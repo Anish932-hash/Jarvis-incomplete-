@@ -12,7 +12,6 @@ pyvenv.cfg
 # IDE settings
 .idea/
 .vscode/
-.github/
 
 # Python
 __pycache__/
@@ -36,7 +35,6 @@ Thumbs.db
 .DS_Store
 
 # Large generated files
-FULL_FILE_TREE.md
 NEWS.txt
 LICENSE.txt
 
