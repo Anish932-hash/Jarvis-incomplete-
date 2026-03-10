@@ -1,0 +1,46 @@
+<!-- JARVIS/desktop-wrapper/electron/index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>JARVIS Desktop</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self';
+                   img-src 'self' data:;
+                   style-src 'self' 'unsafe-inline';
+                   script-src 'self';
+                   connect-src 'self' http://localhost:* https://*;">
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #loading {
+            font-size: 32px;
+            opacity: 0.75;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading">Launching JARVIS Desktop…</div>
+
+    <script type="module">
+        import { DesktopIPC } from "./ipc.js";
+
+        console.log("JARVIS Desktop Shell Loaded");
+
+        DesktopIPC.getAppInfo().then(info => {
+            console.log("App Info:", info);
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,62 @@
+/* ----------------------------------------------------
+   COMPONENT SYSTEM — GLASS PANELS, NEON BUTTONS, HUD
+----------------------------------------------------- */
+
+/* Glass Panel */
+.panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur-mid));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: var(--shadow-soft);
+    animation: floatUp 0.6s ease;
+}
+
+/* Neon Button */
+.btn {
+    padding: 12px 22px;
+    border-radius: var(--radius);
+    background: linear-gradient(90deg, var(--neon-purple), var(--neon-blue));
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    outline: none;
+    transition: 0.2s ease;
+    font-family: var(--font-main);
+}
+
+.btn:hover {
+    filter: brightness(1.3);
+    transform: translateY(-2px);
+    box-shadow: 0 0 16px var(--neon-cyan);
+}
+
+/* Input */
+.input {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    padding: 12px 14px;
+    width: 100%;
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    backdrop-filter: blur(var(--blur-mid));
+}
+
+/* Scanline Overlay */
+.hud-scan {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.hud-scan::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(transparent,
+            rgba(255, 255, 255, 0.12),
+            transparent);
+    animation: scanline 4s linear infinite;
+}

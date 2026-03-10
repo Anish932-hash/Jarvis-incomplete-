@@ -1,0 +1,269 @@
+{
+  "autotune": {
+    "applied": 0,
+    "history": [],
+    "last_apply_at": "",
+    "last_apply_by_scope": {},
+    "last_reason": "",
+    "last_run_at": "",
+    "last_run_monotonic": 0.0,
+    "last_scope_key": "",
+    "last_status": "",
+    "runs": 0
+  },
+  "history": [
+    {
+      "action": "external_email_send",
+      "controls": {
+        "allow_high_risk": true,
+        "max_steps": 12,
+        "profile": "aggressive",
+        "require_compare": false,
+        "stop_on_blocked": false
+      },
+      "created_at": "2026-03-07T02:41:06.494791+00:00",
+      "event_id": 1,
+      "legacy_scope_key": "external_email_send|google",
+      "metadata": {
+        "compare_against_simulation_id": "",
+        "mission_mode": "stable",
+        "promoted_from": "connector_preflight_simulation",
+        "promotion_preview": {
+          "approval_ready_ratio": 0.0,
+          "approval_required_ratio": 0.0,
+          "best_risk": 0.11296,
+          "compare_against_simulation_id": "",
+          "compare_improved": true,
+          "compare_required_ratio": 0.0,
+          "compare_score_gap": 0.0,
+          "compare_status": "available",
+          "compare_winner": "tie",
+          "confidence": 0.866294,
+          "eligible": false,
+          "error_ratio": 0.0,
+          "execution_candidate_count": 1,
+          "gate_reasons": [
+            "approval_not_ready"
+          ],
+          "mission_mode": "stable",
+          "promotion_score": 0.919127,
+          "ready_ratio": 1.0,
+          "recommended_apply": false,
+          "recommended_controls": {
+            "allow_high_risk": true,
+            "max_steps": 12,
+            "profile": "aggressive",
+            "require_compare": false,
+            "stop_on_blocked": false
+          },
+          "recommended_profile": "aggressive",
+          "require_compare": false,
+          "simulation_id": "sim_8afa5c4571b3",
+          "stability_score": 0.990853,
+          "status": "success",
+          "summary": "Promotion is blocked until the execution candidate is stageable and approval-ready."
+        },
+        "simulation_id": "sim_8afa5c4571b3"
+      },
+      "mission_mode": "stable",
+      "profile": "aggressive",
+      "provider": "google",
+      "reason": "unit_test_promote_history",
+      "recommendation_confidence": 0.0,
+      "scope_key": "external_email_send|google|stable",
+      "source": "desktop-ui",
+      "used_recommendation": false
+    },
+    {
+      "action": "external_email_send",
+      "controls": {
+        "allow_high_risk": false,
+        "max_steps": 4,
+        "profile": "strict",
+        "require_compare": true,
+        "stop_on_blocked": true
+      },
+      "created_at": "2026-03-07T02:41:06.517519+00:00",
+      "event_id": 2,
+      "legacy_scope_key": "external_email_send|google",
+      "metadata": {},
+      "mission_mode": "stable",
+      "profile": "strict",
+      "provider": "google",
+      "reason": "unit_test_override_policy",
+      "recommendation_confidence": 0.0,
+      "scope_key": "external_email_send|google|stable",
+      "source": "desktop-ui",
+      "used_recommendation": false
+    },
+    {
+      "action": "external_email_send",
+      "controls": {
+        "allow_high_risk": true,
+        "max_steps": 12,
+        "profile": "aggressive",
+        "require_compare": false,
+        "stop_on_blocked": false
+      },
+      "created_at": "2026-03-07T02:41:06.520351+00:00",
+      "event_id": 3,
+      "legacy_scope_key": "external_email_send|google",
+      "metadata": {
+        "restore_created_at": "2026-03-07T02:41:06.494791+00:00",
+        "restore_diff": {
+          "after_profile": "aggressive",
+          "before_profile": "strict",
+          "changed_control_count": 5,
+          "changed_controls": [
+            {
+              "after": true,
+              "before": false,
+              "key": "allow_high_risk"
+            },
+            {
+              "after": 12,
+              "before": 4,
+              "key": "max_steps"
+            },
+            {
+              "after": "aggressive",
+              "before": "strict",
+              "key": "profile"
+            },
+            {
+              "after": false,
+              "before": true,
+              "key": "require_compare"
+            },
+            {
+              "after": false,
+              "before": true,
+              "key": "stop_on_blocked"
+            }
+          ],
+          "profile_changed": true,
+          "summary": "Restoring this event will switch profile from 'strict' to 'aggressive' and change 5 control field(s)."
+        },
+        "restore_event_id": 1,
+        "restore_previous_entry": {
+          "action": "external_email_send",
+          "controls": {
+            "allow_high_risk": false,
+            "max_steps": 4,
+            "profile": "strict",
+            "require_compare": true,
+            "stop_on_blocked": true
+          },
+          "legacy_scope_key": "external_email_send|google",
+          "metadata": {},
+          "mission_mode": "stable",
+          "profile": "strict",
+          "provider": "google",
+          "reason": "unit_test_override_policy",
+          "recommendation_confidence": 0.0,
+          "scope_key": "external_email_send|google|stable",
+          "updated_at": "2026-03-07T02:41:06.517519+00:00",
+          "updated_by_source": "desktop-ui",
+          "version": 2
+        },
+        "restore_reason": "unit_test_promote_history",
+        "restore_scope_key": "external_email_send|google|stable",
+        "restore_source": "desktop-ui"
+      },
+      "mission_mode": "stable",
+      "profile": "aggressive",
+      "provider": "google",
+      "reason": "unit_test_restore_policy",
+      "recommendation_confidence": 0.0,
+      "scope_key": "external_email_send|google|stable",
+      "source": "desktop-ui",
+      "used_recommendation": false
+    }
+  ],
+  "profiles": {
+    "external_email_send|google|stable": {
+      "action": "external_email_send",
+      "controls": {
+        "allow_high_risk": true,
+        "max_steps": 12,
+        "profile": "aggressive",
+        "require_compare": false,
+        "stop_on_blocked": false
+      },
+      "legacy_scope_key": "external_email_send|google",
+      "metadata": {
+        "restore_created_at": "2026-03-07T02:41:06.494791+00:00",
+        "restore_diff": {
+          "after_profile": "aggressive",
+          "before_profile": "strict",
+          "changed_control_count": 5,
+          "changed_controls": [
+            {
+              "after": true,
+              "before": false,
+              "key": "allow_high_risk"
+            },
+            {
+              "after": 12,
+              "before": 4,
+              "key": "max_steps"
+            },
+            {
+              "after": "aggressive",
+              "before": "strict",
+              "key": "profile"
+            },
+            {
+              "after": false,
+              "before": true,
+              "key": "require_compare"
+            },
+            {
+              "after": false,
+              "before": true,
+              "key": "stop_on_blocked"
+            }
+          ],
+          "profile_changed": true,
+          "summary": "Restoring this event will switch profile from 'strict' to 'aggressive' and change 5 control field(s)."
+        },
+        "restore_event_id": 1,
+        "restore_previous_entry": {
+          "action": "external_email_send",
+          "controls": {
+            "allow_high_risk": false,
+            "max_steps": 4,
+            "profile": "strict",
+            "require_compare": true,
+            "stop_on_blocked": true
+          },
+          "legacy_scope_key": "external_email_send|google",
+          "metadata": {},
+          "mission_mode": "stable",
+          "profile": "strict",
+          "provider": "google",
+          "reason": "unit_test_override_policy",
+          "recommendation_confidence": 0.0,
+          "scope_key": "external_email_send|google|stable",
+          "updated_at": "2026-03-07T02:41:06.517519+00:00",
+          "updated_by_source": "desktop-ui",
+          "version": 2
+        },
+        "restore_reason": "unit_test_promote_history",
+        "restore_scope_key": "external_email_send|google|stable",
+        "restore_source": "desktop-ui"
+      },
+      "mission_mode": "stable",
+      "profile": "aggressive",
+      "provider": "google",
+      "reason": "unit_test_restore_policy",
+      "recommendation_confidence": 0.0,
+      "scope_key": "external_email_send|google|stable",
+      "updated_at": "2026-03-07T02:41:06.520351+00:00",
+      "updated_by_source": "desktop-ui",
+      "version": 3
+    }
+  },
+  "updated_at": "2026-03-07T02:41:06.520351+00:00",
+  "version": "1.0"
+}

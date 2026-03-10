@@ -1,0 +1,51 @@
+/* ----------------------------------------------------
+   ANIMATIONS — CYBERPUNK + HOLOGRAM + APPLE SMOOTH
+----------------------------------------------------- */
+
+/* Neon Pulse */
+@keyframes neonGlow {
+    0% {
+        box-shadow: 0 0 6px var(--neon-blue);
+    }
+
+    100% {
+        box-shadow: 0 0 22px var(--neon-cyan);
+    }
+}
+
+/* Hologram Scanline */
+@keyframes scanline {
+    0% {
+        transform: translateY(-100%);
+        opacity: 0.15;
+    }
+
+    100% {
+        transform: translateY(200%);
+        opacity: 0;
+    }
+}
+
+/* Soft Fade */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* Floating UI */
+@keyframes floatUp {
+    from {
+        transform: translateY(12px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}

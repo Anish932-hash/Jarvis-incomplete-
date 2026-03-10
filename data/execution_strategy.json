@@ -1,0 +1,94 @@
+{
+  "updated_at": "2026-03-04T03:33:18.003158+00:00",
+  "config": {
+    "ema_alpha": 0.34,
+    "min_pulls_for_confident_mode": 4,
+    "mode_hysteresis_margin": 0.08,
+    "strict_bias": 0.0,
+    "throughput_bias": 0.0,
+    "global_parallel_cap": 3,
+    "family_bias_alpha": 0.26,
+    "family_bias_limit": 0.52,
+    "family_hotspot_weight": 0.34,
+    "last_tune": {
+      "status": "idle",
+      "last_run_at": "",
+      "changed": false,
+      "dry_run": false,
+      "reason": "",
+      "mode": ""
+    }
+  },
+  "task_family_bias": [
+    {
+      "task_family": "automation",
+      "strict_bias": -0.21999417,
+      "throughput_bias": 0.21997075,
+      "risk_ema": 0.0,
+      "retry_ema": 0.0,
+      "success_ema": 0.99999952,
+      "samples": 35,
+      "last_updated_at": "2026-03-04T03:33:18.003077+00:00"
+    },
+    {
+      "task_family": "generic",
+      "strict_bias": -0.21406797,
+      "throughput_bias": 0.19593096,
+      "risk_ema": 0.0,
+      "retry_ema": 0.0,
+      "success_ema": 0.99316833,
+      "samples": 12,
+      "last_updated_at": "2026-03-03T14:55:53.281383+00:00"
+    }
+  ],
+  "items": [
+    {
+      "task_class": "desktop_ui_automation_simple",
+      "mode": "throughput",
+      "pulls": 28,
+      "successes": 28,
+      "failures": 0,
+      "blocked": 0,
+      "cancelled": 0,
+      "ema_failure_pressure": 0.0,
+      "ema_blocked_pressure": 0.0,
+      "ema_retry_pressure": 0.0,
+      "ema_duration_pressure": 0.00012668,
+      "last_outcome": "completed",
+      "last_goal_id": "cc80cc4c-03b9-4003-a95f-92a9182f1820",
+      "last_updated_at": "2026-03-04T03:33:11.985796+00:00"
+    },
+    {
+      "task_class": "desktop_schedule_automation_simple",
+      "mode": "throughput",
+      "pulls": 21,
+      "successes": 21,
+      "failures": 0,
+      "blocked": 0,
+      "cancelled": 0,
+      "ema_failure_pressure": 0.0,
+      "ema_blocked_pressure": 0.0,
+      "ema_retry_pressure": 0.0,
+      "ema_duration_pressure": 4.9e-06,
+      "last_outcome": "completed",
+      "last_goal_id": "82cc8ac5-8105-44d3-bfed-df67f974ee31",
+      "last_updated_at": "2026-03-04T03:33:18.003077+00:00"
+    },
+    {
+      "task_class": "desktop_ui_generic_simple",
+      "mode": "throughput",
+      "pulls": 12,
+      "successes": 12,
+      "failures": 0,
+      "blocked": 0,
+      "cancelled": 0,
+      "ema_failure_pressure": 0.0,
+      "ema_blocked_pressure": 0.0,
+      "ema_retry_pressure": 0.0,
+      "ema_duration_pressure": 0.05192598,
+      "last_outcome": "completed",
+      "last_goal_id": "9f6fbdd6-9d41-485d-8ebf-ffc3f53c1067",
+      "last_updated_at": "2026-03-03T14:55:53.281383+00:00"
+    }
+  ]
+}

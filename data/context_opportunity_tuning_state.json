@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "saved_at": "2026-03-04T03:33:28.666732+00:00",
+  "self_tune": {
+    "enabled": true,
+    "alpha": 0.28,
+    "min_samples": 5,
+    "bad_threshold": 0.48,
+    "good_threshold": 0.8
+  },
+  "multiobjective": {
+    "enabled": true,
+    "deadline_weight": 2.6,
+    "utility_weight": 1.8,
+    "risk_weight": 1.4,
+    "duration_weight": 0.65
+  },
+  "class_config": {
+    "weights": {
+      "recovery": 1.15,
+      "automation": 1.0,
+      "external": 0.95,
+      "insight": 0.9,
+      "other": 0.85
+    },
+    "limits_in_window": {
+      "recovery": 6,
+      "automation": 4,
+      "external": 3,
+      "insight": 3,
+      "other": 2
+    },
+    "max_concurrency": {
+      "recovery": 2,
+      "automation": 1,
+      "external": 1,
+      "insight": 1,
+      "other": 1
+    }
+  },
+  "dynamic": {
+    "priority_offsets_by_type": {},
+    "confidence_offsets_by_type": {},
+    "retry_penalty_by_type": {},
+    "class_weight_offsets": {},
+    "class_limit_scale_by_class": {},
+    "class_concurrency_scale_by_class": {},
+    "external_penalty_weight_offset": 0.0,
+    "external_recovery_boost_offset": 0.0
+  },
+  "external_pressure": {
+    "enabled": true,
+    "refresh_s": 15.0,
+    "penalty_weight": 2.8,
+    "recovery_boost": 1.2,
+    "limit_floor_scale": 0.35,
+    "concurrency_floor_scale": 0.4,
+    "autotune_enabled": true,
+    "autotune_alpha": 0.24,
+    "autotune_bad_threshold": 0.58,
+    "autotune_good_threshold": 0.36,
+    "policy_learning_state": {}
+  },
+  "learning_state_by_type": {}
+}

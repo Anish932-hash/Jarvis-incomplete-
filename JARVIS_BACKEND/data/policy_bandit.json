@@ -1,0 +1,93 @@
+{
+  "updated_at": "2026-03-04T04:41:25.403006+00:00",
+  "config": {
+    "exploration_weight": 0.26,
+    "cold_start_bonus": 0.16,
+    "min_trials_per_profile": 2,
+    "decay": 0.985,
+    "adaptive_alpha": 0.34,
+    "mode_hysteresis_margin": 0.09,
+    "last_tune": {
+      "status": "idle",
+      "last_run_at": "",
+      "mode": "",
+      "changed": false,
+      "dry_run": false,
+      "reason": ""
+    },
+    "adaptive_state": {
+      "ema_failure_pressure": 0.0,
+      "ema_open_breaker_pressure": 0.0,
+      "ema_failed_ratio": 0.0,
+      "ema_blocked_ratio": 0.0,
+      "ema_quality": 0.0,
+      "ema_risk": 0.0,
+      "ema_reliability": 0.0,
+      "ema_autonomy": 0.0,
+      "ema_guardrail_pressure": 0.0,
+      "ema_hotspot_pressure": 0.0,
+      "last_mode": "balanced",
+      "last_mode_reason": "initial",
+      "tune_runs": 0,
+      "last_updated_at": ""
+    }
+  },
+  "items": [
+    {
+      "task_class": "desktop_ui_automation_simple",
+      "profile": "interactive",
+      "pulls": 2,
+      "reward_sum": 1.985,
+      "reward_mean": 0.9925,
+      "successes": 2,
+      "failures": 0,
+      "blocked": 0,
+      "last_reward": 1.0,
+      "last_outcome": "completed",
+      "last_goal_id": "31ab7a44-fe39-4732-accf-9127415e3b72",
+      "updated_at": "2026-03-01T12:56:03.646433+00:00"
+    },
+    {
+      "task_class": "desktop_ui_automation_simple",
+      "profile": "automation_safe",
+      "pulls": 15,
+      "reward_sum": 13.52291641,
+      "reward_mean": 0.90152776,
+      "successes": 15,
+      "failures": 0,
+      "blocked": 0,
+      "last_reward": 1.0,
+      "last_outcome": "completed",
+      "last_goal_id": "e179dc8e-c8a3-4934-905c-c96d9d1b567e",
+      "updated_at": "2026-03-04T04:41:11.356028+00:00"
+    },
+    {
+      "task_class": "desktop_schedule_automation_simple",
+      "profile": "automation_safe",
+      "pulls": 17,
+      "reward_sum": 15.10527157,
+      "reward_mean": 0.88854539,
+      "successes": 17,
+      "failures": 0,
+      "blocked": 0,
+      "last_reward": 1.0,
+      "last_outcome": "completed",
+      "last_goal_id": "8023fb9c-902e-440e-883a-646d4de200b8",
+      "updated_at": "2026-03-04T04:09:49.211781+00:00"
+    },
+    {
+      "task_class": "desktop_ui_generic_simple",
+      "profile": "automation_power",
+      "pulls": 9,
+      "reward_sum": 8.47848105,
+      "reward_mean": 0.94205345,
+      "successes": 9,
+      "failures": 0,
+      "blocked": 0,
+      "last_reward": 1.0,
+      "last_outcome": "completed",
+      "last_goal_id": "ab46f852-aa22-462e-b574-9b035d9b510f",
+      "updated_at": "2026-03-04T04:41:25.402973+00:00"
+    }
+  ]
+}

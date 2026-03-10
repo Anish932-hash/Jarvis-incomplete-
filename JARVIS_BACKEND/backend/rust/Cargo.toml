@@ -1,0 +1,115 @@
+[package]
+name = "jarvis_backend"
+version = "1.0.0"
+edition = "2021"
+authors = ["Anish <milti.mondal@example.com>"]
+license = "MIT"
+description = "Rust backend for the JARVIS system — high-performance IPC, safe Windows control, audio utils, monitoring."
+repository = "https://github.com/Anish932-hash/J.A.R.V.I.S.-AGI.git"
+readme = "README.md"
+
+# Ensure reproducible builds
+publish = false
+
+[lib]
+name = "jarvis_backend"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "jarvis_backend_bin"
+path = "src/main.rs"
+
+# =====================================================
+# Dependencies (ADVANCED + HIGH PERFORMANCE + SAFE)
+# =====================================================
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+async-recursion = "1.1"
+anyhow = "1.0"
+
+# Inter-process communication (Python ↔ Rust safely)
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py38"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# High-speed channel/event system
+crossbeam = "0.8"
+
+# System monitoring (CPU, RAM, battery, processes)
+sysinfo = { version = "0.30", features = ["multithread"] }
+
+# Windows-specific safe APIs (non-harmful)
+windows = { version = "0.54", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Power",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading"
+] }
+
+# High-performance async file handling
+tokio-util = "0.7"
+notify = "6.1"
+sha2 = "0.10"
+rodio = "0.17"
+lazy_static = "1.5"
+
+# Logging (advanced structured logs)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+
+# Time utilities
+chrono = { version = "0.4", features = ["serde"] }
+
+# Audio processing (safe)
+cpal = "0.15"
+hound = "3.5"
+
+# Error management system (robust)
+thiserror = "1.0"
+
+# High-performance caching (for automation engine)
+dashmap = "5.5"
+
+# UUID generator for events
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# =====================================================
+# Development Tools
+# =====================================================
+
+[dev-dependencies]
+criterion = "0.5"        # Benchmarking
+rand = "0.8"             # For test generation
+
+# =====================================================
+# Build Settings
+# =====================================================
+
+[profile.dev]
+opt-level = 2
+debug = true
+panic = "unwind"
+incremental = true
+overflow-checks = true
+
+[profile.release]
+opt-level = "z"          # Smaller binary
+codegen-units = 1        # More optimization
+lto = true               # Link Time Optimization
+panic = "abort"
+strip = "symbols"
+
+# =====================================================
+# Features (optional)
+# =====================================================
+
+[features]
+default = ["ipc", "monitoring", "audio"]
+ipc = []
+monitoring = []
+automation = []         # Your safe automation engine
+audio = []

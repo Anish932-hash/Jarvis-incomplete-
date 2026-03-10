@@ -1,0 +1,104 @@
+version: 1.0
+jarvis:
+  name: "JARVIS-Ω"
+  environment: "production"
+  language: "en-IN"
+  timezone: "Asia/Kolkata"
+  logging:
+    level: "INFO"
+    format: "json"
+    file: "logs/jarvis.log"
+    rotate:
+      enabled: true
+      max_size_mb: 50
+      max_files: 10
+
+# ============================
+# AGENT + PIPELINE SETTINGS
+# ============================
+agents:
+  core_agent:
+    max_depth: 8
+    parallel_tasks: 4
+    safety_strict_mode: true
+    reasoning_engine: "hybrid-graph-transformer"
+
+  task_planner:
+    planning_mode: "semantic+toolchain"
+    max_tools: 5
+    max_retries: 3
+    prefer_local_tools: true
+
+  memory_manager:
+    type: "local_vector_db"
+    embedding_model: "nomic-embed-v1"
+    retention_days: 45
+    autosave_interval_sec: 30
+
+  safety_layer:
+    scanning:
+      detect_harmful_commands: true
+      block_disallowed_actions: true
+      escalate_on_danger: true
+    audit_logging: true
+
+# ============================
+# BACKEND ROUTES
+# ============================
+backend:
+  python_entry: "backend/python/main.py"
+  rust_entry: "backend/rust/target/release/jarvis_backend_bin"
+
+ipc:
+  mode: "tcp"
+  host: "127.0.0.1"
+  port: 7654
+  timeout_ms: 4500
+
+# ============================
+# SYSTEM CONTROLS
+# ============================
+system:
+  monitoring:
+    enable_cpu: true
+    enable_ram: true
+    enable_temp: true
+    poll_interval_ms: 2000
+
+  notifications:
+    enabled: true
+    provider: "windows_toast"
+
+  actions:
+    allowed:
+      - "read_files"
+      - "open_safe_apps"
+      - "system_monitoring"
+    denied:
+      - "simulate_input"
+      - "keyboard_events"
+      - "mouse_events"
+
+# ============================
+# SPEECH
+# ============================
+speech:
+  wakeword:
+    sensitivity: 0.65
+    model: "porcupine"
+  stt:
+    engine: "whisper"
+    realtime: true
+    vad: "webrtc"
+  tts:
+    engine: "elevenlabs"
+    voice_id: "advanced_female"
+    stability: 0.7
+    clarity: 0.9
+
+# ============================
+# UI LINK
+# ============================
+ui:
+  active_theme: "neon_dark"
+  hot_reload: true

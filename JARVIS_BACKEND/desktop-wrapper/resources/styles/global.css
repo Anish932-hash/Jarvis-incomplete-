@@ -1,0 +1,57 @@
+/* -----------------------------------------
+   JARVIS GLOBAL STYLES — HYBRID ENGINE
+------------------------------------------ */
+
+:root {
+    --font-main: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    --radius: 16px;
+    --radius-lg: 28px;
+    --blur-strong: 40px;
+    --blur-mid: 20px;
+
+    /* Neo-Glass Colors */
+    --glass-bg: rgba(255, 255, 255, 0.12);
+    --glass-border: rgba(255, 255, 255, 0.22);
+
+    /* Cyberpunk Neon */
+    --neon-blue: #00d5ff;
+    --neon-cyan: #32fff7;
+    --neon-purple: #ae32ff;
+
+    /* Apple Smooth Shadows */
+    --shadow-soft: 0 6px 22px rgba(0, 0, 0, 0.25);
+    --shadow-strong: 0 12px 38px rgba(0, 0, 0, 0.45);
+
+    /* Minimalist Grayscale Base */
+    --text-primary: #eaeaea;
+    --text-secondary: #b5b5b5;
+    --bg-base: #0e0e0f;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-base);
+    font-family: var(--font-main);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--neon-purple);
+    border-radius: 20px;
+}

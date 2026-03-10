@@ -1,0 +1,16 @@
+[
+  {
+    "macro_id": "9ee8064f-4233-446e-9d44-922d07db7eaf",
+    "name": "what time is it in UTC",
+    "text": "what time is it in UTC",
+    "source": "desktop-ui",
+    "actions": [
+      "time_now"
+    ],
+    "success_count": 457,
+    "usage_count": 0,
+    "created_at": "2026-02-23T16:31:47.007659+00:00",
+    "updated_at": "2026-03-04T04:41:41.238106+00:00",
+    "last_used_at": ""
+  }
+]

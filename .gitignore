@@ -1,0 +1,45 @@
+# Virtual environment
+.venv/
+Lib/
+Scripts/
+include/
+libs/
+pyvenv.cfg
+
+# Temporary files
+.tmp/
+
+# IDE settings
+.idea/
+.vscode/
+.github/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Rust build artifacts
+**/target/
+
+# Logs
+logs/
+
+# Node modules
+node_modules/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Large generated files
+FULL_FILE_TREE.md
+NEWS.txt
+LICENSE.txt
+
+# Environment variables
+.env
+.env.local

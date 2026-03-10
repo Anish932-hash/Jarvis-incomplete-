@@ -1,0 +1,30 @@
+Name, the models according to your PC, and create these Folders, along with the path you have to keep, these local AI models:
+1)all_rounder
+2)custom_intent
+3)embeddings
+4)tts
+5)stt
+6)wakeword
+7)reasoning
+8)JARVIS_BACKEND/models/all 3 vision and all models
+"E:\J.A.R.V.I.S\all_rounder\qwen\Qwen3.5-9B"
+"E:\J.A.R.V.I.S\all_rounder\qwen\Qwen3-14B"
+"E:\J.A.R.V.I.S\custom_intents\all-mpnet-base-v2(Custom_intents_model)"
+"E:\J.A.R.V.I.S\custom_intents\bart-large-mnli (Custom_intent_model)"
+"E:\J.A.R.V.I.S\embeddings\all-mpnet-base-v2(Embeddings_model)"
+"E:\J.A.R.V.I.S\embeddings\multi-qa-mpnet-base-dot-v1(Embeddings_model)"
+"E:\J.A.R.V.I.S\JARVIS_BACKEND\models\vision\ggml-model-q4_k.gguf"
+"E:\J.A.R.V.I.S\JARVIS_BACKEND\models\vision\sam_vit_h_4b8939.pth"
+"E:\J.A.R.V.I.S\JARVIS_BACKEND\models\vision\yolov10x.pt"
+"E:\J.A.R.V.I.S\reasoning\deepseek-r1-distill-qwen-14b-q5_k_m.gguf"
+"E:\J.A.R.V.I.S\reasoning\Meta-Llama-3.1-8B-Instruct-Q8_0.gguf"
+"E:\J.A.R.V.I.S\reasoning\Qwen2.5-14B-Instruct-Q8_0.gguf"
+"E:\J.A.R.V.I.S\stt\whisper-large-v3(Speech-To-text_model)"
+"E:\J.A.R.V.I.S\stt\whisper-medium(Speech-to-text_model)"
+"E:\J.A.R.V.I.S\tts\Orpheus-3B-TTS.f16.gguf"
+"E:\J.A.R.V.I.S\wakeword\Jarvis_en_windows_v4_0_0.ppn"
+
+And these API keys:
+1)Groq
+2)ElevenLabs
+3)Nvidia

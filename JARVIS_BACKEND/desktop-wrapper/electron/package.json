@@ -1,0 +1,32 @@
+{
+    "name": "jarvis-desktop-wrapper",
+    "version": "1.0.0",
+    "description": "Desktop wrapper for JARVIS AI system",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder --win --x64"
+    },
+    "author": "Anish",
+    "license": "MIT",
+    "dependencies": {
+        "electron": "31.0.0"
+    },
+    "devDependencies": {
+        "electron-builder": "^24.7.0"
+    },
+    "build": {
+        "appId": "com.jarvis.desktop",
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "electron/**/*",
+            "!build/**/*"
+        ],
+        "win": {
+            "target": "nsis",
+            "icon": "../resources/icons/6951249_preview.ico"
+        }
+    }
+}

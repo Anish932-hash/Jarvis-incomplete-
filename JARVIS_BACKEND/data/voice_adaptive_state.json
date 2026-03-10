@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "saved_at": "2026-03-04T04:41:41.320139+00:00",
+  "learning": {
+    "enabled": true,
+    "alpha": 0.24,
+    "min_samples": 8,
+    "bad_threshold": 0.54,
+    "good_threshold": 0.84
+  },
+  "dynamic_profile_by_risk": {},
+  "dynamic_guardrails_by_risk": {},
+  "learning_state": {},
+  "action_reliability_by_type": {}
+}

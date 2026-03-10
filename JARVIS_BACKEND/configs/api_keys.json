@@ -1,0 +1,35 @@
+{
+    "meta": {
+        "version": "1.0",
+        "encryption": {
+            "enabled": true,
+            "method": "AES-256-GCM",
+            "rotation_interval_days": 60
+        }
+    },
+    "services": {
+        "groq": {
+            "api_key": "ENCRYPTED::groq_key_v1",
+            "rate_limit_per_min": 300,
+            "enabled": true
+        },
+        "nvidia_nim": {
+            "api_key": "ENCRYPTED::nvidia_key_v1",
+            "rate_limit_per_min": 400,
+            "model": "nemotron-4-340b",
+            "enabled": true
+        },
+        "firebase": {
+            "project_id": "jarvis-realtime-system",
+            "api_key": "ENCRYPTED::firebase_key_v1",
+            "database_url": "https://jarvis-realtime.firebaseio.com",
+            "enabled": true
+        },
+        "elevenlabs": {
+            "api_key": "ENCRYPTED::eleven_key_v1",
+            "tts_model": "eleven_multilingual_v2",
+            "voices_cache": true,
+            "enabled": true
+        }
+    }
+}

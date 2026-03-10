@@ -1,0 +1,45 @@
+{
+    "version": "2.0",
+    "ui": {
+        "theme": {
+            "active_theme": "neon_dark",
+            "themes": {
+                "neon_dark": {
+                    "background": "#0a0f18",
+                    "panel": "#121b2e",
+                    "accent": "#00eaff",
+                    "text_primary": "#e9f7ff",
+                    "text_secondary": "#88a1b8",
+                    "border": "#1a253a"
+                },
+                "cyber_light": {
+                    "background": "#f0f8ff",
+                    "panel": "#ffffff",
+                    "accent": "#0071ff",
+                    "text_primary": "#121212",
+                    "text_secondary": "#3f3f3f",
+                    "border": "#d0d0d0"
+                }
+            }
+        },
+        "layout": {
+            "sidebar_position": "left",
+            "sidebar_width_px": 320,
+            "glass_effect": true,
+            "animations": {
+                "enable": true,
+                "speed_ms": 120
+            }
+        },
+        "voice_console": {
+            "waveform_style": "neon",
+            "auto_scroll": true,
+            "input_indicator": true
+        },
+        "hotkeys": {
+            "wake_ui": "CTRL+SHIFT+X",
+            "toggle_voice": "ALT+SPACE",
+            "open_logs": "CTRL+SHIFT+L"
+        }
+    }
+}

@@ -1,0 +1,31 @@
+/* -----------------------------------------
+    THEME ENGINE — MULTI-MODE VISUAL LAYERS
+------------------------------------------ */
+
+:root[data-theme="dark"] {
+    --bg-base: #0d0d10;
+    --text-primary: #ffffff;
+    --text-secondary: #bfbfbf;
+}
+
+:root[data-theme="light"] {
+    --bg-base: #f4f4f7;
+    --text-primary: #212121;
+    --text-secondary: #5b5b5b;
+    --glass-bg: rgba(255, 255, 255, 0.45);
+    --glass-border: rgba(255, 255, 255, 0.6);
+}
+
+:root[data-theme="holographic"] {
+    --glass-bg: rgba(0, 255, 255, 0.08);
+    --glass-border: rgba(0, 255, 255, 0.42);
+    --bg-base: radial-gradient(circle at 20% 20%, #00121c, #00060a 75%);
+    --text-primary: #dfffff;
+}
+
+:root[data-theme="synthetic"] {
+    --bg-base: #050008;
+    --glass-bg: rgba(20, 0, 35, 0.32);
+    --glass-border: rgba(170, 0, 255, 0.65);
+    --text-primary: #f2d9ff;
+}

@@ -1,0 +1,77 @@
+{
+  "updated_at": "2026-03-04T04:41:24.843554+00:00",
+  "config": {
+    "guardrails_warn_unstable": 0.36,
+    "guardrails_block_unstable_high": 0.57,
+    "guardrails_block_unstable_critical": 0.49,
+    "guardrails_block_unstable_medium_automation": 0.67,
+    "guardrails_min_samples": 8,
+    "adaptive_default_profile": "automation_safe",
+    "adaptive_source_default_profiles": {
+      "desktop-schedule": "automation_safe",
+      "desktop-trigger": "automation_safe",
+      "voice-loop": "automation_safe"
+    },
+    "adaptive_tuning_state": {
+      "status": "success",
+      "last_run_at": "2026-03-01T11:13:15.485272+00:00",
+      "mode": "stability",
+      "changed": true,
+      "dry_run": true,
+      "reason": "unit-test"
+    }
+  },
+  "items": [
+    {
+      "action": "time_now",
+      "samples": 40,
+      "successes": 40,
+      "failures": 0,
+      "blocked": 0,
+      "ema_failure": 0.0,
+      "reliability_score": 0.979767,
+      "unstable_score": 0.020233,
+      "consecutive_failures": 0,
+      "last_status": "success",
+      "last_error": "",
+      "last_source": "desktop-ui",
+      "risk_level": "low",
+      "risk_score": 10,
+      "updated_at": "2026-03-04T04:41:10.872220+00:00"
+    },
+    {
+      "action": "tts_speak",
+      "samples": 9,
+      "successes": 9,
+      "failures": 0,
+      "blocked": 0,
+      "ema_failure": 0.0,
+      "reliability_score": 0.726233,
+      "unstable_score": 0.273767,
+      "consecutive_failures": 0,
+      "last_status": "success",
+      "last_error": "",
+      "last_source": "desktop-ui",
+      "risk_level": "low",
+      "risk_score": 1,
+      "updated_at": "2026-03-04T04:41:24.843526+00:00"
+    },
+    {
+      "action": "copy_file",
+      "samples": 2,
+      "successes": 0,
+      "failures": 2,
+      "blocked": 1,
+      "ema_failure": 0.1765,
+      "reliability_score": 0.261585,
+      "unstable_score": 0.738415,
+      "consecutive_failures": 2,
+      "last_status": "failed",
+      "last_error": "Path is outside allowed roots. Allowed roots: C:\\Users\\thecy, E:\\J.A.R.V.I.S\\JARVIS_BACKEND",
+      "last_source": "desktop-ui",
+      "risk_level": "medium",
+      "risk_score": 45,
+      "updated_at": "2026-03-04T03:57:19.351639+00:00"
+    }
+  ]
+}
