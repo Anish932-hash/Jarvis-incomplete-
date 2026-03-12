@@ -116,3 +116,59 @@ def test_model_registry_detects_embedding_and_intent_assets_and_capabilities(tmp
     assert "intent" in tasks
     assert int(tasks["embedding"].get("inventory_count", 0)) >= 1
     assert int(tasks["intent"].get("inventory_count", 0)) >= 1
+
+
+def test_model_registry_merges_manifest_declared_missing_and_present_assets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    present_reasoning = tmp_path / "reasoning" / "Qwen2.5-14B-Instruct-Q8_0.gguf"
+    present_reasoning.parent.mkdir(parents=True, exist_ok=True)
+    present_reasoning.write_bytes(b"gguf")
+
+    missing_tts = tmp_path / "tts" / "Kokoro-82M"
+    manifest_dir = tmp_path / "JARVIS_BACKEND"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "Models to Download.txt").write_text(
+        "\n".join(
+            [
+                "Name, the models according to your PC, and create these Folders, along with the path you have to keep, these local AI models:",
+                f'"{present_reasoning}"',
+                f'"{missing_tts}"',
+                "",
+                "And these API keys:",
+                "1)Groq",
+                "2)ElevenLabs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ModelRegistry(scan_local_models=True, enforce_provider_keys=False)
+    inventory = registry.local_inventory_snapshot(limit=100)
+
+    assert inventory["status"] == "success"
+    assert int(inventory.get("declared_count", 0)) >= 2
+    assert int(inventory.get("missing_count", 0)) >= 1
+    assert inventory.get("manifest", {}).get("provider_count") == 2
+
+    rows_by_path = {
+        str(row.get("path", "")).lower(): row
+        for row in inventory.get("items", [])
+        if isinstance(row, dict)
+    }
+
+    present_row = rows_by_path[str(present_reasoning.resolve()).lower()]
+    assert present_row["declared"] is True
+    assert present_row["present"] is True
+    assert present_row["missing"] is False
+    assert present_row["detected"] is True
+
+    missing_row = rows_by_path[str(missing_tts.resolve()).lower()]
+    assert missing_row["declared"] is True
+    assert missing_row["present"] is False
+    assert missing_row["missing"] is True
+    assert missing_row["detected"] is False
+
+    tts_models = registry.list_by_task("tts")
+    names = {model.name for model in tts_models}
+    assert "local-auto-tts-kokoro-82m" not in names

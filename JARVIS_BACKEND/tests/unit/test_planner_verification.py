@@ -215,6 +215,33 @@ def test_browser_session_request_intent_routes_to_authenticated_request() -> Non
     assert steps[0].args.get("url") == "https://example.com/api"
 
 
+def test_desktop_interact_step_routes_open_and_type_in_app() -> None:
+    planner = Planner()
+
+    text = 'open notepad and type "hello there"'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "notepad"
+    assert steps[0].args.get("text") == "hello there"
+    assert steps[0].args.get("action") == "type"
+    assert steps[0].args.get("ensure_app_launch") is True
+
+
+def test_desktop_interact_step_routes_click_in_app_context() -> None:
+    planner = Planner()
+
+    text = 'click "Save" in notepad'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "notepad"
+    assert steps[0].args.get("query") == "Save"
+    assert steps[0].args.get("action") == "click"
+
+
 def test_voice_delivery_fallback_uses_notification_when_tts_route_is_blocked() -> None:
     planner = Planner()
 

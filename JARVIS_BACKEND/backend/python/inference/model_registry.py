@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from backend.python.core.provider_credentials import ProviderCredentialManager
+from backend.python.inference.model_requirement_manifest import load_model_requirement_manifest
 
 
 _MODEL_EXTENSIONS = {
@@ -93,6 +94,15 @@ class ModelRegistry:
         self._provider_runtime: Dict[str, Dict[str, Any]] = {}
         self._inventory_profiles: set[str] = set()
         self._inventory_rows: List[Dict[str, Any]] = []
+        self._detected_inventory_rows: List[Dict[str, Any]] = []
+        self._requirement_manifest: Dict[str, Any] = {
+            "status": "missing",
+            "path": "",
+            "model_count": 0,
+            "provider_count": 0,
+            "models": [],
+            "providers": [],
+        }
         self._last_refresh_at = 0.0
         self._refresh_interval_s = max(2.0, min(float(refresh_interval_s), 600.0))
 
@@ -107,6 +117,7 @@ class ModelRegistry:
         self._max_scanned_files = max(100, min(self._env_int("JARVIS_LOCAL_MODEL_SCAN_MAX_FILES", 2500), 20_000))
         self._max_scan_depth = max(1, min(self._env_int("JARVIS_LOCAL_MODEL_SCAN_MAX_DEPTH", 3), 8))
         self._custom_model_roots = self._parse_custom_scan_roots()
+        self._manifest_path_hint = str(os.getenv("JARVIS_MODEL_MANIFEST_PATH", "")).strip()
 
         self._register_defaults()
         self.refresh_environment(force=True)
@@ -335,7 +346,12 @@ class ModelRegistry:
         credential_snapshot = self._provider_credentials.refresh(overwrite_env=False)
         providers_payload = credential_snapshot.get("providers", {})
         provider_status = providers_payload if isinstance(providers_payload, dict) else {}
-        inventory_rows = self._scan_local_inventory() if self._scan_local_models else []
+        detected_inventory_rows = self._scan_local_inventory() if self._scan_local_models else []
+        manifest_payload = load_model_requirement_manifest(manifest_path=self._manifest_path_hint)
+        merged_inventory_rows = self._merge_inventory_rows(
+            detected_rows=detected_inventory_rows,
+            manifest_payload=manifest_payload,
+        )
 
         with self._lock:
             self._provider_status = {
@@ -343,8 +359,13 @@ class ModelRegistry:
                 for name, row in provider_status.items()
                 if isinstance(row, dict)
             }
+            self._requirement_manifest = dict(manifest_payload) if isinstance(manifest_payload, dict) else dict(self._requirement_manifest)
             if self._scan_local_models:
-                self._sync_local_profiles_locked(inventory_rows)
+                profile_rows = [dict(row) for row in merged_inventory_rows if bool(row.get("detected", False))]
+                self._sync_local_profiles_locked(profile_rows)
+            else:
+                self._sync_local_profiles_locked([])
+            self._inventory_rows = list(merged_inventory_rows)
             self._apply_provider_availability_locked()
             self._last_refresh_at = now_monotonic
 
@@ -352,7 +373,11 @@ class ModelRegistry:
             "status": "success",
             "refreshed": True,
             "provider_count": len(self._provider_status),
-            "inventory_count": len(inventory_rows),
+            "inventory_count": len(merged_inventory_rows),
+            "detected_inventory_count": len(detected_inventory_rows),
+            "declared_inventory_count": int(manifest_payload.get("model_count", 0) or 0)
+            if isinstance(manifest_payload, dict)
+            else 0,
         }
 
     def provider_status_snapshot(self) -> Dict[str, Any]:
@@ -360,19 +385,60 @@ class ModelRegistry:
         with self._lock:
             return {name: dict(row) for name, row in self._provider_status.items()}
 
+    def requirement_manifest_snapshot(self) -> Dict[str, Any]:
+        self.refresh_environment(force=False)
+        with self._lock:
+            models = self._requirement_manifest.get("models", [])
+            providers = self._requirement_manifest.get("providers", [])
+            return {
+                "status": str(self._requirement_manifest.get("status", "missing") or "missing"),
+                "path": str(self._requirement_manifest.get("path", "") or ""),
+                "model_count": int(self._requirement_manifest.get("model_count", 0) or 0),
+                "provider_count": int(self._requirement_manifest.get("provider_count", 0) or 0),
+                "models": [dict(row) for row in models if isinstance(row, dict)],
+                "providers": [str(item).strip().lower() for item in providers if str(item).strip()],
+            }
+
     def local_inventory_snapshot(self, *, task: str = "", limit: int = 200) -> Dict[str, Any]:
         self.refresh_environment(force=False)
         clean_task = str(task or "").strip().lower()
         bounded_limit = max(1, min(int(limit), 5000))
         with self._lock:
-            rows = list(self._inventory_rows)
+            rows = [dict(row) for row in self._inventory_rows]
+            manifest_payload = {
+                "status": str(self._requirement_manifest.get("status", "missing") or "missing"),
+                "path": str(self._requirement_manifest.get("path", "") or ""),
+                "model_count": int(self._requirement_manifest.get("model_count", 0) or 0),
+                "provider_count": int(self._requirement_manifest.get("provider_count", 0) or 0),
+                "providers": [
+                    str(item).strip().lower()
+                    for item in self._requirement_manifest.get("providers", [])
+                    if str(item).strip()
+                ],
+            }
         if clean_task:
             rows = [row for row in rows if str(row.get("task", "")).strip().lower() == clean_task]
+        present_count = sum(1 for row in rows if bool(row.get("present", False)))
+        detected_count = sum(1 for row in rows if bool(row.get("detected", False)))
+        declared_count = sum(1 for row in rows if bool(row.get("declared", False)))
+        missing_count = sum(1 for row in rows if bool(row.get("missing", False)))
+        undeclared_present_count = sum(
+            1
+            for row in rows
+            if bool(row.get("present", False)) and not bool(row.get("declared", False))
+        )
         return {
             "status": "success",
             "count": len(rows),
             "items": rows[:bounded_limit],
             "task": clean_task,
+            "scan_enabled": bool(self._scan_local_models),
+            "present_count": present_count,
+            "detected_count": detected_count,
+            "declared_count": declared_count,
+            "missing_count": missing_count,
+            "undeclared_present_count": undeclared_present_count,
+            "manifest": manifest_payload,
         }
 
     def capability_summary(self, *, limit_per_task: int = 4) -> Dict[str, Any]:
@@ -382,6 +448,17 @@ class ModelRegistry:
             profiles = [deepcopy(profile) for profile in self._profiles.values()]
             inventory_rows = [dict(row) for row in self._inventory_rows]
             provider_status = {str(name): dict(row) for name, row in self._provider_status.items()}
+            manifest_payload = {
+                "status": str(self._requirement_manifest.get("status", "missing") or "missing"),
+                "path": str(self._requirement_manifest.get("path", "") or ""),
+                "model_count": int(self._requirement_manifest.get("model_count", 0) or 0),
+                "provider_count": int(self._requirement_manifest.get("provider_count", 0) or 0),
+                "providers": [
+                    str(item).strip().lower()
+                    for item in self._requirement_manifest.get("providers", [])
+                    if str(item).strip()
+                ],
+            }
 
         task_names = {
             str(profile.task).strip().lower()
@@ -399,6 +476,7 @@ class ModelRegistry:
             task_profiles = [profile for profile in profiles if profile.task == task_name]
             task_profiles.sort(key=lambda item: (-item.quality, item.latency, -item.privacy, item.name))
             inventory_for_task = [row for row in inventory_rows if str(row.get("task", "")).strip().lower() == task_name]
+            present_inventory_for_task = [row for row in inventory_for_task if bool(row.get("present", False))]
 
             provider_counts: Dict[str, int] = {}
             available_count = 0
@@ -430,9 +508,26 @@ class ModelRegistry:
                     "task": task_name,
                     "profile_count": len(task_profiles),
                     "available_count": available_count,
-                    "inventory_count": len(inventory_for_task),
+                    "inventory_count": len(present_inventory_for_task),
+                    "detected_count": sum(1 for row in inventory_for_task if bool(row.get("detected", False))),
+                    "declared_count": sum(1 for row in inventory_for_task if bool(row.get("declared", False))),
+                    "missing_count": sum(1 for row in inventory_for_task if bool(row.get("missing", False))),
+                    "undeclared_present_count": sum(
+                        1
+                        for row in inventory_for_task
+                        if bool(row.get("present", False)) and not bool(row.get("declared", False))
+                    ),
                     "providers": provider_counts,
                     "local_paths": local_paths[:bounded_limit],
+                    "missing_models": [
+                        {
+                            "name": str(row.get("name", "") or "model"),
+                            "path": str(row.get("path", "") or ""),
+                            "format": str(row.get("format", "") or "directory"),
+                        }
+                        for row in inventory_for_task
+                        if bool(row.get("missing", False))
+                    ][:bounded_limit],
                     "top_models": top_models,
                 }
             )
@@ -442,6 +537,7 @@ class ModelRegistry:
             "task_count": len(items),
             "provider_count": len(provider_status),
             "providers": provider_status,
+            "manifest": manifest_payload,
             "tasks": items,
         }
 
@@ -502,7 +598,9 @@ class ModelRegistry:
                 "task": clean_task,
                 "enforce_provider_keys": bool(self._enforce_provider_keys),
                 "provider_status": providers,
-                "local_inventory_count": len(self._inventory_rows),
+                "local_inventory_count": len(self._detected_inventory_rows),
+                "declared_inventory_count": int(self._requirement_manifest.get("model_count", 0) or 0),
+                "missing_inventory_count": sum(1 for row in self._inventory_rows if bool(row.get("missing", False))),
                 "items": rows[:bounded_limit],
             }
 
@@ -666,7 +764,68 @@ class ModelRegistry:
                 del self._profiles[stale]
             self._runtime.pop(stale, None)
         self._inventory_profiles = live_names
-        self._inventory_rows = list(rows)
+        self._detected_inventory_rows = list(rows)
+
+    def _merge_inventory_rows(
+        self,
+        *,
+        detected_rows: List[Dict[str, Any]],
+        manifest_payload: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        declared_rows = manifest_payload.get("models", []) if isinstance(manifest_payload, dict) else []
+        declared_by_path: Dict[str, Dict[str, Any]] = {}
+        for raw_row in declared_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            key = self._inventory_path_key(raw_row)
+            if not key or key in declared_by_path:
+                continue
+            declared_by_path[key] = dict(raw_row)
+
+        merged_rows: List[Dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for raw_row in detected_rows:
+            row = dict(raw_row)
+            path_key = self._inventory_path_key(row)
+            declared_row = declared_by_path.get(path_key, {})
+            row["detected"] = True
+            row["present"] = True
+            row["missing"] = False
+            row["declared"] = bool(declared_row)
+            row["required_by_manifest"] = bool(declared_row)
+            if declared_row:
+                row["manifest_source"] = "Models to Download.txt"
+            merged_rows.append(row)
+            if path_key:
+                seen_paths.add(path_key)
+
+        for path_key, declared_row in declared_by_path.items():
+            if path_key in seen_paths:
+                continue
+            row = dict(declared_row)
+            row["declared"] = True
+            row["required_by_manifest"] = True
+            row["present"] = bool(row.get("present", False))
+            row["missing"] = not bool(row.get("present", False))
+            row["detected"] = bool(row.get("detected", False))
+            row.setdefault("source", "manifest")
+            merged_rows.append(row)
+
+        merged_rows.sort(
+            key=lambda row: (
+                str(row.get("task", "")),
+                0 if bool(row.get("present", False)) else 1,
+                0 if bool(row.get("declared", False)) else 1,
+                -int(row.get("size_bytes", 0) or 0),
+                str(row.get("name", "")),
+            )
+        )
+        return merged_rows
+
+    @staticmethod
+    def _inventory_path_key(row: Dict[str, Any]) -> str:
+        path = str(row.get("path", "") or "").strip()
+        return path.lower()
 
     def _inventory_row(self, *, task_hint: str, path: Path, source: str) -> Dict[str, Any]:
         resolved = path.resolve()

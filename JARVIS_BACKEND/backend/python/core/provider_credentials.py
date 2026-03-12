@@ -30,12 +30,14 @@ class ProviderCredentialManager:
         "groq": re.compile(r"^gsk_[A-Za-z0-9_\-]{16,}$"),
         "elevenlabs": re.compile(r"^[A-Za-z0-9_\-]{20,}$"),
         "nvidia": re.compile(r"^(nvapi[-_])?[A-Za-z0-9._\-]{20,}$", flags=re.IGNORECASE),
+        "huggingface": re.compile(r"^hf_[A-Za-z0-9]{16,}$"),
     }
     _PROVIDER_DEFS: Dict[str, Dict[str, Any]] = {
         "groq": {
             "env": "GROQ_API_KEY",
             "aliases": ["GROQ_KEY"],
             "keystore_key": "groq.api_key",
+            "credential_label": "API Key",
             "config_paths": [
                 ("providers", "groq", "api_key"),
                 ("services", "groq", "api_key"),
@@ -46,6 +48,7 @@ class ProviderCredentialManager:
             "env": "ELEVENLABS_API_KEY",
             "aliases": ["ELEVEN_API_KEY"],
             "keystore_key": "elevenlabs.api_key",
+            "credential_label": "API Key",
             "config_paths": [
                 ("providers", "elevenlabs", "api_key"),
                 ("services", "elevenlabs", "api_key"),
@@ -64,10 +67,22 @@ class ProviderCredentialManager:
             "env": "NVIDIA_API_KEY",
             "aliases": ["NIM_API_KEY"],
             "keystore_key": "nvidia.api_key",
+            "credential_label": "API Key",
             "config_paths": [
                 ("providers", "nvidia", "api_key"),
                 ("services", "nvidia", "api_key"),
                 ("nvidia", "api_key"),
+            ],
+        },
+        "huggingface": {
+            "env": "HUGGINGFACE_HUB_TOKEN",
+            "aliases": ["HF_TOKEN", "HUGGINGFACE_TOKEN"],
+            "keystore_key": "huggingface.token",
+            "credential_label": "Access Token",
+            "config_paths": [
+                ("providers", "huggingface", "token"),
+                ("services", "huggingface", "token"),
+                ("huggingface", "token"),
             ],
         },
     }
@@ -87,6 +102,52 @@ class ProviderCredentialManager:
     @classmethod
     def providers(cls) -> list[str]:
         return list(cls._PROVIDER_DEFS.keys())
+
+    @classmethod
+    def provider_catalog(cls) -> Dict[str, Dict[str, Any]]:
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for provider, definition in cls._PROVIDER_DEFS.items():
+            required_map = definition.get("required_env_map", {})
+            required_paths: Dict[str, list[str]] = {}
+            if isinstance(required_map, dict):
+                for env_name, paths in required_map.items():
+                    clean_env = str(env_name or "").strip()
+                    if not clean_env:
+                        continue
+                    required_paths[clean_env] = [
+                        ".".join(path)
+                        for path in paths
+                        if isinstance(path, tuple) and path
+                    ]
+            catalog[provider] = {
+                "provider": provider,
+                "env": str(definition.get("env", "")).strip(),
+                "aliases": [str(item).strip() for item in definition.get("aliases", []) if str(item).strip()],
+                "credential_label": str(definition.get("credential_label", "API Key") or "API Key").strip() or "API Key",
+                "required_env": [str(item).strip() for item in definition.get("required_env", []) if str(item).strip()],
+                "config_paths": [
+                    ".".join(path)
+                    for path in definition.get("config_paths", [])
+                    if isinstance(path, tuple) and path
+                ],
+                "required_env_map": required_paths,
+            }
+        return catalog
+
+    def storage_capabilities(self) -> Dict[str, Any]:
+        config_path = Path(self._resolved_path(self._config_path))
+        key_store_path = Path(self._resolved_path(self._key_store_path))
+        master_key = self._decode_master_key(str(os.getenv(self._master_key_env, "")).strip())
+        return {
+            "status": "success",
+            "config_path": str(config_path),
+            "key_store_path": str(key_store_path),
+            "master_key_env": self._master_key_env,
+            "master_key_configured": master_key is not None,
+            "keystore_enabled": master_key is not None,
+            "config_parent": str(config_path.parent),
+            "key_store_parent": str(key_store_path.parent),
+        }
 
     def refresh(self, *, overwrite_env: bool = False) -> Dict[str, Any]:
         config_payload = self._load_config_payload()
@@ -164,6 +225,7 @@ class ProviderCredentialManager:
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "config_path": self._resolved_path(self._config_path),
             "key_store_path": self._resolved_path(self._key_store_path),
+            "storage": self.storage_capabilities(),
         }
         self._status_cache = payload
         return payload
@@ -186,9 +248,17 @@ class ProviderCredentialManager:
         clean_provider = str(provider or "").strip().lower()
         definition = self._PROVIDER_DEFS.get(clean_provider, {})
         env_name = str(definition.get("env", "")).strip()
+        aliases = [str(item).strip() for item in definition.get("aliases", []) if str(item).strip()]
         if env_name:
-            return str(os.getenv(env_name, "")).strip()
-        return ""
+            env_value, _ = self._first_present_env(env_name=env_name, aliases=aliases)
+            if env_value:
+                return env_value
+        config_payload = self._load_config_payload()
+        config_value = self._extract_from_config(provider=clean_provider, payload=config_payload)
+        if config_value:
+            return config_value
+        keystore_payload = self._load_keystore_payload()
+        return self._extract_from_keystore(provider=clean_provider, payload=keystore_payload)
 
     def is_ready(self, provider: str, *, strict_format: bool = True) -> bool:
         row = self.provider_status(provider)
@@ -202,6 +272,133 @@ class ProviderCredentialManager:
         if isinstance(missing, list) and missing:
             return False
         return True
+
+    def update_provider_credentials(
+        self,
+        *,
+        provider: str,
+        api_key: Optional[str] = None,
+        requirements: Optional[Dict[str, Any]] = None,
+        persist_plaintext: bool = True,
+        persist_encrypted: Optional[bool] = None,
+        overwrite_env: bool = True,
+        clear_api_key: bool = False,
+    ) -> Dict[str, Any]:
+        clean_provider = str(provider or "").strip().lower()
+        definition = self._PROVIDER_DEFS.get(clean_provider)
+        if not isinstance(definition, dict):
+            return {"status": "error", "message": f"unsupported provider: {clean_provider or provider}"}
+
+        raw_api_key = "" if api_key is None else str(api_key or "").strip()
+        api_key_provided = api_key is not None
+        clean_api_key = self._clean_secret(raw_api_key)
+        if api_key_provided and raw_api_key and not clean_api_key and not clear_api_key:
+            return {"status": "error", "message": "api_key looks like a placeholder or invalid empty value"}
+        if clean_api_key:
+            format_valid, format_reason = self._validate_format(provider=clean_provider, value=clean_api_key)
+            if not format_valid:
+                return {"status": "error", "message": f"api_key failed validation: {format_reason}"}
+
+        requirement_inputs: Dict[str, str] = {}
+        if isinstance(requirements, dict):
+            for key, value in requirements.items():
+                clean_key = str(key or "").strip().upper()
+                clean_value = str(value or "").strip()
+                if clean_key and clean_value:
+                    requirement_inputs[clean_key] = clean_value
+
+        required_env = [str(item).strip() for item in definition.get("required_env", []) if str(item).strip()]
+        requirement_updates = {env_name: requirement_inputs.get(env_name, "") for env_name in required_env if requirement_inputs.get(env_name, "")}
+
+        if not clean_api_key and not requirement_updates and not clear_api_key:
+            return {"status": "error", "message": "nothing to update"}
+
+        storage = self.storage_capabilities()
+        master_key_configured = bool(storage.get("master_key_configured", False))
+        use_keystore = master_key_configured if persist_encrypted is None else bool(persist_encrypted)
+        warnings: list[str] = []
+        if bool(persist_encrypted) and not master_key_configured:
+            warnings.append(
+                f"Encrypted keystore mirroring skipped because {self._master_key_env} is not configured."
+            )
+        if (clean_api_key or clear_api_key) and not bool(persist_plaintext) and not use_keystore:
+            return {
+                "status": "error",
+                "message": "no writable destination selected for api_key; enable plaintext persistence or configure JARVIS_MASTER_KEY",
+            }
+
+        config_payload = self._load_config_payload()
+        if not isinstance(config_payload, dict):
+            config_payload = {}
+
+        updated_fields: list[str] = []
+        if clean_api_key or clear_api_key:
+            for path in definition.get("config_paths", []):
+                if not isinstance(path, tuple) or not path:
+                    continue
+                if persist_plaintext and clean_api_key:
+                    self._set_nested_value(config_payload, path, clean_api_key)
+                elif clear_api_key:
+                    self._set_nested_value(config_payload, path, None)
+            updated_fields.append("api_key")
+
+        required_map = definition.get("required_env_map", {})
+        if isinstance(required_map, dict):
+            for env_name, env_value in requirement_updates.items():
+                paths = required_map.get(env_name, [])
+                for path in paths:
+                    if not isinstance(path, tuple) or not path:
+                        continue
+                    self._set_nested_value(config_payload, path, env_value)
+                updated_fields.append(env_name)
+
+        if updated_fields:
+            config_payload.setdefault("_meta", {})
+            if isinstance(config_payload.get("_meta"), dict):
+                config_payload["_meta"]["provider_credentials_updated_at"] = datetime.now(timezone.utc).isoformat()
+            self._write_config_payload(config_payload)
+
+        keystore_written = False
+        if clean_api_key or clear_api_key:
+            try:
+                keystore_written = self._write_keystore_secret(
+                    provider=clean_provider,
+                    secret_value=clean_api_key,
+                    delete=bool(clear_api_key and not clean_api_key),
+                ) if use_keystore else False
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"Encrypted keystore write failed: {exc}")
+
+        env_name = str(definition.get("env", "")).strip()
+        aliases = [str(item).strip() for item in definition.get("aliases", []) if str(item).strip()]
+        if overwrite_env:
+            if clean_api_key:
+                if env_name:
+                    os.environ[env_name] = clean_api_key
+                for alias in aliases:
+                    os.environ[alias] = clean_api_key
+            elif clear_api_key:
+                if env_name:
+                    os.environ.pop(env_name, None)
+                for alias in aliases:
+                    os.environ.pop(alias, None)
+            for env_var, env_value in requirement_updates.items():
+                os.environ[env_var] = env_value
+
+        snapshot = self.refresh(overwrite_env=overwrite_env)
+        provider_row = snapshot.get("providers", {}).get(clean_provider, {}) if isinstance(snapshot, dict) else {}
+        return {
+            "status": "success",
+            "provider": clean_provider,
+            "updated_fields": updated_fields,
+            "persist_plaintext": bool(persist_plaintext),
+            "persist_encrypted": bool(keystore_written),
+            "overwrite_env": bool(overwrite_env),
+            "storage": self.storage_capabilities(),
+            "warnings": warnings,
+            "provider_status": dict(provider_row) if isinstance(provider_row, dict) else {},
+            "snapshot": snapshot if isinstance(snapshot, dict) else {},
+        }
 
     def _load_config_payload(self) -> Dict[str, Any]:
         path = Path(self._resolved_path(self._config_path))
@@ -340,6 +537,46 @@ class ProviderCredentialManager:
                 return None
             current = current[key]
         return current
+
+    @staticmethod
+    def _set_nested_value(payload: Dict[str, Any], path: tuple[str, ...], value: Optional[str]) -> None:
+        current: Dict[str, Any] = payload
+        for key in path[:-1]:
+            child = current.get(key)
+            if not isinstance(child, dict):
+                child = {}
+                current[key] = child
+            current = child
+        if value is None:
+            current.pop(path[-1], None)
+            return
+        current[path[-1]] = value
+
+    def _write_config_payload(self, payload: Dict[str, Any]) -> None:
+        path = Path(self._resolved_path(self._config_path))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    def _write_keystore_secret(self, *, provider: str, secret_value: str, delete: bool = False) -> bool:
+        master_key = self._decode_master_key(str(os.getenv(self._master_key_env, "")).strip())
+        if master_key is None:
+            return False
+        try:
+            from backend.python.database.key_store import KeyStore
+        except Exception:
+            return False
+        definition = self._PROVIDER_DEFS.get(provider, {})
+        key_name = str(definition.get("keystore_key", "")).strip()
+        if not key_name:
+            return False
+        store = KeyStore(path=self._resolved_path(self._key_store_path), master_key=master_key)
+        if delete:
+            store.delete(key_name)
+            return True
+        if not secret_value:
+            return False
+        store.set(key_name, secret_value)
+        return True
 
     @staticmethod
     def _decode_master_key(raw: str) -> Optional[bytes]:

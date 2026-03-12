@@ -25,10 +25,23 @@ from backend.python.core.kernel import AgentKernel
 from backend.python.core.oauth_flow import OAuthFlowManager
 from backend.python.core.oauth_token_store import OAuthTokenStore
 from backend.python.core.provider_credentials import ProviderCredentialManager
+from backend.python.core.desktop_action_router import DesktopActionRouter
+from backend.python.core.provider_verifier import ProviderCredentialVerifier
 from backend.python.core.rust_runtime import RustRuntimeBridge
 from backend.python.core.task_state import GoalStatus
 from backend.python.inference.model_registry import ModelRegistry
 from backend.python.inference.model_router import ModelRouter
+from backend.python.inference.coworker_stack_activation import CoworkerStackActivationOrchestrator
+from backend.python.inference.coworker_stack_advisor import CoworkerStackAdvisor
+from backend.python.inference.coworker_stack_recovery import CoworkerStackRecoveryPlanner
+from backend.python.inference.model_setup_install_manager import ModelSetupInstallManager
+from backend.python.inference.model_setup_installer import ModelSetupInstaller
+from backend.python.inference.model_setup_manual_run_manager import ModelSetupManualRunManager
+from backend.python.inference.model_setup_manual_runner import ModelSetupManualRunner
+from backend.python.inference.model_setup_manual_pipeline import build_model_setup_manual_pipeline
+from backend.python.inference.model_setup_planner import build_model_setup_plan
+from backend.python.inference.model_setup_preflight import build_model_setup_preflight
+from backend.python.inference.model_setup_remote_metadata import ModelSetupRemoteMetadataProbe
 from backend.python.pc_control.system_monitor import SystemMonitor
 from backend.python.tools.system_tools import SystemTools
 from backend.python.utils.logger import Logger
@@ -136,12 +149,28 @@ class DesktopBackendService:
         self.monitor = SystemMonitor()
         self.provider_credentials = ProviderCredentialManager()
         self.provider_credentials.refresh(overwrite_env=False)
+        self.provider_verifier = ProviderCredentialVerifier(self.provider_credentials)
+        self.desktop_action_router = DesktopActionRouter()
         self.model_registry = ModelRegistry(
             provider_credentials=self.provider_credentials,
             enforce_provider_keys=self._env_bool("JARVIS_MODEL_ENFORCE_PROVIDER_KEYS", False),
             scan_local_models=self._env_bool("JARVIS_SCAN_LOCAL_MODELS", True),
         )
+        self.model_setup_installer = ModelSetupInstaller(provider_credentials=self.provider_credentials)
+        self.coworker_stack_activation = CoworkerStackActivationOrchestrator()
+        self.model_setup_install_manager = ModelSetupInstallManager(
+            self.model_setup_installer,
+            completion_callback=self.auto_activate_coworker_stack_for_setup,
+        )
+        self.model_setup_manual_runner = ModelSetupManualRunner(provider_credentials=self.provider_credentials)
+        self.model_setup_manual_run_manager = ModelSetupManualRunManager(
+            self.model_setup_manual_runner,
+            completion_callback=self.auto_activate_coworker_stack_for_setup,
+        )
+        self.model_setup_remote_probe = ModelSetupRemoteMetadataProbe(provider_credentials=self.provider_credentials)
         self.model_router = ModelRouter(self.model_registry)
+        self.coworker_stack_advisor = CoworkerStackAdvisor()
+        self.coworker_stack_recovery = CoworkerStackRecoveryPlanner()
         self.oauth_flow = OAuthFlowManager.shared()
         self._voice_lock = threading.RLock()
         self._stt_engine: Any = None
@@ -149,6 +178,7 @@ class DesktopBackendService:
         self._rust_runtime = RustRuntimeBridge(logger=self.log)
         self._stt_runtime_profile_state: Dict[str, Any] = {}
         self._vision_runtime_profile_state: Dict[str, Any] = {}
+        self._coworker_stack_runtime_state: Dict[str, Any] = {}
 
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop_worker, name="desktop-api-loop", daemon=True)
@@ -7131,9 +7161,114 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_action_advice(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        text: str = "",
+        keys: Optional[List[str]] = None,
+        ensure_app_launch: Optional[bool] = None,
+        focus_first: Optional[bool] = None,
+        press_enter: Optional[bool] = None,
+        verify_after_action: Optional[bool] = None,
+        verify_text: str = "",
+        retry_on_verification_failure: Optional[bool] = None,
+        max_strategy_attempts: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload: Dict[str, Any] = {
+                "action": action,
+                "app_name": app_name,
+                "window_title": window_title,
+                "query": query,
+                "text": text,
+                "keys": list(keys or []),
+            }
+            if ensure_app_launch is not None:
+                payload["ensure_app_launch"] = bool(ensure_app_launch)
+            if focus_first is not None:
+                payload["focus_first"] = bool(focus_first)
+            if press_enter is not None:
+                payload["press_enter"] = bool(press_enter)
+            if verify_after_action is not None:
+                payload["verify_after_action"] = bool(verify_after_action)
+            if verify_text:
+                payload["verify_text"] = verify_text
+            if retry_on_verification_failure is not None:
+                payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
+            if max_strategy_attempts is not None:
+                payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            return router.advise(payload)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_interact(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        text: str = "",
+        keys: Optional[List[str]] = None,
+        ensure_app_launch: Optional[bool] = None,
+        focus_first: Optional[bool] = None,
+        press_enter: Optional[bool] = None,
+        verify_after_action: Optional[bool] = None,
+        verify_text: str = "",
+        retry_on_verification_failure: Optional[bool] = None,
+        max_strategy_attempts: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload: Dict[str, Any] = {
+                "action": action,
+                "app_name": app_name,
+                "window_title": window_title,
+                "query": query,
+                "text": text,
+                "keys": list(keys or []),
+            }
+            if ensure_app_launch is not None:
+                payload["ensure_app_launch"] = bool(ensure_app_launch)
+            if focus_first is not None:
+                payload["focus_first"] = bool(focus_first)
+            if press_enter is not None:
+                payload["press_enter"] = bool(press_enter)
+            if verify_after_action is not None:
+                payload["verify_after_action"] = bool(verify_after_action)
+            if verify_text:
+                payload["verify_text"] = verify_text
+            if retry_on_verification_failure is not None:
+                payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
+            if max_strategy_attempts is not None:
+                payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            return router.execute(payload)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_profiles(self, *, query: str = "", category: str = "", limit: int = 200) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.app_profile_catalog(query=query, category=category, limit=limit)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app profile payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def model_local_inventory(self, *, task: str = "", limit: int = 200) -> Dict[str, Any]:
         inventory_fn = getattr(self.model_registry, "local_inventory_snapshot", None)
         runtime_fn = getattr(self.model_registry, "runtime_snapshot", None)
+        manifest_fn = getattr(self.model_registry, "requirement_manifest_snapshot", None)
         if not callable(inventory_fn):
             return {"status": "unavailable", "message": "model registry inventory unavailable"}
         bounded = max(1, min(int(limit), 2000))
@@ -7141,14 +7276,22 @@ class DesktopBackendService:
         try:
             inventory = inventory_fn(task=clean_task, limit=bounded)
             runtime = runtime_fn(task=clean_task, limit=max(bounded, min(5000, bounded * 4))) if callable(runtime_fn) else {"status": "unavailable"}
+            manifest = manifest_fn() if callable(manifest_fn) else {}
             task_counts: Dict[str, int] = {}
+            missing_task_counts: Dict[str, int] = {}
+            declared_task_counts: Dict[str, int] = {}
             inventory_items = inventory.get("items", []) if isinstance(inventory, dict) else []
             if isinstance(inventory_items, list):
                 for item in inventory_items:
                     if not isinstance(item, dict):
                         continue
                     task_name = str(item.get("task", "") or "").strip().lower() or "unknown"
-                    task_counts[task_name] = int(task_counts.get(task_name, 0)) + 1
+                    if bool(item.get("present", False)):
+                        task_counts[task_name] = int(task_counts.get(task_name, 0)) + 1
+                    if bool(item.get("missing", False)):
+                        missing_task_counts[task_name] = int(missing_task_counts.get(task_name, 0)) + 1
+                    if bool(item.get("declared", False)):
+                        declared_task_counts[task_name] = int(declared_task_counts.get(task_name, 0)) + 1
             bridge_profiles = self.model_bridge_profiles(task=clean_task, limit=min(96, bounded))
             launch_summary = {"profile_count": 0, "ready_profile_count": 0, "by_task": {}}
             profile_rows = bridge_profiles.get("profiles", []) if isinstance(bridge_profiles, dict) else []
@@ -7163,17 +7306,610 @@ class DesktopBackendService:
                     if int(row.get("launch_ready_count", 0) or 0) > 0:
                         launch_summary["ready_profile_count"] = int(launch_summary.get("ready_profile_count", 0) or 0) + 1
                         task_bucket["ready_profile_count"] = int(task_bucket.get("ready_profile_count", 0) or 0) + 1
+            provider_credentials = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=False,
+            )
             return {
                 "status": "success",
                 "task": clean_task,
                 "limit": bounded,
                 "task_counts": task_counts,
+                "missing_task_counts": missing_task_counts,
+                "declared_task_counts": declared_task_counts,
                 "launch_summary": launch_summary,
                 "inventory": _to_jsonable(inventory) if isinstance(inventory, dict) else {"status": "error", "message": "invalid inventory payload"},
+                "manifest": _to_jsonable(manifest) if isinstance(manifest, dict) else {"status": "unavailable"},
                 "runtime": _to_jsonable(runtime) if isinstance(runtime, dict) else {"status": "error", "message": "invalid runtime payload"},
                 "bridge_profiles": list(bridge_profiles.get("profiles", [])) if isinstance(bridge_profiles, dict) else [],
-                "provider_credentials": self._provider_credentials_snapshot(refresh=False),
+                "provider_credentials": provider_credentials,
             }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_plan(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        include_present: bool = False,
+    ) -> Dict[str, Any]:
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        try:
+            manifest_fn = getattr(self.model_registry, "requirement_manifest_snapshot", None)
+            inventory_fn = getattr(self.model_registry, "local_inventory_snapshot", None)
+            manifest = manifest_fn() if callable(manifest_fn) else {"status": "unavailable", "models": [], "providers": []}
+            inventory = (
+                inventory_fn(task=clean_task, limit=bounded)
+                if callable(inventory_fn)
+                else {"status": "unavailable", "items": []}
+            )
+            provider_credentials = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=False,
+            )
+            payload = build_model_setup_plan(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                provider_snapshot=provider_credentials if isinstance(provider_credentials, dict) else {},
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid setup plan payload"}
+            payload["inventory"] = _to_jsonable(inventory) if isinstance(inventory, dict) else {"status": "unavailable"}
+            payload["provider_credentials"] = provider_credentials
+            if isinstance(provider_credentials, dict):
+                payload["storage"] = _to_jsonable(provider_credentials.get("storage", {}))
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_manual_pipeline(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        try:
+            plan = self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+            )
+            if not isinstance(plan, dict) or plan.get("status") != "success":
+                return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
+            payload = build_model_setup_manual_pipeline(
+                plan_payload=plan,
+                item_keys=selected_keys or None,
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid manual pipeline payload", "setup_plan": plan}
+            payload["task"] = clean_task
+            payload["selected_item_keys"] = selected_keys
+            payload["setup_plan"] = plan
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_manual_run_launch(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        limit: int = 200,
+        step_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_manual_run_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "manual pipeline run manager unavailable"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        selected_steps = [str(item).strip() for item in (step_ids or []) if str(item).strip()]
+        try:
+            pipeline = self.model_setup_manual_pipeline(
+                task=clean_task,
+                limit=bounded,
+                include_present=False,
+                item_keys=selected_keys or None,
+            )
+            if not isinstance(pipeline, dict) or pipeline.get("status") != "success":
+                return {"status": "error", "message": "unable to build manual pipeline", "manual_pipeline": pipeline}
+            launch = manager.start(
+                pipeline_payload=pipeline,
+                item_keys=selected_keys or None,
+                dry_run=bool(dry_run),
+                force=bool(force),
+                task=clean_task,
+                step_ids=selected_steps or None,
+            )
+            if launch.get("status") == "error":
+                launch["manual_pipeline"] = pipeline
+                return launch
+            return {
+                "status": str(launch.get("status", "accepted") or "accepted"),
+                "task": clean_task,
+                "selected_item_keys": selected_keys,
+                "selected_step_ids": selected_steps,
+                "dry_run": bool(dry_run),
+                "force": bool(force),
+                "run": launch.get("run", {}),
+                "manual_pipeline": pipeline,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_manual_runs(self, *, limit: int = 20) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_manual_run_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "manual pipeline run manager unavailable"}
+        bounded = max(1, min(int(limit), 200))
+        try:
+            return manager.list_runs(limit=bounded)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_manual_run(self, *, run_id: str) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_manual_run_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "manual pipeline run manager unavailable"}
+        try:
+            return manager.get_run(run_id)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc), "run_id": str(run_id or "").strip()}
+
+    def cancel_model_setup_manual_run(self, *, run_id: str, reason: str = "cancelled_by_user") -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_manual_run_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "manual pipeline run manager unavailable"}
+        try:
+            return manager.cancel(run_id, reason=str(reason or "cancelled_by_user").strip() or "cancelled_by_user")
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc), "run_id": str(run_id or "").strip()}
+
+    def model_setup_preflight(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        reserve_bytes: int = 1_073_741_824,
+        refresh_remote: bool = False,
+        remote_timeout_s: float = 6.0,
+    ) -> Dict[str, Any]:
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        try:
+            plan = self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+            )
+            if plan.get("status") != "success":
+                return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
+            remote_metadata = self.model_setup_remote_metadata(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+                item_keys=selected_keys or None,
+                refresh=bool(refresh_remote),
+                timeout_s=float(remote_timeout_s),
+                plan_payload=plan if isinstance(plan, dict) else None,
+            )
+            payload = build_model_setup_preflight(
+                plan_payload=plan if isinstance(plan, dict) else {},
+                item_keys=selected_keys or None,
+                reserve_bytes=max(0, int(reserve_bytes)),
+                remote_metadata=remote_metadata if isinstance(remote_metadata, dict) else None,
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid preflight payload"}
+            payload["task"] = clean_task
+            payload["selected_item_keys"] = selected_keys
+            payload["setup_plan"] = plan
+            payload["remote_metadata"] = (
+                {
+                    str(key): value
+                    for key, value in remote_metadata.items()
+                    if str(key) != "setup_plan"
+                }
+                if isinstance(remote_metadata, dict)
+                else {"status": "unavailable"}
+            )
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_remote_metadata(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        refresh: bool = False,
+        timeout_s: float = 6.0,
+        plan_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        probe = getattr(self, "model_setup_remote_probe", None)
+        if probe is None:
+            return {"status": "unavailable", "message": "model setup remote metadata probe unavailable"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        bounded_timeout = max(1.0, min(float(timeout_s), 30.0))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        try:
+            plan = plan_payload if isinstance(plan_payload, dict) else self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+            )
+            if not isinstance(plan, dict) or plan.get("status") != "success":
+                return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
+            payload = probe.plan_metadata(
+                plan_payload=plan,
+                item_keys=selected_keys or None,
+                refresh=bool(refresh),
+                timeout_s=bounded_timeout,
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid remote metadata payload", "setup_plan": plan}
+            payload["task"] = clean_task
+            payload["selected_item_keys"] = selected_keys
+            payload["setup_plan"] = plan
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def update_provider_credentials(
+        self,
+        *,
+        provider: str,
+        api_key: str = "",
+        requirements: Optional[Dict[str, Any]] = None,
+        persist_plaintext: bool = True,
+        persist_encrypted: Optional[bool] = None,
+        overwrite_env: bool = True,
+        clear_api_key: bool = False,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "provider_credentials", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "provider credential manager unavailable"}
+        try:
+            payload = manager.update_provider_credentials(
+                provider=provider,
+                api_key=api_key if api_key else None,
+                requirements=requirements if isinstance(requirements, dict) else None,
+                persist_plaintext=bool(persist_plaintext),
+                persist_encrypted=persist_encrypted,
+                overwrite_env=bool(overwrite_env),
+                clear_api_key=bool(clear_api_key),
+            )
+            if payload.get("status") != "success":
+                return payload
+            refresh_fn = getattr(self.model_registry, "refresh_environment", None)
+            if callable(refresh_fn):
+                try:
+                    refresh_fn(force=True)
+                except Exception:
+                    pass
+            manifest = self.model_registry.requirement_manifest_snapshot()
+            provider_snapshot = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=False,
+            )
+            return {
+                "status": "success",
+                "provider": str(provider or "").strip().lower(),
+                "updated_fields": list(payload.get("updated_fields", [])) if isinstance(payload.get("updated_fields", []), list) else [],
+                "warnings": list(payload.get("warnings", [])) if isinstance(payload.get("warnings", []), list) else [],
+                "storage": _to_jsonable(payload.get("storage", {})) if isinstance(payload.get("storage", {}), dict) else {},
+                "provider_status": _to_jsonable(payload.get("provider_status", {})) if isinstance(payload.get("provider_status", {}), dict) else {},
+                "provider_credentials": provider_snapshot,
+                "inventory": self.model_local_inventory(limit=160),
+                "setup_plan": self.model_setup_plan(limit=160),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def verify_provider_credentials(
+        self,
+        *,
+        provider: str,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        force_refresh: bool = True,
+        timeout_s: float = 8.0,
+    ) -> Dict[str, Any]:
+        verifier = getattr(self, "provider_verifier", None)
+        if verifier is None:
+            return {"status": "unavailable", "message": "provider verifier unavailable"}
+        clean_provider = str(provider or "").strip().lower()
+        if not clean_provider:
+            return {"status": "error", "message": "provider is required"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = {
+            str(item).strip().lower()
+            for item in (item_keys or [])
+            if str(item).strip()
+        }
+        repo_items: List[Dict[str, Any]] = []
+        plan_payload: Dict[str, Any] | None = None
+        if clean_provider == "huggingface":
+            plan_candidate = self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+            )
+            if isinstance(plan_candidate, dict):
+                plan_payload = plan_candidate
+                if plan_candidate.get("status") == "success":
+                    for item in plan_candidate.get("items", []):
+                        if not isinstance(item, dict):
+                            continue
+                        if str(item.get("source_kind", "") or "").strip().lower() != "huggingface":
+                            continue
+                        clean_key = str(item.get("key", "") or "").strip().lower()
+                        if selected_keys and clean_key not in selected_keys:
+                            continue
+                        repo_items.append(dict(item))
+        try:
+            verification = verifier.verify(
+                provider=clean_provider,
+                repo_items=repo_items or None,
+                force_refresh=bool(force_refresh),
+                timeout_s=max(2.0, min(float(timeout_s), 30.0)),
+            )
+            manifest = self.model_registry.requirement_manifest_snapshot()
+            provider_snapshot = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=False,
+            )
+            return {
+                "status": str(verification.get("status", "error") or "error"),
+                "provider": clean_provider,
+                "task": clean_task,
+                "verification": _to_jsonable(verification) if isinstance(verification, dict) else {"status": "error"},
+                "provider_status": _to_jsonable(verification.get("provider_status", {})) if isinstance(verification, dict) and isinstance(verification.get("provider_status", {}), dict) else {},
+                "provider_credentials": provider_snapshot,
+                "inventory": self.model_local_inventory(limit=160),
+                "setup_plan": plan_payload if isinstance(plan_payload, dict) else self.model_setup_plan(limit=160),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc), "provider": clean_provider}
+
+    def model_setup_install(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        include_present: bool = False,
+        limit: int = 200,
+        refresh_remote: bool = False,
+        remote_timeout_s: float = 6.0,
+        verify_integrity: bool = True,
+    ) -> Dict[str, Any]:
+        installer = getattr(self, "model_setup_installer", None)
+        if installer is None:
+            return {"status": "unavailable", "message": "model setup installer unavailable"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [
+            str(item).strip()
+            for item in (item_keys or [])
+            if str(item).strip()
+        ]
+        try:
+            plan = self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present or force),
+            )
+            if plan.get("status") != "success":
+                return {
+                    "status": "error",
+                    "message": "unable to build setup plan",
+                    "setup_plan": plan,
+                }
+            remote_metadata: Dict[str, Any] | None = None
+            if not bool(dry_run) or bool(refresh_remote):
+                remote_metadata = self.model_setup_remote_metadata(
+                    task=clean_task,
+                    limit=bounded,
+                    include_present=bool(include_present or force),
+                    item_keys=selected_keys or None,
+                    refresh=bool(refresh_remote),
+                    timeout_s=float(remote_timeout_s),
+                    plan_payload=plan if isinstance(plan, dict) else None,
+                )
+            install_payload = installer.install(
+                plan_payload=plan,
+                item_keys=selected_keys or None,
+                dry_run=bool(dry_run),
+                force=bool(force),
+                remote_metadata=remote_metadata if isinstance(remote_metadata, dict) else None,
+                verify_integrity=bool(verify_integrity and not dry_run),
+            )
+            refresh_payload = None
+            activation_payload = None
+            if not bool(dry_run):
+                refresh_fn = getattr(self.model_registry, "refresh_environment", None)
+                if callable(refresh_fn):
+                    try:
+                        refresh_payload = refresh_fn(force=True)
+                    except Exception as exc:  # noqa: BLE001
+                        refresh_payload = {"status": "error", "message": str(exc)}
+                try:
+                    activation_payload = self.auto_activate_coworker_stack_for_setup(
+                        source="setup_install",
+                        task=clean_task,
+                        run_payload=install_payload if isinstance(install_payload, dict) else {},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    activation_payload = {"status": "error", "message": str(exc), "source": "setup_install"}
+                if isinstance(activation_payload, dict):
+                    install_payload["activation"] = _to_jsonable(activation_payload)
+            inventory = self.model_local_inventory(task=clean_task, limit=min(bounded, 160))
+            setup_plan = self.model_setup_plan(
+                task=clean_task,
+                limit=min(bounded, 160),
+                include_present=False,
+            )
+            history = installer.history(limit=12)
+            status_name = str(install_payload.get("status", "error") or "error")
+            response: Dict[str, Any] = {
+                "status": status_name,
+                "task": clean_task,
+                "selected_item_keys": selected_keys,
+                "dry_run": bool(dry_run),
+                "force": bool(force),
+                "install": install_payload,
+                "inventory": inventory,
+                "setup_plan": setup_plan,
+                "history": history,
+                "remote_metadata": (
+                    {
+                        str(key): value
+                        for key, value in remote_metadata.items()
+                        if str(key) != "setup_plan"
+                    }
+                    if isinstance(remote_metadata, dict)
+                    else {"status": "unavailable"}
+                ),
+            }
+            if isinstance(refresh_payload, dict):
+                response["refresh"] = refresh_payload
+            if isinstance(activation_payload, dict):
+                response["activation"] = _to_jsonable(activation_payload)
+            return response
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_install_history(self, *, limit: int = 20) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_install_manager", None)
+        bounded = max(1, min(int(limit), 200))
+        try:
+            if manager is not None:
+                return manager.list_runs(limit=bounded)
+            installer = getattr(self, "model_setup_installer", None)
+            if installer is None:
+                return {"status": "unavailable", "message": "model setup installer unavailable"}
+            return installer.history(limit=bounded)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_install_launch(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        include_present: bool = False,
+        limit: int = 200,
+        refresh_remote: bool = True,
+        remote_timeout_s: float = 6.0,
+        verify_integrity: bool = True,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_install_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "model setup install manager unavailable"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        try:
+            plan = self.model_setup_plan(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present or force),
+            )
+            if plan.get("status") != "success":
+                return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
+            preflight = self.model_setup_preflight(
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present or force),
+                item_keys=selected_keys or None,
+                refresh_remote=bool(refresh_remote),
+                remote_timeout_s=float(remote_timeout_s),
+            )
+            if preflight.get("status") != "success":
+                return {"status": "error", "message": "unable to build setup preflight", "preflight": preflight, "setup_plan": plan}
+            preflight_summary = preflight.get("summary", {}) if isinstance(preflight.get("summary", {}), dict) else {}
+            if int(preflight_summary.get("blocked_count", 0) or 0) > 0 and not bool(force):
+                return {
+                    "status": "blocked",
+                    "message": "setup preflight reported blockers; use force to override launch",
+                    "task": clean_task,
+                    "selected_item_keys": selected_keys,
+                    "setup_plan": plan,
+                    "preflight": preflight,
+                }
+            launch = manager.start(
+                plan_payload=plan,
+                item_keys=selected_keys or None,
+                dry_run=bool(dry_run),
+                force=bool(force),
+                task=clean_task,
+                remote_metadata=preflight.get("remote_metadata", {}) if isinstance(preflight.get("remote_metadata", {}), dict) else None,
+                verify_integrity=bool(verify_integrity and not dry_run),
+            )
+            if launch.get("status") == "error":
+                return launch
+            return {
+                "status": str(launch.get("status", "accepted") or "accepted"),
+                "task": clean_task,
+                "selected_item_keys": selected_keys,
+                "dry_run": bool(dry_run),
+                "force": bool(force),
+                "run": launch.get("run", {}),
+                "setup_plan": plan,
+                "preflight": preflight,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_install_runs(self, *, limit: int = 20) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_install_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "model setup install manager unavailable"}
+        bounded = max(1, min(int(limit), 200))
+        try:
+            return manager.list_runs(limit=bounded)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_install_run(self, *, run_id: str) -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_install_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "model setup install manager unavailable"}
+        try:
+            return manager.get_run(run_id)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def cancel_model_setup_install(self, *, run_id: str, reason: str = "cancelled_by_user") -> Dict[str, Any]:
+        manager = getattr(self, "model_setup_install_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "model setup install manager unavailable"}
+        try:
+            return manager.cancel(run_id, reason=reason)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -9381,6 +10117,395 @@ class DesktopBackendService:
             ),
         }
 
+    def _coworker_stack_active_runtimes(self) -> Dict[str, Any]:
+        reasoning_payload = self.get_local_reasoning_bridge_status(probe=False)
+        tts_payload = self.get_local_neural_tts_bridge_status(probe=False)
+        return {
+            "reasoning": _to_jsonable(reasoning_payload) if isinstance(reasoning_payload, dict) else {},
+            "tts": _to_jsonable(tts_payload) if isinstance(tts_payload, dict) else {},
+            "stt": _to_jsonable(self._stt_runtime_profile_status()),
+            "vision": _to_jsonable(self._vision_runtime_profile_status()),
+        }
+
+    def _coworker_stack_activation_context(self) -> Dict[str, Any]:
+        state = self._coworker_stack_runtime_state if isinstance(self._coworker_stack_runtime_state, dict) else {}
+        return {
+            "stack_name": str(state.get("stack_name", "desktop_agent") or "desktop_agent").strip().lower() or "desktop_agent",
+            "mission_profile": str(state.get("mission_profile", "balanced") or "balanced").strip().lower() or "balanced",
+            "requires_offline": bool(state.get("requires_offline", False)),
+            "privacy_mode": bool(state.get("privacy_mode", False)),
+            "latency_sensitive": bool(state.get("latency_sensitive", False)),
+            "cost_sensitive": bool(state.get("cost_sensitive", False)),
+            "max_cost_units": state.get("max_cost_units"),
+        }
+
+    def auto_activate_coworker_stack_for_setup(
+        self,
+        *,
+        source: str,
+        run_payload: Dict[str, Any],
+        task: str = "",
+    ) -> Dict[str, Any]:
+        orchestrator = getattr(self, "coworker_stack_activation", None)
+        if orchestrator is None:
+            return {"status": "unavailable", "message": "coworker stack activation unavailable"}
+        if not isinstance(run_payload, dict):
+            return {"status": "error", "message": "invalid setup run payload"}
+        context = self._coworker_stack_activation_context()
+        activation_payload = orchestrator.activate(
+            source=str(source or "setup").strip().lower(),
+            run_payload=run_payload,
+            task=str(task or "").strip().lower(),
+            stack_name=str(context.get("stack_name", "desktop_agent") or "desktop_agent"),
+            mission_profile=str(context.get("mission_profile", "balanced") or "balanced"),
+            requires_offline=bool(context.get("requires_offline", False)),
+            privacy_mode=bool(context.get("privacy_mode", False)),
+            latency_sensitive=bool(context.get("latency_sensitive", False)),
+            cost_sensitive=bool(context.get("cost_sensitive", False)),
+            max_cost_units=context.get("max_cost_units"),
+            refresh_registry=lambda force=False: self.model_registry.refresh_environment(force=bool(force)),
+            stack_status=lambda **kwargs: self.coworker_stack_status(**kwargs),
+            apply_stack=lambda **kwargs: self.apply_coworker_stack(**kwargs),
+            inventory_snapshot=lambda task="", limit=24: self.model_local_inventory(task=str(task or "").strip().lower(), limit=int(limit or 24)),
+        )
+        state = dict(self._coworker_stack_runtime_state) if isinstance(self._coworker_stack_runtime_state, dict) else {}
+        state["last_activation"] = _to_jsonable(activation_payload)
+        state["last_activation_at"] = time.time()
+        state["last_activation_source"] = str(source or "setup").strip().lower()
+        self._coworker_stack_runtime_state = state
+        return activation_payload
+
+    def coworker_stack_status(
+        self,
+        *,
+        stack_name: str = "desktop_agent",
+        requires_offline: bool = False,
+        privacy_mode: bool = False,
+        latency_sensitive: bool = False,
+        mission_profile: str = "balanced",
+        cost_sensitive: bool = False,
+        max_cost_units: Optional[float] = None,
+        refresh_provider_credentials: bool = False,
+    ) -> Dict[str, Any]:
+        normalized_stack = str(stack_name or "desktop_agent").strip().lower() or "desktop_agent"
+        normalized_profile = str(mission_profile or "balanced").strip().lower() or "balanced"
+        route_bundle = self.model_route_bundle(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+        )
+        runtime_supervisors = self.model_runtime_supervisors(limit=8)
+        provider_credentials = self._provider_credentials_snapshot(refresh=bool(refresh_provider_credentials))
+        setup_plan = self.model_setup_plan(limit=256, include_present=False)
+        active_runtimes = self._coworker_stack_active_runtimes()
+        payload = self.coworker_stack_advisor.build_status(
+            stack_name=normalized_stack,
+            mission_profile=normalized_profile,
+            route_bundle=route_bundle if isinstance(route_bundle, dict) else {},
+            runtime_supervisors=runtime_supervisors if isinstance(runtime_supervisors, dict) else {},
+            active_runtimes=active_runtimes,
+            provider_credentials=provider_credentials if isinstance(provider_credentials, dict) else {},
+            setup_plan=setup_plan if isinstance(setup_plan, dict) else {},
+        )
+        payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+        payload["runtime_state"] = _to_jsonable(self._coworker_stack_runtime_state)
+        return payload
+
+    def apply_coworker_stack(
+        self,
+        *,
+        stack_name: str = "desktop_agent",
+        tasks: Optional[list[str]] = None,
+        requires_offline: bool = False,
+        privacy_mode: bool = False,
+        latency_sensitive: bool = False,
+        mission_profile: str = "balanced",
+        cost_sensitive: bool = False,
+        max_cost_units: Optional[float] = None,
+        force_reapply: bool = False,
+        continue_on_error: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_stack = str(stack_name or "desktop_agent").strip().lower() or "desktop_agent"
+        normalized_profile = str(mission_profile or "balanced").strip().lower() or "balanced"
+        selected_tasks = [
+            str(item or "").strip().lower()
+            for item in (tasks or [])
+            if str(item or "").strip()
+        ]
+        before = self.coworker_stack_status(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=False,
+        )
+
+        def _execute_launch_template(task_name: str, profile_id: str, template_id: str) -> Dict[str, Any]:
+            return self.execute_model_launch_template(
+                profile_id=profile_id,
+                template_id=template_id,
+                replace=True,
+                wait_ready=True,
+                force=True,
+                probe=True,
+                auto_fallback=True,
+                retry_on_failure=True,
+                max_attempts=3,
+            )
+
+        apply_payload = self.coworker_stack_advisor.apply_recommended(
+            status_payload=before if isinstance(before, dict) else {},
+            execute_launch_template=_execute_launch_template,
+            selected_tasks=selected_tasks or None,
+            force_reapply=bool(force_reapply),
+            continue_on_error=bool(continue_on_error),
+        )
+        after = self.coworker_stack_status(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=False,
+        )
+        self._coworker_stack_runtime_state = {
+            "status": str(apply_payload.get("status", "unknown") or "unknown"),
+            "stack_name": normalized_stack,
+            "mission_profile": normalized_profile,
+            "requires_offline": bool(requires_offline),
+            "privacy_mode": bool(privacy_mode),
+            "latency_sensitive": bool(latency_sensitive),
+            "cost_sensitive": bool(cost_sensitive),
+            "max_cost_units": max_cost_units,
+            "requested_tasks": list(selected_tasks),
+            "force_reapply": bool(force_reapply),
+            "continue_on_error": bool(continue_on_error),
+            "last_applied_at": time.time(),
+            "last_apply": _to_jsonable(apply_payload),
+        }
+        return {
+            "status": str(apply_payload.get("status", "unknown") or "unknown"),
+            "stack_name": normalized_stack,
+            "mission_profile": normalized_profile,
+            "requested_tasks": list(selected_tasks),
+            "apply": _to_jsonable(apply_payload),
+            "before": _to_jsonable(before),
+            "after": _to_jsonable(after),
+            "runtime_state": _to_jsonable(self._coworker_stack_runtime_state),
+        }
+
+    def coworker_stack_recovery_plan(
+        self,
+        *,
+        stack_name: str = "desktop_agent",
+        requires_offline: bool = False,
+        privacy_mode: bool = False,
+        latency_sensitive: bool = False,
+        mission_profile: str = "balanced",
+        cost_sensitive: bool = False,
+        max_cost_units: Optional[float] = None,
+        refresh_provider_credentials: bool = False,
+        verification_stale_after_s: float = 21_600.0,
+    ) -> Dict[str, Any]:
+        planner = getattr(self, "coworker_stack_recovery", None)
+        if planner is None:
+            return {"status": "unavailable", "message": "coworker stack recovery unavailable"}
+        normalized_stack = str(stack_name or "desktop_agent").strip().lower() or "desktop_agent"
+        normalized_profile = str(mission_profile or "balanced").strip().lower() or "balanced"
+        stack_status = self.coworker_stack_status(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+        )
+        if not isinstance(stack_status, dict) or stack_status.get("status") == "error":
+            return {"status": "error", "message": "unable to compose coworker stack", "stack_status": stack_status}
+        setup_plan = stack_status.get("setup_plan", {}) if isinstance(stack_status.get("setup_plan"), dict) else {}
+        manual_item_keys = [
+            str(item.get("key", "") or "").strip().lower()
+            for item in (setup_plan.get("items", []) if isinstance(setup_plan.get("items"), list) else [])
+            if isinstance(item, dict)
+            and not bool(item.get("present", False))
+            and not bool(item.get("automation_ready", False))
+            and str(item.get("key", "") or "").strip()
+        ]
+        manual_pipeline = (
+            self.model_setup_manual_pipeline(item_keys=manual_item_keys, limit=256)
+            if manual_item_keys
+            else {"status": "success", "summary": {"manual_count": 0}, "items": [], "upgrade_actions": []}
+        )
+        install_runs = self.model_setup_install_runs(limit=24)
+        manual_runs = self.model_setup_manual_runs(limit=24)
+        payload = planner.build_plan(
+            status_payload=stack_status,
+            install_runs_payload=install_runs if isinstance(install_runs, dict) else {},
+            manual_pipeline_payload=manual_pipeline if isinstance(manual_pipeline, dict) else {},
+            manual_runs_payload=manual_runs if isinstance(manual_runs, dict) else {},
+            verification_stale_after_s=max(300.0, min(float(verification_stale_after_s), 604_800.0)),
+        )
+        payload["manual_pipeline_status"] = (
+            str(manual_pipeline.get("status", "unknown") or "unknown")
+            if isinstance(manual_pipeline, dict)
+            else "unknown"
+        )
+        payload["generated_from"] = {
+            "stack_status": str(stack_status.get("status", "unknown") or "unknown"),
+            "setup_plan_status": str(setup_plan.get("status", "unknown") or "unknown"),
+            "install_runs_status": str(install_runs.get("status", "unknown") or "unknown")
+            if isinstance(install_runs, dict)
+            else "unknown",
+            "manual_runs_status": str(manual_runs.get("status", "unknown") or "unknown")
+            if isinstance(manual_runs, dict)
+            else "unknown",
+        }
+        return payload
+
+    def recover_coworker_stack(
+        self,
+        *,
+        stack_name: str = "desktop_agent",
+        action_ids: Optional[list[str]] = None,
+        requires_offline: bool = False,
+        privacy_mode: bool = False,
+        latency_sensitive: bool = False,
+        mission_profile: str = "balanced",
+        cost_sensitive: bool = False,
+        max_cost_units: Optional[float] = None,
+        refresh_provider_credentials: bool = False,
+        verification_stale_after_s: float = 21_600.0,
+        continue_on_error: bool = True,
+    ) -> Dict[str, Any]:
+        planner = getattr(self, "coworker_stack_recovery", None)
+        if planner is None:
+            return {"status": "unavailable", "message": "coworker stack recovery unavailable"}
+        normalized_stack = str(stack_name or "desktop_agent").strip().lower() or "desktop_agent"
+        normalized_profile = str(mission_profile or "balanced").strip().lower() or "balanced"
+        selected_action_ids = [
+            str(item or "").strip().lower()
+            for item in (action_ids or [])
+            if str(item or "").strip()
+        ]
+        before = self.coworker_stack_recovery_plan(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            verification_stale_after_s=verification_stale_after_s,
+        )
+        if not isinstance(before, dict) or before.get("status") == "error":
+            return {"status": "error", "message": "unable to build coworker recovery plan", "before": before}
+
+        def _execute_launch_template(task_name: str, profile_id: str, template_id: str) -> Dict[str, Any]:
+            return self.execute_model_launch_template(
+                profile_id=profile_id,
+                template_id=template_id,
+                replace=True,
+                wait_ready=True,
+                force=True,
+                probe=True,
+                auto_fallback=True,
+                retry_on_failure=True,
+                max_attempts=3,
+            )
+
+        def _launch_setup_install(task_name: str, item_keys: Optional[list[str]]) -> Dict[str, Any]:
+            return self.model_setup_install_launch(
+                task=task_name,
+                item_keys=item_keys,
+                dry_run=False,
+                force=False,
+                include_present=False,
+                limit=256,
+                refresh_remote=True,
+                remote_timeout_s=8.0,
+                verify_integrity=True,
+            )
+
+        def _launch_manual_pipeline(task_name: str, item_keys: Optional[list[str]]) -> Dict[str, Any]:
+            return self.model_setup_manual_run_launch(
+                task=task_name,
+                item_keys=item_keys,
+                dry_run=False,
+                force=False,
+                limit=256,
+            )
+
+        def _verify_provider(provider_name: str, task_name: str, item_keys: Optional[list[str]]) -> Dict[str, Any]:
+            return self.verify_provider_credentials(
+                provider=provider_name,
+                task=task_name,
+                limit=256,
+                include_present=False,
+                item_keys=item_keys,
+                force_refresh=True,
+                timeout_s=12.0,
+            )
+
+        recovery = planner.execute(
+            plan_payload=before,
+            execute_launch_template=_execute_launch_template,
+            launch_setup_install=_launch_setup_install,
+            launch_manual_pipeline=_launch_manual_pipeline,
+            verify_provider_credentials=_verify_provider,
+            selected_action_ids=selected_action_ids or None,
+            continue_on_error=bool(continue_on_error),
+        )
+        stack_after = self.coworker_stack_status(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=False,
+        )
+        after = self.coworker_stack_recovery_plan(
+            stack_name=normalized_stack,
+            requires_offline=bool(requires_offline),
+            privacy_mode=bool(privacy_mode),
+            latency_sensitive=bool(latency_sensitive),
+            mission_profile=normalized_profile,
+            cost_sensitive=bool(cost_sensitive),
+            max_cost_units=max_cost_units,
+            refresh_provider_credentials=False,
+            verification_stale_after_s=verification_stale_after_s,
+        )
+        self._coworker_stack_runtime_state = {
+            **(self._coworker_stack_runtime_state if isinstance(self._coworker_stack_runtime_state, dict) else {}),
+            "last_recovery_at": time.time(),
+            "last_recovery_status": str(recovery.get("status", "unknown") or "unknown"),
+            "last_recovery": _to_jsonable(recovery),
+        }
+        return {
+            "status": str(recovery.get("status", "unknown") or "unknown"),
+            "stack_name": normalized_stack,
+            "mission_profile": normalized_profile,
+            "selected_action_ids": selected_action_ids,
+            "recovery": _to_jsonable(recovery),
+            "before": _to_jsonable(before),
+            "after": _to_jsonable(after),
+            "stack_after": _to_jsonable(stack_after),
+            "runtime_state": _to_jsonable(self._coworker_stack_runtime_state),
+        }
+
     def model_runtime_supervisors(self, *, preferred_model_name: str = "", limit: int = 8) -> Dict[str, Any]:
         planner = getattr(self.kernel, "planner", None)
         reasoning_payload: Dict[str, Any]
@@ -11503,6 +12628,59 @@ class DesktopBackendService:
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc), "providers": {}}
+
+    def _provider_credentials_with_manifest_requirements(
+        self,
+        *,
+        manifest_payload: Dict[str, Any],
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        snapshot = self._provider_credentials_snapshot(refresh=refresh)
+        providers = snapshot.get("providers", {}) if isinstance(snapshot.get("providers", {}), dict) else {}
+        required_providers = [
+            str(item).strip().lower()
+            for item in manifest_payload.get("providers", [])
+            if str(item).strip()
+        ] if isinstance(manifest_payload, dict) else []
+        required_set = set(required_providers)
+        provider_names = sorted(set(str(name).strip().lower() for name in providers.keys()) | required_set)
+        verifier = getattr(self, "provider_verifier", None)
+        latest_verifications = (
+            verifier.latest_map(provider_names)
+            if verifier is not None and hasattr(verifier, "latest_map")
+            else {}
+        )
+
+        normalized_rows: Dict[str, Any] = {}
+        ready_required_count = 0
+        missing_required_count = 0
+        for provider_name in provider_names:
+            source_row = providers.get(provider_name, {})
+            row = dict(source_row) if isinstance(source_row, dict) else {}
+            latest_verification = latest_verifications.get(provider_name, {}) if isinstance(latest_verifications, dict) else {}
+            row["provider"] = provider_name
+            row["required_by_manifest"] = provider_name in required_set
+            row["optional"] = provider_name not in required_set
+            if isinstance(latest_verification, dict) and latest_verification:
+                row["last_verification"] = latest_verification
+                row["verification_status"] = str(latest_verification.get("status", "") or "").strip()
+                row["verification_verified"] = bool(latest_verification.get("verified", False))
+                row["verification_checked_at"] = str(latest_verification.get("checked_at", "") or "").strip()
+                row["verification_summary"] = str(latest_verification.get("summary", "") or latest_verification.get("message", "") or "").strip()
+            normalized_rows[provider_name] = row
+            if provider_name in required_set:
+                if bool(row.get("ready", False)):
+                    ready_required_count += 1
+                else:
+                    missing_required_count += 1
+
+        updated = dict(snapshot) if isinstance(snapshot, dict) else {"status": "error", "providers": {}}
+        updated["providers"] = normalized_rows
+        updated["required_count"] = len(required_set)
+        updated["ready_required_count"] = ready_required_count
+        updated["missing_required_count"] = missing_required_count
+        updated["manifest_required_providers"] = sorted(required_set)
+        return updated
 
     def _requires_offline_reasoning(self) -> bool:
         self._provider_credentials_snapshot(refresh=True)
@@ -35590,6 +36768,73 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
+            if path == "/models/coworker-stack":
+                stack_name = str(query.get("stack_name", ["desktop_agent"])[0] or "desktop_agent").strip().lower() or "desktop_agent"
+                requires_offline = self._parse_bool(str(query.get("requires_offline", ["0"])[0]), default=False)
+                privacy_mode = self._parse_bool(str(query.get("privacy_mode", ["0"])[0]), default=False)
+                latency_sensitive = self._parse_bool(str(query.get("latency_sensitive", ["0"])[0]), default=False)
+                cost_sensitive = self._parse_bool(str(query.get("cost_sensitive", ["0"])[0]), default=False)
+                refresh_provider_credentials = self._parse_bool(
+                    str(query.get("refresh_provider_credentials", ["0"])[0]),
+                    default=False,
+                )
+                mission_profile = str(query.get("mission_profile", ["balanced"])[0] or "balanced").strip().lower() or "balanced"
+                max_cost_raw = str(query.get("max_cost_units", [""])[0] or "").strip()
+                max_cost_units = None
+                if max_cost_raw:
+                    try:
+                        max_cost_units = float(max_cost_raw)
+                    except Exception:
+                        max_cost_units = None
+                payload = self.server.service.coworker_stack_status(
+                    stack_name=stack_name,
+                    requires_offline=requires_offline,
+                    privacy_mode=privacy_mode,
+                    latency_sensitive=latency_sensitive,
+                    mission_profile=mission_profile,
+                    cost_sensitive=cost_sensitive,
+                    max_cost_units=max_cost_units,
+                    refresh_provider_credentials=refresh_provider_credentials,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/coworker-stack/recovery":
+                stack_name = str(query.get("stack_name", ["desktop_agent"])[0] or "desktop_agent").strip().lower() or "desktop_agent"
+                requires_offline = self._parse_bool(str(query.get("requires_offline", ["0"])[0]), default=False)
+                privacy_mode = self._parse_bool(str(query.get("privacy_mode", ["0"])[0]), default=False)
+                latency_sensitive = self._parse_bool(str(query.get("latency_sensitive", ["0"])[0]), default=False)
+                cost_sensitive = self._parse_bool(str(query.get("cost_sensitive", ["0"])[0]), default=False)
+                refresh_provider_credentials = self._parse_bool(
+                    str(query.get("refresh_provider_credentials", ["0"])[0]),
+                    default=False,
+                )
+                verification_stale_after_s = self._parse_float(
+                    str(query.get("verification_stale_after_s", ["21600"])[0]),
+                    21_600.0,
+                    minimum=300.0,
+                    maximum=604_800.0,
+                )
+                mission_profile = str(query.get("mission_profile", ["balanced"])[0] or "balanced").strip().lower() or "balanced"
+                max_cost_raw = str(query.get("max_cost_units", [""])[0] or "").strip()
+                max_cost_units = None
+                if max_cost_raw:
+                    try:
+                        max_cost_units = float(max_cost_raw)
+                    except Exception:
+                        max_cost_units = None
+                payload = self.server.service.coworker_stack_recovery_plan(
+                    stack_name=stack_name,
+                    requires_offline=requires_offline,
+                    privacy_mode=privacy_mode,
+                    latency_sensitive=latency_sensitive,
+                    mission_profile=mission_profile,
+                    cost_sensitive=cost_sensitive,
+                    max_cost_units=max_cost_units,
+                    refresh_provider_credentials=refresh_provider_credentials,
+                    verification_stale_after_s=verification_stale_after_s,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
             if path == "/models/runtime-supervisors":
                 preferred_model_name = str(query.get("preferred_model_name", [""])[0] or "").strip().lower()
                 limit = self._parse_int(str(query.get("limit", ["8"])[0]), 8, minimum=1, maximum=32)
@@ -35604,10 +36849,173 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.get_local_reasoning_bridge_status(probe=probe)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
+            if path == "/desktop/action-advice":
+                action = str(query.get("action", [""])[0] or "").strip().lower()
+                app_name = str(query.get("app_name", [""])[0] or "").strip()
+                window_title = str(query.get("window_title", [""])[0] or "").strip()
+                query_text = str(query.get("query", [""])[0] or "").strip()
+                typed_text = str(query.get("text", [""])[0] or "").strip()
+                keys = [
+                    str(item).strip().lower()
+                    for item in str(query.get("keys", [""])[0] or "").split(",")
+                    if str(item).strip()
+                ]
+                payload = self.server.service.desktop_action_advice(
+                    action=action,
+                    app_name=app_name,
+                    window_title=window_title,
+                    query=query_text,
+                    text=typed_text,
+                    keys=keys or None,
+                    ensure_app_launch=self._parse_bool(str(query.get("ensure_app_launch", ["0"])[0]), default=False) if "ensure_app_launch" in query else None,
+                    focus_first=self._parse_bool(str(query.get("focus_first", ["1"])[0]), default=True) if "focus_first" in query else None,
+                    press_enter=self._parse_bool(str(query.get("press_enter", ["0"])[0]), default=False) if "press_enter" in query else None,
+                    verify_after_action=self._parse_bool(str(query.get("verify_after_action", ["1"])[0]), default=True) if "verify_after_action" in query else None,
+                    verify_text=str(query.get("verify_text", [""])[0] or "").strip(),
+                    retry_on_verification_failure=self._parse_bool(
+                        str(query.get("retry_on_verification_failure", ["1"])[0]),
+                        default=True,
+                    ) if "retry_on_verification_failure" in query else None,
+                    max_strategy_attempts=self._parse_int(
+                        str(query.get("max_strategy_attempts", ["2"])[0]),
+                        2,
+                        minimum=1,
+                        maximum=4,
+                    ) if "max_strategy_attempts" in query else None,
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/desktop/app-profiles":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                payload = self.server.service.desktop_app_profiles(
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    limit=limit,
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
             if path == "/models/local-inventory":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
                 task = str(query.get("task", [""])[0] or "").strip().lower()
                 payload = self.server.service.model_local_inventory(task=task, limit=limit)
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/plan":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                task = str(query.get("task", [""])[0] or "").strip().lower()
+                include_present = self._parse_bool(str(query.get("include_present", ["0"])[0]), default=False)
+                payload = self.server.service.model_setup_plan(
+                    task=task,
+                    limit=limit,
+                    include_present=include_present,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/manual-pipeline":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                task = str(query.get("task", [""])[0] or "").strip().lower()
+                include_present = self._parse_bool(str(query.get("include_present", ["0"])[0]), default=False)
+                item_keys = [
+                    str(item).strip()
+                    for item in str(query.get("item_keys", [""])[0] or "").split(",")
+                    if str(item).strip()
+                ]
+                payload = self.server.service.model_setup_manual_pipeline(
+                    task=task,
+                    limit=limit,
+                    include_present=include_present,
+                    item_keys=item_keys or None,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/manual-pipeline/runs":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                payload = self.server.service.model_setup_manual_runs(limit=limit)
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/manual-pipeline/run":
+                run_id = str(query.get("run_id", [""])[0] or "").strip()
+                if not run_id:
+                    self._send_json(400, {"status": "error", "message": "run_id is required"})
+                    return
+                payload = self.server.service.model_setup_manual_run(run_id=run_id)
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/preflight":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                task = str(query.get("task", [""])[0] or "").strip().lower()
+                include_present = self._parse_bool(str(query.get("include_present", ["0"])[0]), default=False)
+                reserve_bytes = self._parse_int(
+                    str(query.get("reserve_bytes", ["1073741824"])[0]),
+                    1_073_741_824,
+                    minimum=0,
+                    maximum=1_000_000_000_000,
+                )
+                refresh_remote = self._parse_bool(str(query.get("refresh_remote", ["0"])[0]), default=False)
+                remote_timeout_s = self._parse_float(
+                    str(query.get("remote_timeout_s", ["6.0"])[0]),
+                    6.0,
+                    minimum=1.0,
+                    maximum=30.0,
+                )
+                item_keys = [
+                    str(item).strip()
+                    for item in str(query.get("item_keys", [""])[0] or "").split(",")
+                    if str(item).strip()
+                ]
+                payload = self.server.service.model_setup_preflight(
+                    task=task,
+                    limit=limit,
+                    include_present=include_present,
+                    item_keys=item_keys or None,
+                    reserve_bytes=reserve_bytes,
+                    refresh_remote=refresh_remote,
+                    remote_timeout_s=remote_timeout_s,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/remote-metadata":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                task = str(query.get("task", [""])[0] or "").strip().lower()
+                include_present = self._parse_bool(str(query.get("include_present", ["0"])[0]), default=False)
+                refresh = self._parse_bool(str(query.get("refresh", ["0"])[0]), default=False)
+                timeout_s = self._parse_float(
+                    str(query.get("timeout_s", ["6.0"])[0]),
+                    6.0,
+                    minimum=1.0,
+                    maximum=30.0,
+                )
+                item_keys = [
+                    str(item).strip()
+                    for item in str(query.get("item_keys", [""])[0] or "").split(",")
+                    if str(item).strip()
+                ]
+                payload = self.server.service.model_setup_remote_metadata(
+                    task=task,
+                    limit=limit,
+                    include_present=include_present,
+                    item_keys=item_keys or None,
+                    refresh=refresh,
+                    timeout_s=timeout_s,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install/history":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                payload = self.server.service.model_setup_install_history(limit=limit)
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install/runs":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                payload = self.server.service.model_setup_install_runs(limit=limit)
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install/run":
+                run_id = str(query.get("run_id", [""])[0] or "").strip()
+                if not run_id:
+                    self._send_json(400, {"status": "error", "message": "run_id is required"})
+                    return
+                payload = self.server.service.model_setup_install_run(run_id=run_id)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/bridge-profiles":
@@ -36694,6 +38102,75 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
+            if path == "/models/coworker-stack/apply":
+                stack_name = str(body.get("stack_name", "desktop_agent") or "desktop_agent").strip().lower() or "desktop_agent"
+                tasks_raw = body.get("tasks", [])
+                if isinstance(tasks_raw, list):
+                    tasks = [str(item or "").strip().lower() for item in tasks_raw if str(item or "").strip()]
+                elif isinstance(tasks_raw, str):
+                    tasks = [str(item or "").strip().lower() for item in tasks_raw.split(",") if str(item or "").strip()]
+                else:
+                    tasks = []
+                mission_profile = str(body.get("mission_profile", "balanced") or "balanced").strip().lower() or "balanced"
+                max_cost_raw = str(body.get("max_cost_units", "") or "").strip()
+                max_cost_units = None
+                if max_cost_raw:
+                    try:
+                        max_cost_units = float(max_cost_raw)
+                    except Exception:
+                        max_cost_units = None
+                payload = self.server.service.apply_coworker_stack(
+                    stack_name=stack_name,
+                    tasks=tasks or None,
+                    requires_offline=bool(body.get("requires_offline", False)),
+                    privacy_mode=bool(body.get("privacy_mode", False)),
+                    latency_sensitive=bool(body.get("latency_sensitive", False)),
+                    mission_profile=mission_profile,
+                    cost_sensitive=bool(body.get("cost_sensitive", False)),
+                    max_cost_units=max_cost_units,
+                    force_reapply=bool(body.get("force_reapply", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/coworker-stack/recover":
+                stack_name = str(body.get("stack_name", "desktop_agent") or "desktop_agent").strip().lower() or "desktop_agent"
+                action_ids_raw = body.get("action_ids", [])
+                if isinstance(action_ids_raw, list):
+                    action_ids = [str(item or "").strip().lower() for item in action_ids_raw if str(item or "").strip()]
+                elif isinstance(action_ids_raw, str):
+                    action_ids = [str(item or "").strip().lower() for item in action_ids_raw.split(",") if str(item or "").strip()]
+                else:
+                    action_ids = []
+                mission_profile = str(body.get("mission_profile", "balanced") or "balanced").strip().lower() or "balanced"
+                max_cost_raw = str(body.get("max_cost_units", "") or "").strip()
+                max_cost_units = None
+                if max_cost_raw:
+                    try:
+                        max_cost_units = float(max_cost_raw)
+                    except Exception:
+                        max_cost_units = None
+                verification_stale_after_s = self._parse_float(
+                    str(body.get("verification_stale_after_s", 21_600.0)),
+                    21_600.0,
+                    minimum=300.0,
+                    maximum=604_800.0,
+                )
+                payload = self.server.service.recover_coworker_stack(
+                    stack_name=stack_name,
+                    action_ids=action_ids or None,
+                    requires_offline=bool(body.get("requires_offline", False)),
+                    privacy_mode=bool(body.get("privacy_mode", False)),
+                    latency_sensitive=bool(body.get("latency_sensitive", False)),
+                    mission_profile=mission_profile,
+                    cost_sensitive=bool(body.get("cost_sensitive", False)),
+                    max_cost_units=max_cost_units,
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    verification_stale_after_s=verification_stale_after_s,
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
             if path == "/models/runtime-supervisors/reasoning/reset":
                 model_name = str(body.get("model_name", "") or "").strip().lower()
                 clear_all = bool(body.get("clear_all", False))
@@ -36735,6 +38212,179 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 updates = body.get("updates") if isinstance(body.get("updates"), dict) else body
                 payload = self.server.service.update_model_connector_policy(updates if isinstance(updates, dict) else {})
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/manual-pipeline/run":
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = item_keys_raw if isinstance(item_keys_raw, list) else []
+                step_ids_raw = body.get("step_ids", [])
+                step_ids = step_ids_raw if isinstance(step_ids_raw, list) else []
+                limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                payload = self.server.service.model_setup_manual_run_launch(
+                    task=task,
+                    item_keys=item_keys,
+                    dry_run=bool(body.get("dry_run", False)),
+                    force=bool(body.get("force", False)),
+                    limit=limit,
+                    step_ids=step_ids,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/manual-pipeline/cancel":
+                run_id = str(body.get("run_id", "") or "").strip()
+                if not run_id:
+                    self._send_json(400, {"status": "error", "message": "run_id is required"})
+                    return
+                payload = self.server.service.cancel_model_setup_manual_run(
+                    run_id=run_id,
+                    reason=str(body.get("reason", "cancelled_by_user") or "cancelled_by_user").strip(),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install":
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = item_keys_raw if isinstance(item_keys_raw, list) else []
+                include_present = bool(body.get("include_present", False))
+                limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                remote_timeout_s = self._parse_float(
+                    str(body.get("remote_timeout_s", 6.0)),
+                    6.0,
+                    minimum=1.0,
+                    maximum=30.0,
+                )
+                payload = self.server.service.model_setup_install(
+                    task=task,
+                    item_keys=item_keys,
+                    dry_run=bool(body.get("dry_run", False)),
+                    force=bool(body.get("force", False)),
+                    include_present=include_present,
+                    limit=limit,
+                    refresh_remote=bool(body.get("refresh_remote", False)),
+                    remote_timeout_s=remote_timeout_s,
+                    verify_integrity=bool(body.get("verify_integrity", True)),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install/launch":
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = item_keys_raw if isinstance(item_keys_raw, list) else []
+                include_present = bool(body.get("include_present", False))
+                limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                remote_timeout_s = self._parse_float(
+                    str(body.get("remote_timeout_s", 6.0)),
+                    6.0,
+                    minimum=1.0,
+                    maximum=30.0,
+                )
+                payload = self.server.service.model_setup_install_launch(
+                    task=task,
+                    item_keys=item_keys,
+                    dry_run=bool(body.get("dry_run", False)),
+                    force=bool(body.get("force", False)),
+                    include_present=include_present,
+                    limit=limit,
+                    refresh_remote=bool(body.get("refresh_remote", True)),
+                    remote_timeout_s=remote_timeout_s,
+                    verify_integrity=bool(body.get("verify_integrity", True)),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/install/cancel":
+                run_id = str(body.get("run_id", "") or "").strip()
+                if not run_id:
+                    self._send_json(400, {"status": "error", "message": "run_id is required"})
+                    return
+                payload = self.server.service.cancel_model_setup_install(
+                    run_id=run_id,
+                    reason=str(body.get("reason", "cancelled_by_user") or "cancelled_by_user").strip(),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/providers/credentials":
+                provider = str(body.get("provider", "") or "").strip().lower()
+                if not provider:
+                    self._send_json(400, {"status": "error", "message": "provider is required"})
+                    return
+                requirements = body.get("requirements") if isinstance(body.get("requirements"), dict) else {}
+                voice_id = str(body.get("voice_id", body.get("ELEVENLABS_VOICE_ID", "")) or "").strip()
+                if voice_id:
+                    requirements = dict(requirements)
+                    requirements["ELEVENLABS_VOICE_ID"] = voice_id
+                persist_encrypted = (
+                    bool(body.get("persist_encrypted"))
+                    if body.get("persist_encrypted") is not None
+                    else None
+                )
+                payload = self.server.service.update_provider_credentials(
+                    provider=provider,
+                    api_key=str(body.get("api_key", "") or "").strip(),
+                    requirements=requirements,
+                    persist_plaintext=bool(body.get("persist_plaintext", True)),
+                    persist_encrypted=persist_encrypted,
+                    overwrite_env=bool(body.get("overwrite_env", True)),
+                    clear_api_key=bool(body.get("clear_api_key", False)),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/providers/credentials/verify":
+                provider = str(body.get("provider", "") or "").strip().lower()
+                if not provider:
+                    self._send_json(400, {"status": "error", "message": "provider is required"})
+                    return
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = [
+                    str(item).strip()
+                    for item in item_keys_raw
+                    if str(item).strip()
+                ] if isinstance(item_keys_raw, list) else None
+                limit = self._parse_int(str(body.get("limit", "160") or "160"), 160, minimum=1, maximum=2000)
+                timeout_s = self._parse_float(str(body.get("timeout_s", "8.0") or "8.0"), 8.0, minimum=2.0, maximum=30.0)
+                payload = self.server.service.verify_provider_credentials(
+                    provider=provider,
+                    task=task,
+                    limit=limit,
+                    include_present=bool(body.get("include_present", False)),
+                    item_keys=item_keys,
+                    force_refresh=bool(body.get("force_refresh", True)),
+                    timeout_s=timeout_s,
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/desktop/interact":
+                action = str(body.get("action", "") or "").strip().lower()
+                app_name = str(body.get("app_name", body.get("app", "")) or "").strip()
+                window_title = str(body.get("window_title", "") or "").strip()
+                query_text = str(body.get("query", body.get("target", "")) or "").strip()
+                typed_text = str(body.get("text", "") or "").strip()
+                keys_raw = body.get("keys", [])
+                keys = [
+                    str(item).strip().lower()
+                    for item in keys_raw
+                    if str(item).strip()
+                ] if isinstance(keys_raw, list) else [
+                    str(item).strip().lower()
+                    for item in str(keys_raw or "").split(",")
+                    if str(item).strip()
+                ]
+                payload = self.server.service.desktop_interact(
+                    action=action,
+                    app_name=app_name,
+                    window_title=window_title,
+                    query=query_text,
+                    text=typed_text,
+                    keys=keys or None,
+                    ensure_app_launch=bool(body.get("ensure_app_launch")) if "ensure_app_launch" in body else None,
+                    focus_first=bool(body.get("focus_first")) if "focus_first" in body else None,
+                    press_enter=(bool(body.get("press_enter", False) or body.get("submit", False)) if ("press_enter" in body or "submit" in body) else None),
+                    verify_after_action=bool(body.get("verify_after_action")) if "verify_after_action" in body else None,
+                    verify_text=str(body.get("verify_text", "") or "").strip(),
+                    retry_on_verification_failure=bool(body.get("retry_on_verification_failure")) if "retry_on_verification_failure" in body else None,
+                    max_strategy_attempts=self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
 
             if path == "/goals":

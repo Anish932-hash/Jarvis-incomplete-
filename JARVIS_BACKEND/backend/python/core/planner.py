@@ -84,6 +84,8 @@ class Planner:
         "computer_wait_for_text",
         "computer_click_text",
         "computer_click_target",
+        "desktop_action_advice",
+        "desktop_interact",
         "extract_text_from_image",
         "run_whitelisted_app",
         "run_trusted_script",
@@ -211,6 +213,8 @@ class Planner:
         "computer_wait_for_text": {"expect_status": "success", "expect_key": "found"},
         "computer_click_text": {"expect_status": "success", "expect_keys": ["x", "y"]},
         "computer_click_target": {"expect_status": "success", "expect_keys": ["query", "method"]},
+        "desktop_action_advice": {"expect_status": "success", "expect_key": "execution_plan"},
+        "desktop_interact": {"expect_status": "success", "expect_key": "results"},
         "extract_text_from_image": {"expect_status": "success", "expect_key": "text"},
         "run_whitelisted_app": {"expect_status": "success", "expect_key": "pid"},
         "run_trusted_script": {"expect_status": "success", "expect_key": "pid"},
@@ -271,6 +275,8 @@ class Planner:
         "oauth_token_maintain": {"base_delay_s": 0.8, "max_delay_s": 6.0, "multiplier": 1.9, "jitter_s": 0.2},
         "computer_click_text": {"base_delay_s": 0.25, "max_delay_s": 2.0, "multiplier": 1.6, "jitter_s": 0.05},
         "computer_click_target": {"base_delay_s": 0.25, "max_delay_s": 2.5, "multiplier": 1.7, "jitter_s": 0.06},
+        "desktop_action_advice": {"base_delay_s": 0.2, "max_delay_s": 1.8, "multiplier": 1.5, "jitter_s": 0.05},
+        "desktop_interact": {"base_delay_s": 0.35, "max_delay_s": 3.5, "multiplier": 1.7, "jitter_s": 0.08},
         "computer_wait_for_text": {"base_delay_s": 0.2, "max_delay_s": 1.5, "multiplier": 1.5, "jitter_s": 0.05},
         "accessibility_list_elements": {"base_delay_s": 0.35, "max_delay_s": 2.5, "multiplier": 1.6, "jitter_s": 0.08},
         "accessibility_find_element": {"base_delay_s": 0.35, "max_delay_s": 2.5, "multiplier": 1.6, "jitter_s": 0.08},
@@ -5164,6 +5170,11 @@ class Planner:
         if intent in {"observe_screen", "computer_observe"}:
             return self._step("computer_observe", args={}, verify={"expect_status": "success", "expect_key": "screenshot_path"})
 
+        if intent in {"desktop_interact", "desktop_action", "desktop_click_and_type"}:
+            step = self._build_desktop_interact_step(original_text=original_text, arguments=arguments)
+            if step is not None:
+                return step
+
         if intent in {"external_connector_status", "connector_status"}:
             return self._step("external_connector_status", args={}, verify={"expect_status": "success"})
         if intent in {"external_connector_preflight", "connector_preflight"}:
@@ -5754,7 +5765,111 @@ class Planner:
             intent_name = "compound_request"
         return (intent_name[:96], merged_steps[:8])
 
+    def _build_desktop_interact_step(
+        self,
+        *,
+        original_text: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        require_target_context: bool = False,
+    ) -> Optional[PlanStep]:
+        args = arguments if isinstance(arguments, dict) else {}
+        text = str(original_text or "")
+        lowered_text = text.lower()
+
+        app_name = str(args.get("app_name") or args.get("app") or "").strip()
+        if not app_name:
+            open_and_action = re.search(
+                r"(?:open|launch|start)\s+(?P<app>.+?)\s+and\s+(?P<verb>type|click|press|hotkey)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if open_and_action:
+                app_name = str(open_and_action.group("app") or "").strip().strip(".")
+        if not app_name:
+            click_in_match = re.search(r"\b(?:click|press)\s+.+?\s+in\s+(.+)$", text, flags=re.IGNORECASE)
+            if click_in_match:
+                app_name = str(click_in_match.group(1) or "").strip().strip(".")
+
+        window_title = str(args.get("window_title") or "").strip()
+        if not window_title and any(token in lowered_text for token in ("window", "tab")):
+            window_title = self._extract_window_title(text)
+
+        query = str(args.get("query") or args.get("target") or "").strip()
+        typed_text = str(args.get("text") or "").strip()
+        keys_raw = args.get("keys")
+        action_name = str(args.get("action") or "").strip().lower()
+
+        if isinstance(keys_raw, list):
+            hotkey_keys = [str(item).strip().lower() for item in keys_raw if str(item).strip()]
+        elif isinstance(keys_raw, str):
+            hotkey_keys = [part.strip().lower() for part in re.split(r"[+,]", keys_raw) if part.strip()]
+        else:
+            hotkey_keys = []
+
+        if not action_name:
+            if any(token in lowered_text for token in ("press key", "hotkey", "shortcut")) or hotkey_keys:
+                action_name = "hotkey"
+            elif ("type " in lowered_text or " type" in lowered_text) and "type of" not in lowered_text:
+                action_name = "type"
+            elif any(token in lowered_text for token in ("click ", "press button", "click button", "select target")):
+                action_name = "click"
+            elif app_name:
+                action_name = "launch"
+
+        if action_name == "type" and not typed_text:
+            typed_text = self._extract_clipboard_text(text)
+        if action_name in {"click", "click_and_type"} and not query:
+            query = self._extract_phrase(text) or self._extract_keyword(text)
+        if action_name == "hotkey" and not hotkey_keys:
+            hotkey_keys = self._extract_hotkey_keys(text)
+
+        if action_name == "type" and query and typed_text:
+            action_name = "click_and_type"
+
+        has_target_context = bool(app_name or window_title)
+        if require_target_context and not has_target_context:
+            return None
+
+        if action_name not in {"launch", "click", "type", "click_and_type", "hotkey"}:
+            return None
+        if action_name == "launch" and not app_name:
+            return None
+        if action_name in {"click", "click_and_type"} and not query:
+            return None
+        if action_name in {"type", "click_and_type"} and not typed_text:
+            return None
+        if action_name == "hotkey" and not hotkey_keys:
+            return None
+
+        step_args: Dict[str, Any] = {
+            "action": action_name,
+            "focus_first": True,
+            "ensure_app_launch": bool(app_name),
+        }
+        if app_name:
+            step_args["app_name"] = app_name
+        if window_title:
+            step_args["window_title"] = window_title
+        if query:
+            step_args["query"] = query
+        if typed_text:
+            step_args["text"] = typed_text
+        if hotkey_keys:
+            step_args["keys"] = hotkey_keys
+        if bool(args.get("press_enter")) or "press enter" in lowered_text or "hit enter" in lowered_text or "submit" in lowered_text:
+            step_args["press_enter"] = True
+
+        return self._step("desktop_interact", args=step_args, verify={"expect_status": "success"})
+
     def _build_primary_steps(self, text: str, lowered: str, allow_compound: bool = True) -> tuple[str, List[PlanStep]]:
+        chained_desktop_interact = self._build_desktop_interact_step(
+            original_text=text,
+            require_target_context=True,
+        )
+        if chained_desktop_interact is not None and chained_desktop_interact.args.get("action") != "launch":
+            if any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";")):
+                return ("desktop_interact", [chained_desktop_interact])
+
         if allow_compound:
             compound = self._build_compound_steps(text)
             if compound is not None:
@@ -6062,6 +6177,14 @@ class Planner:
 
         if any(token in lowered for token in ("list windows", "open windows")):
             return ("list_windows", [self._step("list_windows", args={"limit": 80}, verify={"expect_status": "success", "expect_key": "windows"})])
+
+        desktop_interact_step = self._build_desktop_interact_step(
+            original_text=text,
+            require_target_context=True,
+        )
+        if desktop_interact_step is not None:
+            if desktop_interact_step.args.get("action") != "launch":
+                return ("desktop_interact", [desktop_interact_step])
 
         if any(token in lowered for token in ("accessibility status", "ui automation status", "ui status")):
             return ("accessibility_status", [self._step("accessibility_status", args={}, verify={"expect_status": "success"})])

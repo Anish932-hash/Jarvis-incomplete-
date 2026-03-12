@@ -55,13 +55,29 @@ import {
   type MissionResumePreview,
   type MissionTimelineEntry,
   type CircuitBreakerState,
+  type CoworkerStackApplyResponse,
+  type CoworkerStackRecoverResponse,
+  type CoworkerStackRecoveryPlanResponse,
+  type CoworkerStackStatusResponse,
+  type DesktopAppProfileCatalogResponse,
+  type DesktopActionAdviceResponse,
+  type DesktopInteractInput,
+  type DesktopInteractResponse,
   type GoalListItem,
   type ModelBridgeProfile,
   type ModelBridgeProfilesResponse,
   type ModelLaunchTemplateEventDetailResponse,
   type ModelLaunchTemplateHistoryResponse,
   type ModelLaunchTemplateHealth,
+  type ModelSetupInstallHistoryResponse,
+  type ModelSetupInstallResponse,
+  type ModelSetupManualPipelineResponse,
+  type ModelSetupManualRun,
+  type ModelSetupManualRunHistoryResponse,
+  type ModelSetupManualRunLaunchResponse,
   type ModelLocalInventoryResponse,
+  type ModelSetupPreflightResponse,
+  type ModelSetupPlanResponse,
   type LocalNeuralTtsBridgeStatus,
   type PlanDiagnostics,
   type PlanPreview,
@@ -989,7 +1005,30 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [selectedAction, setSelectedAction] = useState('');
   const [argsText, setArgsText] = useState('{}');
   const [result, setResult] = useState<ActionExecutionResponse | null>(null);
+  const [desktopCoworkerAction, setDesktopCoworkerAction] = useState('click');
+  const [desktopCoworkerAppName, setDesktopCoworkerAppName] = useState('');
+  const [desktopCoworkerWindowTitle, setDesktopCoworkerWindowTitle] = useState('');
+  const [desktopCoworkerQuery, setDesktopCoworkerQuery] = useState('');
+  const [desktopCoworkerText, setDesktopCoworkerText] = useState('');
+  const [desktopCoworkerKeysText, setDesktopCoworkerKeysText] = useState('ctrl,shift,s');
+  const [desktopCoworkerEnsureLaunch, setDesktopCoworkerEnsureLaunch] = useState(true);
+  const [desktopCoworkerFocusFirst, setDesktopCoworkerFocusFirst] = useState(true);
+  const [desktopCoworkerPressEnter, setDesktopCoworkerPressEnter] = useState(false);
+  const [desktopCoworkerUseProfileDefaults, setDesktopCoworkerUseProfileDefaults] = useState(true);
+  const [desktopCoworkerVerifyAfterAction, setDesktopCoworkerVerifyAfterAction] = useState(true);
+  const [desktopCoworkerVerifyText, setDesktopCoworkerVerifyText] = useState('');
+  const [desktopCoworkerRetryOnVerificationFailure, setDesktopCoworkerRetryOnVerificationFailure] = useState(true);
+  const [desktopCoworkerMaxStrategyAttempts, setDesktopCoworkerMaxStrategyAttempts] = useState(2);
+  const [desktopCoworkerBusy, setDesktopCoworkerBusy] = useState(false);
+  const [desktopCoworkerAdvice, setDesktopCoworkerAdvice] = useState<DesktopActionAdviceResponse | null>(null);
+  const [desktopCoworkerResult, setDesktopCoworkerResult] = useState<DesktopInteractResponse | null>(null);
+  const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
+  const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
   const [approvalPrompt, setApprovalPrompt] = useState<PendingApprovalPrompt | null>(null);
+  const [coworkerStackState, setCoworkerStackState] = useState<CoworkerStackStatusResponse | null>(null);
+  const [coworkerStackApplyState, setCoworkerStackApplyState] = useState<CoworkerStackApplyResponse | null>(null);
+  const [coworkerRecoveryState, setCoworkerRecoveryState] = useState<CoworkerStackRecoveryPlanResponse | null>(null);
+  const [coworkerRecoveryRunState, setCoworkerRecoveryRunState] = useState<CoworkerStackRecoverResponse | null>(null);
   const [scheduleFilterStatus, setScheduleFilterStatus] = useState('');
   const [scheduleText, setScheduleText] = useState('what time is it in UTC');
   const [scheduleRunAtLocal, setScheduleRunAtLocal] = useState(() =>
@@ -1098,6 +1137,13 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [modelLaunchEventDetailState, setModelLaunchEventDetailState] = useState<ModelLaunchTemplateEventDetailResponse | null>(null);
   const [reasoningBridgeStatus, setReasoningBridgeStatus] = useState<LocalReasoningBridgeStatus | null>(null);
   const [localModelInventoryState, setLocalModelInventoryState] = useState<ModelLocalInventoryResponse | null>(null);
+  const [modelSetupPlanState, setModelSetupPlanState] = useState<ModelSetupPlanResponse | null>(null);
+  const [modelSetupManualPipelineState, setModelSetupManualPipelineState] = useState<ModelSetupManualPipelineResponse | null>(null);
+  const [modelSetupManualRunsState, setModelSetupManualRunsState] = useState<ModelSetupManualRunHistoryResponse | null>(null);
+  const [modelSetupManualRunResult, setModelSetupManualRunResult] = useState<ModelSetupManualRunLaunchResponse | null>(null);
+  const [modelSetupPreflightState, setModelSetupPreflightState] = useState<ModelSetupPreflightResponse | null>(null);
+  const [modelSetupInstallHistoryState, setModelSetupInstallHistoryState] = useState<ModelSetupInstallHistoryResponse | null>(null);
+  const [modelSetupInstallResult, setModelSetupInstallResult] = useState<ModelSetupInstallResponse | null>(null);
   const [modelBridgeProfilesState, setModelBridgeProfilesState] = useState<ModelBridgeProfilesResponse | null>(null);
   const [loadingRuntimeHealth, setLoadingRuntimeHealth] = useState(false);
   const [loadingRuntimeHealthHistory, setLoadingRuntimeHealthHistory] = useState(false);
@@ -1105,17 +1151,40 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [loadingModelLaunchEventDetail, setLoadingModelLaunchEventDetail] = useState(false);
   const [reasoningBridgeBusy, setReasoningBridgeBusy] = useState(false);
   const [loadingLocalModelInventory, setLoadingLocalModelInventory] = useState(false);
+  const [loadingModelSetupPlan, setLoadingModelSetupPlan] = useState(false);
+  const [loadingModelSetupManualPipeline, setLoadingModelSetupManualPipeline] = useState(false);
+  const [loadingModelSetupManualRuns, setLoadingModelSetupManualRuns] = useState(false);
+  const [loadingModelSetupPreflight, setLoadingModelSetupPreflight] = useState(false);
+  const [loadingModelSetupInstallHistory, setLoadingModelSetupInstallHistory] = useState(false);
   const [loadingModelBridgeProfiles, setLoadingModelBridgeProfiles] = useState(false);
+  const [installingModelSetup, setInstallingModelSetup] = useState(false);
+  const [installingModelSetupKey, setInstallingModelSetupKey] = useState('');
+  const [runningModelSetupManual, setRunningModelSetupManual] = useState(false);
+  const [runningModelSetupManualKey, setRunningModelSetupManualKey] = useState('');
   const [applyingReasoningBridgeProfileId, setApplyingReasoningBridgeProfileId] = useState('');
   const [applyingTtsBridgeProfileId, setApplyingTtsBridgeProfileId] = useState('');
   const [executingLaunchTemplateKey, setExecutingLaunchTemplateKey] = useState('');
   const [loadingModelOperations, setLoadingModelOperations] = useState(false);
+  const [loadingCoworkerStack, setLoadingCoworkerStack] = useState(false);
+  const [applyingCoworkerStack, setApplyingCoworkerStack] = useState(false);
+  const [loadingCoworkerRecovery, setLoadingCoworkerRecovery] = useState(false);
+  const [runningCoworkerRecovery, setRunningCoworkerRecovery] = useState(false);
   const [runtimeHealthLastRefreshAt, setRuntimeHealthLastRefreshAt] = useState(0);
   const [runtimeHealthHistoryLastRefreshAt, setRuntimeHealthHistoryLastRefreshAt] = useState(0);
   const [modelLaunchHistoryLastRefreshAt, setModelLaunchHistoryLastRefreshAt] = useState(0);
   const [localModelInventoryLastRefreshAt, setLocalModelInventoryLastRefreshAt] = useState(0);
+  const [modelSetupPlanLastRefreshAt, setModelSetupPlanLastRefreshAt] = useState(0);
+  const [modelSetupManualPipelineLastRefreshAt, setModelSetupManualPipelineLastRefreshAt] = useState(0);
+  const [modelSetupManualRunsLastRefreshAt, setModelSetupManualRunsLastRefreshAt] = useState(0);
+  const [modelSetupPreflightLastRefreshAt, setModelSetupPreflightLastRefreshAt] = useState(0);
+  const [modelSetupInstallLastRefreshAt, setModelSetupInstallLastRefreshAt] = useState(0);
   const [modelBridgeProfilesLastRefreshAt, setModelBridgeProfilesLastRefreshAt] = useState(0);
   const [modelOperationsLastRefreshAt, setModelOperationsLastRefreshAt] = useState(0);
+  const [coworkerStackLastRefreshAt, setCoworkerStackLastRefreshAt] = useState(0);
+  const [coworkerRecoveryLastRefreshAt, setCoworkerRecoveryLastRefreshAt] = useState(0);
+  const [providerSetupDrafts, setProviderSetupDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [updatingProviderName, setUpdatingProviderName] = useState('');
+  const [verifyingProviderName, setVerifyingProviderName] = useState('');
   const [modelRuntimeStackName, setModelRuntimeStackName] = useState('desktop_agent');
   const [modelRuntimeMissionProfile, setModelRuntimeMissionProfile] = useState('balanced');
   const [modelRuntimeRequiresOffline, setModelRuntimeRequiresOffline] = useState(false);
@@ -1465,10 +1534,19 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const runtimeRefreshLockRef = useRef(false);
   const modelRuntimeRefreshLockRef = useRef(false);
   const modelOperationsRefreshLockRef = useRef(false);
+  const coworkerStackRefreshLockRef = useRef(false);
+  const coworkerRecoveryRefreshLockRef = useRef(false);
   const runtimeHealthRefreshLockRef = useRef(false);
   const runtimeHealthHistoryRefreshLockRef = useRef(false);
   const modelLaunchHistoryRefreshLockRef = useRef(false);
   const localModelInventoryRefreshLockRef = useRef(false);
+  const modelSetupPlanRefreshLockRef = useRef(false);
+  const modelSetupManualPipelineRefreshLockRef = useRef(false);
+  const modelSetupManualRunsRefreshLockRef = useRef(false);
+  const modelSetupPreflightRefreshLockRef = useRef(false);
+  const modelSetupInstallHistoryRefreshLockRef = useRef(false);
+  const modelSetupManualRunActiveCountRef = useRef(0);
+  const modelSetupInstallActiveCountRef = useRef(0);
   const modelBridgeProfilesRefreshLockRef = useRef(false);
   const bridgeRefreshLockRef = useRef(false);
   const missionRefreshLockRef = useRef(false);
@@ -1587,6 +1665,67 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
       ? capabilities.tasks.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
       : [];
   }, [modelOperationsState]);
+  const coworkerStackSummary = useMemo(() => asObjectRecord(coworkerStackState?.summary), [coworkerStackState]);
+  const coworkerStackTasks = useMemo(
+    () =>
+      Array.isArray(coworkerStackState?.tasks)
+        ? coworkerStackState.tasks.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [coworkerStackState]
+  );
+  const coworkerStackActionableTasks = useMemo(
+    () => coworkerStackTasks.filter((item) => Boolean(item.auto_applyable) && !Boolean(item.already_active)),
+    [coworkerStackTasks]
+  );
+  const coworkerStackBlockedTasks = useMemo(
+    () => coworkerStackTasks.filter((item) => String(item.status ?? '').trim().toLowerCase() === 'blocked'),
+    [coworkerStackTasks]
+  );
+  const coworkerStackRecommendations = useMemo(
+    () =>
+      Array.isArray(coworkerStackState?.recommendations)
+        ? coworkerStackState.recommendations.filter((item): item is string => typeof item === 'string')
+        : [],
+    [coworkerStackState]
+  );
+  const coworkerRecoverySummary = useMemo(() => asObjectRecord(coworkerRecoveryState?.summary), [coworkerRecoveryState]);
+  const coworkerRecoveryActions = useMemo(
+    () =>
+      Array.isArray(coworkerRecoveryState?.actions)
+        ? coworkerRecoveryState.actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [coworkerRecoveryState]
+  );
+  const coworkerRecoveryAutoActions = useMemo(
+    () =>
+      coworkerRecoveryActions.filter(
+        (item) => Boolean(item.auto_runnable) && String(item.status ?? '').trim().toLowerCase() === 'ready'
+      ),
+    [coworkerRecoveryActions]
+  );
+  const coworkerRecoveryManualActions = useMemo(
+    () => coworkerRecoveryActions.filter((item) => !Boolean(item.auto_runnable)),
+    [coworkerRecoveryActions]
+  );
+  const coworkerRecoveryPendingActions = useMemo(
+    () => coworkerRecoveryActions.filter((item) => String(item.status ?? '').trim().toLowerCase() === 'in_progress'),
+    [coworkerRecoveryActions]
+  );
+  const coworkerRecoveryRecommendations = useMemo(
+    () =>
+      Array.isArray(coworkerRecoveryState?.recommendations)
+        ? coworkerRecoveryState.recommendations.filter((item): item is string => typeof item === 'string')
+        : [],
+    [coworkerRecoveryState]
+  );
+  const coworkerRecoveryUpgradeActions = useMemo(
+    () =>
+      Array.isArray(coworkerRecoveryState?.upgrade_actions)
+        ? coworkerRecoveryState.upgrade_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [coworkerRecoveryState]
+  );
+  const coworkerRecoveryRunSummary = useMemo(() => asObjectRecord(coworkerRecoveryRunState?.recovery), [coworkerRecoveryRunState]);
   const runtimeHealthSubsystems = useMemo(() => asObjectRecord(runtimeHealthState?.subsystems), [runtimeHealthState]);
   const runtimeHealthAlerts = useMemo(
     () =>
@@ -1675,6 +1814,160 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         ? localModelInventoryState.inventory.items.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
         : [],
     [localModelInventoryState]
+  );
+  const localModelInventorySummary = useMemo(() => asObjectRecord(localModelInventoryState?.inventory), [localModelInventoryState]);
+  const localModelManifestSummary = useMemo(() => {
+    const inventoryManifest = asObjectRecord(localModelInventorySummary.manifest);
+    return Object.keys(inventoryManifest).length > 0 ? inventoryManifest : asObjectRecord(localModelInventoryState?.manifest);
+  }, [localModelInventoryState, localModelInventorySummary]);
+  const presentLocalModelInventoryItems = useMemo(
+    () => localModelInventoryItems.filter((item) => Boolean(item.present)),
+    [localModelInventoryItems]
+  );
+  const missingLocalModelInventoryItems = useMemo(
+    () => localModelInventoryItems.filter((item) => Boolean(item.missing)),
+    [localModelInventoryItems]
+  );
+  const modelSetupPlanProviderMap = useMemo(() => {
+    const rows = Array.isArray(modelSetupPlanState?.providers)
+      ? modelSetupPlanState.providers.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      : [];
+    return rows.reduce<Record<string, Record<string, unknown>>>((accumulator, item) => {
+      const providerName = String(item.provider ?? '').trim().toLowerCase();
+      if (!providerName) return accumulator;
+      accumulator[providerName] = item;
+      return accumulator;
+    }, {});
+  }, [modelSetupPlanState]);
+  const localModelProviderCredentialRows = useMemo(() => {
+    const inventoryRows = asObjectRecord(asObjectRecord(localModelInventoryState?.provider_credentials).providers);
+    const mergedRows: Record<string, Record<string, unknown>> = {};
+    Object.entries(inventoryRows).forEach(([providerName, row]) => {
+      if (!isObjectRecord(row)) return;
+      const cleanProvider = String(providerName || '').trim().toLowerCase();
+      if (!cleanProvider) return;
+      mergedRows[cleanProvider] = { ...row, provider: cleanProvider };
+    });
+    Object.entries(modelSetupPlanProviderMap).forEach(([providerName, row]) => {
+      if (!isObjectRecord(row)) return;
+      const cleanProvider = String(providerName || '').trim().toLowerCase();
+      if (!cleanProvider) return;
+      mergedRows[cleanProvider] = {
+        ...mergedRows[cleanProvider],
+        ...row,
+        provider: cleanProvider,
+      };
+    });
+    return Object.values(mergedRows)
+      .filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      .sort((left, right) => {
+        const leftRequired = Boolean(left.required_by_manifest);
+        const rightRequired = Boolean(right.required_by_manifest);
+        if (leftRequired !== rightRequired) return leftRequired ? -1 : 1;
+        const leftReady = Boolean(left.ready);
+        const rightReady = Boolean(right.ready);
+        if (leftReady !== rightReady) return leftReady ? 1 : -1;
+        return String(left.provider ?? '').localeCompare(String(right.provider ?? ''));
+      });
+  }, [localModelInventoryState, modelSetupPlanProviderMap]);
+  const modelSetupPlanSummary = useMemo(() => asObjectRecord(modelSetupPlanState?.summary), [modelSetupPlanState]);
+  const modelSetupPlanTools = useMemo(() => asObjectRecord(modelSetupPlanState?.tools), [modelSetupPlanState]);
+  const modelSetupManualPipelineSummary = useMemo(
+    () => asObjectRecord(modelSetupManualPipelineState?.summary),
+    [modelSetupManualPipelineState]
+  );
+  const modelSetupManualPipelineToolchain = useMemo(
+    () => asObjectRecord(modelSetupManualPipelineState?.toolchain),
+    [modelSetupManualPipelineState]
+  );
+  const modelSetupManualPipelineUpgradeActions = useMemo(
+    () =>
+      Array.isArray(modelSetupManualPipelineState?.upgrade_actions)
+        ? modelSetupManualPipelineState.upgrade_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupManualPipelineState]
+  );
+  const modelSetupManualPipelineItems = useMemo(
+    () =>
+      Array.isArray(modelSetupManualPipelineState?.items)
+        ? modelSetupManualPipelineState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupManualPipelineState]
+  );
+  const modelSetupManualRunItems = useMemo(
+    () =>
+      Array.isArray(modelSetupManualRunsState?.items)
+        ? modelSetupManualRunsState.items.filter((item): item is ModelSetupManualRun => isObjectRecord(item))
+        : [],
+    [modelSetupManualRunsState]
+  );
+  const modelSetupManualPipelineRunnableCount = useMemo(
+    () =>
+      modelSetupManualPipelineItems.filter((item) => {
+        const statusName = String(item.status ?? '').trim().toLowerCase();
+        if (!['ready', 'warning'].includes(statusName)) return false;
+        const blockers = Array.isArray(item.blockers)
+          ? item.blockers.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+        if (blockers.length > 0) return false;
+        const stepRows = Array.isArray(item.steps)
+          ? item.steps.filter((value): value is Record<string, unknown> => isObjectRecord(value))
+          : [];
+        const stepHasCommands = stepRows.some((step) => {
+          const stepStatus = String(step.status ?? '').trim().toLowerCase();
+          if (stepStatus === 'blocked') return false;
+          return Array.isArray(step.commands)
+            ? step.commands.some((command): command is string => typeof command === 'string' && command.trim().length > 0)
+            : false;
+        });
+        if (stepHasCommands) return true;
+        return Array.isArray(item.commands)
+          ? item.commands.some((command): command is string => typeof command === 'string' && command.trim().length > 0)
+          : false;
+      }).length,
+    [modelSetupManualPipelineItems]
+  );
+  const latestModelSetupManualRun = useMemo(
+    () => (modelSetupManualRunItems.length > 0 ? modelSetupManualRunItems[0] : null),
+    [modelSetupManualRunItems]
+  );
+  const modelSetupPreflightSummary = useMemo(() => asObjectRecord(modelSetupPreflightState?.summary), [modelSetupPreflightState]);
+  const modelSetupPreflightRemoteMetadata = useMemo(
+    () => asObjectRecord(modelSetupPreflightState?.remote_metadata),
+    [modelSetupPreflightState]
+  );
+  const modelSetupPreflightItems = useMemo(
+    () =>
+      Array.isArray(modelSetupPreflightState?.items)
+        ? modelSetupPreflightState.items.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        : [],
+    [modelSetupPreflightState]
+  );
+  const modelSetupPlanItems = useMemo(
+    () =>
+      Array.isArray(modelSetupPlanState?.items)
+        ? modelSetupPlanState.items.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        : [],
+    [modelSetupPlanState]
+  );
+  const autoInstallModelSetupItems = useMemo(
+    () => modelSetupPlanItems.filter((item) => Boolean(item.automation_ready)),
+    [modelSetupPlanItems]
+  );
+  const manualModelSetupItems = useMemo(
+    () => modelSetupPlanItems.filter((item) => !Boolean(item.automation_ready)),
+    [modelSetupPlanItems]
+  );
+  const modelSetupInstallHistoryItems = useMemo(
+    () =>
+      Array.isArray(modelSetupInstallHistoryState?.items)
+        ? modelSetupInstallHistoryState.items.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        : [],
+    [modelSetupInstallHistoryState]
+  );
+  const latestModelSetupInstallRun = useMemo(
+    () => (modelSetupInstallHistoryItems.length > 0 ? modelSetupInstallHistoryItems[0] : null),
+    [modelSetupInstallHistoryItems]
   );
   const reasoningBridgeProfiles = useMemo(
     () =>
@@ -6203,6 +6496,226 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     ]
   );
 
+  const refreshCoworkerStack = useCallback(
+    async (options?: { quiet?: boolean; refreshProviderCredentials?: boolean }) => {
+      if (coworkerStackRefreshLockRef.current) return;
+      coworkerStackRefreshLockRef.current = true;
+      setLoadingCoworkerStack(true);
+      try {
+        const maxCostUnitsValue = Number(modelRuntimeMaxCostUnits.trim());
+        const payload = await backendClient.coworkerStackStatus({
+          stack_name: modelRuntimeStackName.trim() || undefined,
+          requires_offline: modelRuntimeRequiresOffline,
+          privacy_mode: modelRuntimePrivacyMode,
+          latency_sensitive: modelRuntimeLatencySensitive,
+          mission_profile: modelRuntimeMissionProfile.trim() || undefined,
+          cost_sensitive: modelRuntimeCostSensitive,
+          max_cost_units:
+            Number.isFinite(maxCostUnitsValue) && maxCostUnitsValue > 0 ? maxCostUnitsValue : undefined,
+          refresh_provider_credentials: options?.refreshProviderCredentials ?? false,
+        });
+        setCoworkerStackState(payload);
+        setCoworkerStackLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Coworker Stack Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingCoworkerStack(false);
+        coworkerStackRefreshLockRef.current = false;
+      }
+    },
+    [
+      modelRuntimeCostSensitive,
+      modelRuntimeLatencySensitive,
+      modelRuntimeMaxCostUnits,
+      modelRuntimeMissionProfile,
+      modelRuntimePrivacyMode,
+      modelRuntimeRequiresOffline,
+      modelRuntimeStackName,
+      toast,
+    ]
+  );
+
+  const applyCoworkerStack = useCallback(
+    async (selectedTasks?: string[]) => {
+      setApplyingCoworkerStack(true);
+      try {
+        const maxCostUnitsValue = Number(modelRuntimeMaxCostUnits.trim());
+        const payload = await backendClient.applyCoworkerStack({
+          stack_name: modelRuntimeStackName.trim() || undefined,
+          tasks: Array.isArray(selectedTasks) && selectedTasks.length > 0 ? selectedTasks : undefined,
+          requires_offline: modelRuntimeRequiresOffline,
+          privacy_mode: modelRuntimePrivacyMode,
+          latency_sensitive: modelRuntimeLatencySensitive,
+          mission_profile: modelRuntimeMissionProfile.trim() || undefined,
+          cost_sensitive: modelRuntimeCostSensitive,
+          max_cost_units:
+            Number.isFinite(maxCostUnitsValue) && maxCostUnitsValue > 0 ? maxCostUnitsValue : undefined,
+          continue_on_error: true,
+          force_reapply: false,
+        });
+        setCoworkerStackApplyState(payload);
+        if (payload.after && typeof payload.after === 'object') {
+          setCoworkerStackState(payload.after as CoworkerStackStatusResponse);
+          setCoworkerStackLastRefreshAt(Date.now());
+        }
+        await Promise.all([
+          refreshModelRuntimeSupervisors({ quiet: true }),
+          refreshModelOperationsSummary({ quiet: true }),
+          refreshRuntimeHealthSummary({ quiet: true }),
+          refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
+          refreshModelLaunchHistory({ quiet: true }),
+          refreshLocalModelInventory({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true }),
+        ]);
+        const applyState = asObjectRecord(payload.apply);
+        const executedCount = Number(applyState.executed_count ?? 0);
+        const errorCount = Number(applyState.error_count ?? 0);
+        toast({
+          title: 'Coworker Stack Applied',
+          description: `${String(payload.status ?? 'unknown')} • executed:${executedCount} • errors:${errorCount}`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Coworker Stack Apply Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setApplyingCoworkerStack(false);
+      }
+    },
+    [
+      modelRuntimeCostSensitive,
+      modelRuntimeLatencySensitive,
+      modelRuntimeMaxCostUnits,
+      modelRuntimeMissionProfile,
+      modelRuntimePrivacyMode,
+      modelRuntimeRequiresOffline,
+      modelRuntimeStackName,
+      toast,
+    ]
+  );
+
+  const refreshCoworkerRecovery = useCallback(
+    async (options?: { quiet?: boolean; refreshProviderCredentials?: boolean }) => {
+      if (coworkerRecoveryRefreshLockRef.current) return;
+      coworkerRecoveryRefreshLockRef.current = true;
+      setLoadingCoworkerRecovery(true);
+      try {
+        const maxCostUnitsValue = Number(modelRuntimeMaxCostUnits.trim());
+        const payload = await backendClient.coworkerStackRecoveryPlan({
+          stack_name: modelRuntimeStackName.trim() || undefined,
+          requires_offline: modelRuntimeRequiresOffline,
+          privacy_mode: modelRuntimePrivacyMode,
+          latency_sensitive: modelRuntimeLatencySensitive,
+          mission_profile: modelRuntimeMissionProfile.trim() || undefined,
+          cost_sensitive: modelRuntimeCostSensitive,
+          max_cost_units:
+            Number.isFinite(maxCostUnitsValue) && maxCostUnitsValue > 0 ? maxCostUnitsValue : undefined,
+          refresh_provider_credentials: options?.refreshProviderCredentials ?? false,
+        });
+        setCoworkerRecoveryState(payload);
+        setCoworkerRecoveryLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Coworker Recovery Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingCoworkerRecovery(false);
+        coworkerRecoveryRefreshLockRef.current = false;
+      }
+    },
+    [
+      modelRuntimeCostSensitive,
+      modelRuntimeLatencySensitive,
+      modelRuntimeMaxCostUnits,
+      modelRuntimeMissionProfile,
+      modelRuntimePrivacyMode,
+      modelRuntimeRequiresOffline,
+      modelRuntimeStackName,
+      toast,
+    ]
+  );
+
+  const runCoworkerRecovery = useCallback(
+    async (selectedActionIds?: string[]) => {
+      setRunningCoworkerRecovery(true);
+      try {
+        const maxCostUnitsValue = Number(modelRuntimeMaxCostUnits.trim());
+        const payload = await backendClient.recoverCoworkerStack({
+          stack_name: modelRuntimeStackName.trim() || undefined,
+          action_ids: Array.isArray(selectedActionIds) && selectedActionIds.length > 0 ? selectedActionIds : undefined,
+          requires_offline: modelRuntimeRequiresOffline,
+          privacy_mode: modelRuntimePrivacyMode,
+          latency_sensitive: modelRuntimeLatencySensitive,
+          mission_profile: modelRuntimeMissionProfile.trim() || undefined,
+          cost_sensitive: modelRuntimeCostSensitive,
+          max_cost_units:
+            Number.isFinite(maxCostUnitsValue) && maxCostUnitsValue > 0 ? maxCostUnitsValue : undefined,
+          continue_on_error: true,
+        });
+        setCoworkerRecoveryRunState(payload);
+        if (payload.after && typeof payload.after === 'object') {
+          setCoworkerRecoveryState(payload.after as CoworkerStackRecoveryPlanResponse);
+          setCoworkerRecoveryLastRefreshAt(Date.now());
+        }
+        if (payload.stack_after && typeof payload.stack_after === 'object') {
+          setCoworkerStackState(payload.stack_after as CoworkerStackStatusResponse);
+          setCoworkerStackLastRefreshAt(Date.now());
+        }
+        await Promise.all([
+          refreshCoworkerStack({ quiet: true }),
+          refreshModelRuntimeSupervisors({ quiet: true }),
+          refreshModelOperationsSummary({ quiet: true }),
+          refreshRuntimeHealthSummary({ quiet: true }),
+          refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
+          refreshModelLaunchHistory({ quiet: true }),
+          refreshLocalModelInventory({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true }),
+          refreshModelSetupInstallHistory({ quiet: true }),
+        ]);
+        const recoveryState = asObjectRecord(payload.recovery);
+        const executedCount = Number(recoveryState.executed_count ?? 0);
+        const errorCount = Number(recoveryState.error_count ?? 0);
+        const acceptedInstallRuns = Number(recoveryState.accepted_install_run_count ?? 0);
+        const acceptedManualRuns = Number(recoveryState.accepted_manual_run_count ?? 0);
+        toast({
+          title: 'Coworker Recovery Ran',
+          description: `${String(payload.status ?? 'unknown')} • executed:${executedCount} • installs:${acceptedInstallRuns} • manual:${acceptedManualRuns} • errors:${errorCount}`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Coworker Recovery Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningCoworkerRecovery(false);
+      }
+    },
+    [
+      modelRuntimeCostSensitive,
+      modelRuntimeLatencySensitive,
+      modelRuntimeMaxCostUnits,
+      modelRuntimeMissionProfile,
+      modelRuntimePrivacyMode,
+      modelRuntimeRequiresOffline,
+      modelRuntimeStackName,
+      refreshCoworkerStack,
+      toast,
+    ]
+  );
+
   const refreshRuntimeHealthSummary = useCallback(
     async (options?: { quiet?: boolean }) => {
       if (runtimeHealthRefreshLockRef.current) return;
@@ -6401,6 +6914,210 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     [toast]
   );
 
+  const refreshModelSetupPlan = useCallback(
+    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean }) => {
+      if (modelSetupPlanRefreshLockRef.current) return;
+      modelSetupPlanRefreshLockRef.current = true;
+      setLoadingModelSetupPlan(true);
+      try {
+        const payload = await backendClient.modelSetupPlan({
+          limit: 160,
+          task: options?.task?.trim() || undefined,
+          include_present: options?.includePresent ?? false,
+        });
+        setModelSetupPlanState(payload);
+        setModelSetupPlanLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Model Setup Plan Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupPlan(false);
+        modelSetupPlanRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
+  const refreshModelSetupManualPipeline = useCallback(
+    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean; itemKeys?: string[] }) => {
+      if (modelSetupManualPipelineRefreshLockRef.current) return;
+      modelSetupManualPipelineRefreshLockRef.current = true;
+      setLoadingModelSetupManualPipeline(true);
+      try {
+        const payload = await backendClient.modelSetupManualPipeline({
+          limit: 160,
+          task: options?.task?.trim() || undefined,
+          include_present: options?.includePresent ?? false,
+          item_keys: Array.isArray(options?.itemKeys) ? options?.itemKeys.filter(Boolean) : undefined,
+        });
+        setModelSetupManualPipelineState(payload);
+        setModelSetupManualPipelineLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Manual Model Pipeline Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupManualPipeline(false);
+        modelSetupManualPipelineRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
+  const refreshModelSetupManualRuns = useCallback(
+    async (options?: { quiet?: boolean }) => {
+      if (modelSetupManualRunsRefreshLockRef.current) return;
+      modelSetupManualRunsRefreshLockRef.current = true;
+      setLoadingModelSetupManualRuns(true);
+      try {
+        const payload = await backendClient.modelSetupManualRuns({ limit: 10 });
+        setModelSetupManualRunsState(payload);
+        setModelSetupManualRunsLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Manual Pipeline Runs Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupManualRuns(false);
+        modelSetupManualRunsRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
+  const refreshModelSetupPreflight = useCallback(
+    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean; refreshRemote?: boolean }) => {
+      if (modelSetupPreflightRefreshLockRef.current) return;
+      modelSetupPreflightRefreshLockRef.current = true;
+      setLoadingModelSetupPreflight(true);
+      try {
+        const payload = await backendClient.modelSetupPreflight({
+          limit: 160,
+          task: options?.task?.trim() || undefined,
+          include_present: options?.includePresent ?? false,
+          refresh_remote: options?.refreshRemote ?? false,
+          remote_timeout_s: options?.refreshRemote ? 10 : undefined,
+        });
+        setModelSetupPreflightState(payload);
+        setModelSetupPreflightLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Model Setup Preflight Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupPreflight(false);
+        modelSetupPreflightRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
+  const runModelSetupManualPipeline = useCallback(
+    async (options?: { dryRun?: boolean; itemKey?: string; force?: boolean }) => {
+      const requestedKey = String(options?.itemKey ?? '').trim();
+      const busyKey = requestedKey || (options?.dryRun ? '__manual_preview__' : '__manual_auto__');
+      setRunningModelSetupManual(true);
+      setRunningModelSetupManualKey(busyKey);
+      try {
+        const payload = await backendClient.modelSetupManualRunLaunch({
+          task: undefined,
+          item_keys: requestedKey ? [requestedKey] : undefined,
+          dry_run: options?.dryRun ?? false,
+          force: options?.force ?? false,
+          limit: 160,
+        });
+        setModelSetupManualRunResult(payload);
+        if (payload.manual_pipeline && typeof payload.manual_pipeline === 'object') {
+          setModelSetupManualPipelineState(payload.manual_pipeline as ModelSetupManualPipelineResponse);
+          setModelSetupManualPipelineLastRefreshAt(Date.now());
+        }
+        await Promise.all([
+          refreshModelSetupManualPipeline({ quiet: true }),
+          refreshModelSetupManualRuns({ quiet: true }),
+        ]);
+        const runRow = asObjectRecord(payload.run);
+        toast({
+          title: options?.dryRun ? 'Manual Pipeline Preview Ready' : 'Manual Pipeline Run Started',
+          description: `${String(runRow.run_id ?? 'pending')} • ${String(runRow.status ?? payload.status ?? 'accepted')}`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: options?.dryRun ? 'Manual Pipeline Preview Failed' : 'Manual Pipeline Run Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupManual(false);
+        setRunningModelSetupManualKey('');
+      }
+    },
+    [refreshModelSetupManualPipeline, refreshModelSetupManualRuns, toast]
+  );
+
+  const cancelModelSetupManualRun = useCallback(
+    async (runId: string) => {
+      const cleanRunId = runId.trim();
+      if (!cleanRunId) return;
+      try {
+        await backendClient.cancelModelSetupManualRun({ run_id: cleanRunId });
+        await refreshModelSetupManualRuns({ quiet: true });
+        toast({
+          title: 'Manual Pipeline Cancel Requested',
+          description: cleanRunId,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Manual Pipeline Cancel Failed',
+          description: getErrorMessage(error),
+        });
+      }
+    },
+    [refreshModelSetupManualRuns, toast]
+  );
+
+  const refreshModelSetupInstallHistory = useCallback(
+    async (options?: { quiet?: boolean }) => {
+      if (modelSetupInstallHistoryRefreshLockRef.current) return;
+      modelSetupInstallHistoryRefreshLockRef.current = true;
+      setLoadingModelSetupInstallHistory(true);
+      try {
+        const payload = await backendClient.modelSetupInstallRuns({ limit: 10 });
+        setModelSetupInstallHistoryState(payload);
+        setModelSetupInstallLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Model Install History Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupInstallHistory(false);
+        modelSetupInstallHistoryRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
   const refreshModelBridgeProfiles = useCallback(
     async (options?: { quiet?: boolean; task?: string }) => {
       if (modelBridgeProfilesRefreshLockRef.current) return;
@@ -6427,6 +7144,245 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
       }
     },
     [toast]
+  );
+
+  const runModelSetupInstall = useCallback(
+    async (options?: { dryRun?: boolean; itemKey?: string; force?: boolean; includePresent?: boolean }) => {
+      const requestedKey = String(options?.itemKey ?? '').trim();
+      const busyKey = requestedKey || (options?.dryRun ? '__preview__' : '__auto__');
+      setInstallingModelSetup(true);
+      setInstallingModelSetupKey(busyKey);
+      try {
+        if (options?.dryRun) {
+          const payload = await backendClient.modelSetupInstall({
+            limit: 160,
+            dry_run: true,
+            force: options?.force ?? false,
+            include_present: options?.includePresent ?? Boolean(options?.force),
+            item_keys: requestedKey ? [requestedKey] : undefined,
+            verify_integrity: false,
+          });
+          setModelSetupInstallResult(payload);
+          await Promise.all([
+            refreshLocalModelInventory({ quiet: true }),
+            refreshModelSetupPlan({ quiet: true }),
+            refreshModelSetupManualPipeline({ quiet: true }),
+            refreshModelSetupPreflight({ quiet: true }),
+            refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' }),
+            refreshModelSetupInstallHistory({ quiet: true }),
+          ]);
+          const installSummary = asObjectRecord(payload.install);
+          const successCount = Number(installSummary.success_count ?? 0);
+          const errorCount = Number(installSummary.error_count ?? 0);
+          const skippedCount = Number(installSummary.skipped_count ?? 0);
+          const blockedCount = Number(installSummary.blocked_count ?? 0);
+          toast({
+            title: 'Model Setup Preview Ready',
+            description: `${String(payload.status ?? 'unknown')} • ok:${successCount} • skip:${skippedCount} • block:${blockedCount} • error:${errorCount}`,
+          });
+        } else {
+          const payload = await backendClient.modelSetupInstallLaunch({
+            limit: 160,
+            dry_run: false,
+            force: options?.force ?? false,
+            include_present: options?.includePresent ?? Boolean(options?.force),
+            item_keys: requestedKey ? [requestedKey] : undefined,
+            refresh_remote: true,
+            remote_timeout_s: 10,
+            verify_integrity: true,
+          });
+          setModelSetupInstallResult({
+            status: String(payload.status ?? 'accepted'),
+            task: payload.task,
+            selected_item_keys: payload.selected_item_keys,
+            dry_run: payload.dry_run,
+            force: payload.force,
+            install: isObjectRecord(payload.run) ? payload.run : undefined,
+          });
+          if (payload.preflight && typeof payload.preflight === 'object') {
+            setModelSetupPreflightState(payload.preflight as ModelSetupPreflightResponse);
+            setModelSetupPreflightLastRefreshAt(Date.now());
+          }
+          await Promise.all([
+            refreshModelSetupPlan({ quiet: true }),
+            refreshModelSetupManualPipeline({ quiet: true }),
+            refreshModelSetupPreflight({ quiet: true }),
+            refreshModelSetupInstallHistory({ quiet: true }),
+          ]);
+          const runRow = asObjectRecord(payload.run);
+          toast({
+            title: 'Model Setup Run Started',
+            description: `${String(runRow.run_id ?? 'pending')} • ${String(runRow.status ?? payload.status ?? 'accepted')}`,
+          });
+        }
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: options?.dryRun ? 'Model Setup Preview Failed' : 'Model Setup Install Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setInstallingModelSetup(false);
+        setInstallingModelSetupKey('');
+      }
+    },
+    [refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupInstallHistory, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight, toast]
+  );
+
+  const cancelModelSetupInstallRun = useCallback(
+    async (runId: string) => {
+      const cleanRunId = runId.trim();
+      if (!cleanRunId) return;
+      try {
+        await backendClient.cancelModelSetupInstall({ run_id: cleanRunId });
+        await refreshModelSetupInstallHistory({ quiet: true });
+        toast({
+          title: 'Model Setup Cancel Requested',
+          description: cleanRunId,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Model Setup Cancel Failed',
+          description: getErrorMessage(error),
+        });
+      }
+    },
+    [refreshModelSetupInstallHistory, toast]
+  );
+
+  const updateProviderSetupDraft = useCallback((provider: string, field: string, value: string) => {
+    const cleanProvider = provider.trim().toLowerCase();
+    const cleanField = field.trim();
+    if (!cleanProvider || !cleanField) return;
+    setProviderSetupDrafts((current) => {
+      const nextProviderDraft = {
+        ...asObjectRecord(current[cleanProvider]),
+        [cleanField]: value,
+      };
+      return {
+        ...current,
+        [cleanProvider]: Object.fromEntries(
+          Object.entries(nextProviderDraft).map(([key, entryValue]) => [key, String(entryValue ?? '')])
+        ),
+      };
+    });
+  }, []);
+
+  const saveProviderCredentials = useCallback(
+    async (provider: string) => {
+      const cleanProvider = provider.trim().toLowerCase();
+      if (!cleanProvider) return;
+      const draft = asObjectRecord(providerSetupDrafts[cleanProvider]);
+      const apiKey = String(draft.api_key ?? '').trim();
+      const setupProvider = asObjectRecord(modelSetupPlanProviderMap[cleanProvider]);
+      const fieldRows = Array.isArray(setupProvider.fields)
+        ? setupProvider.fields.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [];
+      const requirements = fieldRows.reduce<Record<string, string>>((accumulator, field) => {
+        const fieldName = String(field.name ?? '').trim();
+        if (!fieldName || fieldName === 'api_key') return accumulator;
+        const value = String(draft[fieldName] ?? '').trim();
+        if (value) accumulator[fieldName] = value;
+        return accumulator;
+      }, {});
+      if (!apiKey && Object.keys(requirements).length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Credential Input Required',
+          description: 'Enter an API key or any missing provider requirement before saving.',
+        });
+        return;
+      }
+      setUpdatingProviderName(cleanProvider);
+      try {
+        await backendClient.updateProviderCredentials({
+          provider: cleanProvider,
+          api_key: apiKey || undefined,
+          requirements: Object.keys(requirements).length > 0 ? requirements : undefined,
+          persist_plaintext: true,
+          persist_encrypted: true,
+          overwrite_env: true,
+        });
+        setProviderSetupDrafts((current) => ({
+          ...current,
+          [cleanProvider]: {},
+        }));
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true }),
+          refreshModelSetupPlan({ quiet: true }),
+          refreshModelSetupManualPipeline({ quiet: true }),
+          refreshModelSetupPreflight({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' }),
+        ]);
+        toast({
+          title: 'Provider Credentials Saved',
+          description: cleanProvider,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Provider Credential Save Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setUpdatingProviderName('');
+      }
+    },
+    [modelSetupPlanProviderMap, providerSetupDrafts, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight, toast]
+  );
+
+  const verifyProviderCredentials = useCallback(
+    async (provider: string) => {
+      const cleanProvider = provider.trim().toLowerCase();
+      if (!cleanProvider) return;
+      setVerifyingProviderName(cleanProvider);
+      try {
+        const payload = await backendClient.verifyProviderCredentials({
+          provider: cleanProvider,
+          limit: 160,
+          include_present: true,
+          force_refresh: true,
+        });
+        if (payload.inventory && typeof payload.inventory === 'object') {
+          setLocalModelInventoryState(payload.inventory as ModelLocalInventoryResponse);
+          setLocalModelInventoryLastRefreshAt(Date.now());
+        } else {
+          await refreshLocalModelInventory({ quiet: true });
+        }
+        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
+          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+          setModelSetupPlanLastRefreshAt(Date.now());
+        } else {
+          await refreshModelSetupPlan({ quiet: true });
+        }
+        await refreshModelSetupManualPipeline({ quiet: true });
+        const verification = asObjectRecord(payload.verification);
+        const verified = Boolean(verification.verified);
+        const summary = String(verification.summary ?? verification.message ?? cleanProvider).trim();
+        if (payload.status === 'success' && verified) {
+          toast({
+            title: 'Provider Verified',
+            description: summary || cleanProvider,
+          });
+        } else {
+          toast({
+            variant: 'destructive',
+            title: 'Provider Verification Needs Attention',
+            description: summary || cleanProvider,
+          });
+        }
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Provider Verification Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setVerifyingProviderName('');
+      }
+    },
+    [refreshLocalModelInventory, refreshModelSetupManualPipeline, refreshModelSetupPlan, toast]
   );
 
   const refreshLocalReasoningBridgeStatus = useCallback(
@@ -6472,6 +7428,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         }
         await Promise.all([
           refreshModelRuntimeSupervisors(),
+          refreshCoworkerStack({ quiet: true }),
           refreshRuntimeHealthSummary({ quiet: true }),
           refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
           refreshLocalModelInventory({ quiet: true }),
@@ -6530,6 +7487,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         await Promise.all([
           refreshVoiceState(),
           refreshModelRuntimeSupervisors({ quiet: true }),
+          refreshCoworkerStack({ quiet: true }),
           refreshRuntimeHealthSummary({ quiet: true }),
           refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
           refreshLocalModelInventory({ quiet: true }),
@@ -6606,6 +7564,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
           await Promise.all([
             refreshModelRuntimeSupervisors({ quiet: true }),
             refreshModelOperationsSummary({ quiet: true }),
+            refreshCoworkerStack({ quiet: true }),
             refreshRuntimeHealthSummary({ quiet: true }),
             refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
             refreshModelLaunchHistory({ quiet: true }),
@@ -6620,6 +7579,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
             refreshVoiceState(),
             refreshModelRuntimeSupervisors({ quiet: true }),
             refreshModelOperationsSummary({ quiet: true }),
+            refreshCoworkerStack({ quiet: true }),
             refreshRuntimeHealthSummary({ quiet: true }),
             refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
             refreshModelLaunchHistory({ quiet: true }),
@@ -6631,6 +7591,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
             bridgeKind === 'stt' ? refreshVoiceState() : Promise.resolve(),
             refreshModelRuntimeSupervisors({ quiet: true }),
             refreshModelOperationsSummary({ quiet: true }),
+            refreshCoworkerStack({ quiet: true }),
             refreshRuntimeHealthSummary({ quiet: true }),
             refreshRuntimeHealthHistory({ quiet: true, refresh: true }),
             refreshModelLaunchHistory({ quiet: true }),
@@ -6942,6 +7903,83 @@ useEffect(() => {
 if (!open || activeTab !== 'runtime' || localModelInventoryState) return;
 void refreshLocalModelInventory({ quiet: true });
 }, [activeTab, localModelInventoryState, open, refreshLocalModelInventory]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupPlanState) return;
+void refreshModelSetupPlan({ quiet: true });
+}, [activeTab, modelSetupPlanState, open, refreshModelSetupPlan]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupManualPipelineState) return;
+void refreshModelSetupManualPipeline({ quiet: true });
+}, [activeTab, modelSetupManualPipelineState, open, refreshModelSetupManualPipeline]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupManualRunsState) return;
+void refreshModelSetupManualRuns({ quiet: true });
+}, [activeTab, modelSetupManualRunsState, open, refreshModelSetupManualRuns]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupPreflightState) return;
+void refreshModelSetupPreflight({ quiet: true });
+}, [activeTab, modelSetupPreflightState, open, refreshModelSetupPreflight]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupInstallHistoryState) return;
+void refreshModelSetupInstallHistory({ quiet: true });
+}, [activeTab, modelSetupInstallHistoryState, open, refreshModelSetupInstallHistory]);
+
+useEffect(() => {
+  const activeCount = Number(modelSetupInstallHistoryState?.active_count ?? 0);
+  const previousActiveCount = modelSetupInstallActiveCountRef.current;
+  modelSetupInstallActiveCountRef.current = activeCount;
+  if (!open || activeTab !== 'runtime') return;
+  if (previousActiveCount > 0 && activeCount === 0) {
+    void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupPlan({ quiet: true });
+    void refreshModelSetupManualPipeline({ quiet: true });
+    void refreshModelSetupPreflight({ quiet: true });
+    void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
+  }
+}, [activeTab, modelSetupInstallHistoryState?.active_count, open, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight]);
+
+useEffect(() => {
+  const activeCount = Number(modelSetupInstallHistoryState?.active_count ?? 0);
+  if (!open || activeTab !== 'runtime' || activeCount <= 0) return;
+  const timer = window.setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    void refreshModelSetupInstallHistory({ quiet: true });
+  }, 2500);
+  return () => window.clearInterval(timer);
+}, [activeTab, modelSetupInstallHistoryState?.active_count, open, refreshModelSetupInstallHistory]);
+
+useEffect(() => {
+  const activeCount = Number(modelSetupManualRunsState?.active_count ?? 0);
+  const previousActiveCount = modelSetupManualRunActiveCountRef.current;
+  modelSetupManualRunActiveCountRef.current = activeCount;
+  if (!open || activeTab !== 'runtime') return;
+  if (previousActiveCount > 0 && activeCount === 0) {
+    void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupPlan({ quiet: true });
+    void refreshModelSetupManualPipeline({ quiet: true });
+    void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
+    void refreshCoworkerRecovery({ quiet: true });
+  }
+}, [activeTab, modelSetupManualRunsState?.active_count, open, refreshCoworkerRecovery, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan]);
+
+useEffect(() => {
+  const activeCount = Number(modelSetupManualRunsState?.active_count ?? 0);
+  if (!open || activeTab !== 'runtime' || activeCount <= 0) return;
+  const timer = window.setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    void refreshModelSetupManualRuns({ quiet: true });
+  }, 2500);
+  return () => window.clearInterval(timer);
+}, [activeTab, modelSetupManualRunsState?.active_count, open, refreshModelSetupManualRuns]);
 
 useEffect(() => {
 if (!open || activeTab !== 'runtime' || modelBridgeProfilesState) return;
@@ -7963,6 +9001,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshRuntimeHealthHistory({ quiet: true });
     void refreshModelLaunchHistory({ quiet: true });
     void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupPlan({ quiet: true });
+    void refreshModelSetupManualPipeline({ quiet: true });
+    void refreshModelSetupManualRuns({ quiet: true });
+    void refreshModelSetupPreflight({ quiet: true });
+    void refreshModelSetupInstallHistory({ quiet: true });
+    void refreshCoworkerStack({ quiet: true });
+    void refreshCoworkerRecovery({ quiet: true });
     void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshRecoveryProfiles();
     void refreshMissions();
@@ -7979,6 +9024,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshMemory,
     refreshMissions,
     refreshLocalModelInventory,
+    refreshModelSetupPlan,
+    refreshModelSetupManualPipeline,
+    refreshModelSetupManualRuns,
+    refreshModelSetupPreflight,
+    refreshModelSetupInstallHistory,
+    refreshCoworkerStack,
+    refreshCoworkerRecovery,
     refreshLocalReasoningBridgeStatus,
     refreshModelLaunchHistory,
     refreshModelBridgeProfiles,
@@ -8013,7 +9065,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshModelRuntimeSupervisors({ quiet: true });
     void refreshLocalReasoningBridgeStatus({ quiet: true });
     void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupPlan({ quiet: true });
+    void refreshModelSetupManualPipeline({ quiet: true });
+    void refreshModelSetupManualRuns({ quiet: true });
+    void refreshModelSetupPreflight({ quiet: true });
+    void refreshModelSetupInstallHistory({ quiet: true });
     void refreshModelLaunchHistory({ quiet: true });
+    void refreshCoworkerStack({ quiet: true });
+    void refreshCoworkerRecovery({ quiet: true });
     void refreshModelBridgeProfiles({ quiet: true });
     void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
@@ -8022,6 +9081,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     missionLimit,
     open,
     refreshLocalModelInventory,
+    refreshModelSetupPlan,
+    refreshModelSetupManualPipeline,
+    refreshModelSetupManualRuns,
+    refreshModelSetupPreflight,
+    refreshModelSetupInstallHistory,
+    refreshCoworkerStack,
+    refreshCoworkerRecovery,
     refreshLocalReasoningBridgeStatus,
     refreshModelLaunchHistory,
     refreshMissions,
@@ -8051,7 +9117,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       void refreshCircuitBreakers();
       void refreshModelRuntimeSupervisors({ quiet: true });
       void refreshLocalModelInventory({ quiet: true });
+      void refreshModelSetupPlan({ quiet: true });
+      void refreshModelSetupManualPipeline({ quiet: true });
+      void refreshModelSetupManualRuns({ quiet: true });
+      void refreshModelSetupPreflight({ quiet: true });
+      void refreshModelSetupInstallHistory({ quiet: true });
       void refreshModelLaunchHistory({ quiet: true });
+      void refreshCoworkerStack({ quiet: true });
       void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       void refreshRecoveryProfiles();
       void refreshMissions();
@@ -8092,6 +9164,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshMemory,
     refreshMissions,
     refreshLocalModelInventory,
+    refreshModelSetupPlan,
+    refreshModelSetupPreflight,
+    refreshModelSetupInstallHistory,
+    refreshCoworkerStack,
     refreshModelRuntimeSupervisors,
     refreshModelBridgeProfiles,
     refreshOauthFlow,
@@ -9467,6 +10543,152 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       args: parsed.value,
     });
   }, [argsText, executePayload, selectedAction, toast]);
+
+  const buildDesktopCoworkerPayload = useCallback((): DesktopInteractInput => {
+    const keys = desktopCoworkerKeysText
+      .split(/[,+]/)
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    const payload: DesktopInteractInput = {
+      action: desktopCoworkerAction,
+      app_name: desktopCoworkerAppName.trim() || undefined,
+      window_title: desktopCoworkerWindowTitle.trim() || undefined,
+      query: desktopCoworkerQuery.trim() || undefined,
+      text: desktopCoworkerText.trim() || undefined,
+      keys: keys.length > 0 ? keys : undefined,
+    };
+    if (!desktopCoworkerUseProfileDefaults) {
+      payload.ensure_app_launch = desktopCoworkerEnsureLaunch;
+      payload.focus_first = desktopCoworkerFocusFirst;
+      payload.press_enter = desktopCoworkerPressEnter;
+      payload.verify_after_action = desktopCoworkerVerifyAfterAction;
+      payload.verify_text = desktopCoworkerVerifyText.trim() || undefined;
+      payload.retry_on_verification_failure = desktopCoworkerRetryOnVerificationFailure;
+      payload.max_strategy_attempts = desktopCoworkerMaxStrategyAttempts;
+    } else if (desktopCoworkerPressEnter) {
+      payload.press_enter = true;
+    }
+    if (desktopCoworkerVerifyText.trim()) {
+      payload.verify_text = desktopCoworkerVerifyText.trim();
+    }
+    return payload;
+  }, [
+    desktopCoworkerAction,
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    desktopCoworkerFocusFirst,
+    desktopCoworkerKeysText,
+    desktopCoworkerMaxStrategyAttempts,
+    desktopCoworkerPressEnter,
+    desktopCoworkerQuery,
+    desktopCoworkerRetryOnVerificationFailure,
+    desktopCoworkerText,
+    desktopCoworkerUseProfileDefaults,
+    desktopCoworkerVerifyAfterAction,
+    desktopCoworkerVerifyText,
+    desktopCoworkerWindowTitle,
+  ]);
+
+  const previewDesktopCoworkerRoute = useCallback(async () => {
+    setDesktopCoworkerBusy(true);
+    try {
+      const payload = buildDesktopCoworkerPayload();
+      const advice = await backendClient.desktopActionAdvice(payload);
+      setDesktopCoworkerAdvice(advice);
+      if (String(advice.status ?? '').trim().toLowerCase() === 'success') {
+        toast({
+          title: 'Desktop Route Ready',
+          description:
+            String(advice.route_mode ?? '').trim() || 'JARVIS built a routed desktop execution plan.',
+        });
+      } else {
+        const blockers = Array.isArray(advice.blockers) ? advice.blockers.filter(Boolean).join(' ') : '';
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Route Blocked',
+          description: blockers || String(advice.message ?? 'JARVIS could not build a safe desktop route.'),
+        });
+      }
+      return advice;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Desktop Route Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerBusy(false);
+    }
+  }, [buildDesktopCoworkerPayload, toast]);
+
+  const refreshDesktopAppProfiles = useCallback(async () => {
+    setDesktopAppProfileCatalogBusy(true);
+    try {
+      const payload = await backendClient.desktopAppProfiles({
+        query: desktopCoworkerAppName.trim() || undefined,
+        limit: desktopCoworkerAppName.trim() ? 24 : 80,
+      });
+      setDesktopAppProfileCatalog(payload);
+      const total = Number(payload.total ?? payload.count ?? 0);
+      toast({
+        title: 'App Profiles Ready',
+        description:
+          desktopCoworkerAppName.trim()
+            ? `${Math.min(Number(payload.count ?? 0), total)} matching profile(s) loaded for ${desktopCoworkerAppName.trim()}.`
+            : `${total} installed app profiles are available from your app catalogs.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Profile Refresh Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppProfileCatalogBusy(false);
+    }
+  }, [desktopCoworkerAppName, toast]);
+
+  const runDesktopCoworkerRoute = useCallback(async () => {
+    setDesktopCoworkerBusy(true);
+    try {
+      const payload = buildDesktopCoworkerPayload();
+      const response = await backendClient.desktopInteract(payload);
+      setDesktopCoworkerResult(response);
+      const responseAdvice =
+        response.advice && typeof response.advice === 'object' && !Array.isArray(response.advice)
+          ? (response.advice as DesktopActionAdviceResponse)
+          : null;
+      if (responseAdvice) {
+        setDesktopCoworkerAdvice(responseAdvice);
+      }
+      if (String(response.status ?? '').trim().toLowerCase() === 'success') {
+        toast({
+          title: 'Desktop Action Executed',
+          description:
+            String(response.final_action ?? '').trim() || 'JARVIS completed the routed desktop coworker action.',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Action Failed',
+          description: String(response.message ?? 'The routed desktop action did not complete successfully.'),
+        });
+      }
+      return response;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Desktop Action Error',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerBusy(false);
+    }
+  }, [buildDesktopCoworkerPayload, toast]);
 
   const executeConnectorPreflightRequest = useCallback(
     async ({
@@ -11564,6 +12786,472 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                 Clear Output
                               </Button>
                             </div>
+                          </div>
+
+                          <div className="space-y-3 rounded-md border border-primary/20 bg-background/30 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wider text-primary/90">
+                                  Desktop Coworker Router
+                                </p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  Build an app-aware routed plan before sending clicks, typing, hotkeys, or observation steps.
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {desktopCoworkerAdvice ? (
+                                  <Badge
+                                    variant={
+                                      String(desktopCoworkerAdvice.status ?? '').trim().toLowerCase() === 'success'
+                                        ? 'outline'
+                                        : 'destructive'
+                                    }
+                                  >
+                                    {String(desktopCoworkerAdvice.status ?? 'idle')}
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary">idle</Badge>
+                                )}
+                                {desktopCoworkerAdvice?.route_mode ? (
+                                  <Badge variant="outline">{String(desktopCoworkerAdvice.route_mode)}</Badge>
+                                ) : null}
+                                {(() => {
+                                  const profile =
+                                    (desktopCoworkerAdvice?.app_profile &&
+                                    typeof desktopCoworkerAdvice.app_profile === 'object' &&
+                                    !Array.isArray(desktopCoworkerAdvice.app_profile)
+                                      ? (desktopCoworkerAdvice.app_profile as Record<string, unknown>)
+                                      : null) ??
+                                    (desktopCoworkerResult?.app_profile &&
+                                    typeof desktopCoworkerResult.app_profile === 'object' &&
+                                    !Array.isArray(desktopCoworkerResult.app_profile)
+                                      ? (desktopCoworkerResult.app_profile as Record<string, unknown>)
+                                      : null);
+                                  return profile && String(profile.name ?? '').trim() ? (
+                                    <Badge variant="outline">
+                                      profile:{String(profile.name ?? '').trim()}
+                                    </Badge>
+                                  ) : null;
+                                })()}
+                                {typeof desktopCoworkerAdvice?.confidence === 'number' ? (
+                                  <Badge variant="outline">confidence:{desktopCoworkerAdvice.confidence.toFixed(2)}</Badge>
+                                ) : null}
+                                {desktopCoworkerResult?.verification ? (
+                                  <Badge
+                                    variant={
+                                      String((desktopCoworkerResult.verification as Record<string, unknown>)?.status ?? '')
+                                        .trim()
+                                        .toLowerCase() === 'success'
+                                        ? 'outline'
+                                        : 'secondary'
+                                    }
+                                  >
+                                    verify:
+                                    {String((desktopCoworkerResult.verification as Record<string, unknown>)?.status ?? 'n/a')}
+                                  </Badge>
+                                ) : null}
+                                {typeof desktopCoworkerResult?.attempt_count === 'number' ? (
+                                  <Badge variant="outline">tries:{desktopCoworkerResult.attempt_count}</Badge>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-[140px_1fr_1fr]">
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Action</p>
+                                <select
+                                  value={desktopCoworkerAction}
+                                  onChange={(event) => setDesktopCoworkerAction(event.target.value)}
+                                  className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                >
+                                  <option value="launch">launch</option>
+                                  <option value="focus">focus</option>
+                                  <option value="click">click</option>
+                                  <option value="type">type</option>
+                                  <option value="click_and_type">click_and_type</option>
+                                  <option value="hotkey">hotkey</option>
+                                  <option value="observe">observe</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">App Name</p>
+                                <Input
+                                  value={desktopCoworkerAppName}
+                                  onChange={(event) => setDesktopCoworkerAppName(event.target.value)}
+                                  placeholder="notepad, chrome, vscode..."
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Window Title</p>
+                                <Input
+                                  value={desktopCoworkerWindowTitle}
+                                  onChange={(event) => setDesktopCoworkerWindowTitle(event.target.value)}
+                                  placeholder="optional title hint"
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Target / Query</p>
+                                <Input
+                                  value={desktopCoworkerQuery}
+                                  onChange={(event) => setDesktopCoworkerQuery(event.target.value)}
+                                  placeholder='Save, Send, "Project Name"...'
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Hotkeys (CSV)</p>
+                                <Input
+                                  value={desktopCoworkerKeysText}
+                                  onChange={(event) => setDesktopCoworkerKeysText(event.target.value)}
+                                  placeholder="ctrl,shift,s"
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Text Input</p>
+                              <Textarea
+                                value={desktopCoworkerText}
+                                onChange={(event) => setDesktopCoworkerText(event.target.value)}
+                                className="min-h-[88px] border-primary/20 bg-background/50 text-xs"
+                                placeholder="What JARVIS should type after focus/click."
+                              />
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                              <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                                <span className="text-[11px] text-muted-foreground">Auto-launch app</span>
+                                <Switch
+                                  checked={desktopCoworkerEnsureLaunch}
+                                  onCheckedChange={setDesktopCoworkerEnsureLaunch}
+                                  disabled={desktopCoworkerUseProfileDefaults}
+                                />
+                              </div>
+                              <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                                <span className="text-[11px] text-muted-foreground">Focus first</span>
+                                <Switch
+                                  checked={desktopCoworkerFocusFirst}
+                                  onCheckedChange={setDesktopCoworkerFocusFirst}
+                                  disabled={desktopCoworkerUseProfileDefaults}
+                                />
+                              </div>
+                              <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                                <span className="text-[11px] text-muted-foreground">Press enter</span>
+                                <Switch checked={desktopCoworkerPressEnter} onCheckedChange={setDesktopCoworkerPressEnter} />
+                              </div>
+                            </div>
+                            <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                              <span className="text-[11px] text-muted-foreground">Apply app profile defaults</span>
+                              <Switch checked={desktopCoworkerUseProfileDefaults} onCheckedChange={setDesktopCoworkerUseProfileDefaults} />
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                              <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                                <span className="text-[11px] text-muted-foreground">Verify after action</span>
+                                <Switch
+                                  checked={desktopCoworkerVerifyAfterAction}
+                                  onCheckedChange={setDesktopCoworkerVerifyAfterAction}
+                                  disabled={desktopCoworkerUseProfileDefaults}
+                                />
+                              </div>
+                              <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
+                                <span className="text-[11px] text-muted-foreground">Retry on verify miss</span>
+                                <Switch
+                                  checked={desktopCoworkerRetryOnVerificationFailure}
+                                  onCheckedChange={setDesktopCoworkerRetryOnVerificationFailure}
+                                  disabled={desktopCoworkerUseProfileDefaults}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Strategy Attempts</p>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={4}
+                                  value={String(desktopCoworkerMaxStrategyAttempts)}
+                                  onChange={(event) => {
+                                    const nextValue = Number.parseInt(event.target.value, 10);
+                                    setDesktopCoworkerMaxStrategyAttempts(Number.isFinite(nextValue) ? Math.max(1, Math.min(4, nextValue)) : 2);
+                                  }}
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                  disabled={desktopCoworkerUseProfileDefaults}
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Verify Text</p>
+                              <Input
+                                value={desktopCoworkerVerifyText}
+                                onChange={(event) => setDesktopCoworkerVerifyText(event.target.value)}
+                                placeholder="Optional expected text after the action lands."
+                                className="h-9 border-primary/20 bg-background/60 text-xs"
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => void previewDesktopCoworkerRoute()}
+                                disabled={desktopCoworkerBusy}
+                              >
+                                {desktopCoworkerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                                Preview Route
+                              </Button>
+                              <Button
+                                type="button"
+                                className="gap-2"
+                                onClick={() => void runDesktopCoworkerRoute()}
+                                disabled={desktopCoworkerBusy}
+                              >
+                                {desktopCoworkerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <TerminalSquare className="h-4 w-4" />}
+                                Execute Routed Action
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => void refreshDesktopAppProfiles()}
+                                disabled={desktopCoworkerBusy || desktopAppProfileCatalogBusy}
+                              >
+                                {(desktopCoworkerBusy || desktopAppProfileCatalogBusy) ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                                Refresh App Profiles
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => {
+                                  setDesktopCoworkerAdvice(null);
+                                  setDesktopCoworkerResult(null);
+                                }}
+                              >
+                                Clear Router State
+                              </Button>
+                            </div>
+                            {desktopCoworkerAdvice ? (
+                              <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.3fr_1fr]">
+                                <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Execution Plan
+                                    </p>
+                                    {desktopCoworkerAdvice.target_window ? (
+                                      <Badge variant="outline">
+                                        target:{' '}
+                                        {String(
+                                          (desktopCoworkerAdvice.target_window as Record<string, unknown>).title ??
+                                            (desktopCoworkerAdvice.target_window as Record<string, unknown>).process_name ??
+                                            'window'
+                                        )}
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                  <div className="space-y-2">
+                                    {(desktopCoworkerAdvice.execution_plan ?? []).map((step, index) => (
+                                      <div key={`${String(step.action ?? 'step')}-${index}`} className="rounded border border-primary/15 bg-background/40 p-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <p className="text-xs font-medium text-primary/90">
+                                            {index + 1}. {humanizeRuntimeLabel(String(step.action ?? 'step'))}
+                                          </p>
+                                          <div className="flex items-center gap-2">
+                                            {step.phase ? <Badge variant="secondary">{String(step.phase)}</Badge> : null}
+                                            {step.optional ? <Badge variant="outline">optional</Badge> : null}
+                                          </div>
+                                        </div>
+                                        {step.reason ? (
+                                          <p className="mt-1 text-[11px] text-muted-foreground">{String(step.reason)}</p>
+                                        ) : null}
+                                        {step.args ? (
+                                          <pre className="mt-2 overflow-x-auto rounded bg-black/20 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                                            {formatJson(step.args)}
+                                          </pre>
+                                        ) : null}
+                                      </div>
+                                    ))}
+                                    {(desktopCoworkerAdvice.execution_plan ?? []).length === 0 ? (
+                                      <p className="text-[11px] text-muted-foreground">No routed steps yet. Preview a route first.</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Route Signals
+                                    </p>
+                                    <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                                      {(() => {
+                                        const verificationPlan =
+                                          desktopCoworkerAdvice?.verification_plan &&
+                                          typeof desktopCoworkerAdvice.verification_plan === 'object' &&
+                                          !Array.isArray(desktopCoworkerAdvice.verification_plan)
+                                            ? (desktopCoworkerAdvice.verification_plan as Record<string, unknown>)
+                                            : null;
+                                        const appProfile =
+                                          desktopCoworkerAdvice?.app_profile &&
+                                          typeof desktopCoworkerAdvice.app_profile === 'object' &&
+                                          !Array.isArray(desktopCoworkerAdvice.app_profile)
+                                            ? (desktopCoworkerAdvice.app_profile as Record<string, unknown>)
+                                            : null;
+                                        const profileDefaultsApplied =
+                                          desktopCoworkerAdvice?.profile_defaults_applied &&
+                                          typeof desktopCoworkerAdvice.profile_defaults_applied === 'object' &&
+                                          !Array.isArray(desktopCoworkerAdvice.profile_defaults_applied)
+                                            ? (desktopCoworkerAdvice.profile_defaults_applied as Record<string, unknown>)
+                                            : null;
+                                        const appliedKeys = profileDefaultsApplied ? Object.keys(profileDefaultsApplied).filter(Boolean) : [];
+                                        return (
+                                          <>
+                                      <p>risk: {String(desktopCoworkerAdvice.risk_level ?? 'unknown')}</p>
+                                      <p>mode: {String(desktopCoworkerAdvice.route_mode ?? 'unknown')}</p>
+                                      {appProfile && String(appProfile.name ?? '').trim() ? (
+                                        <p>
+                                          profile: {String(appProfile.name ?? '').trim()}
+                                          {String(appProfile.category ?? '').trim() ? ` • ${String(appProfile.category ?? '').trim()}` : ''}
+                                        </p>
+                                      ) : null}
+                                      <p>
+                                        active:{' '}
+                                        {String(
+                                          (desktopCoworkerAdvice.active_window as Record<string, unknown> | undefined)?.title ??
+                                            (desktopCoworkerAdvice.active_window as Record<string, unknown> | undefined)?.process_name ??
+                                            'n/a'
+                                        )}
+                                      </p>
+                                      <p>candidates: {Number(desktopCoworkerAdvice.candidate_windows?.length ?? 0)}</p>
+                                      <p>verify: {verificationPlan?.enabled === false ? 'disabled' : 'enabled'}</p>
+                                      <p>strategy tries: {Number(verificationPlan?.max_strategy_attempts ?? 1)}</p>
+                                      {String(verificationPlan?.verify_text ?? '').trim() ? (
+                                        <p>verify text: {String(verificationPlan?.verify_text ?? '').trim()}</p>
+                                      ) : null}
+                                      {appliedKeys.length > 0 ? (
+                                        <p>profile defaults: {appliedKeys.slice(0, 4).join(', ')}</p>
+                                      ) : null}
+                                          </>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Warnings / Blockers
+                                    </p>
+                                    <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                                      {(desktopCoworkerAdvice.warnings ?? []).map((warning, index) => (
+                                        <p key={`warning-${index}`}>warn: {warning}</p>
+                                      ))}
+                                      {(desktopCoworkerAdvice.blockers ?? []).map((blocker, index) => (
+                                        <p key={`blocker-${index}`} className="text-amber-300/90">
+                                          block: {blocker}
+                                        </p>
+                                      ))}
+                                      {(desktopCoworkerAdvice.warnings ?? []).length === 0 &&
+                                      (desktopCoworkerAdvice.blockers ?? []).length === 0 ? (
+                                        <p>Route is clear.</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Last Routed Result
+                                    </p>
+                                    {(() => {
+                                      const verification =
+                                        desktopCoworkerResult?.verification &&
+                                        typeof desktopCoworkerResult.verification === 'object' &&
+                                        !Array.isArray(desktopCoworkerResult.verification)
+                                          ? (desktopCoworkerResult.verification as Record<string, unknown>)
+                                          : null;
+                                      const executedStrategy =
+                                        desktopCoworkerResult?.executed_strategy &&
+                                        typeof desktopCoworkerResult.executed_strategy === 'object' &&
+                                        !Array.isArray(desktopCoworkerResult.executed_strategy)
+                                          ? (desktopCoworkerResult.executed_strategy as Record<string, unknown>)
+                                          : null;
+                                      const verificationWarnings = Array.isArray(verification?.warnings)
+                                        ? verification?.warnings.filter((entry): entry is string => typeof entry === 'string')
+                                        : [];
+                                      return verification || executedStrategy ? (
+                                        <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                                          {verification ? (
+                                            <p>
+                                              verify:{' '}
+                                              {String(
+                                                verification.status ??
+                                                  (verification.verified ? 'success' : 'unknown')
+                                              )}
+                                              {String(verification.message ?? '').trim() ? ` • ${String(verification.message ?? '').trim()}` : ''}
+                                            </p>
+                                          ) : null}
+                                          {executedStrategy ? (
+                                            <p>
+                                              strategy:{' '}
+                                              {String(executedStrategy.title ?? executedStrategy.strategy_id ?? 'primary')}
+                                              {Boolean(executedStrategy.recovered) ? ' • recovered' : ''}
+                                            </p>
+                                          ) : null}
+                                          {verificationWarnings.length > 0 ? (
+                                            <p className="text-amber-300/90">warn: {verificationWarnings[0]}</p>
+                                          ) : null}
+                                        </div>
+                                      ) : null;
+                                    })()}
+                                    <pre className="mt-2 max-h-[240px] overflow-auto rounded bg-black/20 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                                      {formatJson(desktopCoworkerResult ?? {})}
+                                    </pre>
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                        Installed App Profiles
+                                      </p>
+                                      {desktopAppProfileCatalog ? (
+                                        <Badge variant="outline">
+                                          {Number(desktopAppProfileCatalog.count ?? 0)} / {Number(desktopAppProfileCatalog.total ?? 0)}
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="secondary">idle</Badge>
+                                      )}
+                                    </div>
+                                    {desktopAppProfileCatalog ? (
+                                      <div className="mt-2 space-y-2 text-[11px] text-muted-foreground">
+                                        <p>
+                                          categories:{' '}
+                                          {Object.entries(desktopAppProfileCatalog.category_counts ?? {})
+                                            .sort((left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0))
+                                            .slice(0, 4)
+                                            .map(([key, value]) => `${key}:${value}`)
+                                            .join(' • ') || 'n/a'}
+                                        </p>
+                                        <div className="space-y-2">
+                                          {(desktopAppProfileCatalog.items ?? []).slice(0, 6).map((item, index) => (
+                                            <div key={`${String(item.profile_id ?? item.name ?? 'profile')}-${index}`} className="rounded border border-primary/15 bg-background/40 p-2">
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="text-[11px] font-medium text-primary/90">{String(item.name ?? 'App')}</p>
+                                                <div className="flex flex-wrap items-center gap-1">
+                                                  {item.category ? <Badge variant="secondary">{String(item.category)}</Badge> : null}
+                                                  {item.risk_posture ? <Badge variant="outline">{String(item.risk_posture)}</Badge> : null}
+                                                </div>
+                                              </div>
+                                              {Array.isArray(item.aliases) && item.aliases.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  aliases: {item.aliases.slice(0, 4).join(', ')}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <p className="mt-2 text-[11px] text-muted-foreground">
+                                        Load the catalog to browse the app-specific profiles generated from `E:\\apps.txt` and `C:\\apps.txt`.
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
 
                           <div className="space-y-3 rounded-md border border-primary/20 bg-background/30 p-3">
@@ -15482,20 +17170,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                             className="h-9 gap-2 border-primary/30 bg-transparent text-xs"
                             onClick={() => {
                               void refreshCircuitBreakers();
-                              void refreshModelRuntimeSupervisors({ quiet: true });
-                              void refreshRuntimeHealthSummary({ quiet: true });
-                              void refreshRecoveryProfiles();
-                              void refreshMissions();
+                                void refreshModelRuntimeSupervisors({ quiet: true });
+                                void refreshCoworkerStack({ quiet: true });
+                                void refreshRuntimeHealthSummary({ quiet: true });
+                                void refreshRecoveryProfiles();
+                                void refreshMissions();
                               if (missionIdInput.trim()) {
                                 void inspectMission(missionIdInput, { quiet: true });
                               }
                             }}
-                            disabled={loadingRuntime || loadingModelRuntime || loadingRuntimeHealth || loadingMissions || loadingRecoveryProfiles}
-                          >
-                            {loadingRuntime || loadingModelRuntime || loadingRuntimeHealth || loadingMissions || loadingRecoveryProfiles ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-4 w-4" />
+                              disabled={loadingRuntime || loadingModelRuntime || loadingCoworkerStack || loadingRuntimeHealth || loadingMissions || loadingRecoveryProfiles}
+                            >
+                              {loadingRuntime || loadingModelRuntime || loadingCoworkerStack || loadingRuntimeHealth || loadingMissions || loadingRecoveryProfiles ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4" />
                             )}
                             Refresh
                           </Button>
@@ -15713,6 +17402,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     void refreshRuntimeHealthHistory({ quiet: true });
                                     void refreshLocalReasoningBridgeStatus({ quiet: true });
                                     void refreshLocalModelInventory({ quiet: true });
+                                    void refreshModelSetupPlan({ quiet: true });
+                                    void refreshModelSetupPreflight({ quiet: true });
+                                    void refreshModelSetupInstallHistory({ quiet: true });
                                     void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   }}
                                   disabled={
@@ -15720,6 +17412,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     loadingRuntimeHealth ||
                                     loadingRuntimeHealthHistory ||
                                     loadingLocalModelInventory ||
+                                    loadingModelSetupPlan ||
+                                    loadingModelSetupPreflight ||
+                                    loadingModelSetupInstallHistory ||
                                     loadingModelBridgeProfiles ||
                                     reasoningBridgeBusy
                                   }
@@ -15728,6 +17423,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   loadingRuntimeHealth ||
                                   loadingRuntimeHealthHistory ||
                                   loadingLocalModelInventory ||
+                                  loadingModelSetupPlan ||
+                                  loadingModelSetupPreflight ||
+                                  loadingModelSetupInstallHistory ||
                                   loadingModelBridgeProfiles ||
                                   reasoningBridgeBusy ? (
                                     <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
@@ -15906,6 +17604,334 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         <p className="text-xs text-muted-foreground">No provider credential snapshot reported yet.</p>
                                       ) : null}
                                     </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 rounded border border-primary/20 bg-black/20 p-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Coworker Stack</p>
+                                    <Badge
+                                      variant={
+                                        String(coworkerStackState?.status ?? 'idle').trim().toLowerCase() === 'success'
+                                          ? 'outline'
+                                          : String(coworkerStackState?.status ?? 'idle').trim().toLowerCase() === 'partial'
+                                            ? 'secondary'
+                                            : 'destructive'
+                                      }
+                                    >
+                                      {String(coworkerStackState?.status ?? 'idle')}
+                                    </Badge>
+                                    <Badge variant="outline">score:{Number(coworkerStackSummary.score ?? 0).toFixed(1)}</Badge>
+                                    <Badge variant="outline">ready:{String(coworkerStackSummary.ready_task_count ?? 0)}</Badge>
+                                    <Badge variant="outline">apply:{String(coworkerStackSummary.action_required_count ?? 0)}</Badge>
+                                    <Badge variant={Number(coworkerStackSummary.blocked_task_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                      blocked:{String(coworkerStackSummary.blocked_task_count ?? 0)}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-muted-foreground">
+                                    Desktop coworker ready:{' '}
+                                    {Boolean(coworkerStackSummary.desktop_coworker_ready) ? 'yes' : 'not yet'}
+                                    {' • '}core:{Boolean(coworkerStackSummary.core_ready) ? 'ready' : 'gapped'}
+                                    {' • '}voice:{Boolean(coworkerStackSummary.voice_ready) ? 'ready' : 'gapped'}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Stack: {String(coworkerStackState?.stack_name ?? modelRuntimeStackName ?? 'desktop_agent')}
+                                    {' • '}Mission: {String(coworkerStackState?.mission_profile ?? modelRuntimeMissionProfile ?? 'balanced')}
+                                    {' • '}Last: {formatRefreshStamp(coworkerStackLastRefreshAt)}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-8 border-primary/30 bg-transparent px-2 text-xs"
+                                    onClick={() => void refreshCoworkerStack()}
+                                    disabled={loadingCoworkerStack}
+                                  >
+                                    {loadingCoworkerStack ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
+                                    Refresh Stack
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    className="h-8 px-2 text-xs"
+                                    onClick={() => void applyCoworkerStack()}
+                                    disabled={applyingCoworkerStack || coworkerStackActionableTasks.length === 0}
+                                  >
+                                    {applyingCoworkerStack ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="mr-2 h-3.5 w-3.5" />}
+                                    Apply Recommended Stack
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Readiness</p>
+                                    <Badge variant="outline">{coworkerStackTasks.length}</Badge>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {coworkerStackTasks.slice(0, 8).map((item, index) => {
+                                      const taskName = String(item.task ?? `task-${index + 1}`);
+                                      const providerName = String(item.provider ?? 'unknown');
+                                      const itemStatus = String(item.status ?? 'unknown').trim().toLowerCase();
+                                      const blockers = Array.isArray(item.blockers)
+                                        ? item.blockers.filter((value): value is string => typeof value === 'string')
+                                        : [];
+                                      const recommendations = Array.isArray(item.recommendations)
+                                        ? item.recommendations.filter((value): value is string => typeof value === 'string')
+                                        : [];
+                                      return (
+                                        <div key={`${taskName}-${providerName}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-mono text-[10px] text-primary/80">{taskName}</p>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant={providerName === 'local' ? 'outline' : 'secondary'}>{providerName}</Badge>
+                                              <Badge
+                                                variant={
+                                                  itemStatus === 'ready'
+                                                    ? 'outline'
+                                                    : itemStatus === 'action_required'
+                                                      ? 'secondary'
+                                                      : 'destructive'
+                                                }
+                                              >
+                                                {itemStatus}
+                                              </Badge>
+                                            </div>
+                                          </div>
+                                          <p className="mt-1 text-[11px] text-muted-foreground">
+                                            {String(item.model ?? 'n/a')}
+                                            {item.profile_id ? ` • profile:${String(item.profile_id)}` : ''}
+                                            {item.template_id ? ` • template:${String(item.template_id)}` : ''}
+                                          </p>
+                                          {item.selected_path ? (
+                                            <p className="mt-1 break-all text-[10px] text-muted-foreground">{String(item.selected_path)}</p>
+                                          ) : null}
+                                          {recommendations.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-primary/80">{recommendations[0]}</p>
+                                          ) : null}
+                                          {blockers.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-amber-300/90">{blockers[0]}</p>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                    {!loadingCoworkerStack && coworkerStackTasks.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">No coworker stack tasks have been composed yet.</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="space-y-3">
+                                  <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Action Queue</p>
+                                      <Badge variant={coworkerStackActionableTasks.length > 0 ? 'secondary' : 'outline'}>
+                                        {coworkerStackActionableTasks.length}
+                                      </Badge>
+                                    </div>
+                                    <div className="mt-2 space-y-2">
+                                      {coworkerStackActionableTasks.slice(0, 6).map((item, index) => (
+                                        <div key={`${String(item.task ?? index)}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <p className="font-mono text-[10px] text-primary/80">{String(item.task ?? `task-${index + 1}`)}</p>
+                                          <p className="mt-1 text-[11px] text-muted-foreground">
+                                            {String(item.profile_id ?? 'profile')} • {String(item.template_id ?? 'template')}
+                                          </p>
+                                        </div>
+                                      ))}
+                                      {coworkerStackActionableTasks.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">No automatic runtime activations are pending.</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recommendations</p>
+                                      <Badge variant={coworkerStackRecommendations.length > 0 ? 'secondary' : 'outline'}>
+                                        {coworkerStackRecommendations.length}
+                                      </Badge>
+                                    </div>
+                                    <div className="mt-2 space-y-2">
+                                      {coworkerStackRecommendations.slice(0, 5).map((item, index) => (
+                                        <div key={`${item}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <p className="text-[11px] text-muted-foreground">{item}</p>
+                                        </div>
+                                      ))}
+                                      {coworkerStackBlockedTasks.length > 0 ? (
+                                        <p className="text-[10px] text-amber-300/90">
+                                          blocked tasks: {coworkerStackBlockedTasks.map((item) => String(item.task ?? 'task')).join(', ')}
+                                        </p>
+                                      ) : null}
+                                      {coworkerStackRecommendations.length === 0 && coworkerStackBlockedTasks.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">No extra stack recommendations right now.</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Last Apply</p>
+                                    <pre className="mt-2 max-h-[180px] overflow-auto font-mono text-[10px] leading-relaxed text-primary/90">
+                                      {formatJson(coworkerStackApplyState ?? {})}
+                                    </pre>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 rounded border border-primary/20 bg-black/20 p-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Coworker Recovery</p>
+                                    <Badge
+                                      variant={
+                                        Number(coworkerRecoverySummary.auto_runnable_count ?? 0) > 0
+                                          ? 'secondary'
+                                          : Number(coworkerRecoverySummary.manual_action_count ?? 0) > 0 ||
+                                              Number(coworkerRecoverySummary.in_progress_count ?? 0) > 0
+                                            ? 'outline'
+                                            : 'outline'
+                                      }
+                                    >
+                                      {String(coworkerRecoveryState?.status ?? 'idle')}
+                                    </Badge>
+                                    <Badge variant="outline">safe:{String(coworkerRecoverySummary.auto_runnable_count ?? 0)}</Badge>
+                                    <Badge variant="outline">manual:{String(coworkerRecoverySummary.manual_action_count ?? 0)}</Badge>
+                                    <Badge variant={Number(coworkerRecoverySummary.in_progress_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                      pending:{String(coworkerRecoverySummary.in_progress_count ?? 0)}
+                                    </Badge>
+                                    <Badge variant="outline">impact:{Number(coworkerRecoverySummary.estimated_impact_score ?? 0).toFixed(1)}</Badge>
+                                  </div>
+                                  <p className="text-muted-foreground">
+                                    Recoverable tasks: {String(coworkerRecoverySummary.recoverable_task_count ?? 0)}
+                                    {' • '}Upgrade actions: {String(coworkerRecoverySummary.upgrade_action_count ?? 0)}
+                                    {' • '}Last: {formatRefreshStamp(coworkerRecoveryLastRefreshAt)}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-8 border-primary/30 bg-transparent px-2 text-xs"
+                                    onClick={() => void refreshCoworkerRecovery()}
+                                    disabled={loadingCoworkerRecovery}
+                                  >
+                                    {loadingCoworkerRecovery ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
+                                    Refresh Recovery
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    className="h-8 px-2 text-xs"
+                                    onClick={() => void runCoworkerRecovery()}
+                                    disabled={runningCoworkerRecovery || coworkerRecoveryAutoActions.length === 0}
+                                  >
+                                    {runningCoworkerRecovery ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="mr-2 h-3.5 w-3.5" />}
+                                    Run Safe Recovery
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recovery Actions</p>
+                                    <Badge variant="outline">{coworkerRecoveryActions.length}</Badge>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {coworkerRecoveryActions.slice(0, 8).map((item, index) => {
+                                      const actionId = String(item.id ?? `action-${index + 1}`);
+                                      const actionStatus = String(item.status ?? 'unknown').trim().toLowerCase();
+                                      const reasons = Array.isArray(item.reasons)
+                                        ? item.reasons.filter((value): value is string => typeof value === 'string')
+                                        : [];
+                                      const blockers = Array.isArray(item.blockers)
+                                        ? item.blockers.filter((value): value is string => typeof value === 'string')
+                                        : [];
+                                      return (
+                                        <div key={`${actionId}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-mono text-[10px] text-primary/80">{String(item.title ?? actionId)}</p>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="outline">{String(item.stage ?? 'stage')}</Badge>
+                                              <Badge variant={Boolean(item.auto_runnable) ? 'secondary' : 'outline'}>
+                                                {Boolean(item.auto_runnable) ? 'safe' : 'manual'}
+                                              </Badge>
+                                              <Badge
+                                                variant={
+                                                  actionStatus === 'ready'
+                                                    ? 'outline'
+                                                    : actionStatus === 'in_progress'
+                                                      ? 'secondary'
+                                                      : 'destructive'
+                                                }
+                                              >
+                                                {actionStatus}
+                                              </Badge>
+                                            </div>
+                                          </div>
+                                          <p className="mt-1 text-[11px] text-muted-foreground">
+                                            {String(item.summary ?? 'No summary available.')}
+                                          </p>
+                                          {reasons.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-primary/80">{reasons[0]}</p>
+                                          ) : null}
+                                          {blockers.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-amber-300/90">{blockers[0]}</p>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                    {!loadingCoworkerRecovery && coworkerRecoveryActions.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">No coworker recovery actions are pending.</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="space-y-3">
+                                  <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recovery Notes</p>
+                                      <Badge variant={coworkerRecoveryRecommendations.length > 0 ? 'secondary' : 'outline'}>
+                                        {coworkerRecoveryRecommendations.length}
+                                      </Badge>
+                                    </div>
+                                    <div className="mt-2 space-y-2">
+                                      {coworkerRecoveryRecommendations.slice(0, 4).map((item, index) => (
+                                        <div key={`${item}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <p className="text-[11px] text-muted-foreground">{item}</p>
+                                        </div>
+                                      ))}
+                                      {coworkerRecoveryPendingActions.length > 0 ? (
+                                        <p className="text-[10px] text-muted-foreground">
+                                          pending runs: {coworkerRecoveryPendingActions.map((item) => String(item.task ?? item.provider ?? item.id ?? 'action')).join(', ')}
+                                        </p>
+                                      ) : null}
+                                      {coworkerRecoveryManualActions.length > 0 ? (
+                                        <p className="text-[10px] text-amber-300/90">
+                                          manual review: {coworkerRecoveryManualActions.map((item) => String(item.task ?? item.provider ?? item.id ?? 'action')).join(', ')}
+                                        </p>
+                                      ) : null}
+                                      {coworkerRecoveryUpgradeActions.length > 0 ? (
+                                        <p className="text-[10px] text-muted-foreground">
+                                          upgrade hints: {coworkerRecoveryUpgradeActions.map((item) => String(item.title ?? 'upgrade')).join(' • ')}
+                                        </p>
+                                      ) : null}
+                                      {coworkerRecoveryRecommendations.length === 0 &&
+                                      coworkerRecoveryPendingActions.length === 0 &&
+                                      coworkerRecoveryManualActions.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">No extra recovery notes right now.</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Last Recovery</p>
+                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                      executed: {String(coworkerRecoveryRunSummary.executed_count ?? 0)}
+                                      {' • '}installs: {String(coworkerRecoveryRunSummary.accepted_install_run_count ?? 0)}
+                                      {' • '}errors: {String(coworkerRecoveryRunSummary.error_count ?? 0)}
+                                    </p>
+                                    <pre className="mt-2 max-h-[180px] overflow-auto font-mono text-[10px] leading-relaxed text-primary/90">
+                                      {formatJson(coworkerRecoveryRunState ?? {})}
+                                    </pre>
                                   </div>
                                 </div>
                               </div>
@@ -16406,7 +18432,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   <div className="flex flex-wrap items-center gap-2">
                                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Local Model Inventory</p>
                                     <Badge variant="outline">
-                                      detected:{Array.isArray(localModelInventoryState?.inventory?.items) ? localModelInventoryState.inventory.items.length : 0}
+                                      declared:{Number(localModelInventorySummary.declared_count ?? 0)}
+                                    </Badge>
+                                    <Badge variant="outline">
+                                      present:{Number(localModelInventorySummary.present_count ?? 0)}
+                                    </Badge>
+                                    <Badge variant={Number(localModelInventorySummary.missing_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                      missing:{Number(localModelInventorySummary.missing_count ?? 0)}
                                     </Badge>
                                     <Badge variant="outline">
                                       profiles:{reasoningBridgeProfiles.length + ttsBridgeProfiles.length + sttBridgeProfiles.length + visionBridgeProfiles.length}
@@ -16419,11 +18451,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     Last refresh: {formatRefreshStamp(localModelInventoryLastRefreshAt)}
                                     {' • '}Profiles refresh: {formatRefreshStamp(modelBridgeProfilesLastRefreshAt)}
                                   </p>
+                                  {String(localModelManifestSummary.path ?? '').trim() ? (
+                                    <p className="text-[10px] text-muted-foreground">
+                                      Manifest: {String(localModelManifestSummary.path ?? '').trim()}
+                                    </p>
+                                  ) : null}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   {Object.entries(localModelInventoryState?.task_counts ?? {}).slice(0, 8).map(([taskName, count]) => (
                                     <Badge key={taskName} variant="secondary">
                                       {taskName}:{count}
+                                    </Badge>
+                                  ))}
+                                  {Object.entries(localModelInventoryState?.missing_task_counts ?? {}).slice(0, 8).map(([taskName, count]) => (
+                                    <Badge key={`missing-${taskName}`} variant="outline">
+                                      missing {taskName}:{count}
                                     </Badge>
                                   ))}
                                   <Button
@@ -16432,11 +18474,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     className="h-8 border-primary/30 bg-transparent px-2 text-xs"
                                     onClick={() => {
                                       void refreshLocalModelInventory();
+                                      void refreshModelSetupPlan({ quiet: true });
+                                      void refreshModelSetupPreflight({ quiet: true });
+                                      void refreshModelSetupInstallHistory({ quiet: true });
                                       void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     }}
-                                    disabled={loadingLocalModelInventory || loadingModelBridgeProfiles}
+                                    disabled={
+                                      loadingLocalModelInventory ||
+                                      loadingModelSetupPlan ||
+                                      loadingModelSetupPreflight ||
+                                      loadingModelSetupInstallHistory ||
+                                      loadingModelBridgeProfiles
+                                    }
                                   >
-                                    {loadingLocalModelInventory || loadingModelBridgeProfiles ? (
+                                    {loadingLocalModelInventory || loadingModelSetupPlan || loadingModelSetupPreflight || loadingModelSetupInstallHistory || loadingModelBridgeProfiles ? (
                                       <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                                     ) : (
                                       <RefreshCw className="mr-2 h-3.5 w-3.5" />
@@ -16448,21 +18499,25 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                               <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
                                 <div className="rounded border border-primary/15 bg-background/20 p-2">
                                   <div className="flex items-center justify-between gap-2">
-                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Detected Artifacts</p>
-                                    <Badge variant="outline">{localModelInventoryItems.length}</Badge>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Installed Artifacts</p>
+                                    <Badge variant="outline">{presentLocalModelInventoryItems.length}</Badge>
                                   </div>
                                   <div className="mt-2 space-y-2">
-                                    {localModelInventoryItems.slice(0, 10).map((item, index) => {
+                                    {presentLocalModelInventoryItems.slice(0, 10).map((item, index) => {
                                       const taskName = String(item.task ?? 'unknown');
                                       const pathText = String(item.path ?? '');
                                       const formatName = String(item.format ?? 'unknown');
                                       const sizeBytes = Number(item.size_bytes ?? 0);
                                       const sizeGb = sizeBytes > 0 ? `${(sizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB` : 'n/a';
+                                      const declared = Boolean(item.declared);
                                       return (
                                         <div key={`${taskName}-${pathText || index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
                                           <div className="flex flex-wrap items-center justify-between gap-2">
                                             <p className="font-mono text-[10px] text-primary/80">{String(item.name ?? `artifact-${index + 1}`)}</p>
-                                            <Badge variant="outline">{taskName}</Badge>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              {declared ? <Badge variant="secondary">manifest</Badge> : null}
+                                              <Badge variant="outline">{taskName}</Badge>
+                                            </div>
                                           </div>
                                           <p className="mt-1 text-[11px] text-muted-foreground">{pathText}</p>
                                           <p className="mt-1 text-[10px] text-muted-foreground">
@@ -16471,8 +18526,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         </div>
                                       );
                                     })}
-                                    {!loadingLocalModelInventory && localModelInventoryItems.length === 0 ? (
-                                      <p className="text-xs text-muted-foreground">No scanned local model artifacts reported yet.</p>
+                                    {!loadingLocalModelInventory && presentLocalModelInventoryItems.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">No installed local model artifacts reported yet.</p>
                                     ) : null}
                                   </div>
                                 </div>
@@ -16681,6 +18736,1171 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     })}
                                     {!loadingModelBridgeProfiles && reasoningBridgeProfiles.length === 0 ? (
                                       <p className="text-xs text-muted-foreground">No reasoning bridge profiles derived from scanned local models yet.</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Missing Declared Artifacts</p>
+                                    <Badge variant={missingLocalModelInventoryItems.length > 0 ? 'secondary' : 'outline'}>
+                                      {missingLocalModelInventoryItems.length}
+                                    </Badge>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {missingLocalModelInventoryItems.slice(0, 10).map((item, index) => {
+                                      const taskName = String(item.task ?? 'unknown');
+                                      const pathText = String(item.path ?? '');
+                                      const formatName = String(item.format ?? 'unknown');
+                                      return (
+                                        <div key={`missing-${taskName}-${pathText || index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-mono text-[10px] text-primary/80">{String(item.name ?? `missing-${index + 1}`)}</p>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant="secondary">missing</Badge>
+                                              <Badge variant="outline">{taskName}</Badge>
+                                            </div>
+                                          </div>
+                                          <p className="mt-1 text-[11px] text-muted-foreground">{pathText}</p>
+                                          <p className="mt-1 text-[10px] text-muted-foreground">expected format: {formatName}</p>
+                                        </div>
+                                      );
+                                    })}
+                                    {!loadingLocalModelInventory && missingLocalModelInventoryItems.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">All manifest-declared local model artifacts currently look present.</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Setup Planner</p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        planned:{Number(modelSetupPlanSummary.planned_count ?? 0)}
+                                        {' • '}auto:{Number(modelSetupPlanSummary.auto_installable_count ?? 0)}
+                                        {' • '}manual:{Number(modelSetupPlanSummary.manual_count ?? 0)}
+                                      </p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        plan:{formatRefreshStamp(modelSetupPlanLastRefreshAt)}
+                                        {' • '}manual:{formatRefreshStamp(modelSetupManualPipelineLastRefreshAt)}
+                                        {' • '}preflight:{formatRefreshStamp(modelSetupPreflightLastRefreshAt)}
+                                        {' • '}runs:{formatRefreshStamp(modelSetupInstallLastRefreshAt)}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge variant={autoInstallModelSetupItems.length > 0 ? 'outline' : 'secondary'}>
+                                        auto:{autoInstallModelSetupItems.length}
+                                      </Badge>
+                                      <Badge variant={manualModelSetupItems.length > 0 ? 'secondary' : 'outline'}>
+                                        manual:{manualModelSetupItems.length}
+                                      </Badge>
+                                      <Badge
+                                        variant={Number(modelSetupManualPipelineSummary.convertible_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                      >
+                                        convert:{Number(modelSetupManualPipelineSummary.convertible_count ?? 0)}
+                                      </Badge>
+                                      <Badge
+                                        variant={Number(modelSetupManualPipelineSummary.upgrade_action_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                      >
+                                        upgrades:{Number(modelSetupManualPipelineSummary.upgrade_action_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant={Boolean(asObjectRecord(modelSetupPlanTools.huggingface_hub).available) ? 'outline' : 'secondary'}>
+                                        hf:{Boolean(asObjectRecord(modelSetupPlanTools.huggingface_hub).available) ? 'ready' : 'missing'}
+                                      </Badge>
+                                      <Badge variant={Boolean(asObjectRecord(modelSetupPlanState?.storage).keystore_enabled) ? 'outline' : 'secondary'}>
+                                        vault:{Boolean(asObjectRecord(modelSetupPlanState?.storage).keystore_enabled) ? 'on' : 'off'}
+                                      </Badge>
+                                      <Badge
+                                        variant={Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                      >
+                                        active:{Number(modelSetupInstallHistoryState?.active_count ?? 0)}
+                                      </Badge>
+                                      <Badge
+                                        variant={Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ? 'destructive' : 'outline'}
+                                      >
+                                        blocked:{Number(modelSetupPreflightSummary.blocked_count ?? 0)}
+                                      </Badge>
+                                      <Badge
+                                        variant={Number(modelSetupPreflightSummary.remote_probe_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                      >
+                                        remote:{Number(modelSetupPreflightSummary.remote_success_count ?? 0)}/
+                                        {Number(modelSetupPreflightSummary.remote_probe_count ?? 0)}
+                                      </Badge>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void runModelSetupInstall({ dryRun: true })}
+                                        disabled={
+                                          loadingModelSetupPlan ||
+                                          autoInstallModelSetupItems.length === 0 ||
+                                          installingModelSetup ||
+                                          loadingModelSetupPreflight ||
+                                          Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ||
+                                          Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0
+                                        }
+                                      >
+                                        {installingModelSetup && installingModelSetupKey === '__preview__' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Preview Auto
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void runModelSetupInstall()}
+                                        disabled={
+                                          loadingModelSetupPlan ||
+                                          autoInstallModelSetupItems.length === 0 ||
+                                          installingModelSetup ||
+                                          loadingModelSetupPreflight ||
+                                          Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ||
+                                          Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0
+                                        }
+                                      >
+                                        {installingModelSetup && installingModelSetupKey === '__auto__' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Install Auto
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupManualPipeline()}
+                                        disabled={loadingModelSetupManualPipeline}
+                                      >
+                                        {loadingModelSetupManualPipeline ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="mr-2 h-3 w-3" />
+                                        )}
+                                        Manual Plan
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void runModelSetupManualPipeline({ dryRun: true })}
+                                        disabled={
+                                          runningModelSetupManual ||
+                                          modelSetupManualPipelineRunnableCount <= 0 ||
+                                          Number(modelSetupManualRunsState?.active_count ?? 0) > 0
+                                        }
+                                      >
+                                        {runningModelSetupManual && runningModelSetupManualKey === '__manual_preview__' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Preview Manual
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void runModelSetupManualPipeline()}
+                                        disabled={
+                                          runningModelSetupManual ||
+                                          modelSetupManualPipelineRunnableCount <= 0 ||
+                                          Number(modelSetupManualRunsState?.active_count ?? 0) > 0
+                                        }
+                                      >
+                                        {runningModelSetupManual && runningModelSetupManualKey === '__manual_auto__' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Run Manual
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupPreflight({ refreshRemote: true })}
+                                        disabled={loadingModelSetupPreflight}
+                                      >
+                                        {loadingModelSetupPreflight ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-2 h-3 w-3" />}
+                                        Preflight
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupInstallHistory()}
+                                        disabled={loadingModelSetupInstallHistory}
+                                      >
+                                        {loadingModelSetupInstallHistory ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-2 h-3 w-3" />}
+                                        Setup Runs
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupManualRuns()}
+                                        disabled={loadingModelSetupManualRuns}
+                                      >
+                                        {loadingModelSetupManualRuns ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-2 h-3 w-3" />}
+                                        Manual Runs
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {modelSetupPreflightItems.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Preflight</p>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Badge variant={Number(modelSetupPreflightSummary.ready_count ?? 0) > 0 ? 'outline' : 'secondary'}>
+                                              ready:{Number(modelSetupPreflightSummary.ready_count ?? 0)}
+                                            </Badge>
+                                            <Badge variant={Number(modelSetupPreflightSummary.warning_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                              warn:{Number(modelSetupPreflightSummary.warning_count ?? 0)}
+                                            </Badge>
+                                            <Badge variant={Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                              blocked:{Number(modelSetupPreflightSummary.blocked_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          trusted:{Number(modelSetupPreflightSummary.trusted_count ?? 0)}
+                                          {' • '}writable:{Number(modelSetupPreflightSummary.writable_count ?? 0)}
+                                          {' • '}launch:{Boolean(modelSetupPreflightSummary.launch_recommended) ? 'recommended' : 'hold'}
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          remote:{Number(modelSetupPreflightSummary.remote_success_count ?? 0)}/
+                                          {Number(modelSetupPreflightSummary.remote_probe_count ?? 0)}
+                                          {' • '}cache:{Number(modelSetupPreflightSummary.remote_cache_hits ?? 0)}
+                                          {' • '}size-known:{Number(modelSetupPreflightSummary.remote_known_size_count ?? 0)}
+                                          {Object.keys(modelSetupPreflightRemoteMetadata).length > 0
+                                            ? ` • source:${String(modelSetupPreflightRemoteMetadata.status ?? 'unknown')}`
+                                            : ''}
+                                        </p>
+                                        {modelSetupPreflightItems.slice(0, 3).map((entry, entryIndex) => {
+                                          const entryStatus = String(entry.status ?? 'unknown');
+                                          const disk = asObjectRecord(entry.disk);
+                                          const sourceTrust = asObjectRecord(entry.source_trust);
+                                          const remoteProbe = asObjectRecord(entry.remote_probe ?? entry.remote_metadata);
+                                          const entryBlockers = Array.isArray(entry.blockers)
+                                            ? entry.blockers.filter((value): value is string => typeof value === 'string')
+                                            : [];
+                                          const entryWarnings = Array.isArray(entry.warnings)
+                                            ? entry.warnings.filter((value): value is string => typeof value === 'string')
+                                            : [];
+                                          const remoteHost = String(
+                                            remoteProbe.final_host ?? sourceTrust.resolved_host ?? sourceTrust.host ?? ''
+                                          ).trim();
+                                          const remoteProbeMode = String(remoteProbe.probe_mode ?? '').trim();
+                                          const remoteSizeBytes = Number(remoteProbe.size_bytes ?? 0);
+                                          const remoteStatus = String(remoteProbe.status ?? '').trim().toLowerCase();
+                                          const remoteRequiresAuth = Boolean(remoteProbe.requires_auth);
+                                          const remoteAuthConfigured = Boolean(remoteProbe.auth_configured);
+                                          const entryStatusVariant =
+                                            entryStatus === 'ready' ? 'outline' : entryStatus === 'warning' ? 'secondary' : 'destructive';
+                                          return (
+                                            <div key={`${String(entry.key ?? entry.name ?? entryIndex)}-${entryIndex}`} className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="font-mono text-[10px] text-primary/80">{String(entry.name ?? entry.key ?? `preflight-${entryIndex + 1}`)}</p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge variant={entryStatusVariant}>{entryStatus}</Badge>
+                                                  <Badge variant={Boolean(sourceTrust.trusted) ? 'outline' : 'secondary'}>
+                                                    {Boolean(sourceTrust.trusted) ? 'trusted' : 'unverified'}
+                                                  </Badge>
+                                                  {remoteProbeMode ? <Badge variant="outline">{remoteProbeMode}</Badge> : null}
+                                                  {Object.keys(remoteProbe).length > 0 ? (
+                                                    <Badge variant={Boolean(remoteProbe.cached) ? 'secondary' : 'outline'}>
+                                                      {Boolean(remoteProbe.cached) ? 'cached' : 'live'}
+                                                    </Badge>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                free:{' '}
+                                                {Number(disk.free_bytes ?? 0) > 0
+                                                  ? `${(Number(disk.free_bytes ?? 0) / 1024 / 1024 / 1024).toFixed(1)} GB`
+                                                  : 'n/a'}
+                                                {' • '}need:{' '}
+                                                {Boolean(disk.known_required_bytes)
+                                                  ? `${(Number(disk.required_bytes ?? 0) / 1024 / 1024 / 1024).toFixed(1)} GB`
+                                                  : 'unknown'}
+                                              </p>
+                                              {Object.keys(remoteProbe).length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  remote:{remoteHost || 'n/a'}
+                                                  {remoteSizeBytes > 0
+                                                    ? ` • live-size:${(remoteSizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+                                                    : ' • live-size:unknown'}
+                                                  {remoteStatus ? ` • status:${remoteStatus}` : ''}
+                                                  {remoteRequiresAuth ? ` • auth:${remoteAuthConfigured ? 'configured' : 'required'}` : ''}
+                                                </p>
+                                              ) : null}
+                                              {entryBlockers.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-red-300/90">{entryBlockers[0]}</p>
+                                              ) : null}
+                                              {entryWarnings.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-amber-300/90">{entryWarnings[0]}</p>
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : null}
+                                    {modelSetupManualPipelineItems.length > 0 || modelSetupManualPipelineUpgradeActions.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Manual Pipeline</p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              ready:{Number(modelSetupManualPipelineSummary.ready_count ?? 0)}
+                                              {' • '}warn:{Number(modelSetupManualPipelineSummary.warning_count ?? 0)}
+                                              {' • '}blocked:{Number(modelSetupManualPipelineSummary.blocked_count ?? 0)}
+                                              {' • '}convertible:{Number(modelSetupManualPipelineSummary.convertible_count ?? 0)}
+                                            </p>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Badge
+                                              variant={Number(modelSetupManualPipelineSummary.quantization_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                            >
+                                              quant:{Number(modelSetupManualPipelineSummary.quantization_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupManualPipelineSummary.auth_required_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                            >
+                                              auth:{Number(modelSetupManualPipelineSummary.auth_ready_count ?? 0)}/
+                                              {Number(modelSetupManualPipelineSummary.auth_required_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          {(() => {
+                                            const toolchainCommands = asObjectRecord(modelSetupManualPipelineToolchain.commands);
+                                            const llamaCpp = asObjectRecord(modelSetupManualPipelineToolchain.llama_cpp);
+                                            const packages = asObjectRecord(modelSetupManualPipelineToolchain.packages);
+                                            return `llama.cpp:${Boolean(llamaCpp.ready) ? 'ready' : Boolean(llamaCpp.bootstrap_ready) ? 'bootstrap' : 'missing'} • git:${Boolean(asObjectRecord(toolchainCommands.git).available) ? 'yes' : 'no'} • cmake:${Boolean(asObjectRecord(toolchainCommands.cmake).available) ? 'yes' : 'no'} • runtime:${Boolean(asObjectRecord(packages.llama_cpp).available) ? 'ready' : 'missing'}`;
+                                          })()}
+                                        </p>
+                                        {modelSetupManualPipelineUpgradeActions.slice(0, 2).map((action, actionIndex) => {
+                                          const actionCommands = Array.isArray(action.commands)
+                                            ? action.commands.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                            : [];
+                                          return (
+                                            <div
+                                              key={`${String(action.id ?? action.title ?? actionIndex)}-${actionIndex}`}
+                                              className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="font-mono text-[10px] text-primary/80">{String(action.title ?? action.id ?? `upgrade-${actionIndex + 1}`)}</p>
+                                                <Badge variant={String(action.status ?? '').trim().toLowerCase() === 'required' ? 'destructive' : 'secondary'}>
+                                                  {String(action.status ?? 'recommended')}
+                                                </Badge>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">{String(action.description ?? 'Upgrade guidance')}</p>
+                                              {actionCommands.length > 0 ? (
+                                                <Textarea
+                                                  value={actionCommands[0]}
+                                                  readOnly
+                                                  className="mt-2 min-h-[86px] border-primary/20 bg-background/30 font-mono text-[10px] leading-4"
+                                                />
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })}
+                                        {modelSetupManualPipelineItems.slice(0, 3).map((entry, entryIndex) => {
+                                          const entryStatus = String(entry.status ?? 'unknown').trim().toLowerCase();
+                                          const entryKey = String(entry.key ?? '').trim();
+                                          const entryBlockers = Array.isArray(entry.blockers)
+                                            ? entry.blockers.filter((value): value is string => typeof value === 'string')
+                                            : [];
+                                          const entryWarnings = Array.isArray(entry.warnings)
+                                            ? entry.warnings.filter((value): value is string => typeof value === 'string')
+                                            : [];
+                                          const stepRows = Array.isArray(entry.steps)
+                                            ? entry.steps.filter((value): value is Record<string, unknown> => isObjectRecord(value))
+                                            : [];
+                                          const entryCommands = Array.isArray(entry.commands)
+                                            ? entry.commands.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+                                            : [];
+                                          const entryRunnable =
+                                            ['ready', 'warning'].includes(entryStatus) &&
+                                            entryBlockers.length === 0 &&
+                                            (stepRows.some((step) => {
+                                              const stepStatus = String(step.status ?? '').trim().toLowerCase();
+                                              if (stepStatus === 'blocked') return false;
+                                              return Array.isArray(step.commands)
+                                                ? step.commands.some((command): command is string => typeof command === 'string' && command.trim().length > 0)
+                                                : false;
+                                            }) ||
+                                              entryCommands.length > 0);
+                                          const statusVariant =
+                                            entryStatus === 'ready' ? 'outline' : entryStatus === 'warning' ? 'secondary' : 'destructive';
+                                          return (
+                                            <div
+                                              key={`${String(entry.key ?? entry.name ?? entryIndex)}-${entryIndex}`}
+                                              className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div>
+                                                  <p className="font-mono text-[10px] text-primary/80">{String(entry.name ?? entry.key ?? `manual-${entryIndex + 1}`)}</p>
+                                                  <p className="text-[10px] text-muted-foreground">{String(entry.path ?? '')}</p>
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge variant={statusVariant}>{entryStatus}</Badge>
+                                                  {Boolean(entry.convertible) ? <Badge variant="outline">convertible</Badge> : null}
+                                                  {String(entry.target_quantization ?? '').trim() ? (
+                                                    <Badge variant="outline">{String(entry.target_quantization ?? '').trim()}</Badge>
+                                                  ) : null}
+                                                  {Boolean(entry.auth_required) ? (
+                                                    <Badge variant={Boolean(entry.auth_configured) ? 'outline' : 'secondary'}>
+                                                      auth:{Boolean(entry.auth_configured) ? 'ready' : 'needed'}
+                                                    </Badge>
+                                                  ) : null}
+                                                  {entryRunnable && entryKey ? (
+                                                    <Button
+                                                      type="button"
+                                                      variant="outline"
+                                                      className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                      onClick={() => void runModelSetupManualPipeline({ itemKey: entryKey })}
+                                                      disabled={
+                                                        runningModelSetupManual ||
+                                                        Number(modelSetupManualRunsState?.active_count ?? 0) > 0
+                                                      }
+                                                    >
+                                                      {runningModelSetupManual && runningModelSetupManualKey === entryKey ? (
+                                                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                                      ) : null}
+                                                      Run Item
+                                                    </Button>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                {String(entry.pipeline_kind ?? 'manual')}
+                                                {' • '}stage:{String(entry.source_stage_dir ?? 'n/a')}
+                                              </p>
+                                              <p className="mt-1 text-[10px] text-primary/80">
+                                                {String(entry.recommended_next_action ?? 'Review the generated pipeline steps.')}
+                                              </p>
+                                              {stepRows.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  steps:{' '}
+                                                  {stepRows
+                                                    .slice(0, 4)
+                                                    .map((step) => `${String(step.id ?? step.title ?? 'step')}=${String(step.status ?? 'unknown')}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {entryBlockers.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-red-300/90">{entryBlockers[0]}</p>
+                                              ) : null}
+                                              {entryWarnings.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-amber-300/90">{entryWarnings[0]}</p>
+                                              ) : null}
+                                              {entryCommands.length > 0 ? (
+                                                <Textarea
+                                                  value={entryCommands[0]}
+                                                  readOnly
+                                                  className="mt-2 min-h-[96px] border-primary/20 bg-background/30 font-mono text-[10px] leading-4"
+                                                />
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : null}
+                                    {latestModelSetupManualRun ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        {(() => {
+                                          const latestRun = latestModelSetupManualRun;
+                                          const latestStatus = String(latestRun.status ?? 'unknown');
+                                          const latestProgress = asObjectRecord(latestRun.progress);
+                                          const latestIsActive = ['queued', 'running', 'cancelling'].includes(latestStatus);
+                                          const latestRunResult = asObjectRecord(latestRun.result);
+                                          const latestActivation = asObjectRecord(latestRun.activation ?? latestRunResult.activation);
+                                          const latestActivationSummary = asObjectRecord(latestActivation.summary);
+                                          const latestActivationStatus = String(latestActivation.status ?? '').trim().toLowerCase();
+                                          const latestActivationMessage = String(latestActivation.message ?? '').trim();
+                                          const latestActivationWarnings = Array.isArray(latestActivation.warnings)
+                                            ? latestActivation.warnings.filter((entry): entry is string => typeof entry === 'string')
+                                            : [];
+                                          const latestActivatedTasks = Number(latestActivationSummary.activated_task_count ?? 0);
+                                          const latestActivationCandidates = Number(latestActivationSummary.activation_candidate_count ?? 0);
+                                          const latestReadyAfter = Number(latestActivationSummary.ready_after_count ?? 0);
+                                          const latestItems = Array.isArray(latestRun.items)
+                                            ? latestRun.items.filter((entry): entry is Record<string, unknown> => isObjectRecord(entry))
+                                            : [];
+                                          const statusVariant =
+                                            latestStatus === 'success' || latestStatus === 'planned'
+                                              ? 'outline'
+                                              : latestStatus === 'partial' || latestStatus === 'warning'
+                                                ? 'secondary'
+                                                : 'destructive';
+                                          return (
+                                            <>
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div>
+                                                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Latest Manual Run</p>
+                                                  <p className="font-mono text-[10px] text-primary/80">
+                                                    {formatIso(String(latestRun.updated_at ?? latestRun.completed_at ?? latestRun.started_at ?? ''))}
+                                                  </p>
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge variant={statusVariant}>{latestStatus}</Badge>
+                                                  {Boolean(latestRun.dry_run) ? <Badge variant="outline">dry-run</Badge> : null}
+                                                  {latestIsActive ? (
+                                                    <Badge variant="secondary">
+                                                      {Number(latestProgress.completed_items ?? 0)}/{Number(latestProgress.total_items ?? latestRun.selected_count ?? 0)}
+                                                    </Badge>
+                                                  ) : null}
+                                                  <Badge variant="outline">ok:{Number(latestRun.success_count ?? 0)}</Badge>
+                                                  {Number(latestRun.planned_count ?? 0) > 0 ? (
+                                                    <Badge variant="secondary">plan:{Number(latestRun.planned_count ?? 0)}</Badge>
+                                                  ) : null}
+                                                  {Number(latestRun.warning_count ?? 0) > 0 ? (
+                                                    <Badge variant="secondary">warn:{Number(latestRun.warning_count ?? 0)}</Badge>
+                                                  ) : null}
+                                                  <Badge variant={Number(latestRun.error_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                                    err:{Number(latestRun.error_count ?? 0)}
+                                                  </Badge>
+                                                  {Number(latestRun.blocked_count ?? 0) > 0 ? (
+                                                    <Badge variant="secondary">block:{Number(latestRun.blocked_count ?? 0)}</Badge>
+                                                  ) : null}
+                                                  {Number(latestRun.cancelled_count ?? 0) > 0 ? (
+                                                    <Badge variant="secondary">cancel:{Number(latestRun.cancelled_count ?? 0)}</Badge>
+                                                  ) : null}
+                                                  {latestActivationStatus ? (
+                                                    <Badge
+                                                      variant={
+                                                        latestActivationStatus === 'success'
+                                                          ? 'outline'
+                                                          : latestActivationStatus === 'partial' || latestActivationStatus === 'skipped'
+                                                            ? 'secondary'
+                                                            : 'destructive'
+                                                      }
+                                                    >
+                                                      activate:{latestActivationStatus}
+                                                    </Badge>
+                                                  ) : null}
+                                                  {latestActivatedTasks > 0 ? <Badge variant="outline">live:{latestActivatedTasks}</Badge> : null}
+                                                </div>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                items:{Number(latestRun.selected_count ?? 0)}
+                                                {' • '}steps:{Number(latestRun.step_success_count ?? 0)}/{Number(latestRun.step_success_count ?? 0) + Number(latestRun.step_error_count ?? 0) + Number(latestRun.step_skipped_count ?? 0)}
+                                                {' • '}duration:
+                                                {Number.isFinite(Number(latestRun.duration_s ?? NaN))
+                                                  ? ` ${Number(latestRun.duration_s ?? 0).toFixed(1)}s`
+                                                  : ' n/a'}
+                                                {String(modelSetupManualRunResult?.status ?? '').trim()
+                                                  ? ` • session:${String(modelSetupManualRunResult?.status ?? '').trim()}`
+                                                  : ''}
+                                              </p>
+                                              {latestActivationStatus ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  activation:{' '}
+                                                  {latestActivationMessage ||
+                                                    `ready:${latestReadyAfter} • activated:${latestActivatedTasks}/${latestActivationCandidates || latestActivatedTasks}`}
+                                                </p>
+                                              ) : null}
+                                              {latestActivationWarnings.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-amber-300/90">{latestActivationWarnings[0]}</p>
+                                              ) : null}
+                                              {latestIsActive ? (
+                                                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                                  <p className="text-[10px] text-muted-foreground">
+                                                    progress:{' '}
+                                                    {Number(latestProgress.completed_items ?? 0)}/{Number(latestProgress.total_items ?? latestRun.selected_count ?? 0)}
+                                                    {' • '}
+                                                    {Number(latestProgress.percent ?? 0).toFixed(1)}%
+                                                    {String(latestProgress.current_item_name ?? '').trim()
+                                                      ? ` • ${String(latestProgress.current_item_name ?? '').trim()}`
+                                                      : ''}
+                                                    {String(latestProgress.current_step_id ?? '').trim()
+                                                      ? ` • step:${String(latestProgress.current_step_id ?? '').trim()}`
+                                                      : ''}
+                                                  </p>
+                                                  {String(latestRun.run_id ?? '').trim() ? (
+                                                    <Button
+                                                      type="button"
+                                                      variant="outline"
+                                                      className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                      onClick={() => void cancelModelSetupManualRun(String(latestRun.run_id ?? ''))}
+                                                    >
+                                                      Cancel Run
+                                                    </Button>
+                                                  ) : null}
+                                                </div>
+                                              ) : null}
+                                              {latestItems.slice(0, 2).map((entry, entryIndex) => {
+                                                const entryStatus = String(entry.status ?? 'unknown');
+                                                const stepRows = Array.isArray(entry.steps)
+                                                  ? entry.steps.filter((step): step is Record<string, unknown> => isObjectRecord(step))
+                                                  : [];
+                                                const firstStepWithLog = stepRows.find((step) =>
+                                                  Array.isArray(step.logs)
+                                                    ? step.logs.some((log): log is Record<string, unknown> => isObjectRecord(log) && String(log.output_tail ?? '').trim().length > 0)
+                                                    : false
+                                                );
+                                                const firstLog = Array.isArray(firstStepWithLog?.logs)
+                                                  ? firstStepWithLog.logs.find((log): log is Record<string, unknown> => isObjectRecord(log) && String(log.output_tail ?? '').trim().length > 0)
+                                                  : null;
+                                                const entryArtifact = asObjectRecord(entry.artifact);
+                                                const entryStatusVariant =
+                                                  entryStatus === 'success' || entryStatus === 'planned'
+                                                    ? 'outline'
+                                                    : entryStatus === 'warning' || entryStatus === 'blocked'
+                                                      ? 'secondary'
+                                                      : 'destructive';
+                                                return (
+                                                  <div
+                                                    key={`${String(entry.key ?? entry.name ?? entryIndex)}-${entryIndex}`}
+                                                    className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                                  >
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                      <div>
+                                                        <p className="font-mono text-[10px] text-primary/80">{String(entry.name ?? entry.key ?? `manual-run-${entryIndex + 1}`)}</p>
+                                                        <p className="text-[10px] text-muted-foreground">{String(entry.path ?? '')}</p>
+                                                      </div>
+                                                      <div className="flex flex-wrap items-center gap-2">
+                                                        <Badge variant={entryStatusVariant}>{entryStatus}</Badge>
+                                                        {Boolean(entryArtifact.exists) ? <Badge variant="outline">artifact</Badge> : null}
+                                                        {Number(entry.step_error_count ?? 0) > 0 ? (
+                                                          <Badge variant="destructive">step-err:{Number(entry.step_error_count ?? 0)}</Badge>
+                                                        ) : null}
+                                                      </div>
+                                                    </div>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      steps:{Number(entry.step_success_count ?? 0)} ok
+                                                      {' • '}skip:{Number(entry.step_skipped_count ?? 0)}
+                                                      {' • '}duration:
+                                                      {Number.isFinite(Number(entry.duration_s ?? NaN))
+                                                        ? ` ${Number(entry.duration_s ?? 0).toFixed(1)}s`
+                                                        : ' n/a'}
+                                                    </p>
+                                                    {String(entry.message ?? '').trim() ? (
+                                                      <p className="mt-1 text-[10px] text-primary/80">{String(entry.message ?? '').trim()}</p>
+                                                    ) : null}
+                                                    {firstLog && String(firstLog.output_tail ?? '').trim() ? (
+                                                      <Textarea
+                                                        value={String(firstLog.output_tail ?? '').trim()}
+                                                        readOnly
+                                                        className="mt-2 min-h-[92px] border-primary/20 bg-background/30 font-mono text-[10px] leading-4"
+                                                      />
+                                                    ) : null}
+                                                  </div>
+                                                );
+                                              })}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    ) : null}
+                                    {latestModelSetupInstallRun ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        {(() => {
+                                          const latestRun = latestModelSetupInstallRun;
+                                          const latestStatus = String(latestRun.status ?? 'unknown');
+                                          const latestSuccess = Number(latestRun.success_count ?? 0);
+                                          const latestErrors = Number(latestRun.error_count ?? 0);
+                                          const latestSkipped = Number(latestRun.skipped_count ?? 0);
+                                          const latestBlocked = Number(latestRun.blocked_count ?? 0);
+                                          const latestCancelled = Number(latestRun.cancelled_count ?? 0);
+                                          const latestVerified = Number(latestRun.verified_count ?? 0);
+                                          const latestObserved = Number(latestRun.observed_count ?? 0);
+                                          const latestVerificationErrors = Number(latestRun.verification_error_count ?? 0);
+                                          const latestDryRun = Boolean(latestRun.dry_run);
+                                          const latestProgress = asObjectRecord(latestRun.progress);
+                                          const latestIsActive = ['queued', 'running', 'cancelling'].includes(latestStatus);
+                                          const latestRunResult = asObjectRecord(latestRun.result);
+                                          const latestActivation = asObjectRecord(latestRun.activation ?? latestRunResult.activation);
+                                          const latestActivationSummary = asObjectRecord(latestActivation.summary);
+                                          const latestActivationStatus = String(latestActivation.status ?? '').trim().toLowerCase();
+                                          const latestActivationMessage = String(latestActivation.message ?? '').trim();
+                                          const latestActivationWarnings = Array.isArray(latestActivation.warnings)
+                                            ? latestActivation.warnings.filter((entry): entry is string => typeof entry === 'string')
+                                            : [];
+                                          const latestActivatedTasks = Number(latestActivationSummary.activated_task_count ?? 0);
+                                          const latestActivationCandidates = Number(latestActivationSummary.activation_candidate_count ?? 0);
+                                          const latestReadyAfter = Number(latestActivationSummary.ready_after_count ?? 0);
+                                          const latestItems = Array.isArray(latestRun.items)
+                                            ? latestRun.items.filter((entry): entry is Record<string, unknown> => isObjectRecord(entry))
+                                            : [];
+                                          const statusVariant =
+                                            latestStatus === 'success'
+                                              ? 'outline'
+                                              : latestStatus === 'partial' || latestStatus === 'planned'
+                                                ? 'secondary'
+                                                : 'destructive';
+                                          return (
+                                            <>
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div>
+                                                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Latest Setup Run</p>
+                                                  <p className="font-mono text-[10px] text-primary/80">
+                                                    {formatIso(String(latestRun.updated_at ?? latestRun.completed_at ?? latestRun.started_at ?? ''))}
+                                                  </p>
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge variant={statusVariant}>{latestStatus}</Badge>
+                                                  {latestDryRun ? <Badge variant="outline">dry-run</Badge> : null}
+                                                  {latestIsActive ? (
+                                                    <Badge variant="secondary">
+                                                      {Number(latestProgress.completed_items ?? 0)}/{Number(latestProgress.total_items ?? latestRun.selected_count ?? 0)}
+                                                    </Badge>
+                                                  ) : null}
+                                                  <Badge variant="outline">ok:{latestSuccess}</Badge>
+                                                  <Badge variant={latestErrors > 0 ? 'destructive' : 'outline'}>err:{latestErrors}</Badge>
+                                                  {latestSkipped > 0 ? <Badge variant="secondary">skip:{latestSkipped}</Badge> : null}
+                                                  {latestBlocked > 0 ? <Badge variant="secondary">block:{latestBlocked}</Badge> : null}
+                                                  {latestCancelled > 0 ? <Badge variant="secondary">cancel:{latestCancelled}</Badge> : null}
+                                                  {latestVerified > 0 ? <Badge variant="outline">verified:{latestVerified}</Badge> : null}
+                                                  {latestObserved > 0 ? <Badge variant="secondary">observed:{latestObserved}</Badge> : null}
+                                                  {latestVerificationErrors > 0 ? (
+                                                    <Badge variant="destructive">verify-err:{latestVerificationErrors}</Badge>
+                                                  ) : null}
+                                                  {latestActivationStatus ? (
+                                                    <Badge
+                                                      variant={
+                                                        latestActivationStatus === 'success'
+                                                          ? 'outline'
+                                                          : latestActivationStatus === 'partial' || latestActivationStatus === 'skipped'
+                                                            ? 'secondary'
+                                                            : 'destructive'
+                                                      }
+                                                    >
+                                                      activate:{latestActivationStatus}
+                                                    </Badge>
+                                                  ) : null}
+                                                  {latestActivatedTasks > 0 ? <Badge variant="outline">live:{latestActivatedTasks}</Badge> : null}
+                                                </div>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                items:{Number(latestRun.selected_count ?? 0)}
+                                                {' • '}duration:
+                                                {Number.isFinite(Number(latestRun.duration_s ?? NaN))
+                                                  ? ` ${Number(latestRun.duration_s ?? 0).toFixed(1)}s`
+                                                  : ' n/a'}
+                                                {String(modelSetupInstallResult?.status ?? '').trim()
+                                                  ? ` • session:${String(modelSetupInstallResult?.status ?? '').trim()}`
+                                                  : ''}
+                                              </p>
+                                              {latestActivationStatus ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  activation:{' '}
+                                                  {latestActivationMessage ||
+                                                    `ready:${latestReadyAfter} • activated:${latestActivatedTasks}/${latestActivationCandidates || latestActivatedTasks}`}
+                                                </p>
+                                              ) : null}
+                                              {latestActivationWarnings.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-amber-300/90">{latestActivationWarnings[0]}</p>
+                                              ) : null}
+                                              {latestIsActive ? (
+                                                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                                  <p className="text-[10px] text-muted-foreground">
+                                                    progress:{' '}
+                                                    {Number(latestProgress.completed_items ?? 0)}/{Number(latestProgress.total_items ?? latestRun.selected_count ?? 0)}
+                                                    {' • '}
+                                                    {Number(latestProgress.percent ?? 0).toFixed(1)}%
+                                                    {String(latestProgress.current_item_name ?? '').trim()
+                                                      ? ` • ${String(latestProgress.current_item_name ?? '').trim()}`
+                                                      : ''}
+                                                  </p>
+                                                  {String(latestRun.run_id ?? '').trim() ? (
+                                                    <Button
+                                                      type="button"
+                                                      variant="outline"
+                                                      className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                      onClick={() => void cancelModelSetupInstallRun(String(latestRun.run_id ?? ''))}
+                                                    >
+                                                      Cancel Run
+                                                    </Button>
+                                                  ) : null}
+                                                </div>
+                                              ) : null}
+                                              {latestItems.slice(0, 3).map((entry, entryIndex) => {
+                                                const entryStatus = String(entry.status ?? 'unknown');
+                                                const entryBytes = Number(entry.bytes_written ?? 0);
+                                                const integrityStatus = String(entry.integrity_status ?? '').trim().toLowerCase();
+                                                const verification = asObjectRecord(entry.verification);
+                                                const verificationErrors = Array.isArray(verification.errors)
+                                                  ? verification.errors.filter((value): value is string => typeof value === 'string')
+                                                  : [];
+                                                const entryStatusVariant =
+                                                  entryStatus === 'success' || entryStatus === 'planned'
+                                                    ? 'outline'
+                                                    : entryStatus === 'skipped' || entryStatus === 'blocked'
+                                                      ? 'secondary'
+                                                      : 'destructive';
+                                                return (
+                                                  <div
+                                                    key={`${String(entry.key ?? entry.name ?? entryIndex)}-${entryIndex}`}
+                                                    className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                                  >
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                      <p className="font-mono text-[10px] text-primary/80">
+                                                        {String(entry.name ?? entry.key ?? `item-${entryIndex + 1}`)}
+                                                      </p>
+                                                      <div className="flex flex-wrap items-center gap-2">
+                                                        <Badge variant={entryStatusVariant}>{entryStatus}</Badge>
+                                                        {integrityStatus ? (
+                                                          <Badge
+                                                            variant={
+                                                              integrityStatus === 'verified'
+                                                                ? 'outline'
+                                                                : integrityStatus === 'observed'
+                                                                  ? 'secondary'
+                                                                  : 'destructive'
+                                                            }
+                                                          >
+                                                            {integrityStatus}
+                                                          </Badge>
+                                                        ) : null}
+                                                      </div>
+                                                    </div>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      {String(entry.message ?? 'no detail')}
+                                                      {entryBytes > 0 ? ` • ${(entryBytes / 1024 / 1024).toFixed(2)} MB` : ''}
+                                                    </p>
+                                                    {verificationErrors.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-red-300/90">{verificationErrors[0]}</p>
+                                                    ) : null}
+                                                  </div>
+                                                );
+                                              })}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    ) : null}
+                                    {modelSetupPlanItems.slice(0, 6).map((item, index) => {
+                                      const itemName = String(item.name ?? `plan-item-${index + 1}`);
+                                      const itemKey = String(item.key ?? '').trim();
+                                      const strategy = String(item.strategy ?? 'manual');
+                                      const sourceRef = String(item.source_ref ?? item.source_url ?? 'manual');
+                                      const sourceUrl = String(item.source_url ?? '').trim();
+                                      const blockers = Array.isArray(item.blockers)
+                                        ? item.blockers.filter((entry): entry is string => typeof entry === 'string')
+                                        : [];
+                                      const notes = Array.isArray(item.notes)
+                                        ? item.notes.filter((entry): entry is string => typeof entry === 'string')
+                                        : [];
+                                      const commands = Array.isArray(item.commands)
+                                        ? item.commands.filter((entry): entry is string => typeof entry === 'string')
+                                        : [];
+                                      const installBusy = Boolean(
+                                        installingModelSetup && itemKey && installingModelSetupKey === itemKey
+                                      );
+                                      return (
+                                        <div key={`${itemName}-${strategy}-${index}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div>
+                                              <p className="font-mono text-[10px] text-primary/80">{itemName}</p>
+                                              <p className="text-[11px] text-muted-foreground">{String(item.path ?? '')}</p>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Badge variant={Boolean(item.automation_ready) ? 'outline' : 'secondary'}>
+                                                {Boolean(item.automation_ready) ? 'auto-ready' : 'manual'}
+                                              </Badge>
+                                              <Badge variant="outline">{String(item.task ?? 'unknown')}</Badge>
+                                              <Badge variant="outline">{strategy}</Badge>
+                                            </div>
+                                          </div>
+                                          <p className="mt-1 text-[10px] text-muted-foreground">
+                                            family: {String(item.family ?? 'custom')}
+                                            {' • '}backend: {String(item.backend ?? 'custom')}
+                                          </p>
+                                          <p className="mt-1 text-[10px] text-muted-foreground">
+                                            source:{' '}
+                                            {sourceUrl ? (
+                                              <a href={sourceUrl} target="_blank" rel="noreferrer" className="text-primary/80 underline underline-offset-2">
+                                                {sourceRef}
+                                              </a>
+                                            ) : (
+                                              sourceRef
+                                            )}
+                                          </p>
+                                          {notes.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-primary/80">{notes[0]}</p>
+                                          ) : null}
+                                          {blockers.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-amber-300/90">blockers: {blockers.join(', ')}</p>
+                                          ) : null}
+                                          {Boolean(item.automation_ready) ? (
+                                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                              <p className="text-[10px] text-muted-foreground">
+                                                This artifact can be installed directly from its declared source.
+                                              </p>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                onClick={() => void runModelSetupInstall({ itemKey })}
+                                                disabled={
+                                                  !itemKey ||
+                                                  installingModelSetup ||
+                                                  Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0
+                                                }
+                                              >
+                                                {installBusy ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+                                                Install Item
+                                              </Button>
+                                            </div>
+                                          ) : null}
+                                          {commands.length > 0 ? (
+                                            <Textarea
+                                              value={commands[0]}
+                                              readOnly
+                                              className="mt-2 min-h-[108px] border-primary/20 bg-background/30 font-mono text-[10px] leading-4"
+                                            />
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                    {!loadingModelSetupPlan && modelSetupPlanItems.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">
+                                        No missing manifest entries need planning right now, or the manifest does not expose installable artifacts.
+                                      </p>
+                                    ) : null}
+                                    {!loadingModelSetupInstallHistory && modelSetupInstallHistoryItems.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent Runs</p>
+                                          <div className="flex items-center gap-2">
+                                            <Badge
+                                              variant={Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                            >
+                                              active:{Number(modelSetupInstallHistoryState?.active_count ?? 0)}
+                                            </Badge>
+                                            <Badge variant="outline">{Number(modelSetupInstallHistoryState?.total ?? modelSetupInstallHistoryItems.length)}</Badge>
+                                          </div>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupInstallHistoryItems.slice(0, 3).map((run, runIndex) => {
+                                            const runStatus = String(run.status ?? 'unknown');
+                                            const runIsActive = ['queued', 'running', 'cancelling'].includes(runStatus);
+                                            const runProgress = asObjectRecord(run.progress);
+                                            const runVerified = Number(run.verified_count ?? 0);
+                                            const runObserved = Number(run.observed_count ?? 0);
+                                            const runVerificationErrors = Number(run.verification_error_count ?? 0);
+                                            const runStatusVariant =
+                                              runStatus === 'success'
+                                                ? 'outline'
+                                                : runStatus === 'partial' || runStatus === 'planned' || runIsActive
+                                                  ? 'secondary'
+                                                  : 'destructive';
+                                            return (
+                                              <div key={`${String(run.run_id ?? runIndex)}-${runIndex}`} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <p className="font-mono text-[10px] text-primary/80">
+                                                    {formatIso(String(run.completed_at ?? run.started_at ?? ''))}
+                                                  </p>
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <Badge variant={runStatusVariant}>{runStatus}</Badge>
+                                                    {Boolean(run.dry_run) ? <Badge variant="outline">dry-run</Badge> : null}
+                                                  </div>
+                                                </div>
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  ok:{Number(run.success_count ?? 0)}
+                                                  {' • '}err:{Number(run.error_count ?? 0)}
+                                                  {' • '}skip:{Number(run.skipped_count ?? 0)}
+                                                  {' • '}block:{Number(run.blocked_count ?? 0)}
+                                                  {' • '}verified:{runVerified}
+                                                  {' • '}observed:{runObserved}
+                                                  {' • '}verify-err:{runVerificationErrors}
+                                                </p>
+                                                {runIsActive ? (
+                                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                                    <p className="text-[10px] text-muted-foreground">
+                                                      {Number(runProgress.completed_items ?? 0)}/
+                                                      {Number(runProgress.total_items ?? run.selected_count ?? 0)}
+                                                      {' • '}
+                                                      {Number(runProgress.percent ?? 0).toFixed(1)}%
+                                                      {String(runProgress.current_item_name ?? '').trim()
+                                                        ? ` • ${String(runProgress.current_item_name ?? '').trim()}`
+                                                        : ''}
+                                                    </p>
+                                                    {String(run.run_id ?? '').trim() ? (
+                                                      <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                        onClick={() => void cancelModelSetupInstallRun(String(run.run_id ?? ''))}
+                                                      >
+                                                        Cancel
+                                                      </Button>
+                                                    ) : null}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Provider Credentials</p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        required:{Number(asObjectRecord(localModelInventoryState?.provider_credentials).required_count ?? 0)}
+                                        {' • '}ready:{Number(asObjectRecord(localModelInventoryState?.provider_credentials).ready_required_count ?? 0)}
+                                        {' • '}providers:{localModelProviderCredentialRows.length}
+                                      </p>
+                                    </div>
+                                    <Badge
+                                      variant={
+                                        Number(asObjectRecord(localModelInventoryState?.provider_credentials).missing_required_count ?? 0) > 0
+                                          ? 'secondary'
+                                          : 'outline'
+                                      }
+                                    >
+                                      missing:{Number(asObjectRecord(localModelInventoryState?.provider_credentials).missing_required_count ?? 0)}
+                                    </Badge>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {localModelProviderCredentialRows.slice(0, 8).map((item, index) => {
+                                      const providerName = String(item.provider ?? `provider-${index + 1}`);
+                                      const providerKey = providerName.trim().toLowerCase();
+                                      const missingRequirements = Array.isArray(item.missing_requirements)
+                                        ? item.missing_requirements.filter((entry): entry is string => typeof entry === 'string')
+                                        : [];
+                                      const setupProvider = asObjectRecord(modelSetupPlanProviderMap[providerKey]);
+                                      const setupFields = Array.isArray(setupProvider.fields)
+                                        ? setupProvider.fields.filter((entry): entry is Record<string, unknown> => isObjectRecord(entry))
+                                        : [];
+                                      const providerDraft = asObjectRecord(providerSetupDrafts[providerKey]);
+                                      const saveBusy = updatingProviderName === providerKey;
+                                      const verifyBusy = verifyingProviderName === providerKey;
+                                      const hasDraftInput = setupFields.some((field) => String(providerDraft[String(field.name ?? '')] ?? '').trim().length > 0);
+                                      const lastVerification = asObjectRecord(item.last_verification);
+                                      const verificationStatus = String(item.verification_status ?? lastVerification.status ?? '').trim().toLowerCase();
+                                      const verificationSummary = String(
+                                        item.verification_summary ?? lastVerification.summary ?? lastVerification.message ?? ''
+                                      ).trim();
+                                      const verificationCheckedAt = String(
+                                        item.verification_checked_at ?? lastVerification.checked_at ?? ''
+                                      ).trim();
+                                      const verificationWarnings = Array.isArray(lastVerification.warnings)
+                                        ? lastVerification.warnings.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                        : [];
+                                      const verificationErrors = Array.isArray(lastVerification.errors)
+                                        ? lastVerification.errors.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                        : [];
+                                      const hasSavedCredential = Boolean(item.present);
+                                      const verificationVerified = Boolean(item.verification_verified ?? lastVerification.verified);
+                                      return (
+                                        <div key={providerName} className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-mono text-[10px] text-primary/80">{providerName}</p>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              {Boolean(item.required_by_manifest) ? <Badge variant="secondary">required</Badge> : null}
+                                              <Badge variant={Boolean(item.ready) ? 'outline' : 'secondary'}>
+                                                {Boolean(item.ready) ? 'ready' : 'needs setup'}
+                                              </Badge>
+                                              {verificationStatus ? (
+                                                <Badge variant={verificationVerified ? 'outline' : 'secondary'}>
+                                                  {verificationVerified ? 'verified' : verificationStatus}
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                          <p className="mt-1 text-[11px] text-muted-foreground">
+                                            source: {String(item.source ?? 'none')}
+                                            {' • '}format: {Boolean(item.format_valid) ? 'valid' : String(item.format_reason ?? 'missing')}
+                                          </p>
+                                          {String(item.redacted ?? '').trim() ? (
+                                            <p className="mt-1 text-[10px] text-muted-foreground">key: {String(item.redacted ?? '').trim()}</p>
+                                          ) : null}
+                                          {verificationSummary ? (
+                                            <p className={`mt-1 text-[10px] ${verificationVerified ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>
+                                              verify: {verificationSummary}
+                                              {verificationCheckedAt ? ` • ${formatCompactDateTime(verificationCheckedAt)}` : ''}
+                                            </p>
+                                          ) : null}
+                                          {verificationWarnings.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-amber-300/90">warning: {verificationWarnings[0]}</p>
+                                          ) : null}
+                                          {verificationErrors.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-rose-300/90">error: {verificationErrors[0]}</p>
+                                          ) : null}
+                                          {String(setupProvider.usage_hint ?? '').trim() ? (
+                                            <p className="mt-1 text-[10px] text-primary/80">{String(setupProvider.usage_hint ?? '').trim()}</p>
+                                          ) : null}
+                                          {missingRequirements.length > 0 ? (
+                                            <p className="mt-1 text-[10px] text-amber-300/90">missing: {missingRequirements.join(', ')}</p>
+                                          ) : null}
+                                          {setupFields.length > 0 ? (
+                                            <div className="mt-2 space-y-2 rounded border border-primary/15 bg-background/20 p-2">
+                                              {setupFields.map((field) => {
+                                                const fieldName = String(field.name ?? '').trim();
+                                                const fieldLabel = String(field.label ?? (fieldName || 'Field'));
+                                                const envVar = String(field.env_var ?? fieldName);
+                                                return (
+                                                  <div key={`${providerName}-${fieldName}`} className="space-y-1">
+                                                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                                      {fieldLabel}
+                                                      {' • '}
+                                                      {envVar}
+                                                    </p>
+                                                    <Input
+                                                      type={Boolean(field.secret) ? 'password' : 'text'}
+                                                      value={String(providerDraft[fieldName] ?? '')}
+                                                      onChange={(event) => updateProviderSetupDraft(providerKey, fieldName, event.target.value)}
+                                                      placeholder={Boolean(field.secret) ? `Enter ${envVar}` : `Set ${envVar}`}
+                                                      className="h-8 border-primary/20 bg-background/30 text-xs"
+                                                    />
+                                                  </div>
+                                                );
+                                              })}
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="text-[10px] text-muted-foreground">
+                                                  {Boolean(asObjectRecord(modelSetupPlanState?.storage).keystore_enabled)
+                                                    ? 'Encrypted keystore mirroring is available.'
+                                                    : 'Set JARVIS_MASTER_KEY to enable encrypted keystore mirroring.'}
+                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                    onClick={() => void verifyProviderCredentials(providerKey)}
+                                                    disabled={verifyBusy || !hasSavedCredential}
+                                                  >
+                                                    {verifyBusy ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                                    Verify Saved
+                                                  </Button>
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                    onClick={() => void saveProviderCredentials(providerKey)}
+                                                    disabled={saveBusy || !hasDraftInput}
+                                                  >
+                                                    {saveBusy ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                                    Save Credentials
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded border border-primary/15 bg-background/20 p-2">
+                                              <p className="text-[10px] text-muted-foreground">
+                                                Run a live provider check against the saved credential.
+                                              </p>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                onClick={() => void verifyProviderCredentials(providerKey)}
+                                                disabled={verifyBusy || !hasSavedCredential}
+                                              >
+                                                {verifyBusy ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                                Verify Saved
+                                              </Button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                    {!loadingLocalModelInventory && localModelProviderCredentialRows.length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">No provider key requirements were parsed from the manifest yet.</p>
                                     ) : null}
                                   </div>
                                 </div>

@@ -46,6 +46,9 @@ class KeyStore:
         return aes.decrypt(nonce, ct, None).decode()
 
     def _save(self):
+        parent = os.path.dirname(self.path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
 
@@ -59,6 +62,11 @@ class KeyStore:
     def set(self, key_name: str, secret_value: str):
         self.data[key_name] = self._encrypt(secret_value)
         self._save()
+
+    def delete(self, key_name: str):
+        if key_name in self.data:
+            del self.data[key_name]
+            self._save()
 
     def get(self, key_name: str) -> str:
         blob = self.data.get(key_name)
