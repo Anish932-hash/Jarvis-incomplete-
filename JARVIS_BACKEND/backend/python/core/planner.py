@@ -5737,6 +5737,7 @@ class Planner:
         previous_clause_tail: str | None = None
         current_desktop_context: Dict[str, str] = {}
         desktop_context_tail: str | None = None
+        desktop_context_anchor: str | None = None
         has_contextual_dependency = False
 
         for index, clause in enumerate(clauses):
@@ -5781,6 +5782,8 @@ class Planner:
                     dependencies.append(previous_clause_tail)
                 if clause_uses_inherited_context and desktop_context_tail:
                     dependencies.append(desktop_context_tail)
+                if clause_uses_inherited_context and desktop_context_anchor:
+                    dependencies.append(desktop_context_anchor)
                 if step.depends_on:
                     dependencies.extend(step.depends_on)
                 deduped: List[str] = []
@@ -5792,6 +5795,16 @@ class Planner:
                 previous_in_clause = step.step_id
                 step_context = self._extract_desktop_context_from_step(step)
                 if step_context:
+                    previous_app = str(current_desktop_context.get("app_name") or "").strip().lower()
+                    previous_window = str(current_desktop_context.get("window_title") or "").strip().lower()
+                    next_app = str(step_context.get("app_name") or "").strip().lower()
+                    next_window = str(step_context.get("window_title") or "").strip().lower()
+                    if (
+                        not desktop_context_anchor
+                        or (next_app and next_app != previous_app)
+                        or (next_window and next_window != previous_window)
+                    ):
+                        desktop_context_anchor = step.step_id
                     current_desktop_context.update(step_context)
                     desktop_context_tail = step.step_id
             if previous_in_clause:
@@ -6284,12 +6297,48 @@ class Planner:
             desktop_context=desktop_context,
         )
         if chained_desktop_interact is not None and chained_desktop_interact.args.get("action") != "launch":
-            if chained_desktop_interact.args.get("action") in {"navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}:
-                has_open_prefix = bool(re.match(r"^\s*(?:open|launch|start)\b", text, flags=re.IGNORECASE))
-                has_clause_separator = any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";"))
-                if not (allow_compound and has_open_prefix and has_clause_separator):
-                    return ("desktop_interact", [chained_desktop_interact])
-            if any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";")):
+            compound_stateful_actions = {
+                "set_field_value",
+                "set_value_control",
+                "open_dropdown",
+                "select_dropdown_option",
+                "focus_checkbox",
+                "check_checkbox",
+                "uncheck_checkbox",
+                "enable_switch",
+                "disable_switch",
+                "select_radio_option",
+                "select_tab_page",
+                "complete_form_page",
+                "complete_form_flow",
+                "focus_value_control",
+                "increase_value",
+                "decrease_value",
+                "toggle_switch",
+                "open_context_menu",
+                "select_context_menu_item",
+                "dismiss_dialog",
+                "confirm_dialog",
+                "press_dialog_button",
+                "next_wizard_step",
+                "previous_wizard_step",
+                "finish_wizard",
+                "complete_wizard_page",
+                "complete_wizard_flow",
+            }
+            chained_action = str(chained_desktop_interact.args.get("action") or "").strip()
+            has_open_prefix = bool(re.match(r"^\s*(?:open|launch|start)\b", text, flags=re.IGNORECASE))
+            has_clause_separator = any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";"))
+            preserve_compound_open_chain = (
+                allow_compound
+                and has_open_prefix
+                and has_clause_separator
+                and chained_action in compound_stateful_actions
+            )
+            if (
+                chained_action in {"navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}
+                or has_clause_separator
+            ) and not preserve_compound_open_chain:
                 return ("desktop_interact", [chained_desktop_interact])
 
         if allow_compound:
@@ -8607,7 +8656,7 @@ class Planner:
         app_name = str(args.get("app_name") or args.get("app") or "").strip()
         if not app_name:
             open_and_action = re.search(
-                r"\b(?:open|launch|start)\b\s+(?P<app>.+?)\s+and\s+(?P<verb>type|click|press|hotkey|navigate|go to|search|focus search box|open search box|focus find box|open find box|run command|command|quick open|open file|focus address bar|address bar|open new tab|new tab|switch(?: to)?(?: the)?\s+(?:next|previous|prev|last|first|final|\d+(?:st|nd|rd|th)?|tab\s+\d+)\s+tab|switch(?: to)?\s+.+?\s+tab|go to\s+.+?\s+tab|focus\s+.+?\s+tab|next tab|previous tab|last tab|close tab|reopen tab|restore tab|open history|history|open downloads|downloads|open devtools|developer tools|devtools|open bookmarks|bookmarks|go back|back|go forward|forward|open chat|new chat|open conversation|jump to conversation|switch conversation|send message|message|reply all|reply to all|reply|forward email|new email|compose email|draft email|new event|new meeting|schedule meeting|open calendar|calendar view|open mail|mail view|open inbox|open contacts|contacts view|open tasks|tasks view|focus folder pane|focus message list|focus reading pane|focus preview pane|focus sidebar|open sidebar|focus main content|content area|main pane|document area|focus toolbar|command bar|menu bar|focus form|open form|focus\s+.+?\s+(?:field|input|text box|textbox|edit box)|set\s+.+?\s+to\s+.+?|fill\s+.+?\s+with\s+.+?|open\s+.+?\s+(?:dropdown|combo box)|select\s+.+?\s+in\s+.+?\s+(?:dropdown|combo box)|focus\s+.+?\s+(?:checkbox|check box)|check\s+.+?\s+(?:checkbox|check box)|uncheck\s+.+?\s+(?:checkbox|check box)|select\s+.+?\s+(?:radio button|radio option)|focus\s+.+?\s+(?:slider|spinner|stepper|value control|number input|numeric field)|(?:increase|decrease|raise|lower)\s+.+?\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field)|toggle\s+.+?\s+(?:switch|toggle)|open context menu|context menu|shortcut menu|right click menu|dismiss dialog|close dialog|cancel dialog|dismiss popup|close popup|confirm dialog|accept dialog|ok dialog|press ok|new document|save document|save file|open print dialog|print dialog|print|start presentation|start slideshow|slideshow|play\s*/\s*pause|play pause|toggle playback|toggle media|pause|resume|continue playback|next track|next song|skip track|skip song|previous track|prev track|last track|stop playback|stop media|stop music|new folder|create folder|focus folder tree|focus navigation pane|focus file list|focus items view|rename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)|open properties|show properties|properties dialog|open preview pane|preview pane|open details pane|details pane|refresh|refresh view|reload|go up|parent folder|focus explorer|open explorer|workspace search|search workspace|find in files|find and replace|replace|go to symbol|symbol search|rename symbol|toggle terminal|open terminal|format document|format file|format code|zoom in|zoom out|reset zoom|actual size|normal size|run terminal command|run shell command|execute terminal command|execute shell command|run|execute)\b",
+                r"\b(?:open|launch|start)\b\s+(?P<app>.+?)\s+and\s+(?P<verb>type|click|press|hotkey|navigate|go to|search|focus search box|open search box|focus find box|open find box|run command|command|quick open|open file|focus address bar|address bar|open new tab|new tab|switch(?: to)?(?: the)?\s+(?:next|previous|prev|last|first|final|\d+(?:st|nd|rd|th)?|tab\s+\d+)\s+tab|switch(?: to)?\s+.+?\s+tab|go to\s+.+?\s+tab|focus\s+.+?\s+tab|next tab|previous tab|last tab|close tab|reopen tab|restore tab|open history|history|open downloads|downloads|open devtools|developer tools|devtools|open bookmarks|bookmarks|go back|back|go forward|forward|open chat|new chat|open conversation|jump to conversation|switch conversation|send message|message|reply all|reply to all|reply|forward email|new email|compose email|draft email|new event|new meeting|schedule meeting|open calendar|calendar view|open mail|mail view|open inbox|open contacts|contacts view|open tasks|tasks view|focus folder pane|focus message list|focus reading pane|focus preview pane|focus sidebar|open sidebar|focus main content|content area|main pane|document area|focus toolbar|command bar|menu bar|focus form|open form|focus\s+.+?\s+(?:field|input|text box|textbox|edit box)|set\s+.+?\s+to\s+.+?|fill\s+.+?\s+with\s+.+?|open\s+.+?\s+(?:dropdown|combo box)|select\s+.+?\s+in\s+.+?\s+(?:dropdown|combo box)|focus\s+.+?\s+(?:checkbox|check box)|check\s+.+?\s+(?:checkbox|check box)|uncheck\s+.+?\s+(?:checkbox|check box)|select\s+.+?\s+(?:radio button|radio option)|focus\s+.+?\s+(?:slider|spinner|stepper|value control|number input|numeric field)|(?:increase|decrease|raise|lower)\s+.+?\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field)|(?:turn on|turn off|enable|disable|switch on|switch off)\s+.+?(?:\s+(?:switch|toggle))?|toggle\s+.+?\s+(?:switch|toggle)|open context menu|context menu|shortcut menu|right click menu|dismiss dialog|close dialog|cancel dialog|dismiss popup|close popup|confirm dialog|accept dialog|ok dialog|press ok|new document|save document|save file|open print dialog|print dialog|print|start presentation|start slideshow|slideshow|play\s*/\s*pause|play pause|toggle playback|toggle media|pause|resume|continue playback|next track|next song|skip track|skip song|previous track|prev track|last track|stop playback|stop media|stop music|new folder|create folder|focus folder tree|focus navigation pane|focus file list|focus items view|rename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)|open properties|show properties|properties dialog|open preview pane|preview pane|open details pane|details pane|refresh|refresh view|reload|go up|parent folder|focus explorer|open explorer|workspace search|search workspace|find in files|find and replace|replace|go to symbol|symbol search|rename symbol|toggle terminal|open terminal|format document|format file|format code|zoom in|zoom out|reset zoom|actual size|normal size|run terminal command|run shell command|execute terminal command|execute shell command|run|execute)\b",
                 normalized_text,
                 flags=re.IGNORECASE,
             )
@@ -8636,6 +8685,7 @@ class Planner:
                 r"\b(?:select|choose|pick)\s+.+?\s+(?:radio button|radio option)\s+in\s+(.+)$",
                 r"\b(?:focus|open|select)\s+.+?\s+(?:slider|spinner|stepper|value control|number input|numeric field)\s+in\s+(.+)$",
                 r"\b(?:increase|decrease|raise|lower)\s+.+?(?:\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field))?(?:\s+by\s+.+?)?\s+in\s+(.+)$",
+                r"\b(?:turn on|turn off|enable|disable|switch on|switch off)\s+.+?(?:\s+(?:switch|toggle))?\s+in\s+(.+)$",
                 r"\b(?:toggle)\s+.+?\s+(?:switch|toggle)\s+in\s+(.+)$",
                 r"\b(?:click|press|select|choose|invoke|open)\s+.+?\s+in\s+(?:the\s+)?(?:context menu|shortcut menu|right click menu)\s+in\s+(.+)$",
                 r"\b(?:press|click|select|choose|confirm|accept)\s+.+?(?:\s+button)?\s+in\s+(?:the\s+)?(?:dialog|popup|modal)\s+in\s+(.+)$",
@@ -8838,6 +8888,12 @@ class Planner:
             "raise ",
             "lower ",
             "toggle switch",
+            "turn on ",
+            "turn off ",
+            "enable ",
+            "disable ",
+            "switch on ",
+            "switch off ",
             "in toolbar",
             "in command bar",
             "in menu bar",

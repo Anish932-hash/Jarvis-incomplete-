@@ -6916,16 +6916,22 @@ class DesktopActionRouter:
                         f"Surface state shows the requested switch ('{candidate_name}') is already off, so JARVIS will preserve it."
                     )
                 arg_updates["_skip_primary_hotkey"] = True
-                arg_updates["_workflow_followup_steps"] = [
-                    _followup_accessibility_step(
+                if clean_action in {"toggle_switch", "enable_switch", "disable_switch"}:
+                    arg_updates["_workflow_action_args_override"] = _candidate_action_args(
                         candidate=toggle_candidate,
-                        reason=(
-                            f"Use the live '{candidate_name}' control exposed by the form surface instead of a generic keyboard toggle."
-                            if clean_action == "toggle_switch"
-                            else f"Use the live '{candidate_name}' control exposed by the form surface instead of a blind switch state change."
-                        ),
+                        action_name="click",
                     )
-                ]
+                else:
+                    arg_updates["_workflow_followup_steps"] = [
+                        _followup_accessibility_step(
+                            candidate=toggle_candidate,
+                            reason=(
+                                f"Use the live '{candidate_name}' control exposed by the form surface instead of a generic keyboard toggle."
+                                if clean_action == "toggle_switch"
+                                else f"Use the live '{candidate_name}' control exposed by the form surface instead of a blind switch state change."
+                            ),
+                        )
+                    ]
                 group_role = str(target_group_state.get("group_role", "") or "").strip()
                 if group_role:
                     warnings.append(

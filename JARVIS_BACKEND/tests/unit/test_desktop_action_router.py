@@ -2675,7 +2675,7 @@ def test_desktop_action_router_enables_and_disables_switch_with_live_state(tmp_p
 
     redundant_enable = router.advise({"action": "enable_switch", "app_name": "settings", "query": "Bluetooth"})
     assert redundant_enable["status"] == "success"
-    assert redundant_enable["execution_plan"][-1]["action"] != "accessibility_invoke_element" or not any(
+    assert not any(
         step["args"].get("element_id") == "toggle-bluetooth"
         for step in redundant_enable["execution_plan"]
         if isinstance(step, dict) and step.get("action") == "accessibility_invoke_element"
