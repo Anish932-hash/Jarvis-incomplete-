@@ -504,6 +504,112 @@ class FakeDesktopService:
                 "expires_at": datetime.now(timezone.utc).isoformat(),
             }
         ]
+        self.desktop_workflow_items: list[Dict[str, Any]] = [
+            {
+                "key": "command|microsoft-visual-studio-code|vscode|preferences open settings json",
+                "action": "command",
+                "profile_id": "microsoft-visual-studio-code",
+                "app_name": "vscode",
+                "window_title": "main.py - Visual Studio Code",
+                "intent": "preferences: open settings (json)",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "variants": {
+                    '{"focus_first":true,"keys":["f1"]}': {
+                        "strategy_id": "workflow_retry_2",
+                        "samples": 3,
+                        "verified_successes": 2,
+                    }
+                },
+            },
+            {
+                "key": "terminal_command|powershell|powershell|npm test",
+                "action": "terminal_command",
+                "profile_id": "powershell",
+                "app_name": "powershell",
+                "window_title": "PowerShell",
+                "intent": "npm test",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "variants": {
+                    "primary": {
+                        "strategy_id": "primary",
+                        "samples": 2,
+                        "verified_successes": 2,
+                    }
+                },
+            },
+        ]
+        self.desktop_workflow_catalog_items: list[Dict[str, Any]] = [
+            {
+                "action": "focus_address_bar",
+                "title": "Focus Address Bar",
+                "route_mode": "workflow_focus_address_bar",
+                "category_hints": ["browser", "file_manager"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "l"],
+                "verify_hint": "address",
+            },
+            {
+                "action": "open_bookmarks",
+                "title": "Open Bookmarks",
+                "route_mode": "workflow_bookmarks",
+                "category_hints": ["browser"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "shift", "o"],
+                "verify_hint": "bookmarks",
+            },
+            {
+                "action": "open_history",
+                "title": "Open History",
+                "route_mode": "workflow_history",
+                "category_hints": ["browser"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "h"],
+                "verify_hint": "history",
+            },
+            {
+                "action": "open_downloads",
+                "title": "Open Downloads",
+                "route_mode": "workflow_downloads",
+                "category_hints": ["browser"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "j"],
+                "verify_hint": "downloads",
+            },
+            {
+                "action": "toggle_terminal",
+                "title": "Toggle Terminal",
+                "route_mode": "workflow_toggle_terminal",
+                "category_hints": ["code_editor", "ide"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "`"],
+                "verify_hint": "terminal",
+            },
+            {
+                "action": "format_document",
+                "title": "Format Document",
+                "route_mode": "workflow_format_document",
+                "category_hints": ["code_editor", "ide"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["shift", "alt", "f"],
+                "verify_hint": "",
+            },
+            {
+                "action": "new_folder",
+                "title": "New Folder",
+                "route_mode": "workflow_new_folder",
+                "category_hints": ["file_manager"],
+                "requires_input": False,
+                "supported": True,
+                "primary_hotkey": ["ctrl", "shift", "n"],
+                "verify_hint": "new folder",
+            },
+        ]
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -10898,6 +11004,355 @@ class FakeDesktopService:
             self.desktop_anchor_quarantine = []
         return {"status": "success", "removed": removed, "key": key, "action": action, "query": query}
 
+    def desktop_workflow_memory_status(
+        self,
+        *,
+        limit: int = 200,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        rows = [dict(item) for item in self.desktop_workflow_items]
+        if action:
+            rows = [row for row in rows if str(row.get("action", "")) == action]
+        if app_name:
+            rows = [
+                row
+                for row in rows
+                if app_name.lower() in str(row.get("app_name", "")).lower()
+                or app_name.lower() in str(row.get("window_title", "")).lower()
+            ]
+        if profile_id:
+            rows = [row for row in rows if str(row.get("profile_id", "")) == profile_id]
+        if intent:
+            rows = [row for row in rows if intent.lower() in str(row.get("intent", "")).lower()]
+        selected = rows[: max(1, int(limit))]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(rows),
+            "items": selected,
+            "filters": {
+                "action": action,
+                "app_name": app_name,
+                "profile_id": profile_id,
+                "intent": intent,
+            },
+        }
+
+    def reset_desktop_workflow_memory(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        removed = 0
+        if action or app_name or profile_id or intent:
+            keep: list[Dict[str, Any]] = []
+            for row in self.desktop_workflow_items:
+                action_match = bool(action) and str(row.get("action", "")) == action
+                app_match = bool(app_name) and (
+                    app_name.lower() in str(row.get("app_name", "")).lower()
+                    or app_name.lower() in str(row.get("window_title", "")).lower()
+                )
+                profile_match = bool(profile_id) and str(row.get("profile_id", "")) == profile_id
+                intent_match = bool(intent) and intent.lower() in str(row.get("intent", "")).lower()
+                if action_match or app_match or profile_match or intent_match:
+                    removed += 1
+                    continue
+                keep.append(row)
+            self.desktop_workflow_items = keep
+        else:
+            removed = len(self.desktop_workflow_items)
+            self.desktop_workflow_items = []
+        return {
+            "status": "success",
+            "removed": removed,
+            "filters": {
+                "action": action,
+                "app_name": app_name,
+                "profile_id": profile_id,
+                "intent": intent,
+            },
+        }
+
+    def desktop_action_advice(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        text: str = "",
+        keys: list[str] | None = None,
+        ensure_app_launch: bool | None = None,
+        focus_first: bool | None = None,
+        press_enter: bool | None = None,
+        verify_after_action: bool | None = None,
+        verify_text: str = "",
+        retry_on_verification_failure: bool | None = None,
+        max_strategy_attempts: int | None = None,
+        max_wizard_pages: int | None = None,
+        allow_warning_pages: bool | None = None,
+        max_form_pages: int | None = None,
+        allow_destructive_forms: bool | None = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "success",
+            "action": action,
+            "app_name": app_name,
+            "window_title": window_title,
+            "query": query,
+            "text": text,
+            "keys": list(keys or []),
+            "ensure_app_launch": ensure_app_launch,
+            "focus_first": focus_first,
+            "press_enter": press_enter,
+            "verify_after_action": verify_after_action,
+            "verify_text": verify_text,
+            "retry_on_verification_failure": retry_on_verification_failure,
+            "max_strategy_attempts": max_strategy_attempts,
+            "max_wizard_pages": max_wizard_pages,
+            "allow_warning_pages": allow_warning_pages,
+            "max_form_pages": max_form_pages,
+            "allow_destructive_forms": allow_destructive_forms,
+        }
+
+    def desktop_interact(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        text: str = "",
+        keys: list[str] | None = None,
+        ensure_app_launch: bool | None = None,
+        focus_first: bool | None = None,
+        press_enter: bool | None = None,
+        verify_after_action: bool | None = None,
+        verify_text: str = "",
+        retry_on_verification_failure: bool | None = None,
+        max_strategy_attempts: int | None = None,
+        max_wizard_pages: int | None = None,
+        allow_warning_pages: bool | None = None,
+        max_form_pages: int | None = None,
+        allow_destructive_forms: bool | None = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "success",
+            "action": action,
+            "app_name": app_name,
+            "window_title": window_title,
+            "query": query,
+            "text": text,
+            "keys": list(keys or []),
+            "ensure_app_launch": ensure_app_launch,
+            "focus_first": focus_first,
+            "press_enter": press_enter,
+            "verify_after_action": verify_after_action,
+            "verify_text": verify_text,
+            "retry_on_verification_failure": retry_on_verification_failure,
+            "max_strategy_attempts": max_strategy_attempts,
+            "max_wizard_pages": max_wizard_pages,
+            "allow_warning_pages": allow_warning_pages,
+            "max_form_pages": max_form_pages,
+            "allow_destructive_forms": allow_destructive_forms,
+        }
+
+    def desktop_workflows(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        rows = [dict(item) for item in self.desktop_workflow_catalog_items]
+        if category:
+            rows = [
+                row
+                for row in rows
+                if category.lower() in [str(value).lower() for value in row.get("category_hints", [])]
+            ]
+        if query:
+            rows = [
+                row
+                for row in rows
+                if query.lower() in str(row.get("action", "")).lower()
+                or query.lower() in str(row.get("title", "")).lower()
+            ]
+        selected = rows[: max(1, int(limit))]
+        profile: Dict[str, Any] = {}
+        if app_name.lower() in {"chrome", "google chrome"}:
+            profile = {"status": "success", "category": "browser", "name": "Google Chrome"}
+        elif app_name.lower() in {"vscode", "visual studio code"}:
+            profile = {"status": "success", "category": "code_editor", "name": "Microsoft Visual Studio Code"}
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(rows),
+            "items": selected,
+            "profile": profile,
+            "filters": {
+                "query": query,
+                "category": category,
+                "app_name": app_name,
+                "window_title": window_title,
+            },
+        }
+
+    def desktop_surface_snapshot(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 24,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+    ) -> Dict[str, Any]:
+        clean_app = app_name.strip().lower()
+        profile: Dict[str, Any] = {}
+        workflow_surfaces: list[Dict[str, Any]] = []
+        elements: list[Dict[str, Any]] = []
+        observation: Dict[str, Any] = {}
+        surface_flags: Dict[str, bool] = {}
+        recommended_actions: list[str] = []
+
+        if clean_app in {"chrome", "google chrome"}:
+            profile = {"status": "success", "category": "browser", "name": "Google Chrome"}
+            workflow_surfaces = [
+                {
+                    "action": "open_history",
+                    "title": "Open History",
+                    "supported": True,
+                    "primary_hotkey": ["ctrl", "h"],
+                    "matched": True,
+                    "match_count": 1,
+                    "matches": [{"query": "history", "match_source": "accessibility"}],
+                    "recommended_followups": ["navigate", "open_bookmarks"],
+                },
+                {
+                    "action": "open_bookmarks",
+                    "title": "Open Bookmarks",
+                    "supported": True,
+                    "primary_hotkey": ["ctrl", "shift", "o"],
+                    "matched": "bookmark" in query.lower(),
+                    "match_count": 1 if "bookmark" in query.lower() else 0,
+                    "matches": [{"query": "bookmarks", "match_source": "accessibility"}] if "bookmark" in query.lower() else [],
+                    "recommended_followups": ["navigate", "search"],
+                },
+            ]
+            elements = [{"name": "History", "control_type": "Document"}, {"name": "Bookmarks", "control_type": "Link"}][: max(1, int(limit))]
+            observation = {
+                "status": "success" if include_observation else "skipped",
+                "screen_hash": "chrome-surface",
+                "text": "History Bookmarks Recent Tabs" if include_observation else "",
+                "screenshot_path": "E:/tmp/chrome-surface.png" if include_observation else "",
+            }
+            surface_flags = {
+                "window_targeted": True,
+                "window_active": True,
+                "history_visible": True,
+                "bookmarks_visible": "bookmark" in query.lower(),
+            }
+            recommended_actions = ["navigate", "search", "open_bookmarks"]
+        elif clean_app in {"explorer", "file explorer", "windows explorer"}:
+            profile = {"status": "success", "category": "file_manager", "name": "File Explorer"}
+            workflow_surfaces = [
+                {
+                    "action": "focus_address_bar",
+                    "title": "Focus Address Bar",
+                    "supported": True,
+                    "primary_hotkey": ["ctrl", "l"],
+                    "matched": True,
+                    "match_count": 1,
+                    "matches": [{"query": "address", "match_source": "accessibility"}],
+                    "recommended_followups": ["navigate", "new_folder"],
+                },
+                {
+                    "action": "new_folder",
+                    "title": "New Folder",
+                    "supported": True,
+                    "primary_hotkey": ["ctrl", "shift", "n"],
+                    "matched": False,
+                    "match_count": 0,
+                    "matches": [],
+                    "recommended_followups": ["refresh_view"],
+                },
+            ]
+            elements = [{"name": "Address", "control_type": "Edit"}, {"name": "Documents", "control_type": "ListItem"}][: max(1, int(limit))]
+            observation = {
+                "status": "success" if include_observation else "skipped",
+                "screen_hash": "explorer-surface",
+                "text": "Address Documents Downloads" if include_observation else "",
+                "screenshot_path": "E:/tmp/explorer-surface.png" if include_observation else "",
+            }
+            surface_flags = {
+                "window_targeted": True,
+                "window_active": True,
+                "address_bar_ready": True,
+                "file_manager_ready": True,
+            }
+            recommended_actions = ["navigate", "new_folder", "search"]
+
+        if not include_elements:
+            elements = []
+        if not include_workflow_probes:
+            workflow_surfaces = []
+            recommended_actions = []
+        return {
+            "status": "success",
+            "app_profile": profile,
+            "profile_defaults_applied": {},
+            "capabilities": {
+                "accessibility": {"available": True},
+                "vision": {"available": True},
+            },
+            "active_window": {"title": window_title or profile.get("name", "")},
+            "target_window": {"title": window_title or profile.get("name", "")},
+            "candidate_windows": [{"title": window_title or profile.get("name", ""), "hwnd": 1}] if profile else [],
+            "elements": {"status": "success" if include_elements else "skipped", "count": len(elements), "items": elements},
+            "query_targets": elements[:1] if include_elements else [],
+            "query_related_candidates": elements[1:2] if include_elements else [],
+            "selection_candidates": elements[:2] if include_elements else [],
+            "control_inventory": {
+                str(item.get("control_type", "") or "unknown").strip().lower(): sum(
+                    1
+                    for row in elements
+                    if str(row.get("control_type", "") or "unknown").strip().lower()
+                    == str(item.get("control_type", "") or "unknown").strip().lower()
+                )
+                for item in elements
+                if isinstance(item, dict)
+            },
+            "target_control_state": elements[0] if include_elements and elements else {},
+            "target_group_state": {
+                "group_role": "list_group" if clean_app in {"explorer", "file explorer", "windows explorer"} else "generic_options",
+                "option_count": len(elements),
+                "options": elements[:2],
+            } if include_elements else {},
+            "observation": observation if include_observation else {"status": "skipped", "screen_hash": "", "text": "", "screenshot_path": ""},
+            "workflow_surfaces": workflow_surfaces,
+            "surface_flags": surface_flags,
+            "recommended_actions": recommended_actions,
+            "filters": {
+                "app_name": app_name,
+                "window_title": window_title,
+                "query": query,
+                "limit": limit,
+                "include_observation": include_observation,
+                "include_elements": include_elements,
+                "include_workflow_probes": include_workflow_probes,
+            },
+        }
+
 
 @pytest.fixture()
 def api_server() -> tuple[str, FakeDesktopService]:
@@ -11667,7 +12122,7 @@ def test_telemetry_events_route(api_server: tuple[str, FakeDesktopService]) -> N
     status, payload = request_json("GET", f"{base_url}/telemetry/events?event=goal.completed&after_id=1&limit=10")
     assert status == 200
     assert payload["count"] == 1
-    assert payload["latest_event_id"] == 2
+    assert payload["latest_event_id"] == 4
     assert payload["items"][0]["event"] == "goal.completed"
 
 
@@ -13461,6 +13916,134 @@ def test_desktop_anchor_routes_status_and_quarantine_reset(api_server: tuple[str
     assert status == 200
     assert cleared["status"] == "success"
     assert int(cleared.get("removed", 0) or 0) >= 1
+
+
+def test_desktop_workflow_memory_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, workflows = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-workflows?action=command&app_name=vscode&intent=settings",
+    )
+    assert status == 200
+    assert workflows["status"] == "success"
+    assert workflows["count"] == 1
+    assert workflows["items"][0]["profile_id"] == "microsoft-visual-studio-code"
+
+    status, cleared = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-workflows/reset",
+        payload={"action": "command", "app_name": "vscode"},
+    )
+    assert status == 200
+    assert cleared["status"] == "success"
+    assert int(cleared.get("removed", 0) or 0) >= 1
+
+    status, remaining = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-workflows?action=terminal_command&app_name=powershell",
+    )
+    assert status == 200
+    assert remaining["status"] == "success"
+    assert remaining["count"] == 1
+    assert remaining["items"][0]["profile_id"] == "powershell"
+
+
+def test_desktop_workflow_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        f"{base_url}/desktop/workflows?category=browser&app_name=chrome&query=history",
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["count"] == 1
+    assert payload["profile"]["category"] == "browser"
+    assert payload["items"][0]["action"] == "open_history"
+    assert payload["items"][0]["primary_hotkey"] == ["ctrl", "h"]
+
+
+def test_desktop_action_routes_forward_wizard_flow_parameters(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, advice = request_json(
+        "GET",
+        f"{base_url}/desktop/action-advice?action=complete_wizard_flow&app_name=installer&max_wizard_pages=7&allow_warning_pages=1",
+    )
+    assert status == 200
+    assert advice["status"] == "success"
+    assert advice["action"] == "complete_wizard_flow"
+    assert advice["app_name"] == "installer"
+    assert advice["max_wizard_pages"] == 7
+    assert advice["allow_warning_pages"] is True
+
+    status, interact = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "complete_wizard_flow",
+            "app_name": "installer",
+            "max_wizard_pages": 8,
+            "allow_warning_pages": True,
+        },
+    )
+    assert status == 200
+    assert interact["status"] == "success"
+    assert interact["action"] == "complete_wizard_flow"
+    assert interact["max_wizard_pages"] == 8
+    assert interact["allow_warning_pages"] is True
+
+
+def test_desktop_action_routes_forward_form_flow_parameters(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, advice = request_json(
+        "GET",
+        f"{base_url}/desktop/action-advice?action=complete_form_flow&app_name=settings&max_form_pages=6&allow_destructive_forms=1",
+    )
+    assert status == 200
+    assert advice["status"] == "success"
+    assert advice["action"] == "complete_form_flow"
+    assert advice["app_name"] == "settings"
+    assert advice["max_form_pages"] == 6
+    assert advice["allow_destructive_forms"] is True
+
+    status, interact = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 7,
+            "allow_destructive_forms": True,
+        },
+    )
+    assert status == 200
+    assert interact["status"] == "success"
+    assert interact["action"] == "complete_form_flow"
+    assert interact["max_form_pages"] == 7
+    assert interact["allow_destructive_forms"] is True
+
+
+def test_desktop_surface_snapshot_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        f"{base_url}/desktop/surfaces?app_name=chrome&query=bookmark&limit=10",
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["app_profile"]["category"] == "browser"
+    assert payload["elements"]["count"] >= 1
+    assert payload["query_targets"][0]["name"] == "History"
+    assert payload["selection_candidates"][0]["name"] == "History"
+    assert payload["control_inventory"]["document"] == 1
+    assert payload["target_group_state"]["option_count"] >= 1
+    assert payload["surface_flags"]["window_targeted"] is True
+    assert any(item["action"] == "open_bookmarks" for item in payload["workflow_surfaces"])
+    assert "navigate" in payload["recommended_actions"]
 
 
 def test_oauth_token_routes_upsert_list_refresh_revoke(api_server: tuple[str, FakeDesktopService]) -> None:

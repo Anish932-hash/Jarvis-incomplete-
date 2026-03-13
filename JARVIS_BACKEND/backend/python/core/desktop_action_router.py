@@ -5,9 +5,2694 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.python.core.desktop_app_profile_registry import DesktopAppProfileRegistry
+from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
 
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
+
+WORKFLOW_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "navigate": {
+        "title": "Navigate",
+        "category_hints": {"browser"},
+        "hotkey_field": "navigation_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_navigation",
+        "missing_input_message": "query is required for navigation workflows.",
+        "support_message": "No navigation workflow is configured for this app. Browser profiles expose address-bar navigation shortcuts.",
+        "hotkey_reason": "Move focus to the app's address or destination field before typing the target.",
+        "input_reason": "Type the requested destination and submit it through the current desktop app.",
+        "retry_label": "Address Bar Retry",
+        "retry_reason": "Retry with an alternate address-bar shortcut for apps that remap navigation focus.",
+        "verification_success": "navigation verified",
+        "verification_failure": "navigation finished, but JARVIS could not confirm the destination was reached",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful navigation workflow as best-effort confirmation.",
+        "surface_flag": "address_bar_ready",
+        "skip_hotkey_when_ready": True,
+    },
+    "search": {
+        "title": "Search",
+        "category_hints": {"browser", "chat", "office", "utility", "general_desktop", "code_editor", "ide", "terminal"},
+        "hotkey_field": "search_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": False,
+        "route_mode": "workflow_search",
+        "missing_input_message": "query is required for desktop search workflows.",
+        "support_message": "No in-app search workflow is configured for this app.",
+        "hotkey_reason": "Open the app's in-context search surface before typing the requested query.",
+        "input_reason": "Type the requested search query into the app's active search surface.",
+        "retry_label": "Search Retry",
+        "retry_reason": "Retry with an alternate search shortcut for apps with custom find bindings.",
+        "verification_success": "search verified",
+        "verification_failure": "search finished, but the follow-up search state could not be confirmed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful search workflow as best-effort confirmation.",
+        "probe_terms": ["search", "find"],
+        "recommended_followups": ["quick_open", "command"],
+        "surface_flag": "search_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "focus_search_box": {
+        "title": "Focus Search Box",
+        "category_hints": {"browser", "chat", "office", "utility", "general_desktop", "code_editor", "ide", "terminal", "file_manager"},
+        "hotkey_field": "search_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_search_box",
+        "missing_input_message": "",
+        "support_message": "No search-surface workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's active search or find surface before a follow-up query or inspection action.",
+        "input_reason": "",
+        "retry_label": "Search Surface Retry",
+        "retry_reason": "Retry with an alternate search shortcut for apps that remap find or search bindings.",
+        "verification_success": "search surface verified",
+        "verification_failure": "search focus finished, but JARVIS could not confirm the search surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful search-surface workflow as best-effort confirmation.",
+        "verify_hint": "search",
+        "probe_terms": ["search", "find"],
+        "recommended_followups": ["search", "quick_open", "command"],
+        "surface_flag": "search_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "command": {
+        "title": "Command Palette",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "command_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_command_palette",
+        "missing_input_message": "text is required for command palette workflows.",
+        "support_message": "No command palette workflow is configured for this app. IDE-style profiles expose command shortcuts.",
+        "hotkey_reason": "Open the app's command palette before dispatching the requested command.",
+        "input_reason": "Type the requested command into the app's command palette.",
+        "retry_label": "Command Palette Retry",
+        "retry_reason": "Retry with an alternate command-palette shortcut for IDE-style apps.",
+        "verification_success": "command verified",
+        "verification_failure": "command palette finished, but the resulting UI state could not be confirmed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful command palette workflow as best-effort confirmation.",
+        "probe_terms": ["command palette", "command"],
+        "recommended_followups": ["quick_open", "go_to_symbol"],
+        "surface_flag": "command_palette_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "quick_open": {
+        "title": "Quick Open",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "quick_open_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_quick_open",
+        "missing_input_message": "query is required for quick-open workflows.",
+        "support_message": "No quick-open workflow is configured for this app. Editor-style profiles expose file switcher shortcuts.",
+        "hotkey_reason": "Open the app's quick-open surface before typing the requested file, symbol, or workspace target.",
+        "input_reason": "Type the requested file, symbol, or workspace target into quick open.",
+        "retry_label": "Quick Open Retry",
+        "retry_reason": "Retry with an alternate quick-open shortcut for editor-style apps.",
+        "verification_success": "quick open verified",
+        "verification_failure": "quick open finished, but the requested target could not be confirmed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful quick-open workflow as best-effort confirmation.",
+        "probe_terms": ["quick open", "open file"],
+        "recommended_followups": ["go_to_symbol", "workspace_search"],
+        "surface_flag": "quick_open_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "focus_address_bar": {
+        "title": "Focus Address Bar",
+        "category_hints": {"browser", "file_manager"},
+        "hotkey_field": "address_bar_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_address_bar",
+        "missing_input_message": "",
+        "support_message": "No address-bar workflow is configured for this app.",
+        "hotkey_reason": "Focus the active address or location field before a follow-up navigation workflow.",
+        "input_reason": "",
+        "retry_label": "Address Focus Retry",
+        "retry_reason": "Retry with an alternate address-bar shortcut if the app remapped the location focus binding.",
+        "verification_success": "address bar verified",
+        "verification_failure": "address bar focus finished, but JARVIS could not confirm the location surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful address-bar workflow as best-effort confirmation.",
+        "verify_hint": "address",
+        "probe_terms": ["address", "location"],
+        "recommended_followups": ["navigate", "search"],
+        "surface_flag": "address_bar_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_bookmarks": {
+        "title": "Open Bookmarks",
+        "category_hints": {"browser"},
+        "hotkey_field": "bookmarks_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_bookmarks",
+        "missing_input_message": "",
+        "support_message": "No bookmarks workflow is configured for this app.",
+        "hotkey_reason": "Open the browser bookmarks surface for navigation and curation workflows.",
+        "input_reason": "",
+        "retry_label": "Bookmarks Retry",
+        "retry_reason": "Retry with an alternate bookmarks shortcut if the browser remapped the bookmark manager binding.",
+        "verification_success": "bookmarks verified",
+        "verification_failure": "bookmarks finished, but JARVIS could not confirm the bookmarks surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful bookmarks workflow as best-effort confirmation.",
+        "verify_hint": "bookmarks",
+        "probe_terms": ["bookmarks", "bookmark"],
+        "recommended_followups": ["navigate", "search", "new_tab"],
+        "surface_flag": "bookmarks_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "focus_explorer": {
+        "title": "Focus Explorer",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "explorer_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_explorer",
+        "missing_input_message": "",
+        "support_message": "No project explorer workflow is configured for this app.",
+        "hotkey_reason": "Focus the workspace explorer or project tree before follow-up file actions.",
+        "input_reason": "",
+        "retry_label": "Explorer Retry",
+        "retry_reason": "Retry with an alternate explorer shortcut for editors or IDEs with custom sidebar bindings.",
+        "verification_success": "explorer verified",
+        "verification_failure": "explorer focus finished, but JARVIS could not confirm the project explorer became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful explorer workflow as best-effort confirmation.",
+        "verify_hint": "explorer",
+        "probe_terms": ["explorer", "files"],
+        "recommended_followups": ["quick_open", "workspace_search"],
+        "surface_flag": "explorer_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "focus_folder_tree": {
+        "title": "Focus Folder Tree",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_folder_tree",
+        "missing_input_message": "",
+        "support_message": "No folder-tree workflow is configured for this file manager.",
+        "hotkey_reason": "Focus the file manager navigation tree before folder browsing actions.",
+        "input_reason": "",
+        "retry_label": "Folder Tree Retry",
+        "retry_reason": "Retry the navigation-tree focus action if the shell delayed accessibility exposure.",
+        "verification_success": "folder tree focused",
+        "verification_failure": "folder-tree focus finished, but JARVIS could not confirm the navigation pane became ready",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful folder-tree focus workflow as best-effort confirmation.",
+        "probe_terms": ["navigation pane", "folders", "quick access", "this pc"],
+        "recommended_followups": ["go_up_level", "search", "focus_file_list"],
+        "surface_flag": "folder_tree_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Navigation Pane", "action": "focus", "control_type": "Tree"},
+        "workflow_action_reason": "Focus the file manager navigation tree through accessibility before follow-up folder actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager"},
+    },
+    "focus_file_list": {
+        "title": "Focus File List",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_file_list",
+        "missing_input_message": "",
+        "support_message": "No file-list workflow is configured for this file manager.",
+        "hotkey_reason": "Focus the visible file list before rename, properties, or search actions.",
+        "input_reason": "",
+        "retry_label": "File List Retry",
+        "retry_reason": "Retry the file-list focus action if the shell delayed accessibility exposure.",
+        "verification_success": "file list focused",
+        "verification_failure": "file-list focus finished, but JARVIS could not confirm the items view became ready",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful file-list focus workflow as best-effort confirmation.",
+        "probe_terms": ["items view", "file list", "list view", "details view"],
+        "recommended_followups": ["rename_selection", "open_properties_dialog", "search"],
+        "surface_flag": "file_list_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Items View", "action": "focus", "control_type": "List"},
+        "workflow_action_reason": "Focus the file manager items list through accessibility before file actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager"},
+    },
+    "focus_navigation_tree": {
+        "title": "Focus Navigation Tree",
+        "category_hints": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_navigation_tree",
+        "missing_input_message": "",
+        "support_message": "No generic navigation-tree workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's tree surface before follow-up hierarchy actions.",
+        "input_reason": "",
+        "retry_label": "Navigation Tree Retry",
+        "retry_reason": "Retry the navigation-tree focus action if the app delayed exposing its hierarchy surface.",
+        "verification_success": "navigation tree focused",
+        "verification_failure": "navigation-tree focus finished, but JARVIS could not confirm the hierarchy surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful navigation-tree focus as best-effort confirmation.",
+        "verify_hint": "tree",
+        "probe_terms": ["tree view", "navigation tree", "nodes"],
+        "recommended_followups": ["select_tree_item", "expand_tree_item", "open_context_menu"],
+        "surface_flag": "tree_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Tree", "action": "focus", "control_type": "Tree"},
+        "workflow_action_reason": "Focus the app's navigation tree through accessibility before hierarchy actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+    },
+    "focus_list_surface": {
+        "title": "Focus List Surface",
+        "category_hints": {"file_manager", "utility", "ops_console", "general_desktop", "chat", "office", "security"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_list_surface",
+        "missing_input_message": "",
+        "support_message": "No generic list-surface workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's list surface before follow-up item actions.",
+        "input_reason": "",
+        "retry_label": "List Surface Retry",
+        "retry_reason": "Retry the list focus action if the app delayed exposing its item list.",
+        "verification_success": "list surface focused",
+        "verification_failure": "list-surface focus finished, but JARVIS could not confirm the list became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful list focus as best-effort confirmation.",
+        "verify_hint": "list",
+        "probe_terms": ["list view", "results list", "items list"],
+        "recommended_followups": ["select_list_item", "open_context_menu", "search"],
+        "surface_flag": "list_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "List", "action": "focus", "control_type": "List"},
+        "workflow_action_reason": "Focus the app's list surface through accessibility before follow-up item actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "utility", "ops_console", "general_desktop", "chat", "office", "security"},
+    },
+    "focus_data_table": {
+        "title": "Focus Data Table",
+        "category_hints": {"utility", "ops_console", "general_desktop", "security", "office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_data_table",
+        "missing_input_message": "",
+        "support_message": "No generic table workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's data table before follow-up row actions.",
+        "input_reason": "",
+        "retry_label": "Data Table Retry",
+        "retry_reason": "Retry the table focus action if the app delayed exposing its grid surface.",
+        "verification_success": "data table focused",
+        "verification_failure": "data-table focus finished, but JARVIS could not confirm the grid became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful data-table focus as best-effort confirmation.",
+        "verify_hint": "table",
+        "probe_terms": ["table", "grid", "rows"],
+        "recommended_followups": ["select_table_row", "open_context_menu", "search"],
+        "surface_flag": "table_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Table", "action": "focus", "control_type": "Table"},
+        "workflow_action_reason": "Focus the app's data table through accessibility before row-level actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"utility", "ops_console", "general_desktop", "security", "office"},
+    },
+    "focus_sidebar": {
+        "title": "Focus Sidebar",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_sidebar",
+        "missing_input_message": "",
+        "support_message": "No generic sidebar workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's sidebar or navigation surface before follow-up actions.",
+        "input_reason": "",
+        "retry_label": "Sidebar Focus Retry",
+        "retry_reason": "Retry the sidebar focus action if the app exposed its navigation surface after a render delay.",
+        "verification_success": "sidebar focused",
+        "verification_failure": "sidebar focus finished, but JARVIS could not confirm the sidebar became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful sidebar focus workflow as best-effort confirmation.",
+        "verify_hint": "sidebar",
+        "probe_terms": ["sidebar", "navigation pane", "left pane", "side panel"],
+        "recommended_followups": ["focus_main_content", "search", "open_context_menu"],
+        "surface_flag": "sidebar_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Sidebar", "action": "focus", "control_type": "Pane"},
+        "workflow_action_reason": "Focus the app's sidebar through accessibility before follow-up navigation or context actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "select_sidebar_item": {
+        "title": "Select Sidebar Item",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_sidebar_item",
+        "missing_input_message": "query is required to select a sidebar item.",
+        "support_message": "No generic sidebar-item workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's sidebar before invoking the requested navigation item.",
+        "input_reason": "",
+        "retry_label": "Sidebar Item Retry",
+        "retry_reason": "Retry the sidebar item action if the app delayed exposing the requested navigation target.",
+        "verification_success": "sidebar item invoked",
+        "verification_failure": "sidebar item finished, but JARVIS could not confirm the requested target was activated",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful sidebar-item action as best-effort confirmation.",
+        "verify_hint": "sidebar item",
+        "probe_terms": ["sidebar", "navigation", "side panel"],
+        "recommended_followups": ["focus_main_content", "open_context_menu", "search"],
+        "surface_flag": "sidebar_visible",
+        "prep_workflows": ["focus_sidebar"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Invoke the requested sidebar item through accessibility after staging the app's navigation surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "focus_main_content": {
+        "title": "Focus Main Content",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_main_content",
+        "missing_input_message": "",
+        "support_message": "No generic main-content workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's main content surface before context, selection, or follow-up actions.",
+        "input_reason": "",
+        "retry_label": "Main Content Retry",
+        "retry_reason": "Retry the main-content focus action if the app delayed exposing its primary content surface.",
+        "verification_success": "main content focused",
+        "verification_failure": "main-content focus finished, but JARVIS could not confirm the primary content surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful content-focus workflow as best-effort confirmation.",
+        "verify_hint": "content",
+        "probe_terms": ["content", "document", "main pane", "results"],
+        "recommended_followups": ["search", "open_context_menu", "focus_toolbar"],
+        "surface_flag": "main_content_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Content", "action": "focus", "control_type": "Pane"},
+        "workflow_action_reason": "Focus the app's main content surface through accessibility before follow-up actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "focus_toolbar": {
+        "title": "Focus Toolbar",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_toolbar",
+        "missing_input_message": "",
+        "support_message": "No generic toolbar workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's toolbar or command bar before follow-up tool actions.",
+        "input_reason": "",
+        "retry_label": "Toolbar Focus Retry",
+        "retry_reason": "Retry the toolbar focus action if the app delayed exposing its tool surface.",
+        "verification_success": "toolbar focused",
+        "verification_failure": "toolbar focus finished, but JARVIS could not confirm the toolbar became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful toolbar focus workflow as best-effort confirmation.",
+        "verify_hint": "toolbar",
+        "probe_terms": ["toolbar", "command bar", "menu bar", "ribbon"],
+        "recommended_followups": ["search", "focus_main_content", "open_context_menu"],
+        "surface_flag": "toolbar_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Toolbar", "action": "focus", "control_type": "ToolBar"},
+        "workflow_action_reason": "Focus the app's toolbar through accessibility before follow-up tool actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "invoke_toolbar_action": {
+        "title": "Invoke Toolbar Action",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_invoke_toolbar_action",
+        "missing_input_message": "query is required to invoke a toolbar action.",
+        "support_message": "No generic toolbar-action workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's toolbar before invoking the requested control.",
+        "input_reason": "",
+        "retry_label": "Toolbar Action Retry",
+        "retry_reason": "Retry the toolbar action if the app delayed exposing the requested command surface.",
+        "verification_success": "toolbar action invoked",
+        "verification_failure": "toolbar action finished, but JARVIS could not confirm the requested tool action was triggered",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful toolbar action as best-effort confirmation.",
+        "verify_hint": "toolbar action",
+        "probe_terms": ["toolbar", "command bar", "menu bar", "ribbon"],
+        "recommended_followups": ["focus_main_content", "search", "open_context_menu"],
+        "surface_flag": "toolbar_visible",
+        "prep_workflows": ["focus_toolbar"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Invoke the requested toolbar control through accessibility after staging the tool surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "focus_form_surface": {
+        "title": "Focus Form Surface",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_form_surface",
+        "missing_input_message": "",
+        "support_message": "No generic form workflow is configured for this app.",
+        "hotkey_reason": "Focus the app's form surface before editing fields, dropdowns, or checkbox controls.",
+        "input_reason": "",
+        "retry_label": "Form Focus Retry",
+        "retry_reason": "Retry the form-focus action if the app delayed exposing its editable control surface.",
+        "verification_success": "form surface focused",
+        "verification_failure": "form focus finished, but JARVIS could not confirm the editable form surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful form-focus workflow as best-effort confirmation.",
+        "verify_hint": "form",
+        "probe_terms": ["form", "text box", "input", "dropdown", "checkbox"],
+        "recommended_followups": ["focus_input_field", "open_dropdown", "check_checkbox"],
+        "surface_flag": "form_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Form", "action": "focus", "control_type": "Pane"},
+        "workflow_action_reason": "Focus the app's form surface through accessibility before field or option editing.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "focus_input_field": {
+        "title": "Focus Input Field",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_input_field",
+        "missing_input_message": "query is required to focus an input field.",
+        "support_message": "No generic input-field workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's form surface before focusing the requested editable field.",
+        "input_reason": "",
+        "retry_label": "Input Field Retry",
+        "retry_reason": "Retry the input-field focus action if the requested editor appeared after a render delay.",
+        "verification_success": "input field focused",
+        "verification_failure": "input-field focus finished, but JARVIS could not confirm the requested editor became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful input-field focus as best-effort confirmation.",
+        "verify_hint": "field",
+        "probe_terms": ["field", "input", "text box", "edit"],
+        "recommended_followups": ["set_field_value", "open_dropdown", "focus_main_content"],
+        "surface_flag": "input_field_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus", "control_type": "Edit"},
+        "workflow_action_reason": "Focus the requested editable field through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "set_field_value": {
+        "title": "Set Field Value",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "text",
+        "requires_input": True,
+        "required_fields": ["query", "text"],
+        "default_press_enter": False,
+        "route_mode": "workflow_set_field_value",
+        "missing_input_message": "query and text are required to set a field value.",
+        "support_message": "No generic field-edit workflow is configured for this app.",
+        "hotkey_reason": "Focus the requested field before replacing its current value.",
+        "input_reason": "Replace the requested field value with the provided text.",
+        "retry_label": "Field Value Retry",
+        "retry_reason": "Retry the field edit if the target control ignored the first text replacement.",
+        "verification_success": "field value updated",
+        "verification_failure": "field edit finished, but JARVIS could not confirm the requested value appeared",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful field edit as best-effort confirmation.",
+        "verify_hint": "field value",
+        "probe_terms": ["field", "value", "text box", "input"],
+        "recommended_followups": ["open_dropdown", "check_checkbox", "focus_main_content"],
+        "surface_flag": "input_field_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus", "control_type": "Edit"},
+        "workflow_action_reason": "Focus the requested field through accessibility before replacing its current value.",
+        "prefer_workflow_action": True,
+        "input_sequence": [
+            {
+                "action": "keyboard_hotkey",
+                "keys": ["ctrl", "a"],
+                "phase": "workflow_target",
+                "reason": "Select the current field contents before replacing them with the requested value.",
+            },
+            {
+                "action": "keyboard_type",
+                "field": "text",
+                "phase": "input",
+                "press_enter": False,
+                "reason": "Type the requested replacement value into the focused field.",
+            },
+        ],
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "open_dropdown": {
+        "title": "Open Dropdown",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "dropdown_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_open_dropdown",
+        "missing_input_message": "query is required to open a dropdown.",
+        "support_message": "No generic dropdown workflow is configured for this app.",
+        "hotkey_reason": "Open the requested dropdown after focusing its control.",
+        "input_reason": "",
+        "retry_label": "Dropdown Retry",
+        "retry_reason": "Retry the dropdown expansion if the target control ignored the first open request.",
+        "verification_success": "dropdown opened",
+        "verification_failure": "dropdown finished, but JARVIS could not confirm the option list opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful dropdown workflow as best-effort confirmation.",
+        "verify_hint": "dropdown",
+        "probe_terms": ["dropdown", "combo box", "select an option"],
+        "recommended_followups": ["select_dropdown_option", "focus_main_content", "search"],
+        "surface_flag": "dropdown_open",
+        "prep_workflows": ["focus_input_field"],
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "select_dropdown_option": {
+        "title": "Select Dropdown Option",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "dropdown_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "required_fields": ["query", "text"],
+        "default_press_enter": True,
+        "route_mode": "workflow_select_dropdown_option",
+        "missing_input_message": "query and text are required to select a dropdown option.",
+        "support_message": "No generic dropdown-selection workflow is configured for this app.",
+        "hotkey_reason": "Open the requested dropdown before selecting the requested option.",
+        "input_reason": "Type and confirm the requested dropdown option once the option list is open.",
+        "retry_label": "Dropdown Option Retry",
+        "retry_reason": "Retry the dropdown selection if the option list rendered after the first request.",
+        "verification_success": "dropdown option selected",
+        "verification_failure": "dropdown selection finished, but JARVIS could not confirm the requested option became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful dropdown selection as best-effort confirmation.",
+        "verify_hint": "dropdown option",
+        "probe_terms": ["dropdown", "combo box", "option", "selected"],
+        "recommended_followups": ["set_field_value", "check_checkbox", "focus_main_content"],
+        "surface_flag": "dropdown_open",
+        "prep_workflows": ["focus_input_field"],
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+        "input_sequence": [
+            {
+                "action": "keyboard_type",
+                "field": "text",
+                "phase": "input",
+                "press_enter": True,
+                "reason": "Type and confirm the requested option in the focused dropdown.",
+            },
+        ],
+    },
+    "focus_checkbox": {
+        "title": "Focus Checkbox",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_checkbox",
+        "missing_input_message": "query is required to focus a checkbox.",
+        "support_message": "No generic checkbox workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's form surface before focusing the requested checkbox control.",
+        "input_reason": "",
+        "retry_label": "Checkbox Focus Retry",
+        "retry_reason": "Retry the checkbox focus action if the requested control appeared after a render delay.",
+        "verification_success": "checkbox focused",
+        "verification_failure": "checkbox focus finished, but JARVIS could not confirm the requested checkbox became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful checkbox focus as best-effort confirmation.",
+        "verify_hint": "checkbox",
+        "probe_terms": ["checkbox", "check box", "checked", "unchecked"],
+        "recommended_followups": ["check_checkbox", "uncheck_checkbox", "focus_main_content"],
+        "surface_flag": "checkbox_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus", "control_type": "CheckBox"},
+        "workflow_action_reason": "Focus the requested checkbox through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "check_checkbox": {
+        "title": "Check Checkbox",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "checkbox_toggle_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_check_checkbox",
+        "missing_input_message": "query is required to check a checkbox.",
+        "support_message": "No generic checkbox-toggle workflow is configured for this app.",
+        "hotkey_reason": "Toggle the requested checkbox into its checked state after focusing the control.",
+        "input_reason": "",
+        "retry_label": "Checkbox Check Retry",
+        "retry_reason": "Retry the checkbox toggle if the target control ignored the first request.",
+        "verification_success": "checkbox checked",
+        "verification_failure": "checkbox toggle finished, but JARVIS could not confirm the requested checkbox became checked",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful checkbox toggle as best-effort confirmation.",
+        "verify_hint": "checked",
+        "probe_terms": ["checkbox", "checked", "enabled", "on"],
+        "recommended_followups": ["uncheck_checkbox", "focus_main_content", "search"],
+        "surface_flag": "checkbox_target_checked",
+        "prep_workflows": ["focus_checkbox"],
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "uncheck_checkbox": {
+        "title": "Uncheck Checkbox",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "checkbox_toggle_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_uncheck_checkbox",
+        "missing_input_message": "query is required to uncheck a checkbox.",
+        "support_message": "No generic checkbox-toggle workflow is configured for this app.",
+        "hotkey_reason": "Toggle the requested checkbox into its unchecked state after focusing the control.",
+        "input_reason": "",
+        "retry_label": "Checkbox Uncheck Retry",
+        "retry_reason": "Retry the checkbox toggle if the target control ignored the first request.",
+        "verification_success": "checkbox unchecked",
+        "verification_failure": "checkbox toggle finished, but JARVIS could not confirm the requested checkbox became unchecked",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful checkbox toggle as best-effort confirmation.",
+        "verify_hint": "unchecked",
+        "probe_terms": ["checkbox", "unchecked", "disabled", "off"],
+        "recommended_followups": ["check_checkbox", "focus_main_content", "search"],
+        "surface_flag": "checkbox_target_unchecked",
+        "prep_workflows": ["focus_checkbox"],
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "toggle_switch": {
+        "title": "Toggle Switch",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_toggle_switch",
+        "missing_input_message": "query is required to toggle a switch.",
+        "support_message": "No generic switch-toggle workflow is configured for this app.",
+        "hotkey_reason": "Toggle the requested switch or stateful control.",
+        "input_reason": "",
+        "retry_label": "Switch Toggle Retry",
+        "retry_reason": "Retry the switch action if the requested control appeared after a render delay.",
+        "verification_success": "switch toggled",
+        "verification_failure": "switch action finished, but JARVIS could not confirm the requested control changed state",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful switch action as best-effort confirmation.",
+        "verify_hint": "switch",
+        "probe_terms": ["toggle", "switch", "on", "off"],
+        "recommended_followups": ["focus_main_content", "search"],
+        "surface_flag": "toggle_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Toggle the requested switch through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "enable_switch": {
+        "title": "Enable Switch",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_enable_switch",
+        "missing_input_message": "query is required to enable a specific switch.",
+        "support_message": "No generic switch-enable workflow is configured for this app.",
+        "hotkey_reason": "Turn on the requested switch or stateful control.",
+        "input_reason": "",
+        "retry_label": "Switch Enable Retry",
+        "retry_reason": "Retry the switch-enable action if the requested control appeared after a render delay.",
+        "verification_success": "switch enabled",
+        "verification_failure": "switch-enable action finished, but JARVIS could not confirm the requested control is on",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful switch-enable action as best-effort confirmation.",
+        "verify_hint": "enabled",
+        "probe_terms": ["enable", "turn on", "switch on", "on"],
+        "recommended_followups": ["disable_switch", "focus_main_content", "search"],
+        "surface_flag": "toggle_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Enable the requested switch through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "disable_switch": {
+        "title": "Disable Switch",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_disable_switch",
+        "missing_input_message": "query is required to disable a specific switch.",
+        "support_message": "No generic switch-disable workflow is configured for this app.",
+        "hotkey_reason": "Turn off the requested switch or stateful control.",
+        "input_reason": "",
+        "retry_label": "Switch Disable Retry",
+        "retry_reason": "Retry the switch-disable action if the requested control appeared after a render delay.",
+        "verification_success": "switch disabled",
+        "verification_failure": "switch-disable action finished, but JARVIS could not confirm the requested control is off",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful switch-disable action as best-effort confirmation.",
+        "verify_hint": "disabled",
+        "probe_terms": ["disable", "turn off", "switch off", "off"],
+        "recommended_followups": ["enable_switch", "focus_main_content", "search"],
+        "surface_flag": "toggle_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Disable the requested switch through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "select_radio_option": {
+        "title": "Select Radio Option",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_radio_option",
+        "missing_input_message": "query is required to select a radio option.",
+        "support_message": "No generic radio-option workflow is configured for this app.",
+        "hotkey_reason": "Select the requested radio option after staging the app's form surface.",
+        "input_reason": "",
+        "retry_label": "Radio Option Retry",
+        "retry_reason": "Retry the radio-option action if the requested control appeared after a render delay.",
+        "verification_success": "radio option selected",
+        "verification_failure": "radio selection finished, but JARVIS could not confirm the requested option became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful radio selection as best-effort confirmation.",
+        "verify_hint": "radio option",
+        "probe_terms": ["radio button", "radio option", "selected"],
+        "recommended_followups": ["focus_main_content", "open_dropdown", "focus_value_control"],
+        "surface_flag": "radio_target_selected",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "RadioButton"},
+        "workflow_action_reason": "Select the requested radio option through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "focus_value_control": {
+        "title": "Focus Value Control",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_value_control",
+        "missing_input_message": "query is required to focus a value control.",
+        "support_message": "No generic value-control workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's form surface before focusing the requested slider, spinner, or value control.",
+        "input_reason": "",
+        "retry_label": "Value Control Retry",
+        "retry_reason": "Retry the value-control focus action if the requested control appeared after a render delay.",
+        "verification_success": "value control focused",
+        "verification_failure": "value-control focus finished, but JARVIS could not confirm the requested control became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful value-control focus as best-effort confirmation.",
+        "verify_hint": "value control",
+        "probe_terms": ["slider", "spinner", "stepper", "value control", "number input"],
+        "recommended_followups": ["increase_value", "decrease_value", "focus_main_content"],
+        "surface_flag": "value_control_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus"},
+        "workflow_action_reason": "Focus the requested value control through accessibility after staging the app's form surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "increase_value": {
+        "title": "Increase Value",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_increase_value",
+        "missing_input_message": "query is required to increase a value control.",
+        "support_message": "No generic value-adjustment workflow is configured for this app.",
+        "hotkey_reason": "Focus the requested slider, spinner, or value control before increasing it.",
+        "input_reason": "Increase the focused value control by the requested amount.",
+        "retry_label": "Increase Value Retry",
+        "retry_reason": "Retry the value increase if the control ignored the first adjustment.",
+        "verification_success": "value increased",
+        "verification_failure": "value increase finished, but JARVIS could not confirm the requested control changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful value adjustment as best-effort confirmation.",
+        "verify_hint": "value",
+        "probe_terms": ["slider", "spinner", "stepper", "value", "increment"],
+        "recommended_followups": ["decrease_value", "focus_main_content", "focus_value_control"],
+        "surface_flag": "value_control_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus"},
+        "workflow_action_reason": "Focus the requested value control through accessibility before increasing it.",
+        "prefer_workflow_action": True,
+        "input_sequence": [
+            {
+                "action": "keyboard_hotkey",
+                "keys": ["up"],
+                "repeat_field": "amount",
+                "max_repeat": 20,
+                "phase": "input",
+                "reason": "Increase the focused value control by the requested amount.",
+            },
+        ],
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "decrease_value": {
+        "title": "Decrease Value",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_decrease_value",
+        "missing_input_message": "query is required to decrease a value control.",
+        "support_message": "No generic value-adjustment workflow is configured for this app.",
+        "hotkey_reason": "Focus the requested slider, spinner, or value control before decreasing it.",
+        "input_reason": "Decrease the focused value control by the requested amount.",
+        "retry_label": "Decrease Value Retry",
+        "retry_reason": "Retry the value decrease if the control ignored the first adjustment.",
+        "verification_success": "value decreased",
+        "verification_failure": "value decrease finished, but JARVIS could not confirm the requested control changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful value adjustment as best-effort confirmation.",
+        "verify_hint": "value",
+        "probe_terms": ["slider", "spinner", "stepper", "value", "decrement"],
+        "recommended_followups": ["increase_value", "focus_main_content", "focus_value_control"],
+        "surface_flag": "value_control_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus"},
+        "workflow_action_reason": "Focus the requested value control through accessibility before decreasing it.",
+        "prefer_workflow_action": True,
+        "input_sequence": [
+            {
+                "action": "keyboard_hotkey",
+                "keys": ["down"],
+                "repeat_field": "amount",
+                "max_repeat": 20,
+                "phase": "input",
+                "reason": "Decrease the focused value control by the requested amount.",
+            },
+        ],
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "set_value_control": {
+        "title": "Set Value Control",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "text",
+        "requires_input": True,
+        "required_fields": ["query", "text"],
+        "default_press_enter": False,
+        "route_mode": "workflow_set_value_control",
+        "missing_input_message": "query and text are required to set a value control.",
+        "support_message": "No generic absolute value-control workflow is configured for this app.",
+        "hotkey_reason": "Focus the requested slider, spinner, or numeric control before moving it to the requested value.",
+        "input_reason": "Set the focused value control to the requested target value.",
+        "retry_label": "Set Value Retry",
+        "retry_reason": "Retry the value-setting action after refocusing the requested control if the target state was not reached.",
+        "verification_success": "value control updated",
+        "verification_failure": "value-control update finished, but JARVIS could not confirm the requested target value",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful value-control update as best-effort confirmation.",
+        "verify_hint": "value",
+        "probe_terms": ["slider", "spinner", "stepper", "value", "numeric"],
+        "recommended_followups": ["focus_value_control", "increase_value", "decrease_value"],
+        "surface_flag": "value_control_visible",
+        "prep_workflows": ["focus_form_surface"],
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "focus"},
+        "workflow_action_reason": "Focus the requested value control through accessibility before setting its target value.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "select_tab_page": {
+        "title": "Select Tab Page",
+        "category_hints": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_tab_page",
+        "missing_input_message": "query is required to select a tab page.",
+        "support_message": "No generic tab-page workflow is configured for this app.",
+        "hotkey_reason": "Activate the requested property or settings tab before follow-up actions.",
+        "input_reason": "",
+        "retry_label": "Tab Page Retry",
+        "retry_reason": "Retry the tab-page selection if the property sheet rendered after the first click.",
+        "verification_success": "tab page selected",
+        "verification_failure": "tab-page selection finished, but JARVIS could not confirm the requested tab became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tab-page selection as best-effort confirmation.",
+        "verify_hint": "tab",
+        "probe_terms": ["tab", "page", "property sheet", "settings page"],
+        "recommended_followups": ["focus_form_surface", "focus_main_content", "set_value_control"],
+        "surface_flag": "tab_target_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "TabItem"},
+        "workflow_action_reason": "Activate the requested tab page through accessibility.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+    },
+    "select_tree_item": {
+        "title": "Select Tree Item",
+        "category_hints": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_tree_item",
+        "missing_input_message": "query is required to select a tree item.",
+        "support_message": "No generic tree-item workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's hierarchy surface before selecting the requested tree item.",
+        "input_reason": "",
+        "retry_label": "Tree Item Retry",
+        "retry_reason": "Retry the tree-item action if the hierarchy target appeared after a render delay.",
+        "verification_success": "tree item selected",
+        "verification_failure": "tree item finished, but JARVIS could not confirm the requested hierarchy target was activated",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tree-item action as best-effort confirmation.",
+        "verify_hint": "tree item",
+        "probe_terms": ["tree", "node", "folder"],
+        "recommended_followups": ["expand_tree_item", "open_context_menu", "focus_list_surface"],
+        "surface_flag": "tree_visible",
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "TreeItem"},
+        "workflow_action_reason": "Select the requested tree item through accessibility after staging the hierarchy surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+    },
+    "expand_tree_item": {
+        "title": "Expand Tree Item",
+        "category_hints": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_expand_tree_item",
+        "missing_input_message": "query is required to expand a tree item.",
+        "support_message": "No generic tree-expansion workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's hierarchy surface before expanding the requested tree item.",
+        "input_reason": "",
+        "retry_label": "Tree Expansion Retry",
+        "retry_reason": "Retry the tree-expansion action if the hierarchy target appeared after a render delay.",
+        "verification_success": "tree item expanded",
+        "verification_failure": "tree expansion finished, but JARVIS could not confirm the requested hierarchy target expanded",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tree expansion as best-effort confirmation.",
+        "verify_hint": "expanded",
+        "probe_terms": ["tree", "expanded", "node"],
+        "recommended_followups": ["select_tree_item", "focus_list_surface", "open_context_menu"],
+        "surface_flag": "tree_visible",
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "double_click", "control_type": "TreeItem"},
+        "workflow_action_reason": "Expand the requested tree item through accessibility after staging the hierarchy surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "utility", "ops_console", "general_desktop", "security", "office"},
+    },
+    "select_list_item": {
+        "title": "Select List Item",
+        "category_hints": {"file_manager", "utility", "ops_console", "general_desktop", "chat", "office", "security"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_list_item",
+        "missing_input_message": "query is required to select a list item.",
+        "support_message": "No generic list-item workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's list surface before selecting the requested item.",
+        "input_reason": "",
+        "retry_label": "List Item Retry",
+        "retry_reason": "Retry the list-item action if the requested target appeared after a render delay.",
+        "verification_success": "list item selected",
+        "verification_failure": "list item finished, but JARVIS could not confirm the requested list target was activated",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful list-item action as best-effort confirmation.",
+        "verify_hint": "list item",
+        "probe_terms": ["list", "item", "results"],
+        "recommended_followups": ["open_context_menu", "search", "focus_data_table"],
+        "surface_flag": "list_visible",
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "ListItem"},
+        "workflow_action_reason": "Select the requested list item through accessibility after staging the list surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"file_manager", "utility", "ops_console", "general_desktop", "chat", "office", "security"},
+    },
+    "select_table_row": {
+        "title": "Select Table Row",
+        "category_hints": {"utility", "ops_console", "general_desktop", "security", "office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_table_row",
+        "missing_input_message": "query is required to select a table row.",
+        "support_message": "No generic table-row workflow is configured for this app.",
+        "hotkey_reason": "Stage the app's data table before selecting the requested row.",
+        "input_reason": "",
+        "retry_label": "Table Row Retry",
+        "retry_reason": "Retry the table-row action if the requested row appeared after a render delay.",
+        "verification_success": "table row selected",
+        "verification_failure": "table row finished, but JARVIS could not confirm the requested row was activated",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful table-row action as best-effort confirmation.",
+        "verify_hint": "row",
+        "probe_terms": ["table", "row", "grid"],
+        "recommended_followups": ["open_context_menu", "search", "focus_main_content"],
+        "surface_flag": "table_visible",
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click"},
+        "workflow_action_reason": "Select the requested data row through accessibility after staging the table surface.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"utility", "ops_console", "general_desktop", "security", "office"},
+    },
+    "new_folder": {
+        "title": "New Folder",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "new_folder_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_folder",
+        "missing_input_message": "",
+        "support_message": "No new-folder workflow is configured for this app.",
+        "hotkey_reason": "Create a fresh folder in the current file manager location before follow-up file actions.",
+        "input_reason": "",
+        "retry_label": "New Folder Retry",
+        "retry_reason": "Retry with an alternate new-folder shortcut if the file manager remapped the binding.",
+        "verification_success": "new folder verified",
+        "verification_failure": "new folder finished, but JARVIS could not confirm that a new folder placeholder appeared",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful new-folder workflow as best-effort confirmation.",
+        "verify_hint": "new folder",
+        "probe_terms": ["new folder"],
+        "recommended_followups": ["search", "refresh_view"],
+    },
+    "rename_selection": {
+        "title": "Rename Selection",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "item_rename_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "required_fields": ["text"],
+        "default_press_enter": True,
+        "route_mode": "workflow_rename_selection",
+        "missing_input_message": "text is required to rename the selected item.",
+        "support_message": "No selection-rename workflow is configured for this app.",
+        "hotkey_reason": "Open the active selection's rename surface before typing the requested replacement name.",
+        "input_reason": "Type and submit the requested replacement name for the current selection.",
+        "retry_label": "Rename Selection Retry",
+        "retry_reason": "Retry with an alternate rename shortcut if the current app remapped rename for the selected item.",
+        "verification_success": "selection rename verified",
+        "verification_failure": "selection rename finished, but JARVIS could not confirm the rename surface or replacement name",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful selection-rename workflow as best-effort confirmation.",
+        "verify_hint": "rename",
+        "probe_terms": ["rename", "name"],
+        "recommended_followups": ["refresh_view", "open_properties_dialog", "search"],
+        "surface_flag": "rename_active",
+        "skip_hotkey_when_ready": True,
+    },
+    "open_properties_dialog": {
+        "title": "Open Properties",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "properties_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_properties_dialog",
+        "missing_input_message": "",
+        "support_message": "No properties-dialog workflow is configured for this app.",
+        "hotkey_reason": "Open the active item's properties surface for inspection and follow-up actions.",
+        "input_reason": "",
+        "retry_label": "Properties Retry",
+        "retry_reason": "Retry with an alternate properties shortcut if the current app remapped it.",
+        "verification_success": "properties dialog verified",
+        "verification_failure": "properties dialog finished, but JARVIS could not confirm the properties surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful properties workflow as best-effort confirmation.",
+        "verify_hint": "properties",
+        "probe_terms": ["properties", "general", "details"],
+        "recommended_followups": ["rename_selection", "search", "refresh_view"],
+        "surface_flag": "properties_dialog_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_preview_pane": {
+        "title": "Open Preview Pane",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "preview_pane_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_preview_pane",
+        "missing_input_message": "",
+        "support_message": "No preview-pane workflow is configured for this app.",
+        "hotkey_reason": "Open the active preview pane so JARVIS can inspect or branch from the file preview surface.",
+        "input_reason": "",
+        "retry_label": "Preview Pane Retry",
+        "retry_reason": "Retry with an alternate preview-pane shortcut if the file manager remapped pane visibility controls.",
+        "verification_success": "preview pane verified",
+        "verification_failure": "preview pane finished, but JARVIS could not confirm the preview surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful preview-pane workflow as best-effort confirmation.",
+        "verify_hint": "preview",
+        "probe_terms": ["preview", "preview pane"],
+        "recommended_followups": ["search", "open_properties_dialog", "refresh_view"],
+        "surface_flag": "preview_pane_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_details_pane": {
+        "title": "Open Details Pane",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "details_pane_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_details_pane",
+        "missing_input_message": "",
+        "support_message": "No details-pane workflow is configured for this app.",
+        "hotkey_reason": "Open the active details pane so JARVIS can branch from metadata and selection details.",
+        "input_reason": "",
+        "retry_label": "Details Pane Retry",
+        "retry_reason": "Retry with an alternate details-pane shortcut if the file manager remapped pane visibility controls.",
+        "verification_success": "details pane verified",
+        "verification_failure": "details pane finished, but JARVIS could not confirm the details surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful details-pane workflow as best-effort confirmation.",
+        "verify_hint": "details",
+        "probe_terms": ["details", "details pane"],
+        "recommended_followups": ["open_properties_dialog", "rename_selection", "search"],
+        "surface_flag": "details_pane_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_context_menu": {
+        "title": "Open Context Menu",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "context_menu_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_context_menu",
+        "missing_input_message": "",
+        "support_message": "No context-menu workflow is configured for this app.",
+        "hotkey_reason": "Open the active context or shortcut menu before a follow-up menu action.",
+        "input_reason": "",
+        "retry_label": "Context Menu Retry",
+        "retry_reason": "Retry with an alternate context-menu shortcut if the app remapped or delayed menu activation.",
+        "verification_success": "context menu verified",
+        "verification_failure": "context menu finished, but JARVIS could not confirm the shortcut menu opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful context-menu workflow as best-effort confirmation.",
+        "verify_hint": "menu",
+        "probe_terms": ["context menu", "shortcut menu", "right click menu"],
+        "recommended_followups": ["dismiss_dialog", "confirm_dialog", "focus_main_content"],
+        "surface_flag": "context_menu_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "select_context_menu_item": {
+        "title": "Select Context Menu Item",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_select_context_menu_item",
+        "missing_input_message": "query is required to select a context-menu item.",
+        "support_message": "No generic context-menu item workflow is configured for this app.",
+        "hotkey_reason": "Open the active context menu before invoking the requested menu item.",
+        "input_reason": "",
+        "retry_label": "Context Menu Item Retry",
+        "retry_reason": "Retry the context-menu item action if the requested menu target appeared after a render delay.",
+        "verification_success": "context menu item invoked",
+        "verification_failure": "context menu item finished, but JARVIS could not confirm the requested menu target was activated",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful context-menu item action as best-effort confirmation.",
+        "verify_hint": "menu item",
+        "probe_terms": ["context menu", "shortcut menu", "menu item"],
+        "recommended_followups": ["focus_main_content", "dismiss_dialog", "confirm_dialog"],
+        "surface_flag": "context_menu_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+        "prep_workflows": ["open_context_menu"],
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "MenuItem"},
+        "workflow_action_reason": "Invoke the requested context-menu item through accessibility after staging the active shortcut menu.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "dismiss_dialog": {
+        "title": "Dismiss Dialog",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "dismiss_dialog_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_dismiss_dialog",
+        "missing_input_message": "",
+        "support_message": "No dismiss-dialog workflow is configured for this app.",
+        "hotkey_reason": "Dismiss the active dialog, popup, or context surface before continuing.",
+        "input_reason": "",
+        "retry_label": "Dismiss Surface Retry",
+        "retry_reason": "Retry with an alternate dismiss shortcut if the active surface ignored the first cancel request.",
+        "verification_success": "dismiss surface dispatched",
+        "verification_failure": "dismiss surface finished, but JARVIS could not confirm the modal or menu closed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful dismiss action as best-effort confirmation.",
+        "verify_hint": "cancel",
+        "probe_terms": ["cancel", "close", "dismiss", "popup"],
+        "recommended_followups": ["focus_main_content", "search"],
+        "surface_flag": "dismissible_surface_visible",
+    },
+    "confirm_dialog": {
+        "title": "Confirm Dialog",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "confirm_dialog_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_confirm_dialog",
+        "missing_input_message": "",
+        "support_message": "No confirm-dialog workflow is configured for this app.",
+        "hotkey_reason": "Confirm the active dialog or modal surface before continuing.",
+        "input_reason": "",
+        "retry_label": "Confirm Surface Retry",
+        "retry_reason": "Retry with an alternate confirm shortcut if the active dialog ignored the first confirmation.",
+        "verification_success": "confirm surface dispatched",
+        "verification_failure": "confirm surface finished, but JARVIS could not confirm the dialog was accepted",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful confirm action as best-effort confirmation.",
+        "verify_hint": "ok",
+        "probe_terms": ["ok", "apply", "confirm", "continue"],
+        "recommended_followups": ["focus_main_content", "search"],
+        "surface_flag": "dialog_visible",
+    },
+    "press_dialog_button": {
+        "title": "Press Dialog Button",
+        "category_hints": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "required_fields": ["query"],
+        "default_press_enter": False,
+        "route_mode": "workflow_press_dialog_button",
+        "missing_input_message": "query is required to press a dialog button.",
+        "support_message": "No generic dialog-button workflow is configured for this app.",
+        "hotkey_reason": "Target the active dialog before invoking the requested button.",
+        "input_reason": "",
+        "retry_label": "Dialog Button Retry",
+        "retry_reason": "Retry the dialog-button action if the requested control appeared after a render delay.",
+        "verification_success": "dialog button invoked",
+        "verification_failure": "dialog button finished, but JARVIS could not confirm the requested dialog action was accepted",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful dialog-button action as best-effort confirmation.",
+        "verify_hint": "button",
+        "probe_terms": ["dialog", "popup", "modal", "button"],
+        "recommended_followups": ["focus_main_content", "search"],
+        "surface_flag": "dialog_visible",
+        "skip_input_steps": True,
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "{{args.query}}", "action": "click", "control_type": "Button"},
+        "workflow_action_reason": "Invoke the requested dialog button through accessibility while the modal surface is active.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"},
+    },
+    "next_wizard_step": {
+        "title": "Next Wizard Step",
+        "category_hints": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "hotkey_field": "wizard_next_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_next_wizard_step",
+        "missing_input_message": "",
+        "support_message": "No wizard-step workflow is configured for this app.",
+        "hotkey_reason": "Advance the active setup or installer wizard to the next step.",
+        "input_reason": "",
+        "retry_label": "Wizard Next Retry",
+        "retry_reason": "Retry with an alternate wizard accelerator if the setup flow ignored the first advance action.",
+        "verification_success": "wizard advanced",
+        "verification_failure": "wizard advance finished, but JARVIS could not confirm that the next step opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful wizard advance as best-effort confirmation.",
+        "verify_hint": "next",
+        "probe_terms": ["wizard", "installer", "setup", "next", "continue"],
+        "recommended_followups": ["finish_wizard", "dismiss_dialog", "confirm_dialog"],
+        "surface_flag": "wizard_next_available",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Next", "action": "click", "control_type": "Button"},
+        "workflow_action_reason": "Invoke the wizard Next button through accessibility before falling back to keyboard accelerators.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+    },
+    "previous_wizard_step": {
+        "title": "Previous Wizard Step",
+        "category_hints": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "hotkey_field": "wizard_back_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_previous_wizard_step",
+        "missing_input_message": "",
+        "support_message": "No wizard-back workflow is configured for this app.",
+        "hotkey_reason": "Return the active setup or installer wizard to the previous step.",
+        "input_reason": "",
+        "retry_label": "Wizard Back Retry",
+        "retry_reason": "Retry with an alternate wizard accelerator if the setup flow ignored the first back action.",
+        "verification_success": "wizard moved back",
+        "verification_failure": "wizard back action finished, but JARVIS could not confirm that the previous step opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful wizard back action as best-effort confirmation.",
+        "verify_hint": "back",
+        "probe_terms": ["wizard", "installer", "setup", "back", "previous"],
+        "recommended_followups": ["next_wizard_step", "dismiss_dialog"],
+        "surface_flag": "wizard_back_available",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Back", "action": "click", "control_type": "Button"},
+        "workflow_action_reason": "Invoke the wizard Back button through accessibility before falling back to keyboard accelerators.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+    },
+    "finish_wizard": {
+        "title": "Finish Wizard",
+        "category_hints": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "hotkey_field": "wizard_finish_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_finish_wizard",
+        "missing_input_message": "",
+        "support_message": "No wizard-finish workflow is configured for this app.",
+        "hotkey_reason": "Finish the active setup or installer wizard when the completion step is ready.",
+        "input_reason": "",
+        "retry_label": "Wizard Finish Retry",
+        "retry_reason": "Retry with an alternate finish accelerator if the setup flow ignored the first completion action.",
+        "verification_success": "wizard finish dispatched",
+        "verification_failure": "wizard finish finished, but JARVIS could not confirm the installer accepted the completion step",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful wizard finish action as best-effort confirmation.",
+        "verify_hint": "finish",
+        "probe_terms": ["wizard", "installer", "setup", "finish", "done", "complete"],
+        "recommended_followups": ["confirm_dialog", "dismiss_dialog"],
+        "surface_flag": "wizard_finish_available",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Finish", "action": "click", "control_type": "Button"},
+        "workflow_action_reason": "Invoke the wizard Finish button through accessibility before falling back to keyboard accelerators.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+    },
+    "complete_wizard_page": {
+        "title": "Complete Wizard Page",
+        "category_hints": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_complete_wizard_page",
+        "missing_input_message": "",
+        "support_message": "No page-completion workflow is configured for this wizard surface.",
+        "hotkey_reason": "Resolve the current wizard page requirements and then advance through the preferred live confirmation control.",
+        "input_reason": "",
+        "retry_label": "Wizard Page Completion Retry",
+        "retry_reason": "Retry the wizard page completion sequence if the setup surface refreshed after JARVIS staged a prerequisite control.",
+        "verification_success": "wizard page completion dispatched",
+        "verification_failure": "wizard page completion finished, but JARVIS could not confirm the setup page advanced",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful wizard page completion as best-effort confirmation.",
+        "verify_hint": "wizard",
+        "probe_terms": ["wizard", "installer", "setup", "continue setup", "license agreement", "ready to install"],
+        "recommended_followups": ["next_wizard_step", "finish_wizard", "dismiss_dialog"],
+        "surface_flag": "wizard_surface_visible",
+        "skip_input_steps": True,
+        "supports_stateful_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "supports_action_dispatch_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+    },
+    "complete_wizard_flow": {
+        "title": "Complete Wizard Flow",
+        "category_hints": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_complete_wizard_flow",
+        "missing_input_message": "",
+        "support_message": "No autonomous wizard-flow workflow is configured for this setup surface.",
+        "hotkey_reason": "",
+        "input_reason": "",
+        "retry_label": "Wizard Flow Recovery Retry",
+        "retry_reason": "Retry the autonomous wizard flow with an alternate recovery strategy if the setup surface stalls.",
+        "verification_success": "wizard flow completed",
+        "verification_failure": "wizard flow stopped before all setup pages could be completed safely",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful wizard mission result as best-effort confirmation.",
+        "verify_hint": "setup complete",
+        "probe_terms": ["wizard", "installer", "setup", "installation complete", "setup complete", "finish", "done"],
+        "recommended_followups": ["dismiss_dialog"],
+        "surface_flag": "wizard_surface_visible",
+        "skip_input_steps": True,
+        "supports_stateful_categories": {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"},
+    },
+    "complete_form_page": {
+        "title": "Complete Form Page",
+        "category_hints": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_complete_form_page",
+        "missing_input_message": "",
+        "support_message": "No autonomous form-page workflow is configured for this settings or dialog surface.",
+        "hotkey_reason": "",
+        "input_reason": "",
+        "retry_label": "Form Page Completion Retry",
+        "retry_reason": "Retry the form-page completion sequence if the settings or dialog surface refreshed after JARVIS staged a prerequisite control.",
+        "verification_success": "form page completion dispatched",
+        "verification_failure": "form page completion finished, but JARVIS could not confirm the form committed or advanced",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful form-page completion as best-effort confirmation.",
+        "verify_hint": "settings saved",
+        "probe_terms": ["settings", "options", "properties", "dialog", "save", "apply", "ok", "done", "submit"],
+        "recommended_followups": ["confirm_dialog", "dismiss_dialog"],
+        "surface_flag": "form_visible",
+        "skip_input_steps": True,
+        "supports_stateful_categories": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+        "supports_action_dispatch_categories": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+    },
+    "complete_form_flow": {
+        "title": "Complete Form Flow",
+        "category_hints": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_complete_form_flow",
+        "missing_input_message": "",
+        "support_message": "No autonomous form-flow workflow is configured for this settings or dialog surface.",
+        "hotkey_reason": "",
+        "input_reason": "",
+        "retry_label": "Form Flow Recovery Retry",
+        "retry_reason": "Retry the autonomous form flow with an alternate recovery strategy if the settings surface stalls.",
+        "verification_success": "form flow completed",
+        "verification_failure": "form flow stopped before all settings or dialog pages could be completed safely",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful form mission result as best-effort confirmation.",
+        "verify_hint": "settings applied",
+        "probe_terms": ["settings", "options", "properties", "dialog", "save changes", "apply changes", "ok", "done", "submit"],
+        "recommended_followups": ["dismiss_dialog"],
+        "surface_flag": "form_visible",
+        "skip_input_steps": True,
+        "supports_stateful_categories": {"file_manager", "office", "utility", "ops_console", "security", "general_desktop", "ai_companion"},
+    },
+    "refresh_view": {
+        "title": "Refresh View",
+        "category_hints": {"browser", "file_manager", "ops_console", "general_desktop"},
+        "hotkey_field": "refresh_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_refresh_view",
+        "missing_input_message": "",
+        "support_message": "No refresh workflow is configured for this app.",
+        "hotkey_reason": "Refresh the current view to reload the visible state before a follow-up action.",
+        "input_reason": "",
+        "retry_label": "Refresh Retry",
+        "retry_reason": "Retry with an alternate refresh shortcut for apps with custom reload bindings.",
+        "verification_success": "refresh verified",
+        "verification_failure": "refresh finished, but JARVIS could not confirm the view changed or reloaded",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful refresh workflow as best-effort confirmation.",
+        "probe_terms": ["refresh"],
+        "recommended_followups": ["search", "navigate"],
+        "surface_flag": "navigation_surface_ready",
+        "self_verifying": True,
+    },
+    "go_back": {
+        "title": "Go Back",
+        "category_hints": {"browser", "file_manager"},
+        "hotkey_field": "back_navigation_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_go_back",
+        "missing_input_message": "",
+        "support_message": "No back-navigation workflow is configured for this app.",
+        "hotkey_reason": "Navigate backward in the active browser or file-manager history stack.",
+        "input_reason": "",
+        "retry_label": "Back Navigation Retry",
+        "retry_reason": "Retry with an alternate back-navigation shortcut if the app remapped history traversal.",
+        "verification_success": "back navigation verified",
+        "verification_failure": "back navigation finished, but JARVIS could not confirm the history transition completed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful back-navigation workflow as best-effort confirmation.",
+        "recommended_followups": ["go_forward", "refresh_view", "search"],
+        "surface_flag": "navigation_surface_ready",
+        "self_verifying": True,
+    },
+    "go_forward": {
+        "title": "Go Forward",
+        "category_hints": {"browser", "file_manager"},
+        "hotkey_field": "forward_navigation_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_go_forward",
+        "missing_input_message": "",
+        "support_message": "No forward-navigation workflow is configured for this app.",
+        "hotkey_reason": "Navigate forward in the active browser or file-manager history stack.",
+        "input_reason": "",
+        "retry_label": "Forward Navigation Retry",
+        "retry_reason": "Retry with an alternate forward-navigation shortcut if the app remapped history traversal.",
+        "verification_success": "forward navigation verified",
+        "verification_failure": "forward navigation finished, but JARVIS could not confirm the history transition completed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful forward-navigation workflow as best-effort confirmation.",
+        "recommended_followups": ["go_back", "refresh_view", "search"],
+        "surface_flag": "navigation_surface_ready",
+        "self_verifying": True,
+    },
+    "go_up_level": {
+        "title": "Go Up Level",
+        "category_hints": {"file_manager"},
+        "hotkey_field": "up_level_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_go_up_level",
+        "missing_input_message": "",
+        "support_message": "No up-level workflow is configured for this app.",
+        "hotkey_reason": "Move to the parent folder before continuing the file manager workflow.",
+        "input_reason": "",
+        "retry_label": "Up Level Retry",
+        "retry_reason": "Retry with an alternate parent-folder shortcut if the file manager remapped navigation.",
+        "verification_success": "parent folder verified",
+        "verification_failure": "up-level finished, but JARVIS could not confirm the file manager location changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful up-level workflow as best-effort confirmation.",
+        "probe_terms": ["up", "parent folder"],
+        "recommended_followups": ["focus_address_bar", "search"],
+    },
+    "workspace_search": {
+        "title": "Workspace Search",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "workspace_search_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": False,
+        "route_mode": "workflow_workspace_search",
+        "missing_input_message": "query is required for workspace search workflows.",
+        "support_message": "No workspace-search workflow is configured for this app.",
+        "hotkey_reason": "Open the workspace search surface before typing the requested cross-file query.",
+        "input_reason": "Type the requested cross-file query into the workspace search panel.",
+        "retry_label": "Workspace Search Retry",
+        "retry_reason": "Retry with an alternate workspace-search shortcut for editor and IDE workflows.",
+        "verification_success": "workspace search verified",
+        "verification_failure": "workspace search finished, but JARVIS could not confirm the search surface or query state",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful workspace-search workflow as best-effort confirmation.",
+        "probe_terms": ["search", "find in files"],
+        "recommended_followups": ["quick_open", "go_to_symbol"],
+        "surface_flag": "workspace_search_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "find_replace": {
+        "title": "Find And Replace",
+        "category_hints": {"code_editor", "ide", "office"},
+        "hotkey_field": "replace_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "required_fields": ["query", "text"],
+        "default_press_enter": False,
+        "route_mode": "workflow_find_replace",
+        "missing_input_message": "query and text are required for find-and-replace workflows.",
+        "support_message": "No find-and-replace workflow is configured for this app.",
+        "hotkey_reason": "Open the app's replace surface before seeding the requested find and replacement text.",
+        "input_reason": "Seed the active replace surface with the requested find and replacement text.",
+        "retry_label": "Replace Retry",
+        "retry_reason": "Retry with an alternate replace shortcut for editors, IDEs, and document apps.",
+        "verification_success": "find and replace verified",
+        "verification_failure": "find and replace finished, but JARVIS could not confirm the replace surface or requested values",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful find-and-replace workflow as best-effort confirmation.",
+        "verify_hint": "replace",
+        "probe_terms": ["replace", "replace with", "find what"],
+        "recommended_followups": ["search", "save_document", "format_document"],
+        "surface_flag": "replace_visible",
+        "skip_hotkey_when_ready": True,
+        "input_sequence": [
+            {
+                "field": "query",
+                "phase": "workflow_target",
+                "press_enter": False,
+                "reason": "Type the requested match text into the replace surface's find field.",
+            },
+            {
+                "action": "keyboard_hotkey",
+                "keys": ["tab"],
+                "phase": "workflow_target",
+                "reason": "Move focus from the find field into the replacement field.",
+            },
+            {
+                "field": "text",
+                "phase": "input",
+                "press_enter": False,
+                "reason": "Type the requested replacement text into the active replace field.",
+            },
+        ],
+    },
+    "go_to_symbol": {
+        "title": "Go To Symbol",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "symbol_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": False,
+        "route_mode": "workflow_go_to_symbol",
+        "missing_input_message": "query is required for symbol workflows.",
+        "support_message": "No go-to-symbol workflow is configured for this app.",
+        "hotkey_reason": "Open the symbol search surface before typing the requested symbol name.",
+        "input_reason": "Type the requested symbol name into the active symbol picker.",
+        "retry_label": "Symbol Retry",
+        "retry_reason": "Retry with an alternate symbol-search shortcut for editor-style apps.",
+        "verification_success": "symbol search verified",
+        "verification_failure": "symbol search finished, but JARVIS could not confirm the symbol picker or requested symbol state",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful symbol-search workflow as best-effort confirmation.",
+        "verify_hint": "symbol",
+        "probe_terms": ["symbol", "outline"],
+        "recommended_followups": ["rename_symbol", "command"],
+        "surface_flag": "symbol_picker_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "rename_symbol": {
+        "title": "Rename Symbol",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "rename_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_rename_symbol",
+        "missing_input_message": "text is required for rename-symbol workflows.",
+        "support_message": "No rename-symbol workflow is configured for this app.",
+        "hotkey_reason": "Open the active symbol rename surface before typing the new symbol name.",
+        "input_reason": "Type the requested replacement symbol into the active rename surface.",
+        "retry_label": "Rename Retry",
+        "retry_reason": "Retry with an alternate rename shortcut for editor-style apps.",
+        "verification_success": "rename verified",
+        "verification_failure": "rename finished, but JARVIS could not confirm the rename surface or replacement symbol state",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful rename workflow as best-effort confirmation.",
+        "probe_terms": ["rename", "symbol"],
+        "recommended_followups": ["format_document", "workspace_search"],
+    },
+    "new_tab": {
+        "title": "New Tab",
+        "category_hints": {"browser", "terminal", "file_manager"},
+        "hotkey_field": "new_tab_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_tab",
+        "missing_input_message": "",
+        "support_message": "No new-tab workflow is configured for this app.",
+        "hotkey_reason": "Create a fresh tab or workspace surface before continuing with follow-up actions.",
+        "input_reason": "",
+        "retry_label": "New Tab Retry",
+        "retry_reason": "Retry with an alternate new-tab shortcut for apps with custom bindings.",
+        "verification_success": "new tab verified",
+        "verification_failure": "new tab finished, but JARVIS could not confirm a fresh tab or surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful new-tab workflow as best-effort confirmation.",
+    },
+    "switch_tab": {
+        "title": "Switch Tab",
+        "category_hints": {"browser", "code_editor", "ide", "terminal", "ops_console", "utility", "file_manager"},
+        "hotkey_field": "next_tab_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": False,
+        "route_mode": "workflow_switch_tab",
+        "missing_input_message": "query is required to switch tabs or sections.",
+        "support_message": "No tab-switch workflow is configured for this app.",
+        "hotkey_reason": "Switch the active tab or section using a hotkey chosen from the requested tab target.",
+        "input_reason": "",
+        "retry_label": "Tab Switch Retry",
+        "retry_reason": "Retry with an alternate tab-navigation shortcut if the app remapped the standard tab controls.",
+        "verification_success": "tab switch verified",
+        "verification_failure": "tab switch finished, but JARVIS could not confirm the active tab or section changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tab switch as best-effort confirmation.",
+        "verify_hint": "tab",
+        "probe_terms": ["tab"],
+        "recommended_followups": ["search", "close_tab", "navigate"],
+        "surface_flag": "tabbed_surface_ready",
+    },
+    "close_tab": {
+        "title": "Close Tab",
+        "category_hints": {"browser", "code_editor", "ide", "file_manager"},
+        "hotkey_field": "close_tab_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_close_tab",
+        "missing_input_message": "",
+        "support_message": "No close-tab workflow is configured for this app.",
+        "hotkey_reason": "Close the active tab or editor surface in the current app.",
+        "input_reason": "",
+        "retry_label": "Close Tab Retry",
+        "retry_reason": "Retry with an alternate close-tab shortcut for apps with custom bindings.",
+        "verification_success": "close tab verified",
+        "verification_failure": "close tab finished, but JARVIS could not confirm the active surface changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful close-tab workflow as best-effort confirmation.",
+    },
+    "reopen_tab": {
+        "title": "Reopen Tab",
+        "category_hints": {"browser", "code_editor", "ide", "file_manager"},
+        "hotkey_field": "reopen_tab_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_reopen_tab",
+        "missing_input_message": "",
+        "support_message": "No reopen-tab workflow is configured for this app.",
+        "hotkey_reason": "Restore the most recently closed tab or editor surface.",
+        "input_reason": "",
+        "retry_label": "Reopen Tab Retry",
+        "retry_reason": "Retry with an alternate reopen-tab shortcut for apps with custom bindings.",
+        "verification_success": "reopen tab verified",
+        "verification_failure": "reopen tab finished, but JARVIS could not confirm the previous surface was restored",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful reopen-tab workflow as best-effort confirmation.",
+    },
+    "open_history": {
+        "title": "Open History",
+        "category_hints": {"browser"},
+        "hotkey_field": "history_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_history",
+        "missing_input_message": "",
+        "support_message": "No history workflow is configured for this app.",
+        "hotkey_reason": "Open the browser history surface to inspect recent destinations and sessions.",
+        "input_reason": "",
+        "retry_label": "History Retry",
+        "retry_reason": "Retry with an alternate history shortcut if the app remapped the standard browser binding.",
+        "verification_success": "history verified",
+        "verification_failure": "history finished, but JARVIS could not confirm the history surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful history workflow as best-effort confirmation.",
+        "verify_hint": "history",
+        "probe_terms": ["history", "recently closed"],
+        "recommended_followups": ["navigate", "new_tab", "open_bookmarks"],
+        "surface_flag": "history_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_downloads": {
+        "title": "Open Downloads",
+        "category_hints": {"browser"},
+        "hotkey_field": "downloads_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_downloads",
+        "missing_input_message": "",
+        "support_message": "No downloads workflow is configured for this app.",
+        "hotkey_reason": "Open the browser downloads surface to inspect recent files and transfers.",
+        "input_reason": "",
+        "retry_label": "Downloads Retry",
+        "retry_reason": "Retry with an alternate downloads shortcut if the app remapped the standard browser binding.",
+        "verification_success": "downloads verified",
+        "verification_failure": "downloads finished, but JARVIS could not confirm the downloads surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful downloads workflow as best-effort confirmation.",
+        "verify_hint": "downloads",
+        "probe_terms": ["downloads", "download"],
+        "recommended_followups": ["new_tab", "search", "navigate"],
+        "surface_flag": "downloads_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_devtools": {
+        "title": "Open DevTools",
+        "category_hints": {"browser"},
+        "hotkey_field": "devtools_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_devtools",
+        "missing_input_message": "",
+        "support_message": "No developer-tools workflow is configured for this app.",
+        "hotkey_reason": "Open the app's developer tools surface for inspection and debugging.",
+        "input_reason": "",
+        "retry_label": "DevTools Retry",
+        "retry_reason": "Retry with an alternate developer-tools shortcut for apps that prefer a different binding.",
+        "verification_success": "developer tools verified",
+        "verification_failure": "developer tools finished, but JARVIS could not confirm the tool surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful developer-tools workflow as best-effort confirmation.",
+        "verify_hint": "elements",
+        "probe_terms": ["developer tools", "elements", "console"],
+        "recommended_followups": ["search", "navigate", "new_tab"],
+        "surface_flag": "devtools_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_tab_search": {
+        "title": "Open Tab Search",
+        "category_hints": {"browser"},
+        "hotkey_field": "tab_search_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_tab_search",
+        "missing_input_message": "",
+        "support_message": "No tab-search workflow is configured for this browser.",
+        "hotkey_reason": "Open the browser's tab-search surface before filtering the active tab list.",
+        "input_reason": "",
+        "retry_label": "Tab Search Retry",
+        "retry_reason": "Retry with an alternate tab-search shortcut if the browser remapped the tab switcher.",
+        "verification_success": "tab search verified",
+        "verification_failure": "tab search finished, but JARVIS could not confirm the open-tab search surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tab-search workflow as best-effort confirmation.",
+        "verify_hint": "search tabs",
+        "probe_terms": ["search tabs", "search open tabs", "tab search", "open tabs"],
+        "recommended_followups": ["search_tabs", "switch_tab", "close_tab"],
+        "surface_flag": "tab_search_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "search_tabs": {
+        "title": "Search Tabs",
+        "category_hints": {"browser"},
+        "hotkey_field": "tab_search_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": False,
+        "route_mode": "workflow_search_tabs",
+        "missing_input_message": "query is required to search browser tabs.",
+        "support_message": "No tab-search workflow is configured for this browser.",
+        "hotkey_reason": "Open the browser's tab-search surface before filtering the active tab list.",
+        "input_reason": "Type the requested tab query into the browser's open-tab search surface.",
+        "retry_label": "Search Tabs Retry",
+        "retry_reason": "Retry with an alternate tab-search shortcut if the browser remapped the tab switcher.",
+        "verification_success": "tab query verified",
+        "verification_failure": "tab search finished, but JARVIS could not confirm the requested tab query became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tab-search workflow as best-effort confirmation.",
+        "verify_hint": "search tabs",
+        "probe_terms": ["search tabs", "search open tabs", "tab search", "open tabs"],
+        "recommended_followups": ["switch_tab", "close_tab", "new_tab"],
+        "surface_flag": "tab_search_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+        "prep_workflows": ["open_tab_search"],
+        "replace_primary_hotkey_with_prep": True,
+    },
+    "new_chat": {
+        "title": "New Chat",
+        "category_hints": {"chat"},
+        "hotkey_field": "new_chat_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_chat",
+        "missing_input_message": "",
+        "support_message": "No new-chat workflow is configured for this chat app.",
+        "hotkey_reason": "Open the chat app's new-conversation surface before a follow-up recipient or message action.",
+        "input_reason": "",
+        "retry_label": "New Chat Retry",
+        "retry_reason": "Retry with an alternate new-conversation shortcut for chat apps that remap message composition.",
+        "verification_success": "new chat verified",
+        "verification_failure": "new chat finished, but JARVIS could not confirm the chat composer or recipient picker opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful new-chat workflow as best-effort confirmation.",
+        "verify_hint": "new message",
+        "probe_terms": ["new message", "new chat", "search or start new chat"],
+        "recommended_followups": ["jump_to_conversation", "send_message"],
+        "surface_flag": "conversation_picker_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "jump_to_conversation": {
+        "title": "Jump To Conversation",
+        "category_hints": {"chat"},
+        "hotkey_field": "conversation_hotkeys",
+        "input_field": "query",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_jump_to_conversation",
+        "missing_input_message": "query is required to target a chat conversation.",
+        "support_message": "No conversation-switch workflow is configured for this chat app.",
+        "hotkey_reason": "Open the chat app's conversation switcher before selecting the requested recipient or thread.",
+        "input_reason": "Type the requested recipient or conversation target into the active switcher.",
+        "retry_label": "Conversation Switch Retry",
+        "retry_reason": "Retry with an alternate conversation-switch shortcut for chat apps that remap quick switching.",
+        "verification_success": "conversation switch verified",
+        "verification_failure": "conversation switch finished, but JARVIS could not confirm the requested conversation target became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful conversation switch as best-effort confirmation.",
+        "probe_terms": ["search", "messages", "people"],
+        "recommended_followups": ["send_message", "search"],
+        "surface_flag": "conversation_picker_visible",
+        "skip_hotkey_when_ready": True,
+    },
+    "send_message": {
+        "title": "Send Message",
+        "category_hints": {"chat", "ai_companion"},
+        "hotkey_field": "conversation_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "required_fields": ["text"],
+        "default_press_enter": True,
+        "route_mode": "workflow_send_message",
+        "missing_input_message": "text is required to send a message.",
+        "support_message": "No message-send workflow is configured for this app. Chat and AI companion profiles can usually type directly into the active composer.",
+        "hotkey_reason": "Open the app's conversation switcher before targeting the requested recipient.",
+        "input_reason": "Type and submit the requested message in the active conversation or prompt surface.",
+        "retry_label": "Send Message Retry",
+        "retry_reason": "Retry with an alternate conversation-switch shortcut before sending the requested message.",
+        "verification_success": "message send verified",
+        "verification_failure": "message send finished, but JARVIS could not confirm the requested message reached the active conversation",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful message-send workflow as best-effort confirmation.",
+        "probe_terms": ["type a message", "write a message", "reply"],
+        "recommended_followups": ["search", "jump_to_conversation"],
+        "supports_without_hotkey_categories": {"chat", "ai_companion"},
+        "hotkey_requires_target_query": True,
+        "surface_flag": "message_compose_ready",
+        "input_sequence": [
+            {
+                "field": "query",
+                "phase": "workflow_target",
+                "press_enter": True,
+                "optional": True,
+                "reason": "Select the requested recipient or conversation before sending the message.",
+            },
+            {
+                "field": "text",
+                "phase": "input",
+                "press_enter": True,
+                "reason": "Type and submit the requested message in the active conversation or prompt surface.",
+            },
+        ],
+    },
+    "new_email_draft": {
+        "title": "New Email Draft",
+        "category_hints": {"office"},
+        "hotkey_field": "new_email_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_email_draft",
+        "missing_input_message": "",
+        "support_message": "No new-email workflow is configured for this app.",
+        "hotkey_reason": "Open a fresh mail compose surface before filling recipients, subject lines, or body content.",
+        "input_reason": "",
+        "retry_label": "New Email Retry",
+        "retry_reason": "Retry with an alternate compose shortcut for desktop mail apps that remap message creation.",
+        "verification_success": "new email draft verified",
+        "verification_failure": "new email draft finished, but JARVIS could not confirm the compose window opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful new-email workflow as best-effort confirmation.",
+        "verify_hint": "subject",
+        "probe_terms": ["new message", "subject", "to"],
+        "recommended_followups": ["search", "save_document"],
+        "surface_flag": "email_compose_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_mail_view": {
+        "title": "Open Mail View",
+        "category_hints": {"office"},
+        "hotkey_field": "mail_view_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_mail_view",
+        "missing_input_message": "",
+        "support_message": "No mail-view workflow is configured for this app.",
+        "hotkey_reason": "Switch the mail client back to its primary mail or inbox view before follow-up actions.",
+        "input_reason": "",
+        "retry_label": "Mail View Retry",
+        "retry_reason": "Retry with an alternate mail-view shortcut if the app remapped module switching.",
+        "verification_success": "mail view verified",
+        "verification_failure": "mail view finished, but JARVIS could not confirm the mail surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful mail-view workflow as best-effort confirmation.",
+        "verify_hint": "inbox",
+        "probe_terms": ["inbox", "mail", "message list"],
+        "recommended_followups": ["new_email_draft", "search"],
+        "surface_flag": "mail_view_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_calendar_view": {
+        "title": "Open Calendar View",
+        "category_hints": {"office"},
+        "hotkey_field": "calendar_view_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_calendar_view",
+        "missing_input_message": "",
+        "support_message": "No calendar-view workflow is configured for this app.",
+        "hotkey_reason": "Switch the mail client into its calendar surface before follow-up scheduling actions.",
+        "input_reason": "",
+        "retry_label": "Calendar View Retry",
+        "retry_reason": "Retry with an alternate calendar-view shortcut if the app remapped module switching.",
+        "verification_success": "calendar view verified",
+        "verification_failure": "calendar view finished, but JARVIS could not confirm the calendar surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful calendar-view workflow as best-effort confirmation.",
+        "verify_hint": "calendar",
+        "probe_terms": ["calendar", "meeting", "schedule"],
+        "recommended_followups": ["search", "new_email_draft"],
+        "surface_flag": "calendar_view_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_people_view": {
+        "title": "Open People View",
+        "category_hints": {"office"},
+        "hotkey_field": "people_view_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_people_view",
+        "missing_input_message": "",
+        "support_message": "No people-view workflow is configured for this app.",
+        "hotkey_reason": "Switch the mail client into its people or contacts surface before follow-up contact actions.",
+        "input_reason": "",
+        "retry_label": "People View Retry",
+        "retry_reason": "Retry with an alternate people-view shortcut if the app remapped module switching.",
+        "verification_success": "people view verified",
+        "verification_failure": "people view finished, but JARVIS could not confirm the contacts surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful people-view workflow as best-effort confirmation.",
+        "verify_hint": "people",
+        "probe_terms": ["people", "contacts", "contact list"],
+        "recommended_followups": ["search", "new_email_draft"],
+        "surface_flag": "people_view_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "open_tasks_view": {
+        "title": "Open Tasks View",
+        "category_hints": {"office"},
+        "hotkey_field": "tasks_view_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_open_tasks_view",
+        "missing_input_message": "",
+        "support_message": "No tasks-view workflow is configured for this app.",
+        "hotkey_reason": "Switch the mail client into its task or to-do surface before follow-up planning actions.",
+        "input_reason": "",
+        "retry_label": "Tasks View Retry",
+        "retry_reason": "Retry with an alternate tasks-view shortcut if the app remapped module switching.",
+        "verification_success": "tasks view verified",
+        "verification_failure": "tasks view finished, but JARVIS could not confirm the tasks surface became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful tasks-view workflow as best-effort confirmation.",
+        "verify_hint": "tasks",
+        "probe_terms": ["tasks", "to do", "todo"],
+        "recommended_followups": ["search", "new_email_draft"],
+        "surface_flag": "tasks_view_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "focus_folder_pane": {
+        "title": "Focus Folder Pane",
+        "category_hints": {"office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_folder_pane",
+        "missing_input_message": "",
+        "support_message": "No folder-pane workflow is configured for this mail app.",
+        "hotkey_reason": "Focus the Outlook folder pane before mailbox navigation actions.",
+        "input_reason": "",
+        "retry_label": "Folder Pane Retry",
+        "retry_reason": "Retry the folder-pane focus action if Outlook delayed accessibility exposure.",
+        "verification_success": "folder pane focused",
+        "verification_failure": "folder-pane focus finished, but JARVIS could not confirm the mailbox folder surface became ready",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful folder-pane focus workflow as best-effort confirmation.",
+        "probe_terms": ["folder pane", "folders", "mail folders", "favorites"],
+        "recommended_followups": ["open_mail_view", "open_calendar_view", "focus_message_list"],
+        "surface_flag": "folder_pane_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Folder Pane", "action": "focus", "control_type": "Pane"},
+        "workflow_action_reason": "Focus the Outlook folder pane through accessibility before mailbox navigation.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"office"},
+    },
+    "focus_message_list": {
+        "title": "Focus Message List",
+        "category_hints": {"office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_message_list",
+        "missing_input_message": "",
+        "support_message": "No message-list workflow is configured for this mail app.",
+        "hotkey_reason": "Focus the Outlook message list before triage or reply workflows.",
+        "input_reason": "",
+        "retry_label": "Message List Retry",
+        "retry_reason": "Retry the message-list focus action if Outlook delayed accessibility exposure.",
+        "verification_success": "message list focused",
+        "verification_failure": "message-list focus finished, but JARVIS could not confirm the message list became ready",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful message-list focus workflow as best-effort confirmation.",
+        "probe_terms": ["message list", "inbox list", "messages", "conversation list"],
+        "recommended_followups": ["reply_email", "reply_all_email", "forward_email"],
+        "surface_flag": "message_list_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Message List", "action": "focus", "control_type": "List"},
+        "workflow_action_reason": "Focus the Outlook message list through accessibility before email triage actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"office"},
+    },
+    "focus_reading_pane": {
+        "title": "Focus Reading Pane",
+        "category_hints": {"office"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_focus_reading_pane",
+        "missing_input_message": "",
+        "support_message": "No reading-pane workflow is configured for this mail app.",
+        "hotkey_reason": "Focus the Outlook reading pane before review or follow-up compose actions.",
+        "input_reason": "",
+        "retry_label": "Reading Pane Retry",
+        "retry_reason": "Retry the reading-pane focus action if Outlook delayed accessibility exposure.",
+        "verification_success": "reading pane focused",
+        "verification_failure": "reading-pane focus finished, but JARVIS could not confirm the preview surface became ready",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful reading-pane focus workflow as best-effort confirmation.",
+        "probe_terms": ["reading pane", "preview", "message preview", "reading"],
+        "recommended_followups": ["reply_email", "reply_all_email", "forward_email"],
+        "surface_flag": "reading_pane_visible",
+        "workflow_action": "accessibility_invoke_element",
+        "workflow_action_args": {"query": "Reading Pane", "action": "focus", "control_type": "Pane"},
+        "workflow_action_reason": "Focus the Outlook reading pane through accessibility before follow-up mail actions.",
+        "prefer_workflow_action": True,
+        "supports_action_dispatch_categories": {"office"},
+    },
+    "reply_email": {
+        "title": "Reply To Email",
+        "category_hints": {"office"},
+        "hotkey_field": "reply_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_reply_email",
+        "missing_input_message": "",
+        "support_message": "No email-reply workflow is configured for this app.",
+        "hotkey_reason": "Open a reply compose surface for the active email before follow-up editing or sending actions.",
+        "input_reason": "",
+        "retry_label": "Reply Retry",
+        "retry_reason": "Retry with an alternate reply shortcut if the mail app remapped compose actions.",
+        "verification_success": "reply compose verified",
+        "verification_failure": "reply finished, but JARVIS could not confirm the reply compose surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful reply workflow as best-effort confirmation.",
+        "verify_hint": "subject",
+        "probe_terms": ["reply", "subject", "to"],
+        "recommended_followups": ["search", "save_document"],
+        "surface_flag": "email_compose_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "reply_all_email": {
+        "title": "Reply All To Email",
+        "category_hints": {"office"},
+        "hotkey_field": "reply_all_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_reply_all_email",
+        "missing_input_message": "",
+        "support_message": "No reply-all workflow is configured for this app.",
+        "hotkey_reason": "Open a reply-all compose surface for the active email before follow-up editing or sending actions.",
+        "input_reason": "",
+        "retry_label": "Reply All Retry",
+        "retry_reason": "Retry with an alternate reply-all shortcut if the mail app remapped compose actions.",
+        "verification_success": "reply all compose verified",
+        "verification_failure": "reply all finished, but JARVIS could not confirm the reply-all compose surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful reply-all workflow as best-effort confirmation.",
+        "verify_hint": "cc",
+        "probe_terms": ["reply all", "subject", "cc"],
+        "recommended_followups": ["search", "save_document"],
+        "surface_flag": "email_compose_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "forward_email": {
+        "title": "Forward Email",
+        "category_hints": {"office"},
+        "hotkey_field": "forward_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_forward_email",
+        "missing_input_message": "",
+        "support_message": "No email-forward workflow is configured for this app.",
+        "hotkey_reason": "Open a forward compose surface for the active email before follow-up editing or sending actions.",
+        "input_reason": "",
+        "retry_label": "Forward Retry",
+        "retry_reason": "Retry with an alternate forward shortcut if the mail app remapped compose actions.",
+        "verification_success": "forward compose verified",
+        "verification_failure": "forward finished, but JARVIS could not confirm the forward compose surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful forward workflow as best-effort confirmation.",
+        "verify_hint": "to",
+        "probe_terms": ["forward", "subject", "to"],
+        "recommended_followups": ["search", "save_document"],
+        "surface_flag": "email_compose_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "new_calendar_event": {
+        "title": "New Calendar Event",
+        "category_hints": {"office"},
+        "hotkey_field": "new_calendar_event_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_calendar_event",
+        "missing_input_message": "",
+        "support_message": "No calendar-event workflow is configured for this app.",
+        "hotkey_reason": "Open a fresh calendar event or meeting compose surface before adding attendees, titles, or timing details.",
+        "input_reason": "",
+        "retry_label": "New Event Retry",
+        "retry_reason": "Retry with an alternate event-compose shortcut if the mail app remapped calendar actions.",
+        "verification_success": "calendar event compose verified",
+        "verification_failure": "new calendar event finished, but JARVIS could not confirm the event compose surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful calendar-event workflow as best-effort confirmation.",
+        "verify_hint": "appointment",
+        "probe_terms": ["new event", "appointment", "invite attendees", "all day"],
+        "recommended_followups": ["open_calendar_view", "search"],
+        "surface_flag": "calendar_event_compose_ready",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "new_document": {
+        "title": "New Document",
+        "category_hints": {"office", "code_editor", "ide"},
+        "hotkey_field": "new_document_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_new_document",
+        "missing_input_message": "",
+        "support_message": "No new-document workflow is configured for this app.",
+        "hotkey_reason": "Create a new document, workbook, presentation, or note in the target app.",
+        "input_reason": "",
+        "retry_label": "New Document Retry",
+        "retry_reason": "Retry with an alternate new-document shortcut if the app remapped the binding.",
+        "verification_success": "new document verified",
+        "verification_failure": "new document finished, but JARVIS could not confirm a fresh document surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful new-document workflow as best-effort confirmation.",
+        "recommended_followups": ["save_document", "open_print_dialog"],
+    },
+    "save_document": {
+        "title": "Save Document",
+        "category_hints": {"office", "code_editor", "ide"},
+        "hotkey_field": "save_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_save_document",
+        "missing_input_message": "",
+        "support_message": "No save-document workflow is configured for this app.",
+        "hotkey_reason": "Save the active document, workbook, note, or editor buffer.",
+        "input_reason": "",
+        "retry_label": "Save Retry",
+        "retry_reason": "Retry with an alternate save shortcut if the app remapped the binding.",
+        "verification_success": "save verified",
+        "verification_failure": "save finished, but JARVIS could not confirm the active document state persisted",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful save workflow as best-effort confirmation.",
+        "recommended_followups": ["open_print_dialog", "search"],
+    },
+    "open_print_dialog": {
+        "title": "Open Print Dialog",
+        "category_hints": {"office", "browser", "code_editor", "ide", "general_desktop"},
+        "hotkey_field": "print_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_print_dialog",
+        "missing_input_message": "",
+        "support_message": "No print-dialog workflow is configured for this app.",
+        "hotkey_reason": "Open the current app's print surface for export, PDF, or hard-copy actions.",
+        "input_reason": "",
+        "retry_label": "Print Dialog Retry",
+        "retry_reason": "Retry with an alternate print shortcut if the app remapped the binding.",
+        "verification_success": "print dialog verified",
+        "verification_failure": "print dialog finished, but JARVIS could not confirm the print surface opened",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful print-dialog workflow as best-effort confirmation.",
+        "verify_hint": "print",
+        "probe_terms": ["print", "printer"],
+        "recommended_followups": ["save_document", "new_document"],
+        "surface_flag": "print_dialog_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "start_presentation": {
+        "title": "Start Presentation",
+        "category_hints": {"office"},
+        "hotkey_field": "presentation_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_start_presentation",
+        "missing_input_message": "",
+        "support_message": "No presentation-start workflow is configured for this app.",
+        "hotkey_reason": "Start the active slideshow or presentation surface.",
+        "input_reason": "",
+        "retry_label": "Presentation Retry",
+        "retry_reason": "Retry with an alternate slideshow shortcut if the app remapped the presentation binding.",
+        "verification_success": "presentation verified",
+        "verification_failure": "presentation finished, but JARVIS could not confirm slideshow mode became active",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful presentation start as best-effort confirmation.",
+        "verify_hint": "slide show",
+        "probe_terms": ["slide show", "presenter view", "slideshow"],
+        "recommended_followups": ["save_document", "open_print_dialog"],
+        "surface_flag": "presentation_active",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "toggle_terminal": {
+        "title": "Toggle Terminal",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "toggle_terminal_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_toggle_terminal",
+        "missing_input_message": "",
+        "support_message": "No integrated-terminal workflow is configured for this app.",
+        "hotkey_reason": "Toggle the integrated terminal surface for editor or IDE workflows.",
+        "input_reason": "",
+        "retry_label": "Terminal Toggle Retry",
+        "retry_reason": "Retry with an alternate terminal shortcut for IDE-style apps.",
+        "verification_success": "terminal verified",
+        "verification_failure": "terminal toggle finished, but JARVIS could not confirm the terminal surface changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful terminal-toggle workflow as best-effort confirmation.",
+        "verify_hint": "terminal",
+        "probe_terms": ["terminal", "problems"],
+        "recommended_followups": ["terminal_command", "workspace_search"],
+        "surface_flag": "terminal_visible",
+        "skip_hotkey_when_ready": True,
+        "preserve_ready_surface": True,
+    },
+    "format_document": {
+        "title": "Format Document",
+        "category_hints": {"code_editor", "ide"},
+        "hotkey_field": "format_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_format_document",
+        "missing_input_message": "",
+        "support_message": "No document-format workflow is configured for this app.",
+        "hotkey_reason": "Run the app's formatting shortcut to normalize the active document or selection.",
+        "input_reason": "",
+        "retry_label": "Format Retry",
+        "retry_reason": "Retry with an alternate format shortcut for editor-style apps.",
+        "verification_success": "format verified",
+        "verification_failure": "format finished, but JARVIS could not confirm the document changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful formatting workflow as best-effort confirmation.",
+    },
+    "zoom_in": {
+        "title": "Zoom In",
+        "category_hints": {"browser", "code_editor", "ide", "office", "utility"},
+        "hotkey_field": "zoom_in_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_zoom_in",
+        "missing_input_message": "",
+        "support_message": "No zoom-in workflow is configured for this app.",
+        "hotkey_reason": "Increase the zoom level for the active document or surface.",
+        "input_reason": "",
+        "retry_label": "Zoom In Retry",
+        "retry_reason": "Retry with an alternate zoom-in shortcut if the app remapped the binding.",
+        "verification_success": "zoom in verified",
+        "verification_failure": "zoom in finished, but JARVIS could not confirm that the surface zoom level changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful zoom-in workflow as best-effort confirmation.",
+        "verify_hint": "zoom",
+        "probe_terms": ["zoom"],
+        "recommended_followups": ["search", "open_print_dialog"],
+        "surface_flag": "zoomable_surface",
+    },
+    "zoom_out": {
+        "title": "Zoom Out",
+        "category_hints": {"browser", "code_editor", "ide", "office", "utility"},
+        "hotkey_field": "zoom_out_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_zoom_out",
+        "missing_input_message": "",
+        "support_message": "No zoom-out workflow is configured for this app.",
+        "hotkey_reason": "Decrease the zoom level for the active document or surface.",
+        "input_reason": "",
+        "retry_label": "Zoom Out Retry",
+        "retry_reason": "Retry with an alternate zoom-out shortcut if the app remapped the binding.",
+        "verification_success": "zoom out verified",
+        "verification_failure": "zoom out finished, but JARVIS could not confirm that the surface zoom level changed",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful zoom-out workflow as best-effort confirmation.",
+        "verify_hint": "zoom",
+        "probe_terms": ["zoom"],
+        "recommended_followups": ["search", "open_print_dialog"],
+        "surface_flag": "zoomable_surface",
+    },
+    "reset_zoom": {
+        "title": "Reset Zoom",
+        "category_hints": {"browser", "code_editor", "ide", "office", "utility"},
+        "hotkey_field": "reset_zoom_hotkeys",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_reset_zoom",
+        "missing_input_message": "",
+        "support_message": "No reset-zoom workflow is configured for this app.",
+        "hotkey_reason": "Reset the active surface to its default zoom level.",
+        "input_reason": "",
+        "retry_label": "Reset Zoom Retry",
+        "retry_reason": "Retry with an alternate reset-zoom shortcut if the app remapped the binding.",
+        "verification_success": "reset zoom verified",
+        "verification_failure": "reset zoom finished, but JARVIS could not confirm that the default zoom level was restored",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful reset-zoom workflow as best-effort confirmation.",
+        "verify_hint": "100%",
+        "probe_terms": ["100%", "zoom"],
+        "recommended_followups": ["search", "open_print_dialog"],
+        "surface_flag": "zoomable_surface",
+    },
+    "play_pause_media": {
+        "title": "Play Or Pause Media",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_play_pause_media",
+        "missing_input_message": "",
+        "support_message": "No focused media-control workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_play_pause",
+        "workflow_action_reason": "Dispatch the focused app's media transport toggle through the native Windows media session controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Media Toggle Retry",
+        "retry_reason": "Retry the media transport toggle after refocusing the requested media surface.",
+        "verification_success": "media transport toggled",
+        "verification_failure": "media toggle finished, but JARVIS could not confirm the focused media transport changed state",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful media transport result as best-effort confirmation.",
+        "verify_hint": "playback",
+        "probe_terms": ["play", "pause", "playing"],
+        "recommended_followups": ["next_track", "previous_track", "stop_media"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "pause_media": {
+        "title": "Pause Media",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_pause_media",
+        "missing_input_message": "",
+        "support_message": "No focused pause-media workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_pause",
+        "workflow_action_reason": "Pause the focused media session through the native Windows media transport controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Media Pause Retry",
+        "retry_reason": "Retry the media pause after refocusing the requested media surface.",
+        "verification_success": "media paused",
+        "verification_failure": "pause finished, but JARVIS could not confirm the focused media session paused",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful media pause result as best-effort confirmation.",
+        "verify_hint": "pause",
+        "probe_terms": ["pause", "paused"],
+        "recommended_followups": ["resume_media", "next_track"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "resume_media": {
+        "title": "Resume Media",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_resume_media",
+        "missing_input_message": "",
+        "support_message": "No focused resume-media workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_play",
+        "workflow_action_reason": "Resume playback for the focused media session through the native Windows media transport controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Media Resume Retry",
+        "retry_reason": "Retry the media resume after refocusing the requested media surface.",
+        "verification_success": "media resumed",
+        "verification_failure": "resume finished, but JARVIS could not confirm the focused media session resumed",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful media resume result as best-effort confirmation.",
+        "verify_hint": "play",
+        "probe_terms": ["play", "playing"],
+        "recommended_followups": ["pause_media", "next_track"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "next_track": {
+        "title": "Next Track",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_next_track",
+        "missing_input_message": "",
+        "support_message": "No focused next-track workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_next",
+        "workflow_action_reason": "Advance the focused media session to the next track through the native Windows media transport controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Next Track Retry",
+        "retry_reason": "Retry the next-track control after refocusing the requested media surface.",
+        "verification_success": "next track dispatched",
+        "verification_failure": "next-track finished, but JARVIS could not confirm the focused media session advanced",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful next-track result as best-effort confirmation.",
+        "verify_hint": "track",
+        "probe_terms": ["track", "song", "playing"],
+        "recommended_followups": ["previous_track", "pause_media", "stop_media"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "previous_track": {
+        "title": "Previous Track",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_previous_track",
+        "missing_input_message": "",
+        "support_message": "No focused previous-track workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_previous",
+        "workflow_action_reason": "Return the focused media session to the previous track through the native Windows media transport controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Previous Track Retry",
+        "retry_reason": "Retry the previous-track control after refocusing the requested media surface.",
+        "verification_success": "previous track dispatched",
+        "verification_failure": "previous-track finished, but JARVIS could not confirm the focused media session moved back",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful previous-track result as best-effort confirmation.",
+        "verify_hint": "track",
+        "probe_terms": ["track", "song", "playing"],
+        "recommended_followups": ["next_track", "pause_media", "stop_media"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "stop_media": {
+        "title": "Stop Media",
+        "category_hints": {"media"},
+        "hotkey_field": "",
+        "input_field": "none",
+        "requires_input": False,
+        "default_press_enter": False,
+        "route_mode": "workflow_stop_media",
+        "missing_input_message": "",
+        "support_message": "No focused stop-media workflow is configured for this app.",
+        "hotkey_reason": "",
+        "workflow_action": "media_stop",
+        "workflow_action_reason": "Stop playback for the focused media session through the native Windows media transport controls.",
+        "prefer_workflow_action": True,
+        "self_verifying": True,
+        "retry_label": "Stop Media Retry",
+        "retry_reason": "Retry the media stop after refocusing the requested media surface.",
+        "verification_success": "media stopped",
+        "verification_failure": "stop finished, but JARVIS could not confirm the focused media session stopped",
+        "vision_warning": "Visual playback signals were unavailable, so JARVIS accepted the successful media stop result as best-effort confirmation.",
+        "verify_hint": "stopped",
+        "probe_terms": ["stopped", "pause", "playback"],
+        "recommended_followups": ["resume_media", "next_track"],
+        "supports_without_hotkey_categories": {"media"},
+        "supports_system_action_categories": {"media"},
+        "surface_flag": "media_surface_ready",
+    },
+    "terminal_command": {
+        "title": "Terminal Command",
+        "category_hints": {"terminal", "code_editor", "ide"},
+        "hotkey_field": "terminal_hotkeys",
+        "input_field": "text",
+        "requires_input": True,
+        "default_press_enter": True,
+        "route_mode": "workflow_terminal_command",
+        "missing_input_message": "text is required for terminal command workflows.",
+        "support_message": "No terminal-command workflow is configured for this app. Terminal profiles can type commands directly and editor profiles expose integrated terminal shortcuts.",
+        "hotkey_reason": "Open the app's terminal surface before typing the requested shell command.",
+        "input_reason": "Type the requested shell command into the active terminal surface.",
+        "retry_label": "Terminal Surface Retry",
+        "retry_reason": "Retry with an alternate terminal shortcut before dispatching the requested command.",
+        "verification_success": "terminal command verified",
+        "verification_failure": "terminal command finished, but JARVIS could not confirm the command reached the intended terminal surface",
+        "vision_warning": "Visual verification was unavailable, so JARVIS accepted the successful terminal command workflow as best-effort confirmation.",
+        "supports_without_hotkey_categories": {"terminal"},
+        "probe_terms": ["terminal"],
+        "recommended_followups": ["workspace_search", "quick_open"],
+        "surface_flag": "terminal_visible",
+        "skip_hotkey_when_ready": True,
+        "prep_workflows": ["toggle_terminal"],
+        "replace_primary_hotkey_with_prep": True,
+    },
+}
+
+WORKFLOW_ACTIONS = frozenset(WORKFLOW_DEFINITIONS)
 
 
 class DesktopActionRouter:
@@ -16,12 +2701,14 @@ class DesktopActionRouter:
         *,
         action_handlers: Optional[Dict[str, ActionHandler]] = None,
         app_profile_registry: Optional[DesktopAppProfileRegistry] = None,
+        workflow_memory: Optional[DesktopWorkflowMemory] = None,
         settle_delay_s: float = 0.35,
     ) -> None:
         self._handlers = self._default_handlers()
         if isinstance(action_handlers, dict):
             self._handlers.update({str(key): value for key, value in action_handlers.items() if callable(value)})
         self._app_profile_registry = app_profile_registry or DesktopAppProfileRegistry()
+        self._workflow_memory = workflow_memory or DesktopWorkflowMemory.default()
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -29,6 +2716,7 @@ class DesktopActionRouter:
         requested_action = str(args.get("action", "observe") or "observe")
         app_profile = self._resolve_app_profile(args=args)
         args, defaults_applied = self._apply_profile_defaults(args=args, app_profile=app_profile)
+        workflow_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
         capabilities = self._capabilities()
         windows = self._list_windows()
         active_window = self._active_window()
@@ -45,6 +2733,7 @@ class DesktopActionRouter:
             app_profile = refined_profile
             args, extra_defaults = self._apply_profile_defaults(args=args, app_profile=app_profile)
             defaults_applied.update(extra_defaults)
+            workflow_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
             candidates = self._rank_window_candidates(
                 windows=windows,
                 active_window=active_window,
@@ -59,14 +2748,23 @@ class DesktopActionRouter:
         plan: List[Dict[str, Any]] = []
         warnings.extend([str(item).strip() for item in app_profile.get("warnings", []) if str(item).strip()])
 
+        workflow_definition = self._workflow_definition(requested_action)
+        missing_workflow_fields = self._workflow_missing_required_fields(requested_action=requested_action, args=args)
+
         if requested_action == "launch" and not str(args.get("app_name", "") or "").strip():
             blockers.append("app_name is required to launch an application.")
+        if requested_action in WORKFLOW_ACTIONS and missing_workflow_fields:
+            blockers.append(str(workflow_definition.get("missing_input_message", "") or "workflow input is required."))
         if requested_action in {"click", "click_and_type"} and not str(args.get("query", "") or "").strip():
             blockers.append("query is required for click-oriented desktop interaction.")
         if requested_action in {"type", "click_and_type"} and not str(args.get("text", "") or "").strip():
             blockers.append("text is required for typing interactions.")
         if requested_action == "hotkey" and not list(args.get("keys", [])):
             blockers.append("keys are required for hotkey interactions.")
+        if requested_action in WORKFLOW_ACTIONS and not bool(workflow_profile.get("supported", False)):
+            blockers.append(
+                str(workflow_profile.get("message", "") or "No workflow hotkeys are configured for this desktop interaction.")
+            )
         if requested_action in {"click", "click_and_type"} and not (
             bool(capabilities["accessibility"].get("available")) or bool(capabilities["vision"].get("available"))
         ):
@@ -80,7 +2778,7 @@ class DesktopActionRouter:
         focus_first = bool(args.get("focus_first", True))
         active_matches = self._window_matches(active_window, app_name=app_name, window_title=window_title)
 
-        if app_name and not candidates and ensure_app_launch and requested_action in {"launch", "focus", "click", "type", "click_and_type", "hotkey"}:
+        if app_name and not candidates and ensure_app_launch and requested_action in {"launch", "focus", "click", "type", "click_and_type", "hotkey", *WORKFLOW_ACTIONS}:
             plan.append(
                 self._plan_step(
                     action="open_app",
@@ -91,12 +2789,17 @@ class DesktopActionRouter:
                 )
             )
             warnings.append(f"No running window matched '{app_name}'. The router will launch it first.")
-        elif app_name and not candidates and requested_action in {"focus", "click", "type", "click_and_type", "hotkey"}:
+        elif app_name and not candidates and requested_action in {"focus", "click", "type", "click_and_type", "hotkey", *WORKFLOW_ACTIONS}:
             warnings.append(f"No running window matched '{app_name}'. Enable ensure_app_launch to open it automatically.")
 
         focus_title = str(primary_candidate.get("title", "") or window_title or app_name).strip()
         focus_hwnd = self._to_int(primary_candidate.get("hwnd"))
-        if requested_action in {"focus", "click", "type", "click_and_type", "hotkey"} and focus_first and focus_title and not active_matches:
+        active_hwnd = self._to_int(active_window.get("hwnd"))
+        target_already_focused = bool(
+            active_matches
+            or (active_hwnd is not None and focus_hwnd is not None and active_hwnd == focus_hwnd)
+        )
+        if requested_action in {"focus", "click", "type", "click_and_type", "hotkey", *WORKFLOW_ACTIONS} and focus_first and focus_title and not target_already_focused:
             focus_args: Dict[str, Any] = {"title": focus_title}
             if focus_hwnd is not None and focus_hwnd > 0:
                 focus_args["hwnd"] = focus_hwnd
@@ -109,6 +2812,40 @@ class DesktopActionRouter:
                     reason="Bring the target app/window to the foreground before sending desktop input.",
                 )
             )
+
+        surface_preflight = {
+            "enabled": False,
+            "snapshot": {},
+            "skip_primary_hotkey": False,
+            "prep_steps": [],
+            "warnings": [],
+            "candidate_prep_actions": [],
+            "prep_actions": [],
+        }
+        if requested_action in WORKFLOW_ACTIONS:
+            surface_preflight = self._workflow_surface_preflight(
+                requested_action=requested_action,
+                args=args,
+                app_profile=app_profile,
+                capabilities=capabilities,
+                active_window=active_window,
+                primary_candidate=primary_candidate,
+            )
+            warnings.extend([str(item).strip() for item in surface_preflight.get("warnings", []) if str(item).strip()])
+            if bool(surface_preflight.get("target_query_already_active", False)):
+                args["_target_query_already_active"] = True
+            runtime_overrides = self._workflow_stateful_overrides(
+                requested_action=requested_action,
+                args=args,
+                snapshot=surface_preflight.get("snapshot", {}),
+            )
+            if isinstance(runtime_overrides.get("arg_updates", {}), dict):
+                args.update(runtime_overrides.get("arg_updates", {}))
+            warnings.extend([str(item).strip() for item in runtime_overrides.get("warnings", []) if str(item).strip()])
+            surface_preflight["target_state_ready"] = bool(runtime_overrides.get("target_state_ready", False))
+            if bool(runtime_overrides.get("target_state_ready", False)):
+                surface_preflight["prep_steps"] = []
+                surface_preflight["prep_actions"] = []
 
         if requested_action in {"click", "click_and_type"}:
             click_args = {
@@ -159,6 +2896,74 @@ class DesktopActionRouter:
                 )
             )
 
+        if requested_action in WORKFLOW_ACTIONS:
+            for preflight_step in surface_preflight.get("prep_steps", []):
+                if isinstance(preflight_step, dict):
+                    plan.append(preflight_step)
+            workflow_hotkeys = workflow_profile.get("hotkeys", []) if isinstance(workflow_profile.get("hotkeys", []), list) else []
+            primary_hotkey = workflow_hotkeys[0] if workflow_hotkeys and isinstance(workflow_hotkeys[0], list) else []
+            workflow_action_name = str(workflow_profile.get("workflow_action", "") or "").strip().lower()
+            workflow_action_args = self._resolve_workflow_action_args(workflow_profile.get("workflow_action_args", {}), args)
+            if not isinstance(workflow_action_args, dict):
+                workflow_action_args = {}
+            workflow_action_override = args.get("_workflow_action_args_override", {})
+            if isinstance(workflow_action_override, dict) and workflow_action_override:
+                workflow_action_args.update(
+                    {
+                        str(key): value
+                        for key, value in workflow_action_override.items()
+                        if str(key).strip() and value not in (None, "", [], {})
+                    }
+                )
+            if workflow_action_name == "accessibility_invoke_element" and focus_title and not str(workflow_action_args.get("window_title", "") or "").strip():
+                workflow_action_args["window_title"] = focus_title
+            use_workflow_action = bool(
+                workflow_action_name
+                and (
+                    workflow_profile.get("supports_system_action", False)
+                    or workflow_profile.get("supports_action_dispatch", False)
+                )
+                and (workflow_profile.get("prefer_workflow_action", False) or not primary_hotkey)
+            )
+            hotkey_requires_target_query = bool(workflow_definition.get("hotkey_requires_target_query", False))
+            has_target_query = bool(str(args.get("query", "") or "").strip())
+            if use_workflow_action and not bool(args.get("_skip_workflow_action", False)):
+                plan.append(
+                    self._plan_step(
+                        action=workflow_action_name,
+                        args=workflow_action_args,
+                        phase="workflow",
+                        optional=False,
+                        reason=str(
+                            workflow_profile.get("workflow_action_reason", "")
+                            or "Dispatch the requested workflow through a native desktop control action."
+                        ),
+                    )
+                )
+            elif (
+                primary_hotkey
+                and not bool(args.get("_skip_primary_hotkey", False))
+                and not bool(surface_preflight.get("skip_primary_hotkey", False))
+                and not (hotkey_requires_target_query and not has_target_query)
+            ):
+                plan.append(
+                    self._plan_step(
+                        action="keyboard_hotkey",
+                        args={"keys": list(primary_hotkey)},
+                        phase="workflow",
+                        optional=False,
+                        reason=str(workflow_profile.get("hotkey_reason", "") or "Prepare the target app for the requested workflow."),
+                    )
+                )
+            workflow_steps = self._workflow_input_steps(
+                requested_action=requested_action,
+                args=args,
+                workflow_profile=workflow_profile,
+            )
+            for workflow_step in workflow_steps:
+                if isinstance(workflow_step, dict):
+                    plan.append(workflow_step)
+
         if requested_action == "observe":
             plan.append(
                 self._plan_step(
@@ -169,6 +2974,9 @@ class DesktopActionRouter:
                     reason="Capture the current screen and OCR state for grounded desktop reasoning.",
                 )
             )
+
+        surface_snapshot = surface_preflight.get("snapshot", {}) if isinstance(surface_preflight.get("snapshot", {}), dict) else {}
+        safety_signals = surface_snapshot.get("safety_signals", {}) if isinstance(surface_snapshot.get("safety_signals", {}), dict) else {}
 
         route_mode = self._route_mode(requested_action=requested_action, args=args, capabilities=capabilities, app_profile=app_profile)
         confidence = self._confidence(
@@ -182,9 +2990,43 @@ class DesktopActionRouter:
         risk_level = str(app_profile.get("risk_posture", "") or "").strip().lower() or (
             "low" if requested_action in {"observe", "focus"} else ("medium" if requested_action in {"launch", "hotkey"} else "medium")
         )
+        risky_confirmation_actions = {"confirm_dialog", "press_dialog_button", "next_wizard_step", "finish_wizard", "complete_form_page", "complete_form_flow"}
+        if requested_action in risky_confirmation_actions and any(
+            bool(safety_signals.get(key, False))
+            for key in ("warning_surface_visible", "destructive_warning_visible", "elevation_prompt_visible", "requires_confirmation")
+        ):
+            risk_level = "high"
+        if requested_action in risky_confirmation_actions and bool(safety_signals.get("destructive_warning_visible", False)):
+            warnings.append(
+                "Surface safety detected a destructive confirmation prompt, so review the pending change carefully before continuing."
+            )
+        if requested_action in risky_confirmation_actions and bool(safety_signals.get("warning_surface_visible", False)):
+            warnings.append(
+                "Surface safety detected an elevated warning or review step, so JARVIS is treating this confirmation path as high risk."
+            )
+        if requested_action in risky_confirmation_actions and bool(safety_signals.get("elevation_prompt_visible", False)):
+            warnings.append(
+                "Surface safety detected an elevation prompt, so the action may require administrator approval or trigger privileged system changes."
+            )
+        if requested_action in {"next_wizard_step", "finish_wizard"} and bool(safety_signals.get("requires_confirmation", False)):
+            warnings.append(
+                "Surface safety detected a confirmation-style wizard step, so advancing may commit changes instead of only moving through the installer."
+            )
+        if requested_action in {"complete_form_page", "complete_form_flow"} and bool(safety_signals.get("requires_confirmation", False)):
+            warnings.append(
+                "Surface safety detected a form or dialog confirmation path, so JARVIS is treating the commit workflow as a potentially state-changing operation."
+            )
 
         status = "blocked" if blockers else "success"
         strategy_variants = self._build_strategy_variants(args=args, capabilities=capabilities, app_profile=app_profile)
+        adaptive_strategy = self._workflow_memory.recommend(
+            action=requested_action,
+            args=args,
+            app_profile=app_profile,
+            variants=strategy_variants,
+        )
+        if isinstance(adaptive_strategy, dict) and isinstance(adaptive_strategy.get("variants", []), list) and adaptive_strategy.get("variants"):
+            strategy_variants = [row for row in adaptive_strategy.get("variants", []) if isinstance(row, dict)]
         return {
             "status": status,
             "action": requested_action,
@@ -192,6 +3034,7 @@ class DesktopActionRouter:
             "confidence": confidence,
             "risk_level": risk_level,
             "app_profile": app_profile if app_profile.get("status") == "success" else {},
+            "workflow_profile": workflow_profile,
             "profile_defaults_applied": defaults_applied,
             "target_window": primary_candidate,
             "active_window": active_window,
@@ -206,12 +3049,25 @@ class DesktopActionRouter:
                 "supports_cross_app_fallback": bool(capabilities["vision"].get("available")) and bool(capabilities["accessibility"].get("available")),
                 "requires_visual": requested_action in {"click", "click_and_type", "observe"},
             },
+            "surface_snapshot": surface_snapshot,
+            "safety_signals": safety_signals,
+            "surface_branch": {
+                "enabled": bool(surface_preflight.get("enabled", False)),
+                "surface_flag": str(surface_preflight.get("surface_flag", "") or ""),
+                "surface_ready": bool(surface_preflight.get("surface_ready", False)),
+                "skip_primary_hotkey": bool(surface_preflight.get("skip_primary_hotkey", False)),
+                "candidate_prep_actions": list(surface_preflight.get("candidate_prep_actions", [])),
+                "prep_actions": list(surface_preflight.get("prep_actions", [])),
+                "target_query_already_active": bool(surface_preflight.get("target_query_already_active", False)),
+                "target_state_ready": bool(surface_preflight.get("target_state_ready", False)),
+            },
             "verification_plan": self._verification_plan(
                 args=args,
                 primary_candidate=primary_candidate,
                 capabilities=capabilities,
                 app_profile=app_profile,
             ),
+            "adaptive_strategy": adaptive_strategy,
             "strategy_variants": strategy_variants,
         }
 
@@ -272,6 +3128,12 @@ class DesktopActionRouter:
                 advice=attempt_advice,
                 strategy=variant,
                 attempt_index=attempt_index,
+            )
+            self._record_adaptive_strategy_outcome(
+                args=attempt_args,
+                advice=attempt_advice,
+                strategy=variant,
+                attempt_payload=attempt_payload,
             )
             attempts.append(attempt_payload)
             final_attempt = attempt_payload
@@ -443,6 +3305,8 @@ class DesktopActionRouter:
                 return "accessibility_only"
             if vision_ready:
                 return "ocr_only"
+        if requested_action in WORKFLOW_ACTIONS:
+            return str(self._workflow_definition(requested_action).get("route_mode", "workflow_desktop") or "workflow_desktop")
         if requested_action in {"type", "hotkey"}:
             return "focused_input"
         if requested_action == "launch":
@@ -475,6 +3339,8 @@ class DesktopActionRouter:
                 score += 0.09
         elif requested_action in {"type", "hotkey"}:
             score += 0.1
+        elif requested_action in WORKFLOW_ACTIONS:
+            score += 0.14
         elif requested_action == "observe":
             score += 0.18 if bool(capabilities["vision"].get("available")) else 0.0
         if warnings:
@@ -493,6 +3359,7 @@ class DesktopActionRouter:
                     "window_title": ("window_title", "title"),
                     "query": ("query", "target"),
                     "text": ("text",),
+                    "amount": ("amount",),
                     "keys": ("keys", "key"),
                     "press_enter": ("press_enter", "submit"),
                     "ensure_app_launch": ("ensure_app_launch", "launch_if_missing"),
@@ -503,6 +3370,8 @@ class DesktopActionRouter:
                     "verify_text": ("verify_text",),
                     "retry_on_verification_failure": ("retry_on_verification_failure",),
                     "max_strategy_attempts": ("max_strategy_attempts",),
+                    "max_wizard_pages": ("max_wizard_pages",),
+                    "allow_warning_pages": ("allow_warning_pages",),
                     "control_type": ("control_type",),
                     "element_id": ("element_id",),
                     "include_targets": ("include_targets",),
@@ -521,7 +3390,7 @@ class DesktopActionRouter:
             key = str(raw.get("key", "") or "").strip().lower()
             keys = [key] if key else []
 
-        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe"}:
+        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe", *WORKFLOW_ACTIONS}:
             if keys:
                 normalized_action = "hotkey"
             elif text and query:
@@ -541,6 +3410,7 @@ class DesktopActionRouter:
             "window_title": str(raw.get("window_title", raw.get("title", "")) or "").strip(),
             "query": query,
             "text": text,
+            "amount": max(1, min(int(raw.get("amount", 1) or 1), 20)),
             "keys": keys,
             "press_enter": bool(raw.get("press_enter", False)),
             "submit": bool(raw.get("submit", False)),
@@ -552,6 +3422,10 @@ class DesktopActionRouter:
             "verify_text": str(raw.get("verify_text", "") or "").strip(),
             "retry_on_verification_failure": bool(raw.get("retry_on_verification_failure", True)),
             "max_strategy_attempts": max(1, min(int(raw.get("max_strategy_attempts", 2) or 2), 4)),
+            "max_wizard_pages": max(1, min(int(raw.get("max_wizard_pages", 6) or 6), 12)),
+            "allow_warning_pages": bool(raw.get("allow_warning_pages", False)),
+            "max_form_pages": max(1, min(int(raw.get("max_form_pages", 5) or 5), 10)),
+            "allow_destructive_forms": bool(raw.get("allow_destructive_forms", False)),
             "control_type": str(raw.get("control_type", "") or "").strip(),
             "element_id": str(raw.get("element_id", "") or "").strip(),
             "include_targets": bool(raw.get("include_targets", False)),
@@ -566,35 +3440,27 @@ class DesktopActionRouter:
         strategy: Dict[str, Any],
         attempt_index: int,
     ) -> Dict[str, Any]:
-        results: List[Dict[str, Any]] = []
-        pre_context = self._capture_verification_context(args=args, advice=advice)
-        message = ""
-        status = "success"
-        for step in advice.get("execution_plan", []):
-            if not isinstance(step, dict):
-                continue
-            action = str(step.get("action", "") or "").strip()
-            action_args = step.get("args", {}) if isinstance(step.get("args", {}), dict) else {}
-            handler = self._handlers.get(action)
-            if handler is None:
-                message = f"missing handler for {action}"
-                status = "error"
-                break
-            result = handler(dict(action_args))
-            results.append(
-                {
-                    "action": action,
-                    "phase": str(step.get("phase", "") or ""),
-                    "result": result,
-                }
+        action = str(args.get("action", "observe") or "observe").strip().lower()
+        if action == "complete_wizard_flow":
+            return self._execute_wizard_flow_strategy(
+                args=args,
+                advice=advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
             )
-            if str(action).strip().lower() == "open_app" and result.get("status") == "success" and self.settle_delay_s > 0:
-                time.sleep(self.settle_delay_s)
-            if result.get("status") != "success" and not bool(step.get("optional", False)):
-                message = str(result.get("message", f"{action} failed") or f"{action} failed")
-                status = "error"
-                break
-        final_action = results[-1]["action"] if results else advice.get("action", "")
+        if action == "complete_form_flow":
+            return self._execute_form_flow_strategy(
+                args=args,
+                advice=advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
+            )
+        pre_context = self._capture_verification_context(args=args, advice=advice)
+        execution_payload = self._run_execution_plan(plan=advice.get("execution_plan", []))
+        results = execution_payload.get("results", []) if isinstance(execution_payload.get("results", []), list) else []
+        message = str(execution_payload.get("message", "") or "")
+        status = str(execution_payload.get("status", "success") or "success")
+        final_action = str(execution_payload.get("final_action", "") or advice.get("action", ""))
         post_context = self._capture_verification_context(args=args, advice=advice) if status == "success" else {}
         verification = self._verify_execution(
             args=args,
@@ -622,18 +3488,842 @@ class DesktopActionRouter:
             "verification": verification,
         }
 
+    def _run_execution_plan(
+        self,
+        *,
+        plan: Any,
+        result_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        results: List[Dict[str, Any]] = []
+        message = ""
+        status = "success"
+        final_action = ""
+        metadata = dict(result_metadata) if isinstance(result_metadata, dict) else {}
+        for step in plan if isinstance(plan, list) else []:
+            if not isinstance(step, dict):
+                continue
+            action = str(step.get("action", "") or "").strip()
+            action_args = step.get("args", {}) if isinstance(step.get("args", {}), dict) else {}
+            handler = self._handlers.get(action)
+            if handler is None:
+                message = f"missing handler for {action}"
+                status = "error"
+                final_action = action
+                break
+            result = handler(dict(action_args))
+            result_row = {
+                "action": action,
+                "phase": str(step.get("phase", "") or ""),
+                "result": result,
+            }
+            if metadata:
+                result_row.update(metadata)
+            results.append(result_row)
+            final_action = action
+            if action.lower() == "open_app" and result.get("status") == "success" and self.settle_delay_s > 0:
+                time.sleep(self.settle_delay_s)
+            if result.get("status") != "success" and not bool(step.get("optional", False)):
+                message = str(result.get("message", f"{action} failed") or f"{action} failed")
+                status = "error"
+                break
+        return {
+            "status": status,
+            "message": message,
+            "final_action": final_action,
+            "results": results,
+        }
+
+    def _execute_wizard_flow_strategy(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+    ) -> Dict[str, Any]:
+        results: List[Dict[str, Any]] = []
+        page_history: List[Dict[str, Any]] = []
+        mission_warnings: List[str] = []
+        status = "success"
+        message = ""
+        stop_reason_code = ""
+        stop_reason = ""
+        completed = False
+        pages_completed = 0
+        max_pages = max(1, min(int(args.get("max_wizard_pages", 6) or 6), 12))
+        allow_warning_pages = bool(args.get("allow_warning_pages", False))
+        pre_context = self._capture_verification_context(args=args, advice=advice)
+
+        bootstrap_plan = [dict(step) for step in advice.get("execution_plan", []) if isinstance(step, dict)]
+        if bootstrap_plan:
+            bootstrap_payload = self._run_execution_plan(
+                plan=bootstrap_plan,
+                result_metadata={"wizard_stage": "bootstrap"},
+            )
+            results.extend(bootstrap_payload.get("results", []) if isinstance(bootstrap_payload.get("results", []), list) else [])
+            if str(bootstrap_payload.get("status", "success") or "success") != "success":
+                message = str(bootstrap_payload.get("message", "wizard bootstrap failed") or "wizard bootstrap failed")
+                status = "error"
+                verification = {
+                    "enabled": True,
+                    "status": "failed",
+                    "verified": False,
+                    "message": message,
+                    "checks": [],
+                }
+                return {
+                    "attempt": attempt_index,
+                    "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+                    "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+                    "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+                    "payload": self._sanitize_payload_for_response(args),
+                    "status": status,
+                    "message": message,
+                    "final_action": str(bootstrap_payload.get("final_action", "") or advice.get("action", "")),
+                    "results": results,
+                    "advice": advice,
+                    "verification": verification,
+                    "wizard_mission": {
+                        "enabled": True,
+                        "completed": False,
+                        "pages_completed": 0,
+                        "page_count": 0,
+                        "max_pages": max_pages,
+                        "allow_warning_pages": allow_warning_pages,
+                        "stop_reason_code": "wizard_bootstrap_failed",
+                        "stop_reason": message,
+                        "page_history": [],
+                    },
+                }
+
+        last_snapshot = self._wizard_flow_snapshot(args=args, advice=advice)
+        for page_index in range(1, max_pages + 1):
+            page_args = dict(args)
+            page_args["action"] = "complete_wizard_page"
+            page_args["_provided_fields"] = self._dedupe_strings(
+                list(page_args.get("_provided_fields", [])) + ["action"]
+            )
+            page_advice = self.advise(page_args)
+            page_snapshot = page_advice.get("surface_snapshot", {}) if isinstance(page_advice.get("surface_snapshot", {}), dict) else last_snapshot
+            page_state = page_snapshot.get("wizard_page_state", {}) if isinstance(page_snapshot.get("wizard_page_state", {}), dict) else {}
+            safety_signals = page_snapshot.get("safety_signals", {}) if isinstance(page_snapshot.get("safety_signals", {}), dict) else {}
+            surface_flags = page_snapshot.get("surface_flags", {}) if isinstance(page_snapshot.get("surface_flags", {}), dict) else {}
+            before_summary = self._wizard_flow_summary(snapshot=page_snapshot)
+            page_record: Dict[str, Any] = {
+                "page_index": page_index,
+                "before": before_summary,
+                "warnings": [str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()],
+                "recommended_actions": [str(item).strip() for item in page_snapshot.get("recommended_actions", []) if str(item).strip()] if isinstance(page_snapshot.get("recommended_actions", []), list) else [],
+            }
+
+            if not bool(surface_flags.get("wizard_surface_visible", False)):
+                if page_index == 1 and not results:
+                    stop_reason_code = "wizard_not_visible"
+                    stop_reason = "No active setup wizard surface could be detected after focusing the requested app."
+                    page_record["status"] = "blocked"
+                    page_record["stop_reason_code"] = stop_reason_code
+                    page_record["stop_reason"] = stop_reason
+                    page_history.append(page_record)
+                else:
+                    completed = True
+                    message = "wizard flow completed and the setup surface closed"
+                break
+
+            gate = self._wizard_flow_gate(
+                page_state=page_state,
+                safety_signals=safety_signals,
+                allow_warning_pages=allow_warning_pages,
+            )
+            if not bool(gate.get("allowed", False)):
+                stop_reason_code = str(gate.get("code", "") or "wizard_manual_review_required")
+                stop_reason = str(gate.get("message", "") or "wizard page requires manual review before automation can continue")
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                if stop_reason:
+                    mission_warnings.append(stop_reason)
+                page_history.append(page_record)
+                break
+
+            if page_advice.get("status") != "success":
+                stop_reason_code = "wizard_page_route_unavailable"
+                stop_reason = "; ".join(
+                    str(item) for item in page_advice.get("blockers", []) if str(item).strip()
+                ) or str(page_advice.get("message", "wizard page route unavailable") or "wizard page route unavailable")
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                mission_warnings.extend([str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()])
+                page_history.append(page_record)
+                break
+
+            page_execution = self._run_execution_plan(
+                plan=page_advice.get("execution_plan", []),
+                result_metadata={
+                    "wizard_stage": "page",
+                    "wizard_page_index": page_index,
+                    "wizard_page_kind": str(page_state.get("page_kind", "") or ""),
+                },
+            )
+            results.extend(page_execution.get("results", []) if isinstance(page_execution.get("results", []), list) else [])
+            after_snapshot = self._wizard_flow_snapshot(args=page_args, advice=page_advice)
+            after_summary = self._wizard_flow_summary(snapshot=after_snapshot)
+            progressed = self._wizard_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_snapshot)
+            page_record["after"] = after_summary
+            page_record["status"] = str(page_execution.get("status", "success") or "success")
+            page_record["message"] = str(page_execution.get("message", "") or "")
+            page_record["progressed"] = progressed
+            page_record["executed_actions"] = [
+                str(row.get("action", "") or "").strip()
+                for row in page_execution.get("results", [])
+                if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+            ]
+            page_history.append(page_record)
+            mission_warnings.extend([str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()])
+
+            if str(page_execution.get("status", "success") or "success") != "success":
+                status = "error" if not results else "success"
+                stop_reason_code = "wizard_page_execution_failed"
+                stop_reason = str(page_execution.get("message", "wizard page execution failed") or "wizard page execution failed")
+                break
+
+            if progressed or not bool(after_summary.get("wizard_visible", False)):
+                pages_completed += 1
+            if not bool(after_summary.get("wizard_visible", False)):
+                completed = True
+                message = "wizard flow completed and the setup surface closed"
+                last_snapshot = after_snapshot
+                break
+            if not progressed:
+                stop_reason_code = "wizard_page_stalled"
+                stop_reason = "Wizard page execution completed, but the setup surface did not advance to a new state."
+                break
+
+            last_snapshot = after_snapshot
+
+        if not completed and not stop_reason_code and not message and pages_completed >= max_pages:
+            stop_reason_code = "wizard_page_limit_reached"
+            stop_reason = f"Wizard mission reached the configured page limit of {max_pages} without reaching a completed setup state."
+        if completed and not message:
+            message = "wizard flow completed"
+        elif not message:
+            message = stop_reason or "wizard flow stopped before completion"
+
+        post_context = self._capture_verification_context(args=args, advice=advice) if status == "success" else {}
+        final_summary = self._wizard_flow_summary(snapshot=last_snapshot)
+        verification = self._verify_wizard_flow_execution(
+            args=args,
+            pre_context=pre_context,
+            post_context=post_context,
+            completed=completed,
+            pages_completed=pages_completed,
+            max_pages=max_pages,
+            stop_reason_code=stop_reason_code,
+            stop_reason=stop_reason,
+            final_summary=final_summary,
+            warnings=mission_warnings,
+        )
+        if status == "success" and bool(verification.get("enabled", False)) and not bool(verification.get("verified", False)):
+            message = str(verification.get("message", message) or message)
+
+        return {
+            "attempt": attempt_index,
+            "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+            "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+            "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+            "payload": self._sanitize_payload_for_response(args),
+            "status": status,
+            "message": message,
+            "final_action": "complete_wizard_flow" if completed else str(results[-1]["action"] if results else advice.get("action", "")),
+            "results": results,
+            "advice": advice,
+            "verification": verification,
+            "wizard_mission": {
+                "enabled": True,
+                "completed": completed,
+                "pages_completed": pages_completed,
+                "page_count": len(page_history),
+                "max_pages": max_pages,
+                "allow_warning_pages": allow_warning_pages,
+                "stop_reason_code": stop_reason_code,
+                "stop_reason": stop_reason,
+                "page_history": page_history,
+                "final_page": final_summary,
+            },
+        }
+
+    def _wizard_flow_snapshot(self, *, args: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
+        target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        focus_title = str(
+            target_window.get("title", "")
+            or args.get("window_title", "")
+            or args.get("app_name", "")
+            or ""
+        ).strip()
+        snapshot = self.surface_snapshot(
+            app_name=str(args.get("app_name", "") or "").strip(),
+            window_title=focus_title,
+            query="",
+            limit=18,
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+            preferred_actions=["complete_wizard_flow", "complete_wizard_page", "finish_wizard", "next_wizard_step", "dismiss_dialog"],
+        )
+        candidate_windows = snapshot.get("candidate_windows", []) if isinstance(snapshot.get("candidate_windows", []), list) else []
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        app_name = str(args.get("app_name", "") or "").strip()
+        window_title = str(args.get("window_title", "") or "").strip()
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
+        active_matches = self._window_matches(active_window, app_name=app_name, window_title=window_title or focus_title)
+        if not target_visible and not active_matches:
+            flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+            snapshot["surface_flags"] = {
+                **flags,
+                "wizard_surface_visible": False,
+                "wizard_next_available": False,
+                "wizard_back_available": False,
+                "wizard_finish_available": False,
+            }
+            snapshot["wizard_page_state"] = {}
+        return snapshot
+
+    @staticmethod
+    def _wizard_flow_summary(*, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        return {
+            "wizard_visible": bool(flags.get("wizard_surface_visible", False)),
+            "page_kind": str(page_state.get("page_kind", "") or "").strip(),
+            "advance_action": str(page_state.get("advance_action", "") or "").strip(),
+            "ready_for_advance": bool(page_state.get("ready_for_advance", False)),
+            "pending_requirement_count": int(page_state.get("pending_requirement_count", 0) or 0),
+            "preferred_confirmation_button": str(page_state.get("preferred_confirmation_button", "") or "").strip(),
+            "autonomous_progress_supported": bool(page_state.get("autonomous_progress_supported", False)),
+            "autonomous_blocker": str(page_state.get("autonomous_blocker", "") or "").strip(),
+            "manual_input_likely": bool(page_state.get("manual_input_likely", False)),
+            "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+        }
+
+    @classmethod
+    def _wizard_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str]:
+        summary = cls._wizard_flow_summary(snapshot=snapshot)
+        return (
+            str(summary.get("screen_hash", "") or "").strip(),
+            str(summary.get("page_kind", "") or "").strip(),
+            int(summary.get("pending_requirement_count", 0) or 0),
+            str(summary.get("preferred_confirmation_button", "") or "").strip().lower(),
+        )
+
+    @classmethod
+    def _wizard_flow_progressed(cls, *, before_snapshot: Dict[str, Any], after_snapshot: Dict[str, Any]) -> bool:
+        before_summary = cls._wizard_flow_summary(snapshot=before_snapshot)
+        after_summary = cls._wizard_flow_summary(snapshot=after_snapshot)
+        if bool(before_summary.get("wizard_visible", False)) and not bool(after_summary.get("wizard_visible", False)):
+            return True
+        return cls._wizard_flow_signature(snapshot=before_snapshot) != cls._wizard_flow_signature(snapshot=after_snapshot)
+
+    @staticmethod
+    def _wizard_flow_gate(
+        *,
+        page_state: Dict[str, Any],
+        safety_signals: Dict[str, Any],
+        allow_warning_pages: bool,
+    ) -> Dict[str, Any]:
+        page_kind = str(page_state.get("page_kind", "") or "").strip().lower()
+        if bool(safety_signals.get("elevation_prompt_visible", False)) and page_kind not in {"ready_to_install", "completion"}:
+            return {
+                "allowed": False,
+                "code": "elevation_prompt_requires_approval",
+                "message": "Wizard mission stopped because the current setup step raised an elevation prompt that requires explicit approval.",
+            }
+        blocker = str(page_state.get("autonomous_blocker", "") or "").strip()
+        if blocker == "warning_confirmation_requires_review" and allow_warning_pages:
+            return {"allowed": True, "code": "", "message": ""}
+        blocker_messages = {
+            "warning_confirmation_requires_review": "Wizard mission paused on a warning-confirmation page so JARVIS does not auto-commit a risky step without review.",
+            "unsupported_wizard_requirements": "Wizard mission found page requirements that are not yet safe to auto-resolve, so this setup step needs manual review.",
+            "manual_input_required": "Wizard mission paused because the current setup page appears to require manual text or dropdown input before it can continue.",
+            "no_advance_control_available": "Wizard mission paused because the current setup page exposes no safe advance control yet.",
+        }
+        if blocker:
+            return {
+                "allowed": False,
+                "code": blocker,
+                "message": blocker_messages.get(blocker, "Wizard mission paused because the current setup page is not safe for autonomous progression."),
+            }
+        return {"allowed": True, "code": "", "message": ""}
+
+    @staticmethod
+    def _verify_wizard_flow_execution(
+        *,
+        args: Dict[str, Any],
+        pre_context: Dict[str, Any],
+        post_context: Dict[str, Any],
+        completed: bool,
+        pages_completed: int,
+        max_pages: int,
+        stop_reason_code: str,
+        stop_reason: str,
+        final_summary: Dict[str, Any],
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        checks = [
+            {
+                "name": "wizard_pages_completed",
+                "passed": pages_completed > 0 or completed,
+                "pages_completed": pages_completed,
+                "max_pages": max_pages,
+            },
+            {
+                "name": "wizard_surface_closed",
+                "passed": completed,
+                "wizard_visible_after": bool(final_summary.get("wizard_visible", False)),
+                "final_page_kind": str(final_summary.get("page_kind", "") or "").strip(),
+            },
+        ]
+        if stop_reason_code:
+            checks.append(
+                {
+                    "name": "wizard_safe_stop",
+                    "passed": False,
+                    "reason_code": stop_reason_code,
+                    "reason": stop_reason,
+                }
+            )
+        verified = completed
+        message = "wizard flow completed" if verified else (stop_reason or "wizard flow stopped before completion")
+        status = "degraded" if verified and warnings else ("success" if verified else "failed")
+        return {
+            "enabled": True,
+            "status": status,
+            "verified": verified,
+            "message": message,
+            "checks": checks,
+            "warnings": DesktopActionRouter._dedupe_strings(warnings),
+            "pre_context": {
+                "active_window": pre_context.get("active_window", {}) if isinstance(pre_context.get("active_window", {}), dict) else {},
+                "screen_hash": str((pre_context.get("observation", {}) if isinstance(pre_context.get("observation", {}), dict) else {}).get("screen_hash", "") or "").strip(),
+            },
+            "post_context": {
+                "active_window": post_context.get("active_window", {}) if isinstance(post_context.get("active_window", {}), dict) else {},
+                "screen_hash": str((post_context.get("observation", {}) if isinstance(post_context.get("observation", {}), dict) else {}).get("screen_hash", "") or "").strip(),
+            },
+            "verify_text": str(args.get("verify_text", "") or "").strip() or "setup complete",
+        }
+
+    def _execute_form_flow_strategy(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+    ) -> Dict[str, Any]:
+        results: List[Dict[str, Any]] = []
+        page_history: List[Dict[str, Any]] = []
+        mission_warnings: List[str] = []
+        status = "success"
+        message = ""
+        stop_reason_code = ""
+        stop_reason = ""
+        completed = False
+        pages_completed = 0
+        max_pages = max(1, min(int(args.get("max_form_pages", 5) or 5), 10))
+        allow_destructive_forms = bool(args.get("allow_destructive_forms", False))
+        pre_context = self._capture_verification_context(args=args, advice=advice)
+
+        bootstrap_plan = [dict(step) for step in advice.get("execution_plan", []) if isinstance(step, dict)]
+        if bootstrap_plan:
+            bootstrap_payload = self._run_execution_plan(
+                plan=bootstrap_plan,
+                result_metadata={"form_stage": "bootstrap"},
+            )
+            results.extend(bootstrap_payload.get("results", []) if isinstance(bootstrap_payload.get("results", []), list) else [])
+            if str(bootstrap_payload.get("status", "success") or "success") != "success":
+                message = str(bootstrap_payload.get("message", "form bootstrap failed") or "form bootstrap failed")
+                status = "error"
+                verification = {
+                    "enabled": True,
+                    "status": "failed",
+                    "verified": False,
+                    "message": message,
+                    "checks": [],
+                }
+                return {
+                    "attempt": attempt_index,
+                    "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+                    "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+                    "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+                    "payload": self._sanitize_payload_for_response(args),
+                    "status": status,
+                    "message": message,
+                    "final_action": str(bootstrap_payload.get("final_action", "") or advice.get("action", "")),
+                    "results": results,
+                    "advice": advice,
+                    "verification": verification,
+                    "form_mission": {
+                        "enabled": True,
+                        "completed": False,
+                        "pages_completed": 0,
+                        "page_count": 0,
+                        "max_pages": max_pages,
+                        "allow_destructive_forms": allow_destructive_forms,
+                        "stop_reason_code": "form_bootstrap_failed",
+                        "stop_reason": message,
+                        "page_history": [],
+                    },
+                }
+
+        last_snapshot = self._form_flow_snapshot(args=args, advice=advice)
+        for page_index in range(1, max_pages + 1):
+            page_args = dict(args)
+            page_args["action"] = "complete_form_page"
+            page_args["_provided_fields"] = self._dedupe_strings(
+                list(page_args.get("_provided_fields", [])) + ["action"]
+            )
+            page_advice = self.advise(page_args)
+            page_snapshot = page_advice.get("surface_snapshot", {}) if isinstance(page_advice.get("surface_snapshot", {}), dict) else last_snapshot
+            page_state = page_snapshot.get("form_page_state", {}) if isinstance(page_snapshot.get("form_page_state", {}), dict) else {}
+            safety_signals = page_snapshot.get("safety_signals", {}) if isinstance(page_snapshot.get("safety_signals", {}), dict) else {}
+            surface_flags = page_snapshot.get("surface_flags", {}) if isinstance(page_snapshot.get("surface_flags", {}), dict) else {}
+            before_summary = self._form_flow_summary(snapshot=page_snapshot)
+            page_record: Dict[str, Any] = {
+                "page_index": page_index,
+                "before": before_summary,
+                "warnings": [str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()],
+                "recommended_actions": [str(item).strip() for item in page_snapshot.get("recommended_actions", []) if str(item).strip()] if isinstance(page_snapshot.get("recommended_actions", []), list) else [],
+            }
+
+            if not bool(surface_flags.get("form_visible", False) or surface_flags.get("dialog_visible", False) or surface_flags.get("tab_page_visible", False)):
+                if page_index == 1 and not results:
+                    stop_reason_code = "form_not_visible"
+                    stop_reason = "No active settings or dialog form surface could be detected after focusing the requested app."
+                    page_record["status"] = "blocked"
+                    page_record["stop_reason_code"] = stop_reason_code
+                    page_record["stop_reason"] = stop_reason
+                    page_history.append(page_record)
+                else:
+                    completed = True
+                    message = "form flow completed and the settings surface closed"
+                break
+
+            gate = self._form_flow_gate(
+                page_state=page_state,
+                safety_signals=safety_signals,
+                allow_destructive_forms=allow_destructive_forms,
+            )
+            if not bool(gate.get("allowed", False)):
+                stop_reason_code = str(gate.get("code", "") or "form_manual_review_required")
+                stop_reason = str(gate.get("message", "") or "form page requires manual review before automation can continue")
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                if stop_reason:
+                    mission_warnings.append(stop_reason)
+                page_history.append(page_record)
+                break
+
+            if page_advice.get("status") != "success":
+                stop_reason_code = "form_page_route_unavailable"
+                stop_reason = "; ".join(
+                    str(item) for item in page_advice.get("blockers", []) if str(item).strip()
+                ) or str(page_advice.get("message", "form page route unavailable") or "form page route unavailable")
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                mission_warnings.extend([str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()])
+                page_history.append(page_record)
+                break
+
+            page_execution = self._run_execution_plan(
+                plan=page_advice.get("execution_plan", []),
+                result_metadata={
+                    "form_stage": "page",
+                    "form_page_index": page_index,
+                    "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                },
+            )
+            results.extend(page_execution.get("results", []) if isinstance(page_execution.get("results", []), list) else [])
+            after_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+            after_summary = self._form_flow_summary(snapshot=after_snapshot)
+            progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_snapshot)
+            page_record["after"] = after_summary
+            page_record["status"] = str(page_execution.get("status", "success") or "success")
+            page_record["message"] = str(page_execution.get("message", "") or "")
+            page_record["progressed"] = progressed
+            page_record["executed_actions"] = [
+                str(row.get("action", "") or "").strip()
+                for row in page_execution.get("results", [])
+                if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+            ]
+            page_history.append(page_record)
+            mission_warnings.extend([str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()])
+
+            if str(page_execution.get("status", "success") or "success") != "success":
+                status = "error" if not results else "success"
+                stop_reason_code = "form_page_execution_failed"
+                stop_reason = str(page_execution.get("message", "form page execution failed") or "form page execution failed")
+                break
+
+            if progressed or not bool(after_summary.get("form_visible", False)):
+                pages_completed += 1
+            if not bool(after_summary.get("form_visible", False)):
+                completed = True
+                message = "form flow completed and the settings surface closed"
+                last_snapshot = after_snapshot
+                break
+            if not progressed:
+                stop_reason_code = "form_page_stalled"
+                stop_reason = "Form page execution completed, but the settings surface did not change to a new state."
+                break
+
+            last_snapshot = after_snapshot
+
+        if not completed and not stop_reason_code and not message and pages_completed >= max_pages:
+            stop_reason_code = "form_page_limit_reached"
+            stop_reason = f"Form mission reached the configured page limit of {max_pages} without reaching a completed settings state."
+        if completed and not message:
+            message = "form flow completed"
+        elif not message:
+            message = stop_reason or "form flow stopped before completion"
+
+        post_context = self._capture_verification_context(args=args, advice=advice) if status == "success" else {}
+        final_summary = self._form_flow_summary(snapshot=last_snapshot)
+        verification = self._verify_form_flow_execution(
+            args=args,
+            pre_context=pre_context,
+            post_context=post_context,
+            completed=completed,
+            pages_completed=pages_completed,
+            max_pages=max_pages,
+            stop_reason_code=stop_reason_code,
+            stop_reason=stop_reason,
+            final_summary=final_summary,
+            warnings=mission_warnings,
+        )
+        if status == "success" and bool(verification.get("enabled", False)) and not bool(verification.get("verified", False)):
+            message = str(verification.get("message", message) or message)
+
+        return {
+            "attempt": attempt_index,
+            "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+            "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+            "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+            "payload": self._sanitize_payload_for_response(args),
+            "status": status,
+            "message": message,
+            "final_action": "complete_form_flow" if completed else str(results[-1]["action"] if results else advice.get("action", "")),
+            "results": results,
+            "advice": advice,
+            "verification": verification,
+            "form_mission": {
+                "enabled": True,
+                "completed": completed,
+                "pages_completed": pages_completed,
+                "page_count": len(page_history),
+                "max_pages": max_pages,
+                "allow_destructive_forms": allow_destructive_forms,
+                "stop_reason_code": stop_reason_code,
+                "stop_reason": stop_reason,
+                "page_history": page_history,
+                "final_page": final_summary,
+            },
+        }
+
+    def _form_flow_snapshot(self, *, args: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
+        target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        focus_title = str(
+            target_window.get("title", "")
+            or args.get("window_title", "")
+            or args.get("app_name", "")
+            or ""
+        ).strip()
+        snapshot = self.surface_snapshot(
+            app_name=str(args.get("app_name", "") or "").strip(),
+            window_title=focus_title,
+            query="",
+            limit=18,
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+            preferred_actions=["complete_form_flow", "complete_form_page", "confirm_dialog", "dismiss_dialog", "focus_form_surface"],
+        )
+        candidate_windows = snapshot.get("candidate_windows", []) if isinstance(snapshot.get("candidate_windows", []), list) else []
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        app_name = str(args.get("app_name", "") or "").strip()
+        window_title = str(args.get("window_title", "") or "").strip()
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
+        active_matches = self._window_matches(active_window, app_name=app_name, window_title=window_title or focus_title)
+        if not target_visible and not active_matches:
+            flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+            snapshot["surface_flags"] = {
+                **flags,
+                "form_visible": False,
+                "dialog_visible": False,
+            }
+            snapshot["form_page_state"] = {}
+        return snapshot
+
+    @staticmethod
+    def _form_flow_summary(*, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        form_visible = bool(flags.get("form_visible", False) or flags.get("dialog_visible", False) or flags.get("tab_page_visible", False))
+        return {
+            "form_visible": form_visible,
+            "dialog_visible": bool(flags.get("dialog_visible", False)),
+            "page_kind": str(page_state.get("page_kind", "") or "").strip(),
+            "commit_action": str(page_state.get("commit_action", "") or "").strip(),
+            "ready_for_commit": bool(page_state.get("ready_for_commit", False)),
+            "pending_requirement_count": int(page_state.get("pending_requirement_count", 0) or 0),
+            "preferred_commit_button": str(page_state.get("preferred_commit_button", "") or "").strip(),
+            "autonomous_progress_supported": bool(page_state.get("autonomous_progress_supported", False)),
+            "autonomous_blocker": str(page_state.get("autonomous_blocker", "") or "").strip(),
+            "manual_input_likely": bool(page_state.get("manual_input_likely", False)),
+            "destructive_warning_visible": bool(safety_signals.get("destructive_warning_visible", False)),
+            "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+        }
+
+    @classmethod
+    def _form_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool]:
+        summary = cls._form_flow_summary(snapshot=snapshot)
+        return (
+            str(summary.get("page_kind", "") or "").strip().lower(),
+            str(summary.get("preferred_commit_button", "") or "").strip().lower(),
+            int(summary.get("pending_requirement_count", 0) or 0),
+            str(summary.get("screen_hash", "") or "").strip(),
+            bool(summary.get("form_visible", False)),
+        )
+
+    @classmethod
+    def _form_flow_progressed(cls, *, before_snapshot: Dict[str, Any], after_snapshot: Dict[str, Any]) -> bool:
+        after_summary = cls._form_flow_summary(snapshot=after_snapshot)
+        if not bool(after_summary.get("form_visible", False)):
+            return True
+        return cls._form_flow_signature(snapshot=before_snapshot) != cls._form_flow_signature(snapshot=after_snapshot)
+
+    @staticmethod
+    def _form_flow_gate(
+        *,
+        page_state: Dict[str, Any],
+        safety_signals: Dict[str, Any],
+        allow_destructive_forms: bool,
+    ) -> Dict[str, Any]:
+        blocker = str(page_state.get("autonomous_blocker", "") or "").strip()
+        blocker_messages = {
+            "manual_input_required": "The current form likely requires manual text or option input before JARVIS can continue safely.",
+            "unsupported_form_requirements": "The current form exposes requirements that JARVIS cannot yet resolve safely without a more specific requested target.",
+            "no_commit_target_available": "The current form does not expose a reliable Save, Apply, OK, or Done control for autonomous completion.",
+        }
+        if bool(safety_signals.get("elevation_prompt_visible", False)):
+            return {
+                "allowed": False,
+                "code": "elevation_confirmation_required",
+                "message": "The current form is requesting elevated privileges, so JARVIS is pausing for explicit review instead of continuing autonomously.",
+            }
+        if bool(safety_signals.get("destructive_warning_visible", False)) and not allow_destructive_forms:
+            return {
+                "allowed": False,
+                "code": "destructive_form_review_required",
+                "message": "The current form exposes a destructive or irreversible warning, so JARVIS is pausing before committing the change.",
+            }
+        if blocker:
+            return {
+                "allowed": False,
+                "code": blocker,
+                "message": blocker_messages.get(blocker, "Form mission paused because the current settings page is not safe for autonomous progression."),
+            }
+        if not bool(page_state.get("autonomous_progress_supported", False)):
+            return {
+                "allowed": False,
+                "code": "form_progress_not_supported",
+                "message": "The current form page is visible, but it does not expose a reliable autonomous commit path yet.",
+            }
+        return {"allowed": True, "code": "", "message": ""}
+
+    @staticmethod
+    def _verify_form_flow_execution(
+        *,
+        args: Dict[str, Any],
+        pre_context: Dict[str, Any],
+        post_context: Dict[str, Any],
+        completed: bool,
+        pages_completed: int,
+        max_pages: int,
+        stop_reason_code: str,
+        stop_reason: str,
+        final_summary: Dict[str, Any],
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        checks = [
+            {
+                "name": "form_pages_completed",
+                "passed": pages_completed > 0 or completed,
+                "pages_completed": pages_completed,
+                "max_pages": max_pages,
+            },
+            {
+                "name": "form_surface_closed",
+                "passed": completed,
+                "form_visible_after": bool(final_summary.get("form_visible", False)),
+                "final_page_kind": str(final_summary.get("page_kind", "") or "").strip(),
+            },
+        ]
+        if stop_reason_code:
+            checks.append(
+                {
+                    "name": "form_safe_stop",
+                    "passed": False,
+                    "reason_code": stop_reason_code,
+                    "reason": stop_reason,
+                }
+            )
+        verified = completed
+        message = "form flow completed" if verified else (stop_reason or "form flow stopped before completion")
+        status = "degraded" if verified and warnings else ("success" if verified else "failed")
+        return {
+            "enabled": True,
+            "status": status,
+            "verified": verified,
+            "message": message,
+            "checks": checks,
+            "warnings": DesktopActionRouter._dedupe_strings(warnings),
+            "pre_context": {
+                "active_window": pre_context.get("active_window", {}) if isinstance(pre_context.get("active_window", {}), dict) else {},
+                "screen_hash": str((pre_context.get("observation", {}) if isinstance(pre_context.get("observation", {}), dict) else {}).get("screen_hash", "") or "").strip(),
+            },
+            "post_context": {
+                "active_window": post_context.get("active_window", {}) if isinstance(post_context.get("active_window", {}), dict) else {},
+                "screen_hash": str((post_context.get("observation", {}) if isinstance(post_context.get("observation", {}), dict) else {}).get("screen_hash", "") or "").strip(),
+            },
+            "verify_text": str(args.get("verify_text", "") or "").strip() or "settings applied",
+        }
+
     def _capture_verification_context(self, *, args: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
         context: Dict[str, Any] = {"timestamp": time.time()}
         action = str(args.get("action", "observe") or "observe").strip().lower()
         verify_enabled = bool(args.get("verify_after_action", True))
         if not verify_enabled:
             return context
-        if action in {"launch", "focus", "type", "click", "click_and_type", "hotkey"}:
+        if action in {"launch", "focus", "type", "click", "click_and_type", "hotkey", *WORKFLOW_ACTIONS}:
             context["active_window"] = self._active_window()
         capabilities = advice.get("capabilities", {}) if isinstance(advice.get("capabilities", {}), dict) else {}
         vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
-        if vision_ready and action in {"observe", "click", "click_and_type", "type", "hotkey"}:
+        if vision_ready and action in {"observe", "click", "click_and_type", "type", "hotkey", *WORKFLOW_ACTIONS}:
             context["observation"] = self._call("computer_observe", {"include_targets": False})
+        if action in WORKFLOW_ACTIONS:
+            context["workflow_probe"] = self._run_workflow_probes(
+                action=action,
+                args=args,
+                advice=advice,
+                capabilities=capabilities,
+            )
         return context
 
     def _verify_execution(
@@ -668,12 +4358,19 @@ class DesktopActionRouter:
         window_title = str(args.get("window_title", "") or "").strip()
         verify_text = str(args.get("verify_text", "") or "").strip()
         if not verify_text:
-            verify_text = str(args.get("text", "") or "").strip() if action in {"type", "click_and_type"} else str(args.get("query", "") or "").strip()
+            if action in {"type", "click_and_type", "command", "rename_symbol", "terminal_command"}:
+                verify_text = str(args.get("text", "") or "").strip()
+            elif action in {"navigate", "search", "quick_open", "workspace_search", "go_to_symbol"}:
+                verify_text = str(args.get("query", "") or "").strip()
+            else:
+                verify_text = str(args.get("query", "") or "").strip()
 
         pre_active = pre_context.get("active_window", {}) if isinstance(pre_context.get("active_window", {}), dict) else {}
         post_active = post_context.get("active_window", {}) if isinstance(post_context.get("active_window", {}), dict) else {}
         pre_observation = pre_context.get("observation", {}) if isinstance(pre_context.get("observation", {}), dict) else {}
         post_observation = post_context.get("observation", {}) if isinstance(post_context.get("observation", {}), dict) else {}
+        pre_probe = pre_context.get("workflow_probe", {}) if isinstance(pre_context.get("workflow_probe", {}), dict) else {}
+        post_probe = post_context.get("workflow_probe", {}) if isinstance(post_context.get("workflow_probe", {}), dict) else {}
         checks: List[Dict[str, Any]] = []
         warnings: List[str] = []
         focus_step = self._find_step_result(results, "focus_window")
@@ -695,7 +4392,16 @@ class DesktopActionRouter:
         post_text = str(post_observation.get("text", "") or "")
         text_visible = self._contains_text(post_text, verify_text)
         pre_text_visible = self._contains_text(pre_text, verify_text)
+        probe_queries = post_probe.get("queries", []) if isinstance(post_probe.get("queries", []), list) else []
+        if not probe_queries:
+            probe_queries = pre_probe.get("queries", []) if isinstance(pre_probe.get("queries", []), list) else []
+        probe_matches = post_probe.get("matches", []) if isinstance(post_probe.get("matches", []), list) else []
+        probe_sources = post_probe.get("sources", []) if isinstance(post_probe.get("sources", []), list) else []
+        probe_match = bool(post_probe.get("matched", False))
+        pre_probe_match = bool(pre_probe.get("matched", False))
         active_changed = self._to_int(pre_active.get("hwnd")) != self._to_int(post_active.get("hwnd")) if pre_active and post_active else False
+        workflow_state_signal = bool(screen_changed or text_visible or probe_match)
+        workflow_surface_signal = bool(screen_changed or active_changed or text_visible or probe_match)
         final_step = results[-1].get("result", {}) if results and isinstance(results[-1].get("result", {}), dict) else {}
         click_step = self._find_step_result(results, "computer_click_target")
         type_step = self._find_step_result(results, "keyboard_type")
@@ -712,7 +4418,7 @@ class DesktopActionRouter:
                     "observed": str(post_active.get("title", "") or post_active.get("process_name", "") or ""),
                 }
             )
-        if action in {"click", "click_and_type", "type", "hotkey"}:
+        if action in {"click", "click_and_type", "type", "hotkey", *WORKFLOW_ACTIONS}:
             checks.append(
                 {
                     "name": "screen_changed",
@@ -721,13 +4427,24 @@ class DesktopActionRouter:
                     "post_hash": post_hash,
                 }
             )
-        if verify_text and action in {"click", "click_and_type", "type"}:
+        if verify_text and action in {"click", "click_and_type", "type", "navigate", "search", "command", "quick_open", "workspace_search", "go_to_symbol", "rename_symbol", "terminal_command"}:
             checks.append(
                 {
                     "name": "text_visible",
                     "passed": bool(text_visible),
                     "expected": verify_text[:120],
                     "was_visible_before": bool(pre_text_visible),
+                }
+            )
+        if action in WORKFLOW_ACTIONS and probe_queries:
+            checks.append(
+                {
+                    "name": "workflow_probe_match",
+                    "passed": probe_match,
+                    "queries": probe_queries,
+                    "matched_before": pre_probe_match,
+                    "matched_terms": [str(row.get("query", "") or "") for row in probe_matches if isinstance(row, dict)][:4],
+                    "sources": self._dedupe_strings([str(item) for item in probe_sources if str(item).strip()]),
                 }
             )
         if action == "observe":
@@ -780,6 +4497,146 @@ class DesktopActionRouter:
                 if verified:
                     warnings.append("Visual verification was unavailable, so JARVIS accepted the successful click-and-type chain as best-effort confirmation.")
             message = "click-and-type verified" if verified else "click-and-type finished, but the follow-up state change could not be confirmed"
+        elif action == "navigate":
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and (workflow_state_signal or (active_match and not verify_text))
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "navigation verified" if verified else "navigation finished, but JARVIS could not confirm the destination was reached",
+                )
+                or ("navigation verified" if verified else "navigation finished, but JARVIS could not confirm the destination was reached")
+            )
+        elif action == "search":
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and workflow_state_signal
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "search verified" if verified else "search finished, but the follow-up search state could not be confirmed",
+                )
+                or ("search verified" if verified else "search finished, but the follow-up search state could not be confirmed")
+            )
+        elif action == "command":
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and workflow_state_signal
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "command verified" if verified else "command palette finished, but the resulting UI state could not be confirmed",
+                )
+                or ("command verified" if verified else "command palette finished, but the resulting UI state could not be confirmed")
+            )
+        elif action == "quick_open":
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and workflow_state_signal
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "quick open verified" if verified else "quick open finished, but the requested target could not be confirmed",
+                )
+                or ("quick open verified" if verified else "quick open finished, but the requested target could not be confirmed")
+            )
+        elif action == "terminal_command":
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and (workflow_state_signal or (active_match and not verify_text))
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "terminal command verified" if verified else "terminal command finished, but JARVIS could not confirm the command reached the intended terminal surface",
+                )
+                or ("terminal command verified" if verified else "terminal command finished, but JARVIS could not confirm the command reached the intended terminal surface")
+            )
+        elif action in WORKFLOW_ACTIONS and bool(self._workflow_definition(action).get("requires_input", False)):
+            verified = bool(
+                str(type_step.get("status", "") or "").strip().lower() == "success"
+                and (workflow_state_signal or (active_match and not verify_text))
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and not vision_signal_available and str(type_step.get("status", "") or "").strip().lower() == "success":
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(self._workflow_definition(action).get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                self._workflow_definition(action).get(
+                    "verification_success" if verified else "verification_failure",
+                    "workflow verified" if verified else "workflow finished, but the target state could not be confirmed",
+                )
+                or ("workflow verified" if verified else "workflow finished, but the target state could not be confirmed")
+            )
+        elif action in WORKFLOW_ACTIONS and not bool(self._workflow_definition(action).get("requires_input", False)):
+            workflow_definition = self._workflow_definition(action)
+            workflow_action_name = str(workflow_definition.get("workflow_action", "") or "").strip().lower()
+            workflow_step = self._find_step_result(results, workflow_action_name) if workflow_action_name else {}
+            primary_step = workflow_step if workflow_step else self._find_step_result(results, "keyboard_hotkey")
+            primary_step_status = str(primary_step.get("status", "") or "").strip().lower()
+            self_verifying = bool(workflow_definition.get("self_verifying", False))
+            surface_snapshot = advice.get("surface_snapshot", {}) if isinstance(advice.get("surface_snapshot", {}), dict) else {}
+            surface_flags = surface_snapshot.get("surface_flags", {}) if isinstance(surface_snapshot.get("surface_flags", {}), dict) else {}
+            surface_flag_name = str(workflow_definition.get("surface_flag", "") or "").strip()
+            surface_ready_before = bool(surface_flags.get(surface_flag_name)) if surface_flag_name else False
+            ready_surface_short_circuit = bool(
+                workflow_definition.get("preserve_ready_surface", False)
+                and workflow_definition.get("skip_hotkey_when_ready", False)
+                and surface_ready_before
+                and not primary_step
+            )
+            workflow_ready_signal = bool(workflow_surface_signal or (ready_surface_short_circuit and (probe_match or pre_probe_match or surface_ready_before)))
+            verified = bool(
+                (primary_step_status == "success" or ready_surface_short_circuit)
+                and (workflow_ready_signal or (self_verifying and (active_match or not (app_name or window_title))))
+                and (active_match or not (app_name or window_title))
+            )
+            if not verified and self_verifying and (primary_step_status == "success" or ready_surface_short_circuit):
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(workflow_definition.get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            elif not verified and not vision_signal_available and (primary_step_status == "success" or ready_surface_short_circuit):
+                verified = bool(active_match or not (app_name or window_title))
+                if verified:
+                    warnings.append(str(workflow_definition.get("vision_warning", "") or "Visual verification was unavailable, so JARVIS accepted the successful workflow as best-effort confirmation."))
+            message = str(
+                workflow_definition.get(
+                    "verification_success" if verified else "verification_failure",
+                    "workflow verified" if verified else "workflow finished, but the target state could not be confirmed",
+                )
+                or ("workflow verified" if verified else "workflow finished, but the target state could not be confirmed")
+            )
         elif action == "hotkey":
             verified = bool(screen_changed or active_changed or (active_match if (app_name or window_title) else False))
             if not verified and not vision_signal_available and active_match:
@@ -792,9 +4649,11 @@ class DesktopActionRouter:
         else:
             verified = True
 
-        if not verified and action in {"type", "click_and_type"} and verify_text and not text_visible:
+        if not verified and action in {"type", "click_and_type", "navigate", "search", "command", "quick_open", "workspace_search", "go_to_symbol", "rename_symbol", "terminal_command"} and verify_text and not text_visible:
             warnings.append(f"Expected text '{verify_text[:80]}' was not visible in the post-action OCR snapshot.")
-        if not verified and action in {"click", "click_and_type", "hotkey"} and not (screen_changed or click_changed):
+        if not verified and action in WORKFLOW_ACTIONS and probe_queries and not probe_match:
+            warnings.append("No workflow probe matched the expected post-action surface.")
+        if not verified and action in {"click", "click_and_type", "hotkey", *WORKFLOW_ACTIONS} and not (screen_changed or click_changed or active_changed):
             warnings.append("No post-action screen hash change was detected.")
         status = "degraded" if verified and warnings else ("success" if verified else "failed")
         return {
@@ -808,11 +4667,13 @@ class DesktopActionRouter:
             "pre_context": {
                 "active_window": pre_active,
                 "screen_hash": pre_hash,
+                "workflow_probe": pre_probe,
             },
             "post_context": {
                 "active_window": post_active,
                 "screen_hash": post_hash,
                 "screenshot_path": screenshot_path or str(final_step.get("screenshot_path", "") or "").strip(),
+                "workflow_probe": post_probe,
             },
         }
 
@@ -827,12 +4688,19 @@ class DesktopActionRouter:
         action = str(args.get("action", "observe") or "observe").strip().lower()
         verify_text = self._derive_verify_text(args=args, app_profile=app_profile)
         checks: List[str] = []
-        if action in {"launch", "focus", "type", "click", "click_and_type", "hotkey"} and (args.get("app_name") or args.get("window_title") or primary_candidate):
+        if action in {"launch", "focus", "type", "click", "click_and_type", "hotkey", *WORKFLOW_ACTIONS} and (args.get("app_name") or args.get("window_title") or primary_candidate):
             checks.append("active_window_match")
-        if action in {"click", "click_and_type", "type", "hotkey"} and bool(capabilities.get("vision", {}).get("available")):
+        if action in {"click", "click_and_type", "type", "hotkey", *WORKFLOW_ACTIONS} and bool(capabilities.get("vision", {}).get("available")):
             checks.append("screen_hash_change")
-        if verify_text and action in {"click", "click_and_type", "type"} and bool(capabilities.get("vision", {}).get("available")):
+        if verify_text and action in {"click", "click_and_type", "type", "navigate", "search", "command", "quick_open", "workspace_search", "go_to_symbol", "rename_symbol", "terminal_command"} and bool(capabilities.get("vision", {}).get("available")):
             checks.append("ocr_text_visibility")
+        probe_plan = self._workflow_probe_queries(
+            requested_action=action,
+            args=args,
+            advice={"app_profile": app_profile, "target_window": primary_candidate},
+        )
+        if action in WORKFLOW_ACTIONS and probe_plan:
+            checks.append("workflow_probe_match")
         if action == "launch":
             checks.append("window_presence")
         if action == "observe":
@@ -849,6 +4717,7 @@ class DesktopActionRouter:
             "retry_on_verification_failure": bool(args.get("retry_on_verification_failure", True)),
             "max_strategy_attempts": max(1, min(int(args.get("max_strategy_attempts", 2) or 2), 4)),
             "checks": checks,
+            "probe_plan": probe_plan,
         }
 
     def _build_strategy_variants(self, *, args: Dict[str, Any], capabilities: Dict[str, Any], app_profile: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -917,6 +4786,30 @@ class DesktopActionRouter:
                         "payload_overrides": {"target_mode": "ocr", "focus_first": True},
                     }
                 )
+        if action in WORKFLOW_ACTIONS:
+            workflow_profile = self._workflow_profile(requested_action=action, args=args, app_profile=app_profile)
+            hotkeys = workflow_profile.get("hotkeys", []) if isinstance(workflow_profile.get("hotkeys", []), list) else []
+            definition = self._workflow_definition(action)
+            if focus_retry_needed:
+                variants.append(
+                    {
+                        "strategy_id": "workflow_refocus_retry",
+                        "title": "Workflow Refocus Retry",
+                        "reason": "Retry after explicitly restoring focus before replaying the desktop workflow.",
+                        "payload_overrides": {"focus_first": True},
+                    }
+                )
+            for index, hotkey in enumerate(hotkeys[1:], start=2):
+                if not isinstance(hotkey, list) or not hotkey:
+                    continue
+                variants.append(
+                    {
+                        "strategy_id": f"workflow_retry_{index}",
+                        "title": str(definition.get("retry_label", "Workflow Retry") or "Workflow Retry"),
+                        "reason": str(definition.get("retry_reason", "Retry with an alternate workflow shortcut.") or "Retry with an alternate workflow shortcut."),
+                        "payload_overrides": {"keys": list(hotkey), "focus_first": True},
+                    }
+                )
         deduped: List[Dict[str, Any]] = []
         seen: set[tuple] = set()
         for variant in variants:
@@ -949,12 +4842,18 @@ class DesktopActionRouter:
             "final_action": selected_attempt.get("final_action", advice.get("action", "")),
             "route_mode": advice.get("route_mode", base_advice.get("route_mode", "")),
             "confidence": advice.get("confidence", base_advice.get("confidence", 0.0)),
+            "risk_level": advice.get("risk_level", base_advice.get("risk_level", "")),
             "app_profile": advice.get("app_profile", base_advice.get("app_profile", {})),
             "profile_defaults_applied": advice.get("profile_defaults_applied", base_advice.get("profile_defaults_applied", {})),
             "target_window": advice.get("target_window", base_advice.get("target_window", {})),
+            "surface_snapshot": advice.get("surface_snapshot", base_advice.get("surface_snapshot", {})),
+            "safety_signals": advice.get("safety_signals", base_advice.get("safety_signals", {})),
+            "surface_branch": advice.get("surface_branch", base_advice.get("surface_branch", {})),
             "results": selected_attempt.get("results", []),
             "advice": advice,
             "verification": verification,
+            "wizard_mission": selected_attempt.get("wizard_mission", {}),
+            "form_mission": selected_attempt.get("form_mission", {}),
             "attempts": attempts,
             "attempt_count": len(attempts),
             "executed_strategy": {
@@ -966,8 +4865,2355 @@ class DesktopActionRouter:
             "message": str(message_override or selected_attempt.get("message", "") or ""),
         }
 
+    def _record_adaptive_strategy_outcome(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_payload: Dict[str, Any],
+    ) -> None:
+        try:
+            self._workflow_memory.record_outcome(
+                action=str(args.get("action", "") or ""),
+                args=args,
+                app_profile=advice.get("app_profile", {}) if isinstance(advice.get("app_profile", {}), dict) else {},
+                strategy=strategy,
+                attempt=attempt_payload,
+            )
+        except Exception:  # noqa: BLE001
+            return
+
     def app_profile_catalog(self, *, query: str = "", category: str = "", limit: int = 400) -> Dict[str, Any]:
         return self._app_profile_registry.catalog(query=query, category=category, limit=limit)
+
+    def workflow_catalog(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        clean_query = " ".join(str(query or "").strip().lower().split())
+        clean_category = " ".join(str(category or "").strip().lower().split())
+        resolved_profile = self._app_profile_registry.match(app_name=app_name, window_title=window_title)
+        profile = resolved_profile if resolved_profile.get("status") == "success" else {}
+        items: List[Dict[str, Any]] = []
+        for action in sorted(WORKFLOW_ACTIONS):
+            definition = self._workflow_definition(action)
+            category_hints = self._workflow_category_hints(definition)
+            if clean_category and clean_category not in category_hints:
+                if not (profile and clean_category == str(profile.get("category", "") or "").strip().lower()):
+                    continue
+            workflow_profile = self._workflow_profile(requested_action=action, args={"action": action}, app_profile=profile if profile else {})
+            capability = (
+                profile.get("workflow_capabilities", {}).get(action, {})
+                if isinstance(profile.get("workflow_capabilities", {}), dict)
+                and isinstance(profile.get("workflow_capabilities", {}).get(action, {}), dict)
+                else {}
+            )
+            item = {
+                "action": action,
+                "title": str(definition.get("title", action.replace("_", " ").title()) or action.replace("_", " ").title()),
+                "route_mode": str(definition.get("route_mode", "workflow_desktop") or "workflow_desktop"),
+                "requires_input": bool(definition.get("requires_input", False)),
+                "input_field": str(definition.get("input_field", "") or "").strip(),
+                "required_fields": self._workflow_required_fields(requested_action=action),
+                "input_sequence": [dict(row) for row in definition.get("input_sequence", []) if isinstance(row, dict)],
+                "default_press_enter": bool(definition.get("default_press_enter", False)),
+                "category_hints": category_hints,
+                "support_message": str(definition.get("support_message", "") or ""),
+                "verify_hint": str(definition.get("verify_hint", "") or ""),
+                "supported": workflow_profile.get("supported") if workflow_profile else None,
+                "primary_hotkey": workflow_profile.get("primary_hotkey", []) if workflow_profile else [],
+                "alternate_hotkeys": workflow_profile.get("alternate_hotkeys", []) if workflow_profile else [],
+                "supports_direct_input": bool(workflow_profile.get("supports_direct_input", False)) if workflow_profile else False,
+                "supports_system_action": bool(workflow_profile.get("supports_system_action", False)) if workflow_profile else False,
+                "supports_action_dispatch": bool(workflow_profile.get("supports_action_dispatch", False)) if workflow_profile else False,
+                "supports_stateful_execution": bool(workflow_profile.get("supports_stateful_execution", False)) if workflow_profile else False,
+                "probe_queries": workflow_profile.get("probe_queries", []) if workflow_profile else [],
+                "recommended_followups": workflow_profile.get("recommended_followups", []) if workflow_profile else [],
+                "capability": capability,
+            }
+            haystacks = [
+                str(item.get("action", "") or ""),
+                str(item.get("title", "") or ""),
+                str(item.get("support_message", "") or ""),
+            ]
+            if clean_query and not any(clean_query in " ".join(str(value).strip().lower().split()) for value in haystacks):
+                continue
+            items.append(item)
+        bounded = max(1, min(int(limit or 200), 2000))
+        return {
+            "status": "success",
+            "count": min(len(items), bounded),
+            "total": len(items),
+            "items": items[:bounded],
+            "profile": profile if profile else {},
+            "filters": {
+                "query": clean_query,
+                "category": clean_category,
+                "app_name": str(app_name or "").strip(),
+                "window_title": str(window_title or "").strip(),
+            },
+        }
+
+    def workflow_memory_snapshot(
+        self,
+        *,
+        limit: int = 200,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        return self._workflow_memory.snapshot(
+            limit=limit,
+            action=action,
+            app_name=app_name,
+            profile_id=profile_id,
+            intent=intent,
+        )
+
+    def workflow_memory_reset(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        return self._workflow_memory.reset(
+            action=action,
+            app_name=app_name,
+            profile_id=profile_id,
+            intent=intent,
+        )
+
+    def surface_snapshot(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 24,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        preferred_actions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        args = self._normalize_payload(
+            {
+                "action": "observe",
+                "app_name": app_name,
+                "window_title": window_title,
+                "query": query,
+                "include_targets": False,
+            }
+        )
+        app_profile = self._resolve_app_profile(args=args)
+        args, defaults_applied = self._apply_profile_defaults(args=args, app_profile=app_profile)
+        capabilities = self._capabilities()
+        windows = self._list_windows()
+        active_window = self._active_window()
+        candidates = self._rank_window_candidates(
+            windows=windows,
+            active_window=active_window,
+            app_name=str(args.get("app_name", "") or ""),
+            window_title=str(args.get("window_title", "") or ""),
+            app_profile=app_profile,
+        )
+        primary_candidate = candidates[0] if candidates else {}
+        refined_profile = self._resolve_app_profile(args=args, primary_candidate=primary_candidate, active_window=active_window)
+        if refined_profile.get("status") == "success" and refined_profile.get("profile_id") != app_profile.get("profile_id"):
+            app_profile = refined_profile
+            args, extra_defaults = self._apply_profile_defaults(args=args, app_profile=app_profile)
+            defaults_applied.update(extra_defaults)
+            candidates = self._rank_window_candidates(
+                windows=windows,
+                active_window=active_window,
+                app_name=str(args.get("app_name", "") or ""),
+                window_title=str(args.get("window_title", "") or ""),
+                app_profile=app_profile,
+            )
+            primary_candidate = candidates[0] if candidates else {}
+
+        bounded = max(1, min(int(limit or 24), 80))
+        accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
+        vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
+        focus_title = str(primary_candidate.get("title", "") or args.get("window_title", "") or args.get("app_name", "") or "").strip()
+
+        observation: Dict[str, Any] = {}
+        if include_observation and vision_ready:
+            observation = self._call("computer_observe", {"include_targets": False})
+
+        element_rows: List[Dict[str, Any]] = []
+        elements_result: Dict[str, Any] = {}
+        elements_supplemented = False
+        if include_elements and accessibility_ready:
+            element_payload: Dict[str, Any] = {
+                "max_elements": bounded,
+                "include_descendants": True,
+            }
+            if focus_title:
+                element_payload["window_title"] = focus_title
+            if str(query or "").strip():
+                element_payload["query"] = str(query).strip()
+            elements_result = self._call("accessibility_list_elements", element_payload)
+            raw_items = elements_result.get("items", []) if isinstance(elements_result.get("items", []), list) else []
+            element_rows = [dict(item) for item in raw_items if isinstance(item, dict)][:bounded]
+            if str(query or "").strip() and len(element_rows) < min(bounded, 24):
+                supplemental_payload: Dict[str, Any] = {
+                    "max_elements": bounded,
+                    "include_descendants": True,
+                }
+                if focus_title:
+                    supplemental_payload["window_title"] = focus_title
+                supplemental_result = self._call("accessibility_list_elements", supplemental_payload)
+                supplemental_items = supplemental_result.get("items", []) if isinstance(supplemental_result.get("items", []), list) else []
+                merged_rows: List[Dict[str, Any]] = []
+                seen_element_keys: set[str] = set()
+                for row in [*element_rows, *[dict(item) for item in supplemental_items if isinstance(item, dict)]]:
+                    element_key = self._element_identity_key(row)
+                    if not element_key or element_key in seen_element_keys:
+                        continue
+                    seen_element_keys.add(element_key)
+                    merged_rows.append(row)
+                    if len(merged_rows) >= bounded:
+                        break
+                elements_supplemented = len(merged_rows) > len(element_rows)
+                element_rows = merged_rows
+        query_targets = self._query_target_elements(elements=element_rows, query=str(query or "").strip(), limit=5)
+        target_control_state = query_targets[0] if query_targets else {}
+        query_related_candidates = self._related_target_elements(elements=element_rows, target=target_control_state, limit=12)
+        selection_candidates = self._selection_candidate_elements(elements=element_rows, limit=12)
+        control_inventory = self._control_inventory(elements=element_rows)
+
+        workflow_surfaces: List[Dict[str, Any]] = []
+        if include_workflow_probes:
+            workflow_capabilities = app_profile.get("workflow_capabilities", {}) if isinstance(app_profile.get("workflow_capabilities", {}), dict) else {}
+            supported_actions = [
+                str(action_name).strip().lower()
+                for action_name, capability in workflow_capabilities.items()
+                if str(action_name).strip()
+                and isinstance(capability, dict)
+                and bool(capability.get("supported", False))
+                and str(action_name).strip().lower() in WORKFLOW_ACTIONS
+            ]
+            preferred = [
+                str(action_name).strip().lower()
+                for action_name in (preferred_actions or [])
+                if str(action_name).strip().lower() in supported_actions
+            ]
+            normalized_probe_query = self._normalize_probe_text(query)
+            preferred_order = {action_name: index for index, action_name in enumerate(preferred)}
+
+            def _workflow_priority(action_name: str) -> tuple[int, int, str]:
+                if action_name in preferred_order:
+                    return (0, preferred_order[action_name], action_name)
+                definition = self._workflow_definition(action_name)
+                search_haystack = self._normalize_probe_text(
+                    " ".join(
+                        [
+                            action_name,
+                            str(definition.get("title", "") or ""),
+                            str(definition.get("verify_hint", "") or ""),
+                            str(definition.get("support_message", "") or ""),
+                            " ".join(str(term).strip() for term in definition.get("probe_terms", []) if str(term).strip()),
+                        ]
+                    )
+                )
+                query_matched = bool(normalized_probe_query and normalized_probe_query in search_haystack)
+                return (1 if query_matched else 2, 0, action_name)
+
+            prioritized_actions: List[str] = []
+            for action_name in sorted(supported_actions, key=_workflow_priority):
+                if action_name and action_name not in prioritized_actions:
+                    prioritized_actions.append(action_name)
+            for action_name in prioritized_actions[: min(18, bounded)]:
+                workflow_args: Dict[str, Any] = {
+                    "action": action_name,
+                    "app_name": str(args.get("app_name", "") or ""),
+                    "window_title": str(args.get("window_title", "") or ""),
+                }
+                if str(query or "").strip():
+                    workflow_args["query"] = str(query).strip()
+                workflow_profile = self._workflow_profile(requested_action=action_name, args=workflow_args, app_profile=app_profile)
+                probe_result = self._run_workflow_probes(
+                    action=action_name,
+                    args=workflow_args,
+                    advice={"app_profile": app_profile, "target_window": primary_candidate},
+                    capabilities=capabilities,
+                )
+                workflow_surfaces.append(
+                    {
+                        "action": action_name,
+                        "title": str(workflow_profile.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()),
+                        "supported": bool(workflow_profile.get("supported", False)),
+                        "primary_hotkey": workflow_profile.get("primary_hotkey", []),
+                        "probe_queries": workflow_profile.get("probe_queries", []),
+                        "matched": bool(probe_result.get("matched", False)),
+                        "match_count": len(probe_result.get("matches", [])) if isinstance(probe_result.get("matches", []), list) else 0,
+                        "matches": probe_result.get("matches", []) if isinstance(probe_result.get("matches", []), list) else [],
+                        "recommended_followups": workflow_profile.get("recommended_followups", []),
+                    }
+                )
+
+        flags = self._surface_flags(
+            app_profile=app_profile,
+            workflow_surfaces=workflow_surfaces,
+            observation=observation,
+            active_window=active_window,
+            target_window=primary_candidate,
+            query=str(query or "").strip(),
+            elements=element_rows,
+        )
+        safety_signals = self._surface_safety_signals(
+            app_profile=app_profile,
+            observation=observation,
+            active_window=active_window,
+            target_window=primary_candidate,
+            elements=element_rows,
+        )
+        target_group_state = self._target_group_state(
+            target=target_control_state,
+            related_candidates=query_related_candidates,
+            safety_signals=safety_signals,
+        )
+        wizard_page_state = self._wizard_page_state(
+            observation=observation,
+            elements=element_rows,
+            safety_signals=safety_signals,
+        )
+        form_page_state = self._form_page_state(
+            observation=observation,
+            elements=element_rows,
+            safety_signals=safety_signals,
+            surface_flags=flags,
+        )
+        flags.update(
+            {
+                key: bool(safety_signals.get(key, False))
+                for key in (
+                    "wizard_surface_visible",
+                    "wizard_next_available",
+                    "wizard_back_available",
+                    "wizard_finish_available",
+                    "warning_surface_visible",
+                    "destructive_warning_visible",
+                    "elevation_prompt_visible",
+                    "requires_confirmation",
+                )
+            }
+        )
+        recommended_actions = self._surface_recommendations(workflow_surfaces=workflow_surfaces)
+        recommended_actions = [
+            *self._surface_safety_recommendations(safety_signals=safety_signals),
+            *recommended_actions,
+        ]
+        if bool(wizard_page_state) and bool(wizard_page_state.get("autonomous_progress_supported", False)):
+            recommended_actions = ["complete_wizard_flow", *[action for action in recommended_actions if action != "complete_wizard_flow"]]
+        if bool(wizard_page_state):
+            recommended_actions = ["complete_wizard_page", *[action for action in recommended_actions if action != "complete_wizard_page"]]
+        if bool(form_page_state) and bool(form_page_state.get("autonomous_progress_supported", False)):
+            recommended_actions = ["complete_form_flow", *[action for action in recommended_actions if action != "complete_form_flow"]]
+            recommended_actions = ["complete_form_page", *[action for action in recommended_actions if action != "complete_form_page"]]
+        if bool(flags.get("sidebar_visible")) and not bool(flags.get("wizard_surface_visible")) and "focus_main_content" not in recommended_actions:
+            recommended_actions = ["focus_main_content", *recommended_actions]
+        recommended_actions = self._dedupe_strings(recommended_actions)[:8]
+        return {
+            "status": "success",
+            "app_profile": app_profile if app_profile.get("status") == "success" else {},
+            "profile_defaults_applied": defaults_applied,
+            "capabilities": capabilities,
+            "active_window": active_window,
+            "target_window": primary_candidate,
+            "candidate_windows": candidates[:6],
+            "elements": {
+                "status": str(elements_result.get("status", "skipped") or "skipped") if elements_result else ("success" if element_rows else "skipped"),
+                "count": len(element_rows),
+                "items": element_rows,
+                "supplemented": elements_supplemented,
+            },
+            "query_targets": query_targets,
+            "query_related_candidates": query_related_candidates,
+            "selection_candidates": selection_candidates,
+            "control_inventory": control_inventory,
+            "target_control_state": target_control_state,
+            "target_group_state": target_group_state,
+            "wizard_page_state": wizard_page_state,
+            "form_page_state": form_page_state,
+            "safety_signals": safety_signals,
+            "observation": {
+                "status": str(observation.get("status", "skipped") or "skipped") if observation else "skipped",
+                "screen_hash": str(observation.get("screen_hash", "") or ""),
+                "text": str(observation.get("text", "") or ""),
+                "screenshot_path": str(observation.get("screenshot_path", "") or ""),
+            },
+            "workflow_surfaces": workflow_surfaces,
+            "surface_flags": flags,
+            "recommended_actions": recommended_actions,
+            "filters": {
+                "app_name": str(app_name or "").strip(),
+                "window_title": str(window_title or "").strip(),
+                "query": str(query or "").strip(),
+                "limit": bounded,
+                "include_observation": bool(include_observation),
+                "include_elements": bool(include_elements),
+                "include_workflow_probes": bool(include_workflow_probes),
+            },
+        }
+
+    def _surface_flags(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        workflow_surfaces: List[Dict[str, Any]],
+        observation: Dict[str, Any],
+        active_window: Dict[str, Any],
+        target_window: Dict[str, Any],
+        query: str = "",
+        elements: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, bool]:
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        matched_actions = {
+            str(row.get("action", "") or "").strip().lower()
+            for row in workflow_surfaces
+            if isinstance(row, dict) and bool(row.get("matched", False))
+        }
+        observation_text = self._normalize_probe_text(observation.get("text", ""))
+        normalized_query = self._normalize_probe_text(query)
+        target_title = self._normalize_probe_text(target_window.get("title", ""))
+        active_title = self._normalize_probe_text(active_window.get("title", ""))
+        profile_name = self._normalize_probe_text(app_profile.get("name", ""))
+        element_rows = [dict(row) for row in (elements or []) if isinstance(row, dict)]
+
+        def _coerce_bool(value: Any) -> Optional[bool]:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                if int(value) in {0, 1}:
+                    return bool(int(value))
+                return None
+            clean = self._normalize_probe_text(value)
+            if clean in {"true", "yes", "on", "checked", "selected", "expanded", "open"}:
+                return True
+            if clean in {"false", "no", "off", "unchecked", "unselected", "collapsed", "closed"}:
+                return False
+            return None
+
+        def _normalize_toggle(value: Any) -> str:
+            clean = self._normalize_probe_text(value)
+            if clean in {"1", "true"}:
+                return "on"
+            if clean in {"0", "false"}:
+                return "off"
+            return clean
+
+        def _element_control_type(row: Dict[str, Any]) -> str:
+            return self._normalize_probe_text(row.get("control_type", ""))
+
+        def _element_text(row: Dict[str, Any]) -> str:
+            parts = [
+                str(row.get("name", "") or ""),
+                str(row.get("automation_id", "") or ""),
+                str(row.get("class_name", "") or ""),
+                str(row.get("control_type", "") or ""),
+                str(row.get("state_text", "") or ""),
+                str(row.get("value_text", "") or ""),
+            ]
+            if row.get("range_value") is not None:
+                parts.append(str(row.get("range_value")))
+            return self._normalize_probe_text(" ".join(parts))
+
+        def _element_matches_query(row: Dict[str, Any]) -> bool:
+            if not normalized_query:
+                return True
+            return normalized_query in _element_text(row)
+
+        def _element_has_toggle_state(row: Dict[str, Any]) -> bool:
+            return bool(_normalize_toggle(row.get("toggle_state", "")))
+
+        def _element_is_checked(row: Dict[str, Any]) -> Optional[bool]:
+            checked = _coerce_bool(row.get("checked"))
+            if checked is not None:
+                return checked
+            toggle = _normalize_toggle(row.get("toggle_state", ""))
+            if toggle in {"on", "checked"}:
+                return True
+            if toggle in {"off", "unchecked"}:
+                return False
+            return None
+
+        def _element_is_selected(row: Dict[str, Any]) -> Optional[bool]:
+            selected = _coerce_bool(row.get("selected"))
+            if selected is not None:
+                return selected
+            return _element_is_checked(row)
+
+        def _element_is_expanded(row: Dict[str, Any]) -> Optional[bool]:
+            expanded = _coerce_bool(row.get("expanded"))
+            if expanded is not None:
+                return expanded
+            state_text = self._normalize_probe_text(row.get("state_text", ""))
+            if "expanded" in state_text or "opened" in state_text:
+                return True
+            if "collapsed" in state_text or "closed" in state_text:
+                return False
+            return None
+
+        query_elements = [row for row in element_rows if _element_matches_query(row)]
+        edit_elements = [row for row in element_rows if _element_control_type(row) == "edit"]
+        combo_elements = [row for row in element_rows if _element_control_type(row) == "combobox"]
+        checkbox_elements = [row for row in element_rows if _element_control_type(row) == "checkbox"]
+        radio_elements = [row for row in element_rows if _element_control_type(row) == "radiobutton"]
+        tab_elements = [row for row in element_rows if _element_control_type(row) == "tabitem"]
+        slider_elements = [row for row in element_rows if _element_control_type(row) == "slider"]
+        spinner_elements = [
+            row
+            for row in element_rows
+            if _element_control_type(row) in {"spinner", "updown"}
+        ]
+        value_control_elements = [
+            row
+            for row in element_rows
+            if _element_control_type(row) in {"slider", "spinner", "updown"}
+            or row.get("range_value") is not None
+            or bool(str(row.get("value_text", "") or "").strip())
+        ]
+        query_checkbox_elements = [row for row in checkbox_elements if _element_matches_query(row)]
+        query_radio_elements = [row for row in radio_elements if _element_matches_query(row)]
+        query_tab_elements = [row for row in tab_elements if _element_matches_query(row)]
+        query_value_elements = [row for row in value_control_elements if _element_matches_query(row)]
+        history_visible = "open_history" in matched_actions or any(
+            phrase in observation_text for phrase in ("history", "recently closed", "recent tabs")
+        )
+        downloads_visible = "open_downloads" in matched_actions or any(
+            phrase in observation_text for phrase in ("downloads", "download")
+        )
+        bookmarks_visible = "open_bookmarks" in matched_actions or any(
+            phrase in observation_text for phrase in ("bookmarks", "bookmark manager")
+        )
+        devtools_visible = "open_devtools" in matched_actions or any(
+            phrase in observation_text for phrase in ("developer tools", "devtools", "elements", "console")
+        )
+        tab_strip_visible = bool(tab_elements) or any(phrase in observation_text for phrase in ("tab strip", "tabs", "new tab"))
+        tab_search_visible = "open_tab_search" in matched_actions or "search_tabs" in matched_actions or any(
+            phrase in observation_text for phrase in ("search tabs", "search open tabs", "tab search", "open tabs")
+        )
+        explorer_visible = "focus_explorer" in matched_actions or any(
+            phrase in observation_text for phrase in ("explorer", "project", "outline", "files")
+        )
+        folder_tree_visible = "focus_folder_tree" in matched_actions or any(
+            phrase in observation_text for phrase in ("navigation pane", "quick access", "this pc", "folders")
+        )
+        file_list_visible = "focus_file_list" in matched_actions or any(
+            phrase in observation_text for phrase in ("items view", "file list", "details view", "list view")
+        )
+        tree_visible = "focus_navigation_tree" in matched_actions or "select_tree_item" in matched_actions or "expand_tree_item" in matched_actions or folder_tree_visible or any(
+            phrase in observation_text for phrase in ("tree view", "navigation tree", "nodes", "expanded", "collapsed")
+        )
+        list_visible = "focus_list_surface" in matched_actions or "select_list_item" in matched_actions or file_list_visible or any(
+            phrase in observation_text for phrase in ("results list", "items list", "list view", "list pane")
+        )
+        table_visible = "focus_data_table" in matched_actions or "select_table_row" in matched_actions or any(
+            phrase in observation_text for phrase in ("data grid", "table", "grid", "rows", "columns")
+        )
+        replace_visible = "find_replace" in matched_actions or (
+            "replace" in observation_text and any(phrase in observation_text for phrase in ("find", "replace with", "find what"))
+        )
+        rename_active = "rename_selection" in matched_actions or any(
+            phrase in observation_text for phrase in ("rename", "new name")
+        )
+        properties_dialog_visible = "open_properties_dialog" in matched_actions or any(
+            phrase in observation_text for phrase in ("properties", "details", "type of file")
+        )
+        preview_pane_visible = "open_preview_pane" in matched_actions or any(
+            phrase in observation_text for phrase in ("preview", "preview pane")
+        )
+        details_pane_visible = "open_details_pane" in matched_actions or any(
+            phrase in observation_text for phrase in ("details pane", "size", "date modified")
+        )
+        conversation_picker_visible = "jump_to_conversation" in matched_actions or "new_chat" in matched_actions or any(
+            phrase in observation_text for phrase in ("search or start new chat", "find or start a conversation", "new message", "people")
+        )
+        email_compose_ready = bool({"new_email_draft", "reply_email", "reply_all_email", "forward_email"} & matched_actions) or (
+            any(phrase in observation_text for phrase in ("new message", "compose", "draft", "reply", "forward"))
+            and ("subject" in observation_text or any(token in observation_text for token in ("to", "cc", "bcc")))
+        )
+        calendar_event_compose_ready = "new_calendar_event" in matched_actions or (
+            any(phrase in observation_text for phrase in ("new event", "appointment", "invite attendees", "event details"))
+            and any(token in observation_text for token in ("start", "end", "all day", "location"))
+        )
+        calendar_view_active = "open_calendar_view" in matched_actions or any(
+            phrase in haystack
+            for haystack in (observation_text, target_title, active_title)
+            for phrase in ("calendar", "meetings", "schedule")
+        ) and not calendar_event_compose_ready
+        people_view_active = "open_people_view" in matched_actions or any(
+            phrase in haystack
+            for haystack in (observation_text, target_title, active_title)
+            for phrase in ("people", "contacts", "contact list")
+        )
+        tasks_view_active = "open_tasks_view" in matched_actions or any(
+            phrase in haystack
+            for haystack in (observation_text, target_title, active_title)
+            for phrase in ("tasks", "to do", "todo")
+        )
+        mail_view_active = "open_mail_view" in matched_actions or (
+            any(phrase in haystack for haystack in (observation_text, target_title, active_title) for phrase in ("inbox", "mail", "message list"))
+            and not email_compose_ready
+            and not calendar_event_compose_ready
+            and not calendar_view_active
+            and not people_view_active
+            and not tasks_view_active
+        )
+        folder_pane_visible = "focus_folder_pane" in matched_actions or any(
+            phrase in observation_text for phrase in ("folder pane", "mail folders", "favorites", "mailbox")
+        )
+        message_list_visible = "focus_message_list" in matched_actions or any(
+            phrase in observation_text for phrase in ("message list", "conversation list", "inbox list", "messages")
+        )
+        reading_pane_visible = "focus_reading_pane" in matched_actions or any(
+            phrase in observation_text for phrase in ("reading pane", "message preview", "preview")
+        )
+        sidebar_visible = "focus_sidebar" in matched_actions or tree_visible or folder_pane_visible or any(
+            phrase in observation_text for phrase in ("sidebar", "side panel", "left pane", "navigation")
+        )
+        main_content_visible = "focus_main_content" in matched_actions or list_visible or table_visible or message_list_visible or reading_pane_visible or any(
+            phrase in observation_text for phrase in ("main pane", "content", "document", "results")
+        )
+        toolbar_visible = "focus_toolbar" in matched_actions or any(
+            phrase in observation_text for phrase in ("toolbar", "command bar", "menu bar", "ribbon")
+        )
+        form_visible = (
+            "focus_form_surface" in matched_actions
+            or "set_field_value" in matched_actions
+            or "select_dropdown_option" in matched_actions
+            or bool(edit_elements or combo_elements or checkbox_elements or radio_elements or value_control_elements)
+            or any(
+                phrase in observation_text
+                for phrase in ("form", "text box", "input field", "combo box", "dropdown", "checkbox", "radio button", "slider", "spinner")
+            )
+        )
+        input_field_visible = (
+            "focus_input_field" in matched_actions
+            or "set_field_value" in matched_actions
+            or bool(edit_elements)
+            or any(phrase in observation_text for phrase in ("text box", "input field", "edit", "enter text"))
+        )
+        dropdown_visible = (
+            "open_dropdown" in matched_actions
+            or "select_dropdown_option" in matched_actions
+            or bool(combo_elements)
+            or any(phrase in observation_text for phrase in ("dropdown", "combo box", "select an option", "choose an option"))
+        )
+        dropdown_open = (
+            bool({"open_dropdown", "select_dropdown_option"} & matched_actions)
+            or any(_element_is_expanded(row) is True for row in combo_elements)
+            or any(phrase in observation_text for phrase in ("select an option", "choose an option", "dropdown list", "list box"))
+        )
+        checkbox_visible = (
+            "focus_checkbox" in matched_actions
+            or bool({"check_checkbox", "uncheck_checkbox"} & matched_actions)
+            or bool(checkbox_elements)
+            or any(phrase in observation_text for phrase in ("checkbox", "check box", "checked", "unchecked"))
+        )
+        radio_option_visible = (
+            "select_radio_option" in matched_actions
+            or bool(radio_elements)
+            or any(phrase in observation_text for phrase in ("radio button", "radio option"))
+        )
+        slider_visible = (
+            "focus_value_control" in matched_actions
+            or bool({"increase_value", "decrease_value"} & matched_actions)
+            or bool(slider_elements)
+            or any(phrase in observation_text for phrase in ("slider", "trackbar"))
+        )
+        spinner_visible = bool(spinner_elements) or any(
+            phrase in observation_text for phrase in ("spinner", "stepper", "up down")
+        )
+        value_control_visible = (
+            bool({"focus_value_control", "increase_value", "decrease_value"} & matched_actions)
+            or bool(query_value_elements if normalized_query else value_control_elements)
+            or slider_visible
+            or spinner_visible
+            or any(phrase in observation_text for phrase in ("value control", "slider", "spinner", "stepper", "number input"))
+        )
+        toggle_visible = (
+            "toggle_switch" in matched_actions
+            or any(phrase in observation_text for phrase in ("toggle", "switch"))
+            or any(_element_has_toggle_state(row) for row in (query_elements or element_rows))
+        )
+        query_haystacks = [haystack for haystack in (observation_text, target_title, active_title) if haystack]
+        checkbox_target_checked = (
+            bool(normalized_query)
+            and (
+                any(_element_is_checked(row) is True for row in query_checkbox_elements)
+                or any(
+                    phrase in haystack
+                    for haystack in query_haystacks
+                    for phrase in (
+                        f"{normalized_query} checked",
+                        f"{normalized_query} enabled",
+                        f"{normalized_query} on",
+                        f"checked {normalized_query}",
+                        f"enabled {normalized_query}",
+                    )
+                )
+            )
+        )
+        checkbox_target_unchecked = (
+            bool(normalized_query)
+            and (
+                any(_element_is_checked(row) is False for row in query_checkbox_elements)
+                or any(
+                    phrase in haystack
+                    for haystack in query_haystacks
+                    for phrase in (
+                        f"{normalized_query} unchecked",
+                        f"{normalized_query} disabled",
+                        f"{normalized_query} off",
+                        f"{normalized_query} not checked",
+                        f"unchecked {normalized_query}",
+                        f"disabled {normalized_query}",
+                    )
+                )
+            )
+        )
+        radio_target_selected = bool(normalized_query) and (
+            any(_element_is_selected(row) is True for row in query_radio_elements)
+            or any(
+                phrase in haystack
+                for haystack in query_haystacks
+                for phrase in (
+                    f"{normalized_query} selected",
+                    f"selected {normalized_query}",
+                    f"{normalized_query} enabled",
+                )
+            )
+        )
+        tab_page_visible = bool(tab_elements) or any(
+            phrase in observation_text for phrase in ("property sheet", "tab page", "selected tab")
+        )
+        tab_target_active = bool(normalized_query) and (
+            any(_element_is_selected(row) is True for row in query_tab_elements)
+            or any(
+                phrase in haystack
+                for haystack in query_haystacks
+                for phrase in (
+                    f"{normalized_query} tab",
+                    f"{normalized_query} selected",
+                    f"selected {normalized_query}",
+                )
+            )
+        )
+        context_menu_visible = "open_context_menu" in matched_actions or any(
+            phrase in observation_text for phrase in ("context menu", "shortcut menu", "right click menu")
+        )
+        dialog_visible = bool(properties_dialog_visible or "open_print_dialog" in matched_actions or context_menu_visible is False and any(
+            phrase in observation_text for phrase in ("dialog", "modal", "popup", "are you sure", "ok cancel", "apply")
+        ))
+        dismissible_surface_visible = bool(dialog_visible or context_menu_visible)
+        flags: Dict[str, bool] = {
+            "window_targeted": bool(target_window),
+            "window_active": bool(target_window) and self._to_int(active_window.get("hwnd")) == self._to_int(target_window.get("hwnd")),
+            "search_visible": bool({"search", "focus_search_box"} & matched_actions),
+            "tab_strip_visible": tab_strip_visible,
+            "tab_page_visible": tab_page_visible,
+            "tab_target_active": tab_target_active,
+            "tab_search_visible": tab_search_visible,
+            "command_palette_visible": "command" in matched_actions,
+            "quick_open_visible": "quick_open" in matched_actions,
+            "conversation_picker_visible": conversation_picker_visible,
+            "history_visible": history_visible,
+            "downloads_visible": downloads_visible,
+            "bookmarks_visible": bookmarks_visible,
+            "devtools_visible": devtools_visible,
+            "address_bar_ready": bool({"focus_address_bar", "navigate"} & matched_actions),
+            "terminal_visible": "toggle_terminal" in matched_actions or "terminal_command" in matched_actions,
+            "message_compose_ready": "send_message" in matched_actions or any(
+                phrase in observation_text for phrase in ("type a message", "write a message", "reply")
+            ),
+            "print_dialog_visible": "open_print_dialog" in matched_actions or "print" in observation_text,
+            "presentation_active": "start_presentation" in matched_actions or any(
+                phrase in observation_text for phrase in ("slide show", "slideshow", "presenter view")
+            ),
+            "explorer_visible": explorer_visible,
+            "workspace_search_visible": "workspace_search" in matched_actions,
+            "replace_visible": replace_visible,
+            "rename_active": rename_active,
+            "symbol_picker_visible": "go_to_symbol" in matched_actions,
+            "file_manager_ready": category == "file_manager",
+            "folder_tree_visible": folder_tree_visible,
+            "file_list_visible": file_list_visible,
+            "tree_visible": tree_visible,
+            "list_visible": list_visible,
+            "table_visible": table_visible,
+            "new_folder_visible": "new_folder" in matched_actions or "new folder" in observation_text,
+            "properties_dialog_visible": properties_dialog_visible,
+            "preview_pane_visible": preview_pane_visible,
+            "details_pane_visible": details_pane_visible,
+            "navigation_surface_ready": category in {"browser", "file_manager"} and bool(target_window or active_window),
+            "browser_library_visible": bool(history_visible or downloads_visible or bookmarks_visible),
+            "conversation_target_active": category in {"chat", "ai_companion"} and bool(normalized_query) and any(
+                normalized_query in haystack for haystack in (target_title, active_title, observation_text) if haystack
+            ),
+            "conversation_ready": False,
+            "email_compose_ready": email_compose_ready,
+            "calendar_event_compose_ready": calendar_event_compose_ready,
+            "calendar_view_active": calendar_view_active,
+            "mail_view_active": mail_view_active,
+            "people_view_active": people_view_active,
+            "tasks_view_active": tasks_view_active,
+            "folder_pane_visible": folder_pane_visible,
+            "message_list_visible": message_list_visible,
+            "reading_pane_visible": reading_pane_visible,
+            "sidebar_visible": sidebar_visible,
+            "main_content_visible": bool(main_content_visible or form_visible),
+            "toolbar_visible": toolbar_visible,
+            "form_visible": form_visible,
+            "input_field_visible": input_field_visible,
+            "dropdown_visible": dropdown_visible,
+            "dropdown_open": dropdown_open,
+            "checkbox_visible": checkbox_visible,
+            "checkbox_target_checked": checkbox_target_checked,
+            "checkbox_target_unchecked": checkbox_target_unchecked,
+            "radio_option_visible": radio_option_visible,
+            "radio_target_selected": radio_target_selected,
+            "toggle_visible": toggle_visible,
+            "slider_visible": slider_visible,
+            "spinner_visible": spinner_visible,
+            "value_control_visible": value_control_visible,
+            "context_menu_visible": context_menu_visible,
+            "dialog_visible": dialog_visible,
+            "dismissible_surface_visible": dismissible_surface_visible,
+            "tabbed_surface_ready": category in {"browser", "code_editor", "ide", "terminal", "ops_console", "utility", "file_manager"} and bool(target_window or active_window),
+            "zoomable_surface": category in {"browser", "code_editor", "ide", "office", "utility"} and bool(target_window or active_window),
+            "media_surface_ready": category == "media" and bool(target_window or active_window),
+            "settings_window_ready": any("settings" in haystack for haystack in (target_title, active_title, profile_name) if haystack),
+            "task_manager_ready": any("task manager" in haystack for haystack in (target_title, active_title, profile_name) if haystack),
+        }
+        flags["conversation_ready"] = bool(
+            flags.get("conversation_picker_visible")
+            or flags.get("message_compose_ready")
+            or flags.get("conversation_target_active")
+        )
+        if category == "browser":
+            flags["browser_ready"] = bool(target_window)
+        if category in {"code_editor", "ide"}:
+            flags["editor_ready"] = bool(target_window)
+        return flags
+
+    def _surface_recommendations(self, *, workflow_surfaces: List[Dict[str, Any]]) -> List[str]:
+        rows: List[str] = []
+        for row in workflow_surfaces:
+            if not isinstance(row, dict) or not bool(row.get("matched", False)):
+                continue
+            followups = row.get("recommended_followups", []) if isinstance(row.get("recommended_followups", []), list) else []
+            for action_name in followups:
+                clean = str(action_name or "").strip().lower()
+                if clean and clean in WORKFLOW_ACTIONS and clean not in rows:
+                    rows.append(clean)
+        for row in workflow_surfaces:
+            if not isinstance(row, dict):
+                continue
+            if bool(row.get("matched", False)):
+                continue
+            clean_action = str(row.get("action", "") or "").strip().lower()
+            if clean_action and clean_action not in rows:
+                rows.append(clean_action)
+        return rows[:8]
+
+    def _surface_safety_recommendations(self, *, safety_signals: Dict[str, Any]) -> List[str]:
+        if not isinstance(safety_signals, dict):
+            return []
+        actions: List[str] = []
+        if bool(safety_signals.get("wizard_next_available", False)):
+            actions.append("next_wizard_step")
+        if bool(safety_signals.get("wizard_finish_available", False)):
+            actions.append("finish_wizard")
+        if bool(safety_signals.get("wizard_back_available", False)):
+            actions.append("previous_wizard_step")
+        if bool(safety_signals.get("requires_confirmation", False)):
+            confirmation_actions = (
+                ["dismiss_dialog", "confirm_dialog"]
+                if bool(safety_signals.get("destructive_warning_visible", False))
+                else ["confirm_dialog", "dismiss_dialog"]
+            )
+            for action_name in confirmation_actions:
+                if action_name not in actions:
+                    actions.append(action_name)
+        return actions[:6]
+
+    def _surface_safety_signals(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        observation: Dict[str, Any],
+        active_window: Dict[str, Any],
+        target_window: Dict[str, Any],
+        elements: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        profile_name = self._normalize_probe_text(app_profile.get("name", ""))
+        category = self._normalize_probe_text(app_profile.get("category", ""))
+        observation_text = self._normalize_probe_text(observation.get("text", ""))
+        active_title = self._normalize_probe_text(active_window.get("title", ""))
+        target_title = self._normalize_probe_text(target_window.get("title", ""))
+        combined_text = " ".join(value for value in (observation_text, active_title, target_title, profile_name, category) if value)
+        element_rows = [dict(row) for row in (elements or []) if isinstance(row, dict)]
+
+        def _element_control_type(row: Dict[str, Any]) -> str:
+            return self._normalize_probe_text(row.get("control_type", ""))
+
+        def _element_text(row: Dict[str, Any]) -> str:
+            parts = [
+                str(row.get("name", "") or ""),
+                str(row.get("automation_id", "") or ""),
+                str(row.get("class_name", "") or ""),
+                str(row.get("control_type", "") or ""),
+                str(row.get("state_text", "") or ""),
+                str(row.get("value_text", "") or ""),
+            ]
+            return self._normalize_probe_text(" ".join(parts))
+
+        def _normalize_button_label(value: Any) -> str:
+            clean = self._normalize_probe_text(value)
+            clean = clean.replace("&", " ")
+            clean = re.sub(r"[^a-z0-9 ]+", " ", clean)
+            clean = " ".join(clean.split())
+            return clean
+
+        button_labels: List[str] = []
+        normalized_button_labels: List[str] = []
+        for row in element_rows:
+            control_type = _element_control_type(row)
+            if control_type not in {"button", "splitbutton", "hyperlink", "link"}:
+                continue
+            raw_label = str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+            normalized_label = _normalize_button_label(raw_label)
+            if not raw_label or not normalized_label or normalized_label in normalized_button_labels:
+                continue
+            button_labels.append(raw_label)
+            normalized_button_labels.append(normalized_label)
+
+        wizard_text_markers = (
+            "setup wizard",
+            "installation wizard",
+            "install wizard",
+            "installer",
+            "installshield",
+            "setup",
+            "welcome to",
+            "step 1 of",
+            "step 2 of",
+            "step 3 of",
+            "step 4 of",
+            "step 5 of",
+        )
+        warning_markers = (
+            "warning",
+            "attention",
+            "are you sure",
+            "review changes",
+            "review the changes",
+            "confirm",
+            "security warning",
+            "this action will",
+        )
+        destructive_markers = (
+            "cannot be undone",
+            "permanently",
+            "permanent",
+            "delete",
+            "remove",
+            "erase",
+            "discard",
+            "overwrite",
+            "replace existing",
+            "reset",
+            "format",
+            "uninstall",
+            "make changes to your device",
+        )
+        elevation_markers = (
+            "user account control",
+            "do you want to allow",
+            "administrator permission",
+            "admin permission",
+            "requires administrator",
+            "run as administrator",
+            "elevation",
+            "elevated",
+            "uac",
+            "make changes to your device",
+        )
+        confirmation_markers = (
+            "ok cancel",
+            "yes no",
+            "continue",
+            "apply",
+            "accept",
+            "confirm",
+            "allow",
+        )
+        safe_button_markers = (
+            "cancel",
+            "no",
+            "close",
+            "back",
+            "later",
+            "skip",
+            "not now",
+            "abort",
+        )
+        confirmation_button_markers = (
+            "ok",
+            "yes",
+            "continue",
+            "allow",
+            "accept",
+            "apply",
+            "install",
+            "finish",
+            "next",
+            "proceed",
+            "launch",
+            "delete",
+            "remove",
+            "erase",
+            "overwrite",
+            "replace",
+            "reset",
+            "format",
+            "uninstall",
+        )
+        destructive_button_markers = (
+            "delete",
+            "remove",
+            "erase",
+            "overwrite",
+            "replace",
+            "reset",
+            "format",
+            "uninstall",
+            "install",
+            "finish",
+            "apply",
+            "launch",
+        )
+
+        def _label_matches(candidates: tuple[str, ...]) -> bool:
+            for label in normalized_button_labels:
+                if any(
+                    label == candidate
+                    or label.startswith(f"{candidate} ")
+                    or label.endswith(f" {candidate}")
+                    for candidate in candidates
+                ):
+                    return True
+            return False
+
+        wizard_next_available = _label_matches(("next", "continue", "proceed"))
+        wizard_back_available = _label_matches(("back", "previous", "prev"))
+        wizard_finish_available = _label_matches(("finish", "done", "complete", "install", "launch"))
+        confirmation_buttons_present = _label_matches(("ok", "yes", "continue", "allow", "accept", "apply", "install", "finish", "next"))
+        dismiss_buttons_present = _label_matches(("cancel", "no", "close", "back", "later", "skip"))
+        destructive_warning_visible = bool(any(marker in combined_text for marker in destructive_markers))
+        elevation_prompt_visible = bool(any(marker in combined_text for marker in elevation_markers))
+        dialog_button_targets = [
+            self._element_state_summary(row)
+            for row in element_rows
+            if _element_control_type(row) in {"button", "splitbutton"}
+        ][:12]
+
+        def _target_label_matches(target: Dict[str, Any], candidates: tuple[str, ...]) -> bool:
+            label = self._normalize_probe_text(target.get("name", ""))
+            if not label:
+                return False
+            return any(
+                label == candidate
+                or label.startswith(f"{candidate} ")
+                or label.endswith(f" {candidate}")
+                for candidate in candidates
+            )
+
+        safe_dialog_targets = [
+            target
+            for target in dialog_button_targets
+            if _target_label_matches(target, safe_button_markers)
+        ]
+        confirmation_dialog_targets = [
+            target
+            for target in dialog_button_targets
+            if _target_label_matches(target, confirmation_button_markers)
+        ]
+        destructive_dialog_targets = [
+            target
+            for target in dialog_button_targets
+            if _target_label_matches(target, destructive_button_markers)
+            or (
+                destructive_warning_visible
+                and _target_label_matches(target, ("continue", "ok", "yes", "accept", "apply", "install", "finish", "next", "proceed", "launch"))
+            )
+        ]
+
+        def _preferred_target(targets: List[Dict[str, Any]], priority: tuple[str, ...]) -> Dict[str, Any]:
+            if not targets:
+                return {}
+            def _rank(target: Dict[str, Any]) -> tuple[int, int, str]:
+                label = self._normalize_probe_text(target.get("name", ""))
+                enabled = self._coerce_surface_bool(target.get("enabled"))
+                visible = self._coerce_surface_bool(target.get("visible"))
+                for index, candidate in enumerate(priority):
+                    if label == candidate or label.startswith(f"{candidate} ") or label.endswith(f" {candidate}"):
+                        return (0 if enabled is not False and visible is not False else 1, index, label)
+                return (0 if enabled is not False and visible is not False else 1, len(priority), label)
+            return dict(sorted(targets, key=_rank)[0])
+
+        preferred_confirmation_target = _preferred_target(
+            confirmation_dialog_targets,
+            ("continue", "next", "ok", "yes", "apply", "install", "finish", "launch", "accept", "allow"),
+        )
+        preferred_dismiss_target = _preferred_target(
+            safe_dialog_targets,
+            ("cancel", "back", "no", "close", "later", "skip", "not now", "abort"),
+        )
+
+        wizard_surface_visible = bool(
+            any(marker in combined_text for marker in wizard_text_markers)
+            or (
+                bool(normalized_button_labels)
+                and (wizard_next_available or wizard_back_available or wizard_finish_available)
+                and any(label in {"cancel", "close", "back"} for label in normalized_button_labels)
+            )
+        )
+        warning_surface_visible = bool(
+            any(marker in combined_text for marker in warning_markers)
+            or (wizard_surface_visible and any(marker in combined_text for marker in ("license", "agreement", "ready to install", "review")))
+        )
+        requires_confirmation = bool(
+            warning_surface_visible
+            or destructive_warning_visible
+            or elevation_prompt_visible
+            or any(marker in combined_text for marker in confirmation_markers)
+            or (confirmation_buttons_present and dismiss_buttons_present)
+        )
+
+        return {
+            "wizard_surface_visible": wizard_surface_visible,
+            "wizard_next_available": wizard_surface_visible and wizard_next_available,
+            "wizard_back_available": wizard_surface_visible and wizard_back_available,
+            "wizard_finish_available": wizard_surface_visible and wizard_finish_available,
+            "warning_surface_visible": warning_surface_visible,
+            "destructive_warning_visible": destructive_warning_visible,
+            "elevation_prompt_visible": elevation_prompt_visible,
+            "requires_confirmation": requires_confirmation,
+            "dialog_buttons": button_labels,
+            "dialog_button_targets": dialog_button_targets,
+            "safe_dialog_buttons": [str(target.get("name", "") or "").strip() for target in safe_dialog_targets if str(target.get("name", "") or "").strip()],
+            "confirmation_dialog_buttons": [str(target.get("name", "") or "").strip() for target in confirmation_dialog_targets if str(target.get("name", "") or "").strip()],
+            "destructive_dialog_buttons": [str(target.get("name", "") or "").strip() for target in destructive_dialog_targets if str(target.get("name", "") or "").strip()],
+            "preferred_confirmation_button": str(preferred_confirmation_target.get("name", "") or "").strip(),
+            "preferred_dismiss_button": str(preferred_dismiss_target.get("name", "") or "").strip(),
+            "preferred_confirmation_target": preferred_confirmation_target,
+            "preferred_dismiss_target": preferred_dismiss_target,
+            "accessible_dialog_elements": [
+                row for row in element_rows if _element_control_type(row) in {"button", "text", "document", "pane", "window"} and _element_text(row)
+            ][:12],
+        }
+
+    @classmethod
+    def _wizard_page_state(
+        cls,
+        *,
+        observation: Dict[str, Any],
+        elements: Any,
+        safety_signals: Any,
+    ) -> Dict[str, Any]:
+        safety_payload = dict(safety_signals) if isinstance(safety_signals, dict) else {}
+        if not bool(safety_payload.get("wizard_surface_visible", False)):
+            return {}
+        observation_text = cls._normalize_probe_text(observation.get("text", ""))
+        element_rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+
+        def _control_type(row: Dict[str, Any]) -> str:
+            return cls._normalize_probe_text(row.get("control_type", ""))
+
+        def _label(row: Dict[str, Any]) -> str:
+            return str(row.get("name", "") or "").strip()
+
+        def _label_text(row: Dict[str, Any]) -> str:
+            return cls._normalize_probe_text(row.get("name", ""))
+
+        checkbox_rows = [row for row in element_rows if _control_type(row) == "checkbox"]
+        radio_rows = [row for row in element_rows if _control_type(row) == "radiobutton"]
+        combo_rows = [row for row in element_rows if _control_type(row) == "combobox"]
+        edit_rows = [row for row in element_rows if _control_type(row) == "edit"]
+        positive_acceptance_markers = ("accept", "agree", "i agree", "i accept", "accept the", "agree to", "license", "terms", "eula")
+        negative_acceptance_markers = ("decline", "do not", "don't", "refuse", "reject")
+
+        pending_requirements: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _append_pending(row: Dict[str, Any], requirement_type: str, reason: str) -> None:
+            row_id = cls._element_identity_key(row)
+            if row_id and row_id in seen_ids:
+                return
+            if row_id:
+                seen_ids.add(row_id)
+            pending_requirements.append(
+                {
+                    **cls._element_state_summary(row),
+                    "requirement_type": requirement_type,
+                    "reason": reason,
+                }
+            )
+
+        for row in checkbox_rows:
+            label_text = _label_text(row)
+            if not label_text or not any(marker in label_text for marker in positive_acceptance_markers):
+                continue
+            if cls._coerce_surface_bool(row.get("checked")) is True:
+                continue
+            _append_pending(row, "checkbox", "Wizard page appears to require an agreement or license checkbox before continuing.")
+
+        for row in radio_rows:
+            label_text = _label_text(row)
+            if not label_text or any(marker in label_text for marker in negative_acceptance_markers):
+                continue
+            if not any(marker in label_text for marker in positive_acceptance_markers):
+                continue
+            if cls._coerce_surface_bool(row.get("selected")) is True or cls._coerce_surface_bool(row.get("checked")) is True:
+                continue
+            _append_pending(row, "radio", "Wizard page appears to require selecting an agreement or acceptance option before continuing.")
+
+        page_kind = "wizard_page"
+        if any(marker in observation_text for marker in ("license", "agreement", "terms", "eula")) or pending_requirements:
+            page_kind = "license_agreement"
+        elif any(marker in observation_text for marker in ("ready to install", "ready to begin installation", "install now", "review the changes")):
+            page_kind = "ready_to_install"
+        elif any(marker in observation_text for marker in ("completed", "successfully installed", "setup has finished", "installation complete")):
+            page_kind = "completion"
+        elif bool(safety_payload.get("warning_surface_visible", False)):
+            page_kind = "warning_confirmation"
+        elif combo_rows or edit_rows or checkbox_rows or radio_rows:
+            page_kind = "options"
+
+        preferred_confirmation_target = safety_payload.get("preferred_confirmation_target", {})
+        preferred_confirmation_button = str(safety_payload.get("preferred_confirmation_button", "") or "").strip()
+        advance_action = "finish_wizard" if cls._normalize_probe_text(preferred_confirmation_button) in {"finish", "done", "complete", "install", "apply", "launch"} else "next_wizard_step"
+        if not preferred_confirmation_button and bool(safety_payload.get("wizard_finish_available", False)):
+            advance_action = "finish_wizard"
+        elif not preferred_confirmation_button and bool(safety_payload.get("wizard_next_available", False)):
+            advance_action = "next_wizard_step"
+        ready_for_advance = not pending_requirements and bool(
+            preferred_confirmation_button
+            or safety_payload.get("wizard_next_available", False)
+            or safety_payload.get("wizard_finish_available", False)
+        )
+        auto_resolve_supported = bool(
+            preferred_confirmation_button
+            and all(str(row.get("requirement_type", "") or "").strip().lower() in {"checkbox", "radio"} for row in pending_requirements)
+        )
+        available_controls = [
+            cls._element_state_summary(row)
+            for row in [*checkbox_rows, *radio_rows, *combo_rows, *edit_rows]
+        ][:12]
+        manual_input_likely = bool(
+            not pending_requirements
+            and not ready_for_advance
+            and any(
+                cls._normalize_probe_text(row.get("control_type", "")) in {"edit", "combobox"}
+                for row in available_controls
+                if isinstance(row, dict)
+            )
+        )
+        autonomous_blocker = ""
+        if page_kind == "warning_confirmation":
+            autonomous_blocker = "warning_confirmation_requires_review"
+        elif pending_requirements and not auto_resolve_supported:
+            autonomous_blocker = "unsupported_wizard_requirements"
+        elif manual_input_likely:
+            autonomous_blocker = "manual_input_required"
+        elif not ready_for_advance and not preferred_confirmation_button:
+            autonomous_blocker = "no_advance_control_available"
+        autonomous_progress_supported = not autonomous_blocker and bool(
+            ready_for_advance
+            or auto_resolve_supported
+            or page_kind in {"ready_to_install", "completion"}
+        )
+        return {
+            "page_kind": page_kind,
+            "advance_action": advance_action,
+            "ready_for_advance": ready_for_advance,
+            "auto_resolve_supported": auto_resolve_supported,
+            "autonomous_progress_supported": autonomous_progress_supported,
+            "autonomous_blocker": autonomous_blocker,
+            "manual_input_likely": manual_input_likely,
+            "pending_requirements": pending_requirements[:8],
+            "pending_requirement_count": len(pending_requirements),
+            "available_controls": available_controls,
+            "preferred_confirmation_button": preferred_confirmation_button,
+            "preferred_confirmation_target": preferred_confirmation_target if isinstance(preferred_confirmation_target, dict) else {},
+            "preferred_dismiss_button": str(safety_payload.get("preferred_dismiss_button", "") or "").strip(),
+            "safe_exit_options": [str(item).strip() for item in safety_payload.get("safe_dialog_buttons", []) if str(item).strip()][:6],
+            "destructive_options": [str(item).strip() for item in safety_payload.get("destructive_dialog_buttons", []) if str(item).strip()][:6],
+            "notes": [
+                note
+                for note in [
+                    "Wizard page exposes agreement or acceptance prerequisites." if pending_requirements else "",
+                    "Preferred confirmation button is available through accessibility." if preferred_confirmation_button else "",
+                    "Page likely requires installation or finish confirmation." if page_kind in {"ready_to_install", "completion"} else "",
+                ]
+                if note
+            ],
+        }
+
+    @classmethod
+    def _form_page_state(
+        cls,
+        *,
+        observation: Dict[str, Any],
+        elements: Any,
+        safety_signals: Any,
+        surface_flags: Any,
+    ) -> Dict[str, Any]:
+        safety_payload = dict(safety_signals) if isinstance(safety_signals, dict) else {}
+        flags = dict(surface_flags) if isinstance(surface_flags, dict) else {}
+        if bool(safety_payload.get("wizard_surface_visible", False)):
+            return {}
+        if not bool(flags.get("form_visible", False) or flags.get("dialog_visible", False) or flags.get("tab_page_visible", False) or safety_payload.get("requires_confirmation", False)):
+            return {}
+        observation_text = cls._normalize_probe_text(observation.get("text", ""))
+        element_rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+
+        def _control_type(row: Dict[str, Any]) -> str:
+            return cls._normalize_probe_text(row.get("control_type", ""))
+
+        def _label(row: Dict[str, Any]) -> str:
+            return str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+
+        def _label_text(row: Dict[str, Any]) -> str:
+            return cls._normalize_probe_text(_label(row))
+
+        checkbox_rows = [row for row in element_rows if _control_type(row) == "checkbox"]
+        radio_rows = [row for row in element_rows if _control_type(row) == "radiobutton"]
+        combo_rows = [row for row in element_rows if _control_type(row) == "combobox"]
+        edit_rows = [row for row in element_rows if _control_type(row) == "edit"]
+        value_rows = [row for row in element_rows if _control_type(row) in {"slider", "spinner"}]
+        tab_rows = [row for row in element_rows if _control_type(row) == "tabitem"]
+        button_rows = [row for row in element_rows if _control_type(row) in {"button", "splitbutton"}]
+
+        acknowledgement_markers = ("accept", "agree", "acknowledge", "understand", "confirm", "consent", "reviewed", "review")
+        negative_markers = ("decline", "do not", "don't", "refuse", "reject")
+        required_input_markers = ("name", "path", "folder", "directory", "location", "address", "email", "server", "key", "token", "value", "username", "password")
+        commit_markers = ("save", "apply", "ok", "done", "submit", "continue", "finish", "next", "confirm")
+        safe_exit_markers = ("cancel", "close", "back", "later", "skip", "not now")
+
+        pending_requirements: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _append_pending(row: Dict[str, Any], requirement_type: str, reason: str) -> None:
+            row_id = cls._element_identity_key(row)
+            if row_id and row_id in seen_ids:
+                return
+            if row_id:
+                seen_ids.add(row_id)
+            pending_requirements.append(
+                {
+                    **cls._element_state_summary(row),
+                    "requirement_type": requirement_type,
+                    "reason": reason,
+                }
+            )
+
+        for row in checkbox_rows:
+            label_text = _label_text(row)
+            if not label_text or any(marker in label_text for marker in negative_markers):
+                continue
+            if not any(marker in label_text for marker in acknowledgement_markers):
+                continue
+            if cls._coerce_surface_bool(row.get("checked")) is True:
+                continue
+            _append_pending(row, "checkbox", "The form appears to require acknowledging or accepting a review checkbox before the changes can be committed.")
+
+        for row in radio_rows:
+            label_text = _label_text(row)
+            if not label_text or any(marker in label_text for marker in negative_markers):
+                continue
+            if not any(marker in label_text for marker in acknowledgement_markers):
+                continue
+            if cls._coerce_surface_bool(row.get("selected")) is True or cls._coerce_surface_bool(row.get("checked")) is True:
+                continue
+            _append_pending(row, "radio", "The form appears to require choosing an acknowledgement or confirmation option before the changes can be committed.")
+
+        def _button_priority(row: Dict[str, Any]) -> tuple[int, str]:
+            label_text = _label_text(row)
+            for index, marker in enumerate(commit_markers):
+                if label_text == marker or label_text.startswith(f"{marker} ") or label_text.endswith(f" {marker}"):
+                    enabled = cls._coerce_surface_bool(row.get("enabled"))
+                    visible = cls._coerce_surface_bool(row.get("visible"))
+                    return (0 if enabled is not False and visible is not False else 1, f"{index:02d}:{label_text}")
+            return (2, label_text)
+
+        commit_targets = [
+            cls._element_state_summary(row)
+            for row in sorted(button_rows, key=_button_priority)
+            if _button_priority(row)[0] < 2
+        ]
+        preferred_commit_target = dict(commit_targets[0]) if commit_targets else {}
+        preferred_commit_button = str(preferred_commit_target.get("name", "") or "").strip()
+        safe_exit_options = [
+            _label(row)
+            for row in button_rows
+            if any(marker in _label_text(row) for marker in safe_exit_markers)
+        ]
+        destructive_options = [str(item).strip() for item in safety_payload.get("destructive_dialog_buttons", []) if str(item).strip()]
+
+        page_kind = "form_page"
+        if bool(tab_rows) or any(marker in observation_text for marker in ("properties", "options", "property sheet", "tab page")):
+            page_kind = "property_sheet"
+        elif bool(safety_payload.get("warning_surface_visible", False)) or bool(safety_payload.get("requires_confirmation", False)):
+            page_kind = "review_confirmation"
+        elif any(marker in observation_text for marker in ("settings", "preferences", "configuration", "options")):
+            page_kind = "settings_form"
+        elif bool(flags.get("dialog_visible", False)):
+            page_kind = "dialog_form"
+
+        def _row_empty(row: Dict[str, Any]) -> bool:
+            value_text = str(row.get("value_text", "") or "").strip()
+            state_text = str(row.get("state_text", "") or "").strip()
+            return not value_text and not state_text
+
+        manual_required_controls = [
+            cls._element_state_summary(row)
+            for row in [*edit_rows, *combo_rows]
+            if _row_empty(row) and any(marker in _label_text(row) for marker in required_input_markers)
+        ][:8]
+        manual_input_likely = bool(manual_required_controls and not pending_requirements)
+        ready_for_commit = not pending_requirements and bool(preferred_commit_button)
+        auto_resolve_supported = bool(
+            preferred_commit_button
+            and all(str(row.get("requirement_type", "") or "").strip().lower() in {"checkbox", "radio"} for row in pending_requirements)
+        )
+        autonomous_blocker = ""
+        if pending_requirements and not auto_resolve_supported:
+            autonomous_blocker = "unsupported_form_requirements"
+        elif manual_input_likely:
+            autonomous_blocker = "manual_input_required"
+        elif not preferred_commit_button:
+            autonomous_blocker = "no_commit_target_available"
+        autonomous_progress_supported = not autonomous_blocker and bool(ready_for_commit or auto_resolve_supported)
+        commit_action = "press_dialog_button" if preferred_commit_button else ""
+        available_controls = [
+            cls._element_state_summary(row)
+            for row in [*checkbox_rows, *radio_rows, *combo_rows, *edit_rows, *value_rows, *tab_rows, *button_rows]
+        ][:16]
+        return {
+            "page_kind": page_kind,
+            "commit_action": commit_action,
+            "ready_for_commit": ready_for_commit,
+            "auto_resolve_supported": auto_resolve_supported,
+            "autonomous_progress_supported": autonomous_progress_supported,
+            "autonomous_blocker": autonomous_blocker,
+            "manual_input_likely": manual_input_likely,
+            "pending_requirements": pending_requirements[:8],
+            "pending_requirement_count": len(pending_requirements),
+            "available_controls": available_controls,
+            "manual_required_controls": manual_required_controls,
+            "preferred_commit_button": preferred_commit_button,
+            "preferred_commit_target": preferred_commit_target,
+            "preferred_dismiss_button": str(safety_payload.get("preferred_dismiss_button", "") or "").strip(),
+            "safe_exit_options": [str(item).strip() for item in safe_exit_options if str(item).strip()][:6],
+            "destructive_options": destructive_options[:6],
+            "notes": [
+                note
+                for note in [
+                    "Form page exposes acknowledgement-style prerequisites." if pending_requirements else "",
+                    "Preferred commit button is available through accessibility." if preferred_commit_button else "",
+                    "Form likely still needs manual text or option input before it can be committed." if manual_input_likely else "",
+                ]
+                if note
+            ],
+        }
+
+    def _workflow_surface_preflight(
+        self,
+        *,
+        requested_action: str,
+        args: Dict[str, Any],
+        app_profile: Dict[str, Any],
+        capabilities: Dict[str, Any],
+        active_window: Dict[str, Any],
+        primary_candidate: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        clean_action = str(requested_action or "").strip().lower()
+        definition = self._workflow_definition(clean_action)
+        surface_flag = str(definition.get("surface_flag", "") or "").strip()
+        static_prep_workflows = [
+            str(action_name).strip().lower()
+            for action_name in definition.get("prep_workflows", [])
+            if str(action_name).strip()
+        ]
+        topology_candidate_actions = self._workflow_topology_prep_candidates(
+            requested_action=clean_action,
+            app_profile=app_profile,
+        )
+        should_probe = bool(surface_flag or static_prep_workflows or topology_candidate_actions)
+        accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
+        vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
+        if not should_probe or not (accessibility_ready or vision_ready) or not (primary_candidate or active_window or args.get("app_name") or args.get("window_title")):
+            return {
+                "enabled": False,
+                "snapshot": {},
+                "skip_primary_hotkey": False,
+                "prep_steps": [],
+                "warnings": [],
+                "candidate_prep_actions": list(topology_candidate_actions),
+                "prep_actions": [],
+                "target_query_already_active": False,
+            }
+
+        workflow_query = self._workflow_input_text(requested_action=clean_action, args=args) or str(args.get("query", "") or "").strip()
+        surface_query = str(args.get("query", "") or workflow_query or "").strip() if clean_action == "send_message" else workflow_query
+        snapshot = self.surface_snapshot(
+            app_name=str(args.get("app_name", "") or ""),
+            window_title=str(args.get("window_title", "") or ""),
+            query=surface_query,
+            limit=12,
+            include_observation=True,
+            include_elements=accessibility_ready,
+            include_workflow_probes=True,
+            preferred_actions=[clean_action, *static_prep_workflows, *topology_candidate_actions],
+        )
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        topology_prep_actions = self._workflow_topology_prep_actions(
+            requested_action=clean_action,
+            args=args,
+            app_profile=app_profile,
+            snapshot=snapshot,
+        )
+        prep_workflows = self._dedupe_strings([*topology_prep_actions, *static_prep_workflows])
+        surface_ready = bool(flags.get(surface_flag)) if surface_flag else False
+        workflow_text = self._workflow_input_text(requested_action=clean_action, args=args)
+        preserve_ready_surface = bool(definition.get("preserve_ready_surface", False))
+        skip_primary_hotkey = bool(
+            surface_ready
+            and bool(definition.get("skip_hotkey_when_ready", False))
+            and (bool(workflow_text) or preserve_ready_surface)
+        )
+        target_query_already_active = bool(
+            clean_action == "send_message"
+            and str(args.get("query", "") or "").strip()
+            and flags.get("conversation_target_active")
+            and flags.get("message_compose_ready")
+        )
+        warnings: List[str] = []
+        prep_steps: List[Dict[str, Any]] = []
+        prep_actions_applied: List[str] = []
+        focus_title = str(primary_candidate.get("title", "") or args.get("window_title", "") or args.get("app_name", "")).strip()
+
+        if skip_primary_hotkey:
+            if workflow_text:
+                warnings.append(
+                    f"Surface preflight detected the '{surface_flag}' state, so JARVIS will type directly without reopening the workflow surface."
+                )
+            else:
+                warnings.append(
+                    f"Surface preflight detected the '{surface_flag}' state, so JARVIS will preserve the ready surface instead of replaying its toggle shortcut."
+                )
+        if target_query_already_active:
+            skip_primary_hotkey = True
+            warnings.append(
+                "Surface preflight detected that the requested conversation is already active, so JARVIS will send the message directly."
+            )
+
+        if not surface_ready:
+            for prep_action in prep_workflows:
+                prep_step = self._workflow_preflight_step(
+                    requested_action=prep_action,
+                    args=args,
+                    app_profile=app_profile,
+                    focus_title=focus_title,
+                )
+                if not prep_step:
+                    continue
+                prep_steps.append(prep_step)
+                prep_actions_applied.append(prep_action)
+            if prep_steps and bool(definition.get("replace_primary_hotkey_with_prep", False)):
+                skip_primary_hotkey = True
+                warnings.append(
+                    f"Surface preflight did not detect '{surface_flag}', so JARVIS will bootstrap the surface with {', '.join(prep_actions_applied)} before typing."
+                )
+            elif prep_steps:
+                warnings.append(
+                    f"Surface preflight will stage {', '.join(prep_actions_applied)} before continuing the '{clean_action}' workflow."
+                )
+
+        return {
+            "enabled": True,
+            "snapshot": snapshot if isinstance(snapshot, dict) else {},
+            "surface_flag": surface_flag,
+            "surface_ready": surface_ready,
+            "skip_primary_hotkey": skip_primary_hotkey,
+            "prep_steps": prep_steps,
+            "warnings": warnings,
+            "candidate_prep_actions": list(topology_candidate_actions),
+            "prep_actions": list(prep_actions_applied),
+            "target_query_already_active": target_query_already_active,
+        }
+
+    def _workflow_topology_prep_candidates(
+        self,
+        *,
+        requested_action: str,
+        app_profile: Dict[str, Any],
+    ) -> List[str]:
+        clean_action = str(requested_action or "").strip().lower()
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        actions: List[str] = []
+        if clean_action in {
+            "focus_input_field",
+            "set_field_value",
+            "open_dropdown",
+            "select_dropdown_option",
+            "focus_checkbox",
+            "check_checkbox",
+            "uncheck_checkbox",
+            "toggle_switch",
+            "select_radio_option",
+            "focus_value_control",
+            "increase_value",
+            "decrease_value",
+            "set_value_control",
+            "complete_form_page",
+            "complete_form_flow",
+        }:
+            actions.append("focus_form_surface")
+        if category == "file_manager" and clean_action in {
+            "new_folder",
+            "rename_selection",
+            "open_properties_dialog",
+            "open_preview_pane",
+            "open_details_pane",
+        }:
+            actions.append("focus_file_list")
+        if category == "office" and clean_action in {"reply_email", "reply_all_email", "forward_email"}:
+            actions.extend(["open_mail_view", "focus_message_list"])
+        if category == "office" and clean_action == "new_email_draft":
+            actions.append("open_mail_view")
+        if category == "office" and clean_action == "new_calendar_event":
+            actions.append("open_calendar_view")
+        if clean_action in {"select_tree_item", "expand_tree_item"}:
+            if category == "file_manager":
+                actions.append("focus_folder_tree")
+            else:
+                actions.append("focus_navigation_tree")
+        if clean_action == "select_list_item":
+            if category == "file_manager":
+                actions.append("focus_file_list")
+            elif category == "office":
+                actions.append("focus_message_list")
+            else:
+                actions.append("focus_list_surface")
+        if clean_action == "select_table_row":
+            actions.append("focus_data_table")
+        if clean_action == "open_context_menu":
+            if category == "file_manager":
+                actions.append("focus_file_list")
+            elif category == "office":
+                actions.append("focus_message_list")
+            elif category in {"browser", "code_editor", "ide", "terminal", "chat", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+                actions.append("focus_main_content")
+        if clean_action == "select_context_menu_item":
+            if category == "file_manager":
+                actions.append("focus_file_list")
+            elif category == "office":
+                actions.append("focus_message_list")
+            elif category in {"browser", "code_editor", "ide", "terminal", "chat", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+                actions.append("focus_main_content")
+        return self._dedupe_strings(actions)
+
+    def _workflow_topology_prep_actions(
+        self,
+        *,
+        requested_action: str,
+        args: Dict[str, Any],
+        app_profile: Dict[str, Any],
+        snapshot: Dict[str, Any],
+    ) -> List[str]:
+        del args
+        clean_action = str(requested_action or "").strip().lower()
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        candidate_actions = self._workflow_topology_prep_candidates(
+            requested_action=clean_action,
+            app_profile=app_profile,
+        )
+        if not candidate_actions:
+            return []
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        actions: List[str] = []
+        if clean_action in {
+            "focus_input_field",
+            "set_field_value",
+            "open_dropdown",
+            "select_dropdown_option",
+            "focus_checkbox",
+            "check_checkbox",
+            "uncheck_checkbox",
+            "toggle_switch",
+            "select_radio_option",
+            "focus_value_control",
+            "increase_value",
+            "decrease_value",
+            "set_value_control",
+        } and not bool(flags.get("form_visible")):
+            actions.append("focus_form_surface")
+        if clean_action in {
+            "new_folder",
+            "rename_selection",
+            "open_properties_dialog",
+            "open_preview_pane",
+            "open_details_pane",
+        } and not bool(flags.get("file_list_visible")):
+            actions.append("focus_file_list")
+        if clean_action in {"reply_email", "reply_all_email", "forward_email"} and not bool(flags.get("email_compose_ready")):
+            if not bool(flags.get("mail_view_active")):
+                actions.append("open_mail_view")
+            if not bool(flags.get("message_list_visible")):
+                actions.append("focus_message_list")
+        if clean_action == "new_email_draft" and not bool(flags.get("email_compose_ready")) and not bool(flags.get("mail_view_active")):
+            actions.append("open_mail_view")
+        if clean_action == "new_calendar_event" and not bool(flags.get("calendar_event_compose_ready")) and not bool(flags.get("calendar_view_active")):
+            actions.append("open_calendar_view")
+        if clean_action in {"select_tree_item", "expand_tree_item"}:
+            if category == "file_manager" and not bool(flags.get("folder_tree_visible")):
+                actions.append("focus_folder_tree")
+            elif category != "file_manager" and not bool(flags.get("tree_visible")):
+                actions.append("focus_navigation_tree")
+        if clean_action == "select_list_item":
+            if category == "file_manager" and not bool(flags.get("file_list_visible")):
+                actions.append("focus_file_list")
+            elif category == "office" and bool(flags.get("mail_view_active")) and not bool(flags.get("message_list_visible")):
+                actions.append("focus_message_list")
+            elif category not in {"file_manager", "office"} and not bool(flags.get("list_visible")):
+                actions.append("focus_list_surface")
+        if clean_action == "select_table_row" and not bool(flags.get("table_visible")):
+            actions.append("focus_data_table")
+        if clean_action == "open_context_menu":
+            if category == "file_manager" and not bool(flags.get("file_list_visible")):
+                actions.append("focus_file_list")
+            elif category == "office" and bool(flags.get("mail_view_active")) and not bool(flags.get("message_list_visible")):
+                actions.append("focus_message_list")
+            elif category in {"browser", "code_editor", "ide", "terminal", "chat", "utility", "ops_console", "security", "ai_companion", "general_desktop"} and not bool(flags.get("main_content_visible")):
+                actions.append("focus_main_content")
+        if clean_action == "select_context_menu_item":
+            if category == "file_manager" and not bool(flags.get("file_list_visible")):
+                actions.append("focus_file_list")
+            elif category == "office" and bool(flags.get("mail_view_active")) and not bool(flags.get("message_list_visible")):
+                actions.append("focus_message_list")
+            elif category in {"browser", "code_editor", "ide", "terminal", "chat", "utility", "ops_console", "security", "ai_companion", "general_desktop"} and not bool(flags.get("main_content_visible")):
+                actions.append("focus_main_content")
+        return [action for action in self._dedupe_strings(actions) if action in candidate_actions]
+
+    def _workflow_preflight_step(
+        self,
+        *,
+        requested_action: str,
+        args: Dict[str, Any],
+        app_profile: Dict[str, Any],
+        focus_title: str,
+    ) -> Dict[str, Any]:
+        prep_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
+        if not bool(prep_profile.get("supported", False)):
+            return {}
+        workflow_action_name = str(prep_profile.get("workflow_action", "") or "").strip().lower()
+        workflow_action_args = self._resolve_workflow_action_args(prep_profile.get("workflow_action_args", {}), args)
+        if not isinstance(workflow_action_args, dict):
+            workflow_action_args = {}
+        if workflow_action_name == "accessibility_invoke_element" and focus_title and not str(workflow_action_args.get("window_title", "") or "").strip():
+            workflow_action_args["window_title"] = focus_title
+        primary_hotkey = prep_profile.get("primary_hotkey", []) if isinstance(prep_profile.get("primary_hotkey", []), list) else []
+        use_workflow_action = bool(
+            workflow_action_name
+            and (
+                prep_profile.get("supports_system_action", False)
+                or prep_profile.get("supports_action_dispatch", False)
+            )
+            and (prep_profile.get("prefer_workflow_action", False) or not primary_hotkey)
+        )
+        if use_workflow_action:
+            return self._plan_step(
+                action=workflow_action_name,
+                args=workflow_action_args,
+                phase="preflight",
+                optional=False,
+                reason=str(
+                    prep_profile.get("workflow_action_reason", "")
+                    or prep_profile.get("hotkey_reason", "")
+                    or "Prepare the desktop surface through a native control dispatch before continuing the workflow."
+                ),
+            )
+        if primary_hotkey:
+            return self._plan_step(
+                action="keyboard_hotkey",
+                args={"keys": list(primary_hotkey)},
+                phase="preflight",
+                optional=False,
+                reason=str(
+                    prep_profile.get("hotkey_reason", "")
+                    or "Prepare the desktop surface with a workflow shortcut before continuing the requested action."
+                ),
+            )
+        return {}
+
+    def _workflow_stateful_overrides(
+        self,
+        *,
+        requested_action: str,
+        args: Dict[str, Any],
+        snapshot: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        clean_action = str(requested_action or "").strip().lower()
+        snapshot_payload = snapshot if isinstance(snapshot, dict) else {}
+        target_state = snapshot_payload.get("target_control_state", {})
+        target = target_state if isinstance(target_state, dict) else {}
+        element_payload = snapshot_payload.get("elements", {}) if isinstance(snapshot_payload.get("elements", {}), dict) else {}
+        element_items = element_payload.get("items", []) if isinstance(element_payload.get("items", []), list) else []
+        target_window = snapshot_payload.get("target_window", {}) if isinstance(snapshot_payload.get("target_window", {}), dict) else {}
+        active_window = snapshot_payload.get("active_window", {}) if isinstance(snapshot_payload.get("active_window", {}), dict) else {}
+        target_group_state = snapshot_payload.get("target_group_state", {}) if isinstance(snapshot_payload.get("target_group_state", {}), dict) else {}
+        wizard_page_state = snapshot_payload.get("wizard_page_state", {}) if isinstance(snapshot_payload.get("wizard_page_state", {}), dict) else {}
+        safety_signals = snapshot_payload.get("safety_signals", {}) if isinstance(snapshot_payload.get("safety_signals", {}), dict) else {}
+        warnings: List[str] = []
+        arg_updates: Dict[str, Any] = {}
+        target_state_ready = False
+
+        selected = self._coerce_surface_bool(target.get("selected"))
+        checked = self._coerce_surface_bool(target.get("checked"))
+        current_value_text = str(target.get("value_text", "") or "").strip()
+        current_value_numeric = self._normalize_surface_number(target.get("range_value"))
+        if current_value_numeric is None:
+            current_value_numeric = self._normalize_surface_number(current_value_text)
+        minimum = self._normalize_surface_number(target.get("range_min"))
+        maximum = self._normalize_surface_number(target.get("range_max"))
+        control_type = self._normalize_probe_text(target.get("control_type", ""))
+        desired_text = str(args.get("text", "") or "").strip()
+        desired_numeric = self._normalize_surface_number(desired_text)
+        desired_query = str(args.get("query", "") or "").strip()
+        query_related_candidates = snapshot_payload.get("query_related_candidates", []) if isinstance(snapshot_payload.get("query_related_candidates", []), list) else []
+        selection_candidates = snapshot_payload.get("selection_candidates", []) if isinstance(snapshot_payload.get("selection_candidates", []), list) else []
+
+        def _snapshot_window_title() -> str:
+            return str(target_window.get("title", "") or active_window.get("title", "") or args.get("window_title", "") or args.get("app_name", "")).strip()
+
+        def _candidate_action_args(*, candidate: Dict[str, Any], action_name: str) -> Dict[str, Any]:
+            step_args: Dict[str, Any] = {
+                "query": str(candidate.get("name", "") or desired_text or desired_query).strip(),
+                "action": action_name,
+            }
+            element_id = str(candidate.get("element_id", "") or "").strip()
+            if element_id:
+                step_args["element_id"] = element_id
+            control_name = str(candidate.get("control_type", "") or "").strip()
+            if control_name:
+                step_args["control_type"] = control_name
+            window_title = str(candidate.get("window_title", "") or "").strip() or _snapshot_window_title()
+            if window_title:
+                step_args["window_title"] = window_title
+            return step_args
+
+        def _strong_candidate(*, query_text: str, control_types: Optional[set[str]] = None, minimum_score: float = 0.76) -> Dict[str, Any]:
+            if not query_text:
+                return {}
+            best_candidate: Dict[str, Any] = {}
+            best_score = 0.0
+            for candidate_source, source_bonus in (
+                (query_related_candidates, 0.05),
+                (selection_candidates, 0.03),
+                (element_items, 0.0),
+            ):
+                candidate_rows = self._query_target_elements(
+                    elements=candidate_source,
+                    query=query_text,
+                    control_types=control_types,
+                    limit=6,
+                )
+                for row in candidate_rows:
+                    try:
+                        score = float(row.get("match_score", 0.0) or 0.0) + source_bonus
+                    except Exception:
+                        score = source_bonus
+                    if score <= best_score:
+                        continue
+                    best_score = score
+                    best_candidate = row
+            return best_candidate if best_score >= minimum_score else {}
+
+        def _alias_candidate(*, aliases: List[str], control_types: Optional[set[str]] = None) -> Dict[str, Any]:
+            best_candidate: Dict[str, Any] = {}
+            best_score = 0.0
+            for alias in aliases:
+                candidate = _strong_candidate(query_text=alias, control_types=control_types, minimum_score=0.72)
+                if not candidate:
+                    continue
+                try:
+                    score = float(candidate.get("match_score", 0.0) or 0.0)
+                except Exception:
+                    score = 0.0
+                if score <= best_score:
+                    continue
+                best_score = score
+                best_candidate = candidate
+            return best_candidate
+
+        def _followup_accessibility_step(*, candidate: Dict[str, Any], reason: str) -> Dict[str, Any]:
+            return self._plan_step(
+                action="accessibility_invoke_element",
+                args=_candidate_action_args(candidate=candidate, action_name="click"),
+                phase="input",
+                optional=False,
+                reason=reason,
+            )
+
+        def _followup_hotkey_step(*, keys: List[str], reason: str) -> Dict[str, Any]:
+            return self._plan_step(
+                action="keyboard_hotkey",
+                args={"keys": [str(item).strip().lower() for item in keys if str(item).strip()]},
+                phase="input",
+                optional=False,
+                reason=reason,
+            )
+
+        def _skip_ready_state(message: str) -> Dict[str, Any]:
+            arg_updates["_skip_workflow_action"] = True
+            arg_updates["_skip_primary_hotkey"] = True
+            arg_updates["_skip_input_steps"] = True
+            arg_updates["_target_state_ready"] = True
+            warnings.append(message)
+            return {
+                "arg_updates": arg_updates,
+                "warnings": warnings,
+                "target_state_ready": True,
+            }
+
+        dispatch_override_specs: Dict[str, Dict[str, Any]] = {
+            "focus_input_field": {"control_types": {"edit", "document", "combobox"}, "action": "focus"},
+            "focus_checkbox": {"control_types": {"checkbox"}, "action": "focus"},
+            "focus_value_control": {"control_types": {"slider", "spinner", "edit", "combobox"}, "action": "focus"},
+            "focus_sidebar": {"control_types": {"pane", "tree", "list"}, "action": "focus"},
+            "focus_toolbar": {"control_types": {"toolbar", "pane"}, "action": "focus"},
+            "focus_navigation_tree": {"control_types": {"tree"}, "action": "focus"},
+            "focus_list_surface": {"control_types": {"list"}, "action": "focus"},
+            "focus_data_table": {"control_types": {"table", "datagrid"}, "action": "focus"},
+            "focus_folder_tree": {"control_types": {"tree"}, "action": "focus"},
+            "focus_file_list": {"control_types": {"list", "table"}, "action": "focus"},
+            "focus_main_content": {"control_types": {"pane", "document", "list", "table"}, "action": "focus"},
+            "focus_folder_pane": {"control_types": {"pane", "tree"}, "action": "focus"},
+            "focus_message_list": {"control_types": {"list", "table"}, "action": "focus"},
+            "focus_reading_pane": {"control_types": {"pane", "document"}, "action": "focus"},
+            "select_sidebar_item": {"control_types": {"treeitem", "listitem", "button", "menuitem", "hyperlink"}, "action": "click"},
+            "invoke_toolbar_action": {"control_types": {"button", "splitbutton", "menuitem", "togglebutton"}, "action": "click"},
+            "select_radio_option": {"control_types": {"radiobutton"}, "action": "click", "skip_if_selected": True},
+            "select_tab_page": {"control_types": {"tabitem"}, "action": "click", "skip_if_selected": True},
+            "select_tree_item": {"control_types": {"treeitem"}, "action": "click", "skip_if_selected": True},
+            "expand_tree_item": {"control_types": {"treeitem"}, "action": "double_click", "skip_if_expanded": True},
+            "select_list_item": {"control_types": {"listitem"}, "action": "click", "skip_if_selected": True},
+            "select_table_row": {"control_types": {"dataitem", "listitem", "row"}, "action": "click", "skip_if_selected": True},
+            "select_context_menu_item": {"control_types": {"menuitem"}, "action": "click"},
+            "press_dialog_button": {"control_types": {"button", "splitbutton"}, "action": "click"},
+            "toggle_switch": {"control_types": {"checkbox", "button", "togglebutton"}, "action": "click"},
+            "enable_switch": {"control_types": {"checkbox", "button", "togglebutton"}, "action": "click"},
+            "disable_switch": {"control_types": {"checkbox", "button", "togglebutton"}, "action": "click"},
+        }
+
+        if clean_action in {"select_radio_option", "select_tab_page"} and (selected is True or checked is True):
+            return _skip_ready_state(
+                "Surface state shows the requested target is already active, so JARVIS will preserve it instead of replaying the selection action."
+            )
+
+        if clean_action == "check_checkbox" and checked is True:
+            return _skip_ready_state(
+                "Surface state shows the requested checkbox is already checked, so JARVIS will preserve the current control state."
+            )
+
+        if clean_action == "uncheck_checkbox" and checked is False:
+            return _skip_ready_state(
+                "Surface state shows the requested checkbox is already unchecked, so JARVIS will preserve the current control state."
+            )
+
+        dispatch_override = dispatch_override_specs.get(clean_action, {})
+        if dispatch_override and desired_query:
+            refined_candidate = _strong_candidate(
+                query_text=desired_query,
+                control_types=dispatch_override.get("control_types"),
+                minimum_score=0.78,
+            )
+            if refined_candidate:
+                candidate_name = str(refined_candidate.get("name", "") or "").strip()
+                candidate_selected = self._coerce_surface_bool(refined_candidate.get("selected"))
+                candidate_checked = self._coerce_surface_bool(refined_candidate.get("checked"))
+                candidate_expanded = self._coerce_surface_bool(refined_candidate.get("expanded"))
+                if bool(dispatch_override.get("skip_if_selected")) and (candidate_selected is True or candidate_checked is True):
+                    return _skip_ready_state(
+                        f"Surface state shows the requested '{candidate_name or desired_query}' target is already selected, so JARVIS will preserve it instead of replaying the action."
+                    )
+                if bool(dispatch_override.get("skip_if_expanded")) and candidate_expanded is True:
+                    return _skip_ready_state(
+                        f"Surface state shows the requested '{candidate_name or desired_query}' tree item is already expanded, so JARVIS will preserve the current hierarchy state."
+                    )
+                arg_updates["_workflow_action_args_override"] = _candidate_action_args(
+                    candidate=refined_candidate,
+                    action_name=str(dispatch_override.get("action", "click") or "click"),
+                )
+                if candidate_name and candidate_name != desired_query:
+                    arg_updates["query"] = candidate_name
+                warnings.append(
+                    f"Surface state exposed an exact live target for '{candidate_name or desired_query}', so JARVIS will dispatch directly against that control instance."
+                )
+            elif clean_action in {"select_radio_option", "select_tab_page", "press_dialog_button", "select_context_menu_item"}:
+                refined_name = str(refined_candidate.get("name", "") or "").strip()
+                if refined_name and refined_name != desired_query:
+                    arg_updates["query"] = refined_name
+                    warnings.append(
+                        f"Surface state exposed a stronger live target match ('{refined_name}'), so JARVIS will dispatch against that control label."
+                    )
+
+        if clean_action in {"check_checkbox", "uncheck_checkbox", "toggle_switch", "enable_switch", "disable_switch"} and desired_query:
+            toggle_type_hints = {
+                "check_checkbox": {"checkbox"},
+                "uncheck_checkbox": {"checkbox"},
+                "toggle_switch": {"checkbox", "button", "togglebutton"},
+                "enable_switch": {"checkbox", "button", "togglebutton"},
+                "disable_switch": {"checkbox", "button", "togglebutton"},
+            }
+            toggle_candidate = _strong_candidate(
+                query_text=desired_query,
+                control_types=toggle_type_hints.get(clean_action),
+                minimum_score=0.78,
+            )
+            if toggle_candidate:
+                candidate_name = str(toggle_candidate.get("name", "") or desired_query).strip()
+                candidate_checked = self._coerce_surface_bool(toggle_candidate.get("checked"))
+                candidate_toggle = self._normalize_probe_text(toggle_candidate.get("toggle_state", ""))
+                if clean_action == "check_checkbox" and (candidate_checked is True or candidate_toggle in {"on", "checked"}):
+                    return _skip_ready_state(
+                        f"Surface state shows the requested checkbox ('{candidate_name}') is already checked, so JARVIS will preserve it."
+                    )
+                if clean_action == "uncheck_checkbox" and (candidate_checked is False or candidate_toggle in {"off", "unchecked"}):
+                    return _skip_ready_state(
+                        f"Surface state shows the requested checkbox ('{candidate_name}') is already unchecked, so JARVIS will preserve it."
+                    )
+                if clean_action == "enable_switch" and (candidate_checked is True or candidate_toggle in {"on", "checked"}):
+                    return _skip_ready_state(
+                        f"Surface state shows the requested switch ('{candidate_name}') is already on, so JARVIS will preserve it."
+                    )
+                if clean_action == "disable_switch" and (candidate_checked is False or candidate_toggle in {"off", "unchecked"}):
+                    return _skip_ready_state(
+                        f"Surface state shows the requested switch ('{candidate_name}') is already off, so JARVIS will preserve it."
+                    )
+                arg_updates["_skip_primary_hotkey"] = True
+                arg_updates["_workflow_followup_steps"] = [
+                    _followup_accessibility_step(
+                        candidate=toggle_candidate,
+                        reason=(
+                            f"Use the live '{candidate_name}' control exposed by the form surface instead of a generic keyboard toggle."
+                            if clean_action == "toggle_switch"
+                            else f"Use the live '{candidate_name}' control exposed by the form surface instead of a blind switch state change."
+                        ),
+                    )
+                ]
+                group_role = str(target_group_state.get("group_role", "") or "").strip()
+                if group_role:
+                    warnings.append(
+                        f"Surface state resolved '{candidate_name}' inside the live {group_role.replace('_', ' ')} group, so JARVIS will toggle that exact control instance."
+                    )
+                else:
+                    warnings.append(
+                        f"Surface state exposed the exact '{candidate_name}' control, so JARVIS will toggle it directly through accessibility."
+                    )
+                return {
+                    "arg_updates": arg_updates,
+                    "warnings": warnings,
+                    "target_state_ready": target_state_ready,
+                }
+
+        if clean_action in {"next_wizard_step", "finish_wizard"}:
+            pending_requirements = wizard_page_state.get("pending_requirements", []) if isinstance(wizard_page_state.get("pending_requirements", []), list) else []
+            if pending_requirements:
+                warnings.append(
+                    f"Wizard page intelligence detected {len(pending_requirements)} prerequisite control(s) that may need resolution before this page can advance cleanly."
+                )
+
+        def _preferred_dialog_target(signal_key: str, aliases: List[str]) -> Dict[str, Any]:
+            signal_target = safety_signals.get(signal_key, {})
+            if isinstance(signal_target, dict) and str(signal_target.get("name", "") or "").strip():
+                return signal_target
+            return _alias_candidate(aliases=aliases, control_types={"button", "splitbutton"})
+
+        if clean_action in {"confirm_dialog", "dismiss_dialog", "next_wizard_step", "previous_wizard_step", "finish_wizard"}:
+            semantic_aliases = {
+                "confirm_dialog": ["ok", "yes", "continue", "allow", "accept", "apply", "install", "finish", "next"],
+                "dismiss_dialog": ["cancel", "no", "close", "back", "later", "skip"],
+                "next_wizard_step": ["next", "continue", "proceed"],
+                "previous_wizard_step": ["back", "previous", "prev"],
+                "finish_wizard": ["finish", "done", "complete", "install", "apply", "launch"],
+            }
+            signal_target_fields = {
+                "confirm_dialog": "preferred_confirmation_target",
+                "dismiss_dialog": "preferred_dismiss_target",
+                "next_wizard_step": "preferred_confirmation_target",
+                "previous_wizard_step": "preferred_dismiss_target",
+                "finish_wizard": "preferred_confirmation_target",
+            }
+            matched_button = _preferred_dialog_target(
+                signal_key=signal_target_fields.get(clean_action, ""),
+                aliases=semantic_aliases.get(clean_action, []),
+            )
+            if matched_button:
+                button_name = str(matched_button.get("name", "") or "").strip()
+                arg_updates["_skip_workflow_action"] = True
+                arg_updates["_skip_primary_hotkey"] = True
+                arg_updates["_workflow_followup_steps"] = [
+                    _followup_accessibility_step(
+                        candidate=matched_button,
+                        reason=f"Use the live '{button_name or clean_action}' button exposed by the dialog surface instead of a blind accelerator.",
+                    )
+                ]
+                warnings.append(
+                    f"Surface state exposed the live '{button_name or clean_action}' button, so JARVIS will invoke it directly through accessibility."
+                )
+                safe_buttons = [str(item).strip() for item in safety_signals.get("safe_dialog_buttons", []) if str(item).strip()]
+                destructive_buttons = [str(item).strip() for item in safety_signals.get("destructive_dialog_buttons", []) if str(item).strip()]
+                if clean_action in {"confirm_dialog", "next_wizard_step", "finish_wizard"} and destructive_buttons:
+                    if safe_buttons:
+                        warnings.append(
+                            f"Surface safety also exposed safer alternatives ({', '.join(safe_buttons[:3])}), while the selected confirmation path will press '{button_name or clean_action}'."
+                        )
+                    else:
+                        warnings.append(
+                            f"Surface safety marked '{button_name or clean_action}' as a commit-style action on a risky surface, so JARVIS is using the exact visible control instead of a generic confirmation hotkey."
+                        )
+                return {
+                    "arg_updates": arg_updates,
+                    "warnings": warnings,
+                    "target_state_ready": target_state_ready,
+                }
+
+        if clean_action == "complete_wizard_page":
+            pending_requirements = wizard_page_state.get("pending_requirements", []) if isinstance(wizard_page_state.get("pending_requirements", []), list) else []
+            followup_steps: List[Dict[str, Any]] = []
+            for row in pending_requirements[:4]:
+                if not isinstance(row, dict):
+                    continue
+                control_name = str(row.get("name", "") or "").strip() or str(row.get("target_label", "") or "").strip()
+                requirement_type = str(row.get("requirement_type", "") or "").strip().lower()
+                if not control_name:
+                    continue
+                followup_steps.append(
+                    _followup_accessibility_step(
+                        candidate=row,
+                        reason=(
+                            f"Resolve the wizard page prerequisite '{control_name}' before advancing the setup."
+                            if requirement_type
+                            else f"Resolve the wizard page prerequisite '{control_name}' before advancing the setup."
+                        ),
+                    )
+                )
+            preferred_confirmation_target = wizard_page_state.get("preferred_confirmation_target", {})
+            preferred_confirmation_button = str(wizard_page_state.get("preferred_confirmation_button", "") or "").strip()
+            advance_action = str(wizard_page_state.get("advance_action", "") or "").strip().lower()
+            if isinstance(preferred_confirmation_target, dict) and str(preferred_confirmation_target.get("name", "") or "").strip():
+                followup_steps.append(
+                    _followup_accessibility_step(
+                        candidate=preferred_confirmation_target,
+                        reason=f"Advance the wizard through the preferred '{preferred_confirmation_button or advance_action or 'next'}' control exposed on the current setup page.",
+                    )
+                )
+            elif advance_action == "finish_wizard":
+                followup_steps.append(
+                    _followup_hotkey_step(
+                        keys=["alt", "f"],
+                        reason="Advance the setup through the generic finish accelerator because the final page did not expose a clickable confirmation target.",
+                    )
+                )
+            else:
+                followup_steps.append(
+                    _followup_hotkey_step(
+                        keys=["alt", "n"],
+                        reason="Advance the setup through the generic next-step accelerator because the current page did not expose a clickable confirmation target.",
+                    )
+                )
+            arg_updates["_skip_workflow_action"] = True
+            arg_updates["_skip_primary_hotkey"] = True
+            arg_updates["_workflow_followup_steps"] = followup_steps
+            page_kind = str(wizard_page_state.get("page_kind", "") or "").replace("_", " ").strip()
+            if page_kind:
+                warnings.append(
+                    f"Surface state classified the current setup surface as a {page_kind} page, so JARVIS will resolve the page prerequisites before advancing."
+                )
+            if pending_requirements:
+                warnings.append(
+                    f"Wizard page intelligence found {len(pending_requirements)} pending prerequisite control(s), so JARVIS will stage them before continuing."
+                )
+            if bool(safety_signals.get("destructive_warning_visible", False)):
+                safe_buttons = [str(item).strip() for item in safety_signals.get("safe_dialog_buttons", []) if str(item).strip()]
+                if safe_buttons:
+                    warnings.append(
+                        f"The current setup page exposes safer alternatives ({', '.join(safe_buttons[:3])}), while the completion workflow will continue through '{preferred_confirmation_button or advance_action or 'next'}'."
+                    )
+            return {
+                "arg_updates": arg_updates,
+                "warnings": warnings,
+                "target_state_ready": target_state_ready,
+            }
+
+        if clean_action == "complete_form_page":
+            form_page_state = snapshot_payload.get("form_page_state", {}) if isinstance(snapshot_payload.get("form_page_state", {}), dict) else {}
+            pending_requirements = form_page_state.get("pending_requirements", []) if isinstance(form_page_state.get("pending_requirements", []), list) else []
+            followup_steps: List[Dict[str, Any]] = []
+            for row in pending_requirements[:4]:
+                if not isinstance(row, dict):
+                    continue
+                control_name = str(row.get("name", "") or "").strip() or str(row.get("target_label", "") or "").strip()
+                if not control_name:
+                    continue
+                followup_steps.append(
+                    _followup_accessibility_step(
+                        candidate=row,
+                        reason=f"Resolve the form prerequisite '{control_name}' before committing the current settings page.",
+                    )
+                )
+            preferred_commit_target = form_page_state.get("preferred_commit_target", {})
+            preferred_commit_button = str(form_page_state.get("preferred_commit_button", "") or "").strip()
+            if isinstance(preferred_commit_target, dict) and str(preferred_commit_target.get("name", "") or "").strip():
+                followup_steps.append(
+                    _followup_accessibility_step(
+                        candidate=preferred_commit_target,
+                        reason=f"Commit the current form through the preferred '{preferred_commit_button or 'save'}' control exposed on the surface.",
+                    )
+                )
+            else:
+                followup_steps.append(
+                    _followup_hotkey_step(
+                        keys=["enter"],
+                        reason="Commit the current form through the generic confirmation accelerator because the surface did not expose a reliable clickable commit target.",
+                    )
+                )
+            arg_updates["_skip_workflow_action"] = True
+            arg_updates["_skip_primary_hotkey"] = True
+            arg_updates["_workflow_followup_steps"] = followup_steps
+            page_kind = str(form_page_state.get("page_kind", "") or "").replace("_", " ").strip()
+            if page_kind:
+                warnings.append(
+                    f"Surface state classified the current settings surface as a {page_kind} page, so JARVIS will resolve the page prerequisites before committing."
+                )
+            if pending_requirements:
+                warnings.append(
+                    f"Form page intelligence found {len(pending_requirements)} pending prerequisite control(s), so JARVIS will stage them before continuing."
+                )
+            if bool(safety_signals.get("destructive_warning_visible", False)):
+                safe_buttons = [str(item).strip() for item in safety_signals.get("safe_dialog_buttons", []) if str(item).strip()]
+                if safe_buttons:
+                    warnings.append(
+                        f"The current form exposes safer alternatives ({', '.join(safe_buttons[:3])}), while the completion workflow will continue through '{preferred_commit_button or 'enter'}'."
+                    )
+            return {
+                "arg_updates": arg_updates,
+                "warnings": warnings,
+                "target_state_ready": target_state_ready,
+            }
+
+        if clean_action == "select_dropdown_option":
+            desired_option = self._normalize_probe_text(desired_text)
+            current_option = self._normalize_probe_text(current_value_text)
+            if desired_option and current_option and desired_option == current_option:
+                return _skip_ready_state(
+                    "Surface state shows the requested dropdown option is already selected, so JARVIS will preserve the current control state."
+                )
+            live_option_candidate = _strong_candidate(
+                query_text=desired_text,
+                control_types={"listitem", "menuitem", "text", "button"},
+                minimum_score=0.78,
+            )
+            if live_option_candidate:
+                option_name = str(live_option_candidate.get("name", "") or desired_text).strip()
+                option_selected = self._coerce_surface_bool(live_option_candidate.get("selected"))
+                if option_selected is True:
+                    return _skip_ready_state(
+                        f"Surface state shows the requested dropdown option ('{option_name or desired_text}') is already active, so JARVIS will preserve the current selection."
+                    )
+                arg_updates["_workflow_followup_steps"] = [
+                    _followup_accessibility_step(
+                        candidate=live_option_candidate,
+                        reason=f"Use the live '{option_name}' option exposed by the dropdown instead of typing blindly into the option list.",
+                    )
+                ]
+                warnings.append(
+                    f"Surface state exposed the requested dropdown option ('{option_name}'), so JARVIS will select it directly through accessibility."
+                )
+                return {
+                    "arg_updates": arg_updates,
+                    "warnings": warnings,
+                    "target_state_ready": target_state_ready,
+                }
+
+        if clean_action != "set_value_control":
+            return {
+                "arg_updates": arg_updates,
+                "warnings": warnings,
+                "target_state_ready": target_state_ready,
+            }
+
+        if desired_numeric is not None:
+            clamped_value = desired_numeric
+            if minimum is not None and float(clamped_value) < float(minimum):
+                clamped_value = minimum
+                warnings.append(
+                    f"The requested target is below the detected control minimum, so JARVIS will clamp it to {minimum}."
+                )
+            if maximum is not None and float(clamped_value) > float(maximum):
+                clamped_value = maximum
+                warnings.append(
+                    f"The requested target exceeds the detected control maximum, so JARVIS will clamp it to {maximum}."
+                )
+            arg_updates["text"] = str(clamped_value)
+            if current_value_numeric is not None:
+                delta = float(clamped_value) - float(current_value_numeric)
+                rounded_delta = int(round(delta))
+                if abs(delta) < 1e-9 or rounded_delta == 0:
+                    target_state_ready = True
+                    arg_updates["_skip_workflow_action"] = True
+                    arg_updates["_skip_input_steps"] = True
+                    arg_updates["_target_state_ready"] = True
+                    warnings.append(
+                        "Surface state already matches the requested target value, so JARVIS will preserve the current control value."
+                    )
+                else:
+                    arg_updates["_value_control_mode"] = "adjust"
+                    arg_updates["_value_adjust_amount"] = max(1, min(abs(rounded_delta), 50))
+                    arg_updates["_value_adjust_keys"] = ["up"] if rounded_delta > 0 else ["down"]
+                    if abs(delta - rounded_delta) > 0.001:
+                        warnings.append(
+                            "The detected value delta was not an exact integer step, so JARVIS will use the nearest adjustment count as best effort."
+                        )
+            else:
+                arg_updates["_value_control_mode"] = "type"
+                if control_type == "slider":
+                    warnings.append(
+                        "The current slider value could not be read, so JARVIS will use best-effort direct input after focusing the control."
+                    )
+        elif desired_text:
+            arg_updates["_value_control_mode"] = "type"
+
+        return {
+            "arg_updates": arg_updates,
+            "warnings": warnings,
+            "target_state_ready": target_state_ready,
+        }
 
     def _resolve_app_profile(
         self,
@@ -1026,15 +7272,1164 @@ class DesktopActionRouter:
         explicit = str(args.get("verify_text", "") or "").strip()
         if explicit:
             return explicit
+        action = str(args.get("action", "") or "").strip().lower()
         verification_defaults = app_profile.get("verification_defaults", {}) if isinstance(app_profile.get("verification_defaults", {}), dict) else {}
         verify_text_source = str(verification_defaults.get("verify_text_source", "query_or_typed") or "query_or_typed").strip().lower()
         typed_text = str(args.get("text", "") or "").strip()
         query_text = str(args.get("query", "") or "").strip()
+        if action == "navigate":
+            navigation_hint = self._navigation_verify_text(query_text)
+            if navigation_hint:
+                return navigation_hint
+        definition = self._workflow_definition(action)
+        verify_hint = str(definition.get("verify_hint", "") or "").strip()
+        if action == "search":
+            return query_text or typed_text
+        if action == "focus_search_box":
+            return "search"
+        if action == "go_back":
+            return "back"
+        if action == "go_forward":
+            return "forward"
+        if action == "focus_folder_tree":
+            return "navigation pane"
+        if action == "focus_file_list":
+            return "items view"
+        if action == "focus_navigation_tree":
+            return "tree"
+        if action == "focus_list_surface":
+            return "list"
+        if action == "focus_data_table":
+            return "table"
+        if action == "focus_sidebar":
+            return "sidebar"
+        if action == "select_sidebar_item":
+            return query_text or typed_text
+        if action == "focus_form_surface":
+            return "form"
+        if action == "focus_input_field":
+            return query_text or "field"
+        if action == "set_field_value":
+            return typed_text or query_text
+        if action == "open_dropdown":
+            return query_text or "dropdown"
+        if action == "select_dropdown_option":
+            return typed_text or query_text
+        if action == "focus_checkbox":
+            return query_text or "checkbox"
+        if action == "check_checkbox":
+            return f"{query_text} checked".strip() if query_text else "checked"
+        if action == "uncheck_checkbox":
+            return f"{query_text} unchecked".strip() if query_text else "unchecked"
+        if action == "select_radio_option":
+            return f"{query_text} selected".strip() if query_text else "selected"
+        if action == "select_tab_page":
+            return query_text or "tab"
+        if action == "focus_value_control":
+            return query_text or "value control"
+        if action in {"increase_value", "decrease_value"}:
+            return query_text or "value"
+        if action == "set_value_control":
+            return typed_text or query_text
+        if action == "toggle_switch":
+            return query_text or "switch"
+        if action == "enable_switch":
+            return f"{query_text} enabled".strip() if query_text else "enabled"
+        if action == "disable_switch":
+            return f"{query_text} disabled".strip() if query_text else "disabled"
+        if action == "focus_main_content":
+            return "content"
+        if action == "focus_toolbar":
+            return "toolbar"
+        if action == "invoke_toolbar_action":
+            return query_text or typed_text
+        if action == "open_context_menu":
+            return "menu"
+        if action == "select_context_menu_item":
+            return query_text or typed_text
+        if action == "dismiss_dialog":
+            return "cancel"
+        if action == "confirm_dialog":
+            return "ok"
+        if action == "press_dialog_button":
+            return query_text or typed_text
+        if action == "next_wizard_step":
+            return "next"
+        if action == "previous_wizard_step":
+            return "back"
+        if action == "finish_wizard":
+            return "finish"
+        if action == "complete_wizard_page":
+            return "wizard"
+        if action == "complete_wizard_flow":
+            return "completed"
+        if action == "complete_form_page":
+            return "settings saved"
+        if action == "complete_form_flow":
+            return "settings applied"
+        if action in {"select_tree_item", "expand_tree_item", "select_list_item", "select_table_row"}:
+            return query_text or typed_text
+        if action == "open_tab_search":
+            return "search tabs"
+        if action == "search_tabs":
+            return query_text or typed_text
+        if action == "command":
+            return typed_text or query_text
+        if action == "quick_open":
+            return query_text or typed_text
+        if action == "jump_to_conversation":
+            return query_text or typed_text
+        if action == "switch_tab":
+            tab_target = self._normalize_switch_tab_target(query_text)
+            return "" if tab_target in {"next", "previous", "last"} or tab_target.isdigit() else (query_text or "tab")
+        if action == "workspace_search":
+            return query_text or typed_text
+        if action == "find_replace":
+            return typed_text or query_text
+        if action == "rename_selection":
+            return typed_text or query_text
+        if action == "open_mail_view":
+            return "inbox"
+        if action == "open_calendar_view":
+            return "calendar"
+        if action == "open_people_view":
+            return "people"
+        if action == "open_tasks_view":
+            return "tasks"
+        if action == "focus_folder_pane":
+            return "folder pane"
+        if action == "focus_message_list":
+            return "message list"
+        if action == "focus_reading_pane":
+            return "reading pane"
+        if action in {"reply_email", "forward_email"}:
+            return "subject"
+        if action == "reply_all_email":
+            return "cc"
+        if action == "new_calendar_event":
+            return "appointment"
+        if action == "go_to_symbol":
+            return query_text or typed_text
+        if action == "rename_symbol":
+            return typed_text or query_text
+        if action == "send_message":
+            return typed_text or query_text
+        if action in {"zoom_in", "zoom_out"}:
+            return "zoom"
+        if action == "reset_zoom":
+            return "100%"
+        if action == "terminal_command":
+            return typed_text or query_text
+        if verify_hint:
+            return verify_hint
         if verify_text_source == "typed_text":
             return typed_text
         if verify_text_source == "query":
             return query_text
         return typed_text or query_text
+
+    def _workflow_profile(self, *, requested_action: str, args: Dict[str, Any], app_profile: Dict[str, Any]) -> Dict[str, Any]:
+        clean_action = str(requested_action or "").strip().lower()
+        if clean_action not in WORKFLOW_ACTIONS:
+            return {}
+        definition = self._workflow_definition(clean_action)
+        hotkeys = self._workflow_hotkey_candidates(requested_action=clean_action, args=args, app_profile=app_profile)
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        workflow_action_name = str(definition.get("workflow_action", "") or "").strip().lower()
+        supports_without_hotkey_categories = {
+            str(item).strip().lower()
+            for item in definition.get("supports_without_hotkey_categories", set())
+            if str(item).strip()
+        }
+        supports_system_action_categories = {
+            str(item).strip().lower()
+            for item in definition.get("supports_system_action_categories", set())
+            if str(item).strip()
+        }
+        supports_action_dispatch_categories = {
+            str(item).strip().lower()
+            for item in definition.get("supports_action_dispatch_categories", set())
+            if str(item).strip()
+        }
+        supports_stateful_categories = {
+            str(item).strip().lower()
+            for item in definition.get("supports_stateful_categories", set())
+            if str(item).strip()
+        }
+        supports_direct_input = category in supports_without_hotkey_categories
+        supports_system_action = bool(workflow_action_name) and category in supports_system_action_categories
+        supports_action_dispatch = bool(workflow_action_name) and category in supports_action_dispatch_categories
+        supports_stateful_execution = category in supports_stateful_categories
+        supported = bool(hotkeys) or supports_direct_input or supports_system_action or supports_action_dispatch or supports_stateful_execution
+        return {
+            "action": clean_action,
+            "title": str(definition.get("title", clean_action.replace("_", " ").title()) or clean_action.replace("_", " ").title()),
+            "supported": supported,
+            "category": category,
+            "category_hints": self._workflow_category_hints(definition),
+            "hotkeys": [list(row) for row in hotkeys],
+            "primary_hotkey": list(hotkeys[0]) if hotkeys else [],
+            "alternate_hotkeys": [list(row) for row in hotkeys[1:4]],
+            "supports_direct_input": supports_direct_input,
+            "supports_system_action": supports_system_action,
+            "supports_action_dispatch": supports_action_dispatch,
+            "supports_stateful_execution": supports_stateful_execution,
+            "workflow_action": workflow_action_name,
+            "workflow_action_args": dict(definition.get("workflow_action_args", {}))
+            if isinstance(definition.get("workflow_action_args", {}), dict)
+            else {},
+            "workflow_action_reason": str(definition.get("workflow_action_reason", "") or ""),
+            "prefer_workflow_action": bool(definition.get("prefer_workflow_action", False)),
+            "requires_input": bool(definition.get("requires_input", False)),
+            "input_field": str(definition.get("input_field", "") or "").strip(),
+            "required_fields": self._workflow_required_fields(requested_action=clean_action),
+            "input_sequence": [dict(row) for row in definition.get("input_sequence", []) if isinstance(row, dict)],
+            "press_enter_default": bool(definition.get("default_press_enter", False)),
+            "verify_hint": str(definition.get("verify_hint", "") or ""),
+            "route_mode": str(definition.get("route_mode", "workflow_desktop") or "workflow_desktop"),
+            "hotkey_reason": str(definition.get("hotkey_reason", "") or ""),
+            "input_reason": str(definition.get("input_reason", "") or ""),
+            "probe_queries": self._workflow_probe_queries(
+                requested_action=clean_action,
+                args=args,
+                advice={"app_profile": app_profile},
+            ),
+            "recommended_followups": self._workflow_followups(clean_action),
+            "message": "" if supported else str(definition.get("support_message", "Unsupported desktop workflow.") or "Unsupported desktop workflow."),
+        }
+
+    def _workflow_hotkey_candidates(self, *, requested_action: str, args: Dict[str, Any], app_profile: Dict[str, Any]) -> List[List[str]]:
+        clean_action = str(requested_action or "").strip().lower()
+        definition = self._workflow_definition(clean_action)
+        explicit_keys = [str(item).strip().lower() for item in args.get("keys", []) if str(item).strip()]
+        candidates: List[List[str]] = [explicit_keys] if explicit_keys else []
+        if clean_action == "switch_tab":
+            dynamic_candidates = self._switch_tab_hotkeys(args=args, app_profile=app_profile)
+            for row in dynamic_candidates:
+                if row and row not in candidates:
+                    candidates.append(row)
+            return candidates
+        workflow_defaults = app_profile.get("workflow_defaults", {}) if isinstance(app_profile.get("workflow_defaults", {}), dict) else {}
+        field_name = str(definition.get("hotkey_field", "") or "").strip()
+        raw_rows = workflow_defaults.get(field_name, []) if field_name else []
+        source_rows = raw_rows if isinstance(raw_rows, list) else []
+        for row in source_rows:
+            if isinstance(row, list):
+                normalized = [str(item).strip().lower() for item in row if str(item).strip()]
+            elif isinstance(row, str):
+                normalized = [part.strip().lower() for part in re.split(r"[+,]", row) if part.strip()]
+            else:
+                normalized = []
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        if not candidates and clean_action == "search":
+            candidates.append(["ctrl", "f"])
+        if not candidates and clean_action == "focus_search_box":
+            candidates.append(["ctrl", "f"])
+        if not candidates and clean_action == "navigate" and category == "browser":
+            candidates.append(["ctrl", "l"])
+        if not candidates and clean_action == "command" and category in {"code_editor", "ide"}:
+            candidates.append(["ctrl", "shift", "p"])
+        if not candidates and clean_action == "quick_open" and category in {"code_editor", "ide"}:
+            candidates.append(["ctrl", "p"])
+        if not candidates and clean_action == "focus_address_bar" and category in {"browser", "file_manager"}:
+            candidates.extend([["ctrl", "l"], ["alt", "d"]])
+        if not candidates and clean_action == "open_bookmarks" and category == "browser":
+            candidates.append(["ctrl", "shift", "o"])
+        if not candidates and clean_action == "focus_explorer" and category == "code_editor":
+            candidates.append(["ctrl", "shift", "e"])
+        if not candidates and clean_action == "focus_explorer" and category == "ide":
+            candidates.extend([["alt", "1"], ["ctrl", "shift", "e"]])
+        if not candidates and clean_action == "new_folder" and category == "file_manager":
+            candidates.append(["ctrl", "shift", "n"])
+        if not candidates and clean_action == "rename_selection" and category == "file_manager":
+            candidates.append(["f2"])
+        if not candidates and clean_action == "open_properties_dialog" and category == "file_manager":
+            candidates.append(["alt", "enter"])
+        if not candidates and clean_action == "open_preview_pane" and category == "file_manager":
+            candidates.append(["alt", "p"])
+        if not candidates and clean_action == "open_details_pane" and category == "file_manager":
+            candidates.append(["alt", "shift", "p"])
+        if not candidates and clean_action == "open_context_menu" and category in {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+            candidates.extend([["shift", "f10"], ["apps"]])
+        if not candidates and clean_action == "dismiss_dialog" and category in {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+            candidates.append(["esc"])
+        if not candidates and clean_action == "confirm_dialog" and category in {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+            candidates.append(["enter"])
+        if not candidates and clean_action == "next_wizard_step" and category in {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"}:
+            candidates.extend([["alt", "n"], ["enter"]])
+        if not candidates and clean_action == "previous_wizard_step" and category in {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"}:
+            candidates.append(["alt", "b"])
+        if not candidates and clean_action == "finish_wizard" and category in {"utility", "ops_console", "security", "office", "general_desktop", "ai_companion"}:
+            candidates.extend([["alt", "f"], ["enter"]])
+        if not candidates and clean_action in {"open_dropdown", "select_dropdown_option"} and category in {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+            candidates.append(["alt", "down"])
+        if not candidates and clean_action in {"check_checkbox", "uncheck_checkbox"} and category in {"browser", "file_manager", "code_editor", "ide", "terminal", "chat", "office", "utility", "ops_console", "security", "ai_companion", "general_desktop"}:
+            candidates.append(["space"])
+        if not candidates and clean_action == "refresh_view" and category == "browser":
+            candidates.extend([["f5"], ["ctrl", "r"]])
+        if not candidates and clean_action == "refresh_view" and category in {"file_manager", "ops_console", "general_desktop"}:
+            candidates.append(["f5"])
+        if not candidates and clean_action == "go_back" and category in {"browser", "file_manager"}:
+            candidates.append(["alt", "left"])
+        if not candidates and clean_action == "go_forward" and category in {"browser", "file_manager"}:
+            candidates.append(["alt", "right"])
+        if not candidates and clean_action == "go_up_level" and category == "file_manager":
+            candidates.append(["alt", "up"])
+        if not candidates and clean_action == "workspace_search" and category in {"code_editor", "ide"}:
+            candidates.append(["ctrl", "shift", "f"])
+        if not candidates and clean_action == "find_replace" and category in {"code_editor", "office"}:
+            candidates.append(["ctrl", "h"])
+        if not candidates and clean_action == "find_replace" and category == "ide":
+            candidates.extend([["ctrl", "h"], ["ctrl", "r"]])
+        if not candidates and clean_action == "go_to_symbol" and category == "code_editor":
+            candidates.append(["ctrl", "shift", "o"])
+        if not candidates and clean_action == "go_to_symbol" and category == "ide":
+            candidates.extend([["ctrl", "alt", "shift", "n"], ["ctrl", "shift", "o"]])
+        if not candidates and clean_action == "rename_symbol" and category == "code_editor":
+            candidates.append(["f2"])
+        if not candidates and clean_action == "rename_symbol" and category == "ide":
+            candidates.extend([["shift", "f6"], ["f2"]])
+        if not candidates and clean_action == "new_tab" and category == "browser":
+            candidates.append(["ctrl", "t"])
+        if not candidates and clean_action == "new_tab" and category == "terminal":
+            candidates.extend([["ctrl", "shift", "t"], ["ctrl", "t"]])
+        if not candidates and clean_action == "new_tab" and category == "file_manager":
+            candidates.append(["ctrl", "t"])
+        if not candidates and clean_action == "switch_tab":
+            candidates.extend(self._switch_tab_hotkeys(args=args, app_profile=app_profile))
+        if not candidates and clean_action == "close_tab" and category in {"browser", "code_editor", "ide", "file_manager"}:
+            candidates.append(["ctrl", "w"])
+        if not candidates and clean_action == "reopen_tab" and category in {"browser", "code_editor", "ide", "file_manager"}:
+            candidates.append(["ctrl", "shift", "t"])
+        if not candidates and clean_action == "open_history" and category == "browser":
+            candidates.append(["ctrl", "h"])
+        if not candidates and clean_action == "open_downloads" and category == "browser":
+            candidates.append(["ctrl", "j"])
+        if not candidates and clean_action == "open_devtools" and category == "browser":
+            candidates.extend([["f12"], ["ctrl", "shift", "i"]])
+        if not candidates and clean_action in {"open_tab_search", "search_tabs"} and category == "browser":
+            candidates.append(["ctrl", "shift", "a"])
+        if not candidates and clean_action == "new_chat" and category == "chat":
+            candidates.extend([["ctrl", "n"], ["ctrl", "k"], ["ctrl", "e"]])
+        if not candidates and clean_action == "jump_to_conversation" and category == "chat":
+            candidates.extend([["ctrl", "k"], ["ctrl", "e"], ["ctrl", "n"]])
+        if not candidates and clean_action == "send_message" and category == "chat":
+            candidates.extend([["ctrl", "k"], ["ctrl", "e"], ["ctrl", "n"]])
+        if not candidates and clean_action == "new_document" and category in {"office", "code_editor", "ide"}:
+            candidates.append(["ctrl", "n"])
+        if not candidates and clean_action == "save_document" and category in {"office", "code_editor", "ide"}:
+            candidates.append(["ctrl", "s"])
+        if not candidates and clean_action == "open_print_dialog" and category in {"office", "browser", "code_editor", "ide", "general_desktop"}:
+            candidates.append(["ctrl", "p"])
+        if not candidates and clean_action == "start_presentation" and category == "office":
+            candidates.extend([["f5"], ["shift", "f5"]])
+        if not candidates and clean_action == "open_people_view" and category == "office":
+            candidates.append(["ctrl", "3"])
+        if not candidates and clean_action == "open_tasks_view" and category == "office":
+            candidates.append(["ctrl", "4"])
+        if not candidates and clean_action == "reply_email" and category == "office":
+            candidates.append(["ctrl", "r"])
+        if not candidates and clean_action == "reply_all_email" and category == "office":
+            candidates.append(["ctrl", "shift", "r"])
+        if not candidates and clean_action == "forward_email" and category == "office":
+            candidates.append(["ctrl", "f"])
+        if not candidates and clean_action == "new_calendar_event" and category == "office":
+            candidates.append(["ctrl", "shift", "a"])
+        if not candidates and clean_action == "toggle_terminal" and category == "code_editor":
+            candidates.extend([["ctrl", "`"], ["ctrl", "shift", "`"]])
+        if not candidates and clean_action == "toggle_terminal" and category == "ide":
+            candidates.extend([["alt", "f12"], ["ctrl", "`"]])
+        if not candidates and clean_action == "format_document" and category == "code_editor":
+            candidates.append(["shift", "alt", "f"])
+        if not candidates and clean_action == "format_document" and category == "ide":
+            candidates.extend([["ctrl", "alt", "l"], ["shift", "alt", "f"]])
+        if not candidates and clean_action == "zoom_in" and category in {"browser", "code_editor", "ide", "office", "utility"}:
+            candidates.extend([["ctrl", "equal"], ["ctrl", "plus"]])
+        if not candidates and clean_action == "zoom_out" and category in {"browser", "code_editor", "ide", "office", "utility"}:
+            candidates.append(["ctrl", "minus"])
+        if not candidates and clean_action == "reset_zoom" and category in {"browser", "code_editor", "ide", "office", "utility"}:
+            candidates.append(["ctrl", "0"])
+        if not candidates and clean_action == "terminal_command" and category in {"code_editor", "ide"}:
+            candidates.extend([["ctrl", "`"], ["ctrl", "shift", "`"]])
+        return candidates
+
+    @staticmethod
+    def _normalize_switch_tab_target(value: Any) -> str:
+        clean = " ".join(str(value or "").strip().lower().split())
+        if not clean:
+            return ""
+        alias_map = {
+            "next": "next",
+            "next tab": "next",
+            "forward": "next",
+            "right": "next",
+            "following": "next",
+            "previous": "previous",
+            "previous tab": "previous",
+            "prev": "previous",
+            "prev tab": "previous",
+            "prior": "previous",
+            "back": "previous",
+            "left": "previous",
+            "last": "last",
+            "last tab": "last",
+            "final": "last",
+            "end": "last",
+            "first": "1",
+            "first tab": "1",
+            "1st": "1",
+            "one": "1",
+        }
+        if clean in alias_map:
+            return alias_map[clean]
+        ordinal_words = {
+            "second": "2",
+            "2nd": "2",
+            "two": "2",
+            "third": "3",
+            "3rd": "3",
+            "three": "3",
+            "fourth": "4",
+            "4th": "4",
+            "four": "4",
+            "fifth": "5",
+            "5th": "5",
+            "five": "5",
+            "sixth": "6",
+            "6th": "6",
+            "six": "6",
+            "seventh": "7",
+            "7th": "7",
+            "seven": "7",
+            "eighth": "8",
+            "8th": "8",
+            "eight": "8",
+            "ninth": "9",
+            "9th": "9",
+            "nine": "9",
+        }
+        if clean in ordinal_words:
+            return ordinal_words[clean]
+        digit_match = re.search(r"\b([1-9])(?:st|nd|rd|th)?\b", clean)
+        if digit_match:
+            return str(digit_match.group(1))
+        tab_match = re.search(r"\btab\s+([1-9])\b", clean)
+        if tab_match:
+            return str(tab_match.group(1))
+        return ""
+
+    def _switch_tab_hotkeys(self, *, args: Dict[str, Any], app_profile: Dict[str, Any]) -> List[List[str]]:
+        workflow_defaults = app_profile.get("workflow_defaults", {}) if isinstance(app_profile.get("workflow_defaults", {}), dict) else {}
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        target = self._normalize_switch_tab_target(args.get("query", ""))
+        field_name = ""
+        if not target or target == "next":
+            field_name = "next_tab_hotkeys"
+        elif target == "previous":
+            field_name = "previous_tab_hotkeys"
+        elif target == "last":
+            field_name = "last_tab_hotkeys"
+
+        rows: List[List[str]] = []
+        if field_name:
+            raw_rows = workflow_defaults.get(field_name, []) if isinstance(workflow_defaults.get(field_name, []), list) else []
+            for row in raw_rows:
+                if isinstance(row, list):
+                    normalized = [str(item).strip().lower() for item in row if str(item).strip()]
+                elif isinstance(row, str):
+                    normalized = [part.strip().lower() for part in re.split(r"[+,]", row) if part.strip()]
+                else:
+                    normalized = []
+                if normalized and normalized not in rows:
+                    rows.append(normalized)
+
+        if target.isdigit() and category == "browser":
+            rows.append(["ctrl", target])
+        elif target == "last" and category == "browser" and ["ctrl", "9"] not in rows:
+            rows.append(["ctrl", "9"])
+        elif not rows and target == "next" and category in {"browser", "code_editor", "ide", "terminal", "ops_console", "utility", "file_manager"}:
+            rows.extend([["ctrl", "tab"], ["ctrl", "pgdn"]])
+        elif not rows and target == "previous" and category in {"browser", "code_editor", "ide", "terminal", "ops_console", "utility", "file_manager"}:
+            rows.extend([["ctrl", "shift", "tab"], ["ctrl", "pgup"]])
+
+        deduped: List[List[str]] = []
+        for row in rows:
+            if row and row not in deduped:
+                deduped.append(row)
+        return deduped
+
+    def _workflow_required_fields(self, *, requested_action: str) -> List[str]:
+        definition = self._workflow_definition(requested_action)
+        rows = [
+            str(field_name).strip()
+            for field_name in definition.get("required_fields", [])
+            if str(field_name).strip() and str(field_name).strip().lower() != "none"
+        ]
+        if rows:
+            return self._dedupe_strings(rows)
+        if bool(definition.get("requires_input", False)):
+            input_field = str(definition.get("input_field", "") or "").strip()
+            if input_field and input_field.lower() != "none":
+                return [input_field]
+        return []
+
+    def _workflow_missing_required_fields(self, *, requested_action: str, args: Dict[str, Any]) -> List[str]:
+        missing: List[str] = []
+        for field_name in self._workflow_required_fields(requested_action=requested_action):
+            if not str(args.get(field_name, "") or "").strip():
+                missing.append(field_name)
+        return missing
+
+    def _workflow_input_steps(
+        self,
+        *,
+        requested_action: str,
+        args: Dict[str, Any],
+        workflow_profile: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        clean_action = str(requested_action or "").strip().lower()
+        definition = self._workflow_definition(clean_action)
+        direct_steps = args.get("_workflow_followup_steps", [])
+        if isinstance(direct_steps, list) and any(isinstance(step, dict) for step in direct_steps):
+            return [dict(step) for step in direct_steps if isinstance(step, dict)]
+        if bool(args.get("_skip_input_steps", False)):
+            return []
+        if clean_action == "set_value_control":
+            if bool(args.get("_target_state_ready", False)):
+                return []
+            target_text = str(args.get("text", "") or "").strip()
+            mode = str(args.get("_value_control_mode", "") or "").strip().lower()
+            if mode == "adjust":
+                keys = [str(item).strip().lower() for item in args.get("_value_adjust_keys", []) if str(item).strip()]
+                repeat_count = max(1, min(int(args.get("_value_adjust_amount", 1) or 1), 50))
+                if not keys:
+                    keys = ["up"]
+                return [
+                    self._plan_step(
+                        action="keyboard_hotkey",
+                        args={"keys": list(keys)},
+                        phase="input",
+                        optional=False,
+                        reason="Move the focused value control toward the requested target state.",
+                    )
+                    for _ in range(repeat_count)
+                ]
+            if target_text:
+                return [
+                    self._plan_step(
+                        action="keyboard_hotkey",
+                        args={"keys": ["ctrl", "a"]},
+                        phase="workflow_target",
+                        optional=False,
+                        reason="Select the current control value before replacing it with the requested target.",
+                    ),
+                    self._plan_step(
+                        action="keyboard_type",
+                        args={"text": target_text, "press_enter": False},
+                        phase="input",
+                        optional=False,
+                        reason="Type the requested target value into the focused control.",
+                    ),
+                ]
+            return []
+        if bool(definition.get("skip_input_steps", False)):
+            return []
+        sequence = [dict(row) for row in definition.get("input_sequence", []) if isinstance(row, dict)]
+        fallback_reason = str(workflow_profile.get("input_reason", "") or "Send the workflow input to the focused desktop target.")
+        if not sequence:
+            workflow_text = self._workflow_input_text(requested_action=clean_action, args=args)
+            if not workflow_text:
+                return []
+            return [
+                self._plan_step(
+                    action="keyboard_type",
+                    args={
+                        "text": workflow_text,
+                        "press_enter": self._workflow_press_enter(requested_action=clean_action, args=args),
+                    },
+                    phase="input",
+                    optional=False,
+                    reason=fallback_reason,
+                )
+            ]
+
+        steps: List[Dict[str, Any]] = []
+        for row in sequence:
+            row_action = str(row.get("action", "") or "").strip().lower()
+            if row_action and row_action != "keyboard_type":
+                if row_action == "keyboard_hotkey":
+                    keys_value = row.get("keys", [])
+                    if isinstance(keys_value, list):
+                        keys = [str(item).strip().lower() for item in keys_value if str(item).strip()]
+                    elif isinstance(keys_value, str):
+                        keys = [part.strip().lower() for part in re.split(r"[+,]", keys_value) if part.strip()]
+                    else:
+                        keys = []
+                    if not keys:
+                        continue
+                    repeat_count = 1
+                    repeat_field = str(row.get("repeat_field", "") or "").strip()
+                    repeat_value = row.get("repeat")
+                    if repeat_field:
+                        repeat_value = args.get(repeat_field, repeat_value)
+                    if repeat_value is None:
+                        repeat_value = row.get("repeat_default", 1)
+                    try:
+                        repeat_count = max(1, min(int(repeat_value or 1), int(row.get("max_repeat", 20) or 20)))
+                    except Exception:
+                        repeat_count = 1
+                    for _ in range(repeat_count):
+                        steps.append(
+                            self._plan_step(
+                                action="keyboard_hotkey",
+                                args={"keys": keys},
+                                phase=str(row.get("phase", "workflow_target") or "workflow_target"),
+                                optional=bool(row.get("optional", False)),
+                                reason=str(row.get("reason", "") or "Dispatch the workflow's intermediate key chord."),
+                            )
+                        )
+                continue
+            field_name = str(row.get("field", "") or "").strip()
+            if not field_name:
+                continue
+            if field_name == "query" and bool(args.get("_target_query_already_active", False)):
+                continue
+            text_value = str(args.get(field_name, "") or "").strip()
+            if not text_value:
+                if bool(row.get("optional", False)):
+                    continue
+                continue
+            if "press_enter" in row:
+                press_enter = bool(row.get("press_enter", False))
+            else:
+                press_enter = self._workflow_press_enter(requested_action=clean_action, args=args)
+            steps.append(
+                self._plan_step(
+                    action="keyboard_type",
+                    args={"text": text_value, "press_enter": press_enter},
+                    phase=str(row.get("phase", "input") or "input"),
+                    optional=False,
+                    reason=str(row.get("reason", "") or fallback_reason),
+                )
+            )
+        return steps
+
+    @staticmethod
+    def _workflow_input_text(*, requested_action: str, args: Dict[str, Any]) -> str:
+        clean_action = str(requested_action or "").strip().lower()
+        if clean_action in {"navigate", "search", "quick_open", "workspace_search", "go_to_symbol", "jump_to_conversation", "search_tabs", "select_sidebar_item", "invoke_toolbar_action", "select_context_menu_item", "press_dialog_button", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_input_field", "set_field_value", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "select_radio_option", "select_tab_page", "focus_value_control", "increase_value", "decrease_value", "set_value_control", "toggle_switch", "enable_switch", "disable_switch"}:
+            return str(args.get("query", "") or "").strip()
+        if clean_action == "find_replace":
+            return str(args.get("query", "") or args.get("text", "") or "").strip()
+        if clean_action in {"command", "terminal_command", "rename_symbol", "rename_selection", "send_message"}:
+            return str(args.get("text", "") or args.get("query", "") or "").strip()
+        return ""
+
+    @staticmethod
+    def _resolve_workflow_action_args(template_args: Any, args: Dict[str, Any]) -> Any:
+        if isinstance(template_args, dict):
+            return {
+                str(key): DesktopActionRouter._resolve_workflow_action_args(value, args)
+                for key, value in template_args.items()
+                if str(key).strip()
+            }
+        if isinstance(template_args, list):
+            return [DesktopActionRouter._resolve_workflow_action_args(value, args) for value in template_args]
+        if isinstance(template_args, str):
+            match = re.fullmatch(r"\{\{\s*args\.([a-zA-Z0-9_]+)\s*\}\}", template_args.strip())
+            if match:
+                value = args.get(match.group(1))
+                if isinstance(value, str):
+                    return value.strip()
+                return value
+        return template_args
+
+    @staticmethod
+    def _workflow_press_enter(*, requested_action: str, args: Dict[str, Any]) -> bool:
+        provided_fields = {str(item).strip() for item in args.get("_provided_fields", []) if str(item).strip()}
+        if "press_enter" in provided_fields:
+            return bool(args.get("press_enter", False) or args.get("submit", False))
+        clean_action = str(requested_action or "").strip().lower()
+        definition = WORKFLOW_DEFINITIONS.get(clean_action, {})
+        if bool(definition.get("default_press_enter", False)):
+            return True
+        return bool(args.get("press_enter", False) or args.get("submit", False))
+
+    @staticmethod
+    def _workflow_definition(requested_action: str) -> Dict[str, Any]:
+        clean_action = str(requested_action or "").strip().lower()
+        definition = WORKFLOW_DEFINITIONS.get(clean_action, {})
+        return dict(definition) if isinstance(definition, dict) else {}
+
+    @staticmethod
+    def _normalize_probe_text(value: Any) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    @staticmethod
+    def _coerce_surface_bool(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if int(value) in {0, 1}:
+                return bool(int(value))
+            return None
+        clean = DesktopActionRouter._normalize_probe_text(value)
+        if clean in {"true", "yes", "on", "checked", "selected", "expanded", "open"}:
+            return True
+        if clean in {"false", "no", "off", "unchecked", "unselected", "collapsed", "closed"}:
+            return False
+        return None
+
+    @staticmethod
+    def _normalize_surface_number(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value) if value.is_integer() else round(value, 6)
+        clean = str(value).strip().rstrip("%")
+        if not clean:
+            return None
+        try:
+            number = float(clean)
+        except Exception:
+            return None
+        return int(number) if number.is_integer() else round(number, 6)
+
+    @classmethod
+    def _element_search_text(cls, row: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        for field in ("name", "automation_id", "class_name", "control_type", "state_text", "value_text"):
+            value = str(row.get(field, "") or "").strip()
+            if value:
+                parts.append(value.replace("_", " ").replace("-", " "))
+        if row.get("range_value") is not None:
+            parts.append(str(row.get("range_value")))
+        return cls._normalize_probe_text(" ".join(parts))
+
+    @classmethod
+    def _element_query_match_score(cls, row: Dict[str, Any], query: str) -> float:
+        normalized_query = cls._normalize_probe_text(query)
+        if not normalized_query:
+            return 0.0
+        name = cls._normalize_probe_text(row.get("name", ""))
+        haystack = cls._element_search_text(row)
+        if not haystack:
+            return 0.0
+        if name == normalized_query or haystack == normalized_query:
+            return 1.0
+        if normalized_query in name:
+            return 0.92
+        if normalized_query in haystack:
+            return 0.82
+        query_tokens = {token for token in re.split(r"[^a-z0-9]+", normalized_query) if token}
+        haystack_tokens = {token for token in re.split(r"[^a-z0-9]+", haystack) if token}
+        if not query_tokens or not haystack_tokens:
+            return 0.0
+        overlap = len(query_tokens.intersection(haystack_tokens))
+        if overlap <= 0:
+            return 0.0
+        return overlap / max(1.0, len(query_tokens))
+
+    @classmethod
+    def _element_state_summary(cls, row: Dict[str, Any], *, match_score: Optional[float] = None) -> Dict[str, Any]:
+        toggle_state = cls._normalize_probe_text(row.get("toggle_state", ""))
+        summary = {
+            "element_id": str(row.get("element_id", "") or "").strip(),
+            "parent_id": str(row.get("parent_id", "") or "").strip(),
+            "name": str(row.get("name", "") or "").strip(),
+            "window_title": str(row.get("window_title", "") or "").strip(),
+            "control_type": str(row.get("control_type", "") or "").strip(),
+            "automation_id": str(row.get("automation_id", "") or "").strip(),
+            "class_name": str(row.get("class_name", "") or "").strip(),
+            "enabled": cls._coerce_surface_bool(row.get("enabled")),
+            "visible": cls._coerce_surface_bool(row.get("visible")),
+            "selected": cls._coerce_surface_bool(row.get("selected")),
+            "checked": cls._coerce_surface_bool(row.get("checked")),
+            "expanded": cls._coerce_surface_bool(row.get("expanded")),
+            "toggle_state": toggle_state,
+            "value_text": str(row.get("value_text", "") or "").strip(),
+            "state_text": str(row.get("state_text", "") or "").strip(),
+            "range_value": cls._normalize_surface_number(row.get("range_value")),
+            "range_min": cls._normalize_surface_number(row.get("range_min")),
+            "range_max": cls._normalize_surface_number(row.get("range_max")),
+        }
+        if match_score is not None:
+            summary["match_score"] = round(match_score, 6)
+        return {key: value for key, value in summary.items() if value not in {None, ""}}
+
+    @classmethod
+    def _query_target_elements(
+        cls,
+        *,
+        elements: Any,
+        query: str,
+        limit: int = 5,
+        control_types: Optional[set[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+        bounded = max(1, min(int(limit or 5), 12))
+        normalized_control_types = {
+            cls._normalize_probe_text(value)
+            for value in (control_types or set())
+            if cls._normalize_probe_text(value)
+        }
+        ranked: List[tuple[float, Dict[str, Any]]] = []
+        for row in rows:
+            if normalized_control_types:
+                row_control_type = cls._normalize_probe_text(row.get("control_type", ""))
+                if row_control_type not in normalized_control_types:
+                    continue
+            score = cls._element_query_match_score(row, query)
+            if score <= 0:
+                continue
+            ranked.append((score, cls._element_state_summary(row, match_score=score)))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [row for _, row in ranked[:bounded]]
+
+    @classmethod
+    def _selection_candidate_elements(cls, *, elements: Any, limit: int = 12) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+        bounded = max(1, min(int(limit or 12), 24))
+        selection_types = {"listitem", "menuitem", "radiobutton", "tabitem", "button", "splitbutton", "checkbox"}
+        candidates: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            control_type = cls._normalize_probe_text(row.get("control_type", ""))
+            if control_type not in selection_types:
+                continue
+            key = cls._element_identity_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            candidates.append(cls._element_state_summary(row))
+            if len(candidates) >= bounded:
+                break
+        return candidates
+
+    @classmethod
+    def _related_target_elements(cls, *, elements: Any, target: Any, limit: int = 12) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+        target_row = dict(target) if isinstance(target, dict) else {}
+        target_id = str(target_row.get("element_id", "") or "").strip()
+        parent_id = str(target_row.get("parent_id", "") or "").strip()
+        if not target_id and not parent_id:
+            return []
+        bounded = max(1, min(int(limit or 12), 24))
+        candidates: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            row_id = str(row.get("element_id", "") or "").strip()
+            row_parent_id = str(row.get("parent_id", "") or "").strip()
+            if row_id and row_id == target_id:
+                continue
+            related = False
+            if parent_id and row_parent_id and row_parent_id == parent_id:
+                related = True
+            elif target_id and row_parent_id and row_parent_id == target_id:
+                related = True
+            elif target_id and row_id and parent_id and row_id == parent_id:
+                related = True
+            if not related:
+                continue
+            key = cls._element_identity_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            candidates.append(cls._element_state_summary(row))
+            if len(candidates) >= bounded:
+                break
+        return candidates
+
+    @classmethod
+    def _target_group_state(
+        cls,
+        *,
+        target: Any,
+        related_candidates: Any,
+        safety_signals: Any,
+    ) -> Dict[str, Any]:
+        target_row = dict(target) if isinstance(target, dict) else {}
+        related_rows = [dict(row) for row in related_candidates if isinstance(row, dict)] if isinstance(related_candidates, list) else []
+        safety_payload = dict(safety_signals) if isinstance(safety_signals, dict) else {}
+        option_rows: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in ([target_row] if target_row else []) + related_rows:
+            key = cls._element_identity_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            option_rows.append(row)
+        if not option_rows:
+            dialog_targets = safety_payload.get("dialog_button_targets", [])
+            option_rows = [dict(row) for row in dialog_targets if isinstance(row, dict)]
+            if not option_rows:
+                return {}
+        option_types = {cls._normalize_probe_text(row.get("control_type", "")) for row in option_rows}
+        target_type = cls._normalize_probe_text(target_row.get("control_type", ""))
+        group_role = "generic_options"
+        if "combobox" in option_types or target_type == "combobox":
+            group_role = "dropdown_options"
+        elif "radiobutton" in option_types or target_type == "radiobutton":
+            group_role = "radio_group"
+        elif "tabitem" in option_types or target_type == "tabitem":
+            group_role = "tab_group"
+        elif "treeitem" in option_types or target_type == "treeitem":
+            group_role = "tree_group"
+        elif option_types.intersection({"dataitem", "row"}):
+            group_role = "table_rows"
+        elif "listitem" in option_types or target_type == "listitem":
+            group_role = "list_group"
+        elif option_types.intersection({"button", "splitbutton"}):
+            group_role = "wizard_actions" if bool(safety_payload.get("wizard_surface_visible", False)) else "dialog_actions"
+        filtered_option_rows = list(option_rows)
+        if group_role == "dropdown_options":
+            dropdown_specific = {"combobox", "listitem", "menuitem", "text"}
+            focused_rows = [
+                row
+                for row in option_rows
+                if cls._normalize_probe_text(row.get("control_type", "")) in dropdown_specific
+            ]
+            if focused_rows:
+                filtered_option_rows = focused_rows
+        if group_role in {"dialog_actions", "wizard_actions"}:
+            button_rows = [
+                row
+                for row in filtered_option_rows
+                if cls._normalize_probe_text(row.get("control_type", "")) in {"button", "splitbutton"}
+            ]
+            if button_rows:
+                filtered_option_rows = button_rows
+        selected_options = [
+            str(row.get("name", "") or "").strip()
+            for row in filtered_option_rows
+            if cls._coerce_surface_bool(row.get("selected")) is True or cls._coerce_surface_bool(row.get("checked")) is True
+        ]
+        checked_options = [
+            str(row.get("name", "") or "").strip()
+            for row in filtered_option_rows
+            if cls._coerce_surface_bool(row.get("checked")) is True
+        ]
+        enabled_options = [
+            str(row.get("name", "") or "").strip()
+            for row in filtered_option_rows
+            if cls._coerce_surface_bool(row.get("enabled")) is not False
+        ]
+        visible_options = [
+            str(row.get("name", "") or "").strip()
+            for row in filtered_option_rows
+            if cls._coerce_surface_bool(row.get("visible")) is not False
+        ]
+        safe_options = [str(item).strip() for item in safety_payload.get("safe_dialog_buttons", []) if str(item).strip()]
+        destructive_options = [str(item).strip() for item in safety_payload.get("destructive_dialog_buttons", []) if str(item).strip()]
+        return {
+            "group_role": group_role,
+            "target_label": str(target_row.get("name", "") or "").strip(),
+            "target_control_type": str(target_row.get("control_type", "") or "").strip(),
+            "option_count": len(filtered_option_rows),
+            "options": filtered_option_rows[:12],
+            "selected_options": selected_options[:6],
+            "checked_options": checked_options[:6],
+            "enabled_options": enabled_options[:8],
+            "visible_options": visible_options[:8],
+            "safe_options": safe_options[:6],
+            "destructive_options": destructive_options[:6],
+            "preferred_safe_option": str(safety_payload.get("preferred_dismiss_button", "") or "").strip(),
+            "preferred_confirmation_option": str(safety_payload.get("preferred_confirmation_button", "") or "").strip(),
+        }
+
+    @classmethod
+    def _control_inventory(cls, *, elements: Any) -> Dict[str, int]:
+        rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+        counts: Dict[str, int] = {}
+        for row in rows:
+            control_type = cls._normalize_probe_text(row.get("control_type", "")) or "unknown"
+            counts[control_type] = int(counts.get(control_type, 0)) + 1
+        return counts
+
+    @classmethod
+    def _element_identity_key(cls, row: Dict[str, Any]) -> str:
+        explicit_id = str(row.get("element_id", "") or "").strip()
+        if explicit_id:
+            return explicit_id
+        fallback_parts = [
+            str(row.get("name", "") or "").strip(),
+            str(row.get("automation_id", "") or "").strip(),
+            str(row.get("control_type", "") or "").strip(),
+            str(row.get("class_name", "") or "").strip(),
+            str(row.get("left", "") or "").strip(),
+            str(row.get("top", "") or "").strip(),
+        ]
+        return "|".join(part for part in fallback_parts if part)
+
+    @staticmethod
+    def _workflow_category_hints(definition: Dict[str, Any]) -> List[str]:
+        rows: List[str] = []
+        for field_name in ("category_hints", "supports_without_hotkey_categories", "supports_action_dispatch_categories"):
+            raw = definition.get(field_name, [])
+            values = raw if isinstance(raw, (list, tuple, set)) else []
+            for value in values:
+                clean = str(value or "").strip().lower()
+                if clean and clean not in rows:
+                    rows.append(clean)
+        return rows
+
+    def _workflow_followups(self, requested_action: str) -> List[str]:
+        definition = self._workflow_definition(requested_action)
+        rows: List[str] = []
+        for value in definition.get("recommended_followups", []):
+            clean = str(value or "").strip().lower()
+            if clean and clean in WORKFLOW_ACTIONS and clean not in rows:
+                rows.append(clean)
+        return rows
+
+    def _workflow_probe_queries(self, *, requested_action: str, args: Dict[str, Any], advice: Dict[str, Any]) -> List[Dict[str, Any]]:
+        clean_action = str(requested_action or "").strip().lower()
+        if clean_action not in WORKFLOW_ACTIONS:
+            return []
+        definition = self._workflow_definition(clean_action)
+        app_profile = advice.get("app_profile", {}) if isinstance(advice.get("app_profile", {}), dict) else {}
+        queries: List[Dict[str, Any]] = []
+
+        def _append_probe(term: Any, *, source: str, control_type: str = "") -> None:
+            clean_term = str(term or "").strip()
+            normalized = self._normalize_probe_text(clean_term)
+            if not normalized:
+                return
+            row: Dict[str, Any] = {"query": clean_term, "source": source}
+            if control_type:
+                row["control_type"] = control_type
+            queries.append(row)
+
+        for term in definition.get("probe_terms", []):
+            _append_probe(term, source="definition")
+        verify_text = self._derive_verify_text(args=args, app_profile=app_profile)
+        if verify_text:
+            _append_probe(verify_text, source="verify_text")
+        workflow_input = self._workflow_input_text(requested_action=clean_action, args=args)
+        if workflow_input and self._normalize_probe_text(workflow_input) != self._normalize_probe_text(verify_text):
+            _append_probe(workflow_input, source="workflow_input")
+        if clean_action == "navigate":
+            navigation_hint = self._navigation_verify_text(str(args.get("query", "") or "").strip())
+            if navigation_hint and self._normalize_probe_text(navigation_hint) != self._normalize_probe_text(verify_text):
+                _append_probe(navigation_hint, source="navigation_hint")
+
+        deduped: List[Dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in queries:
+            normalized_query = self._normalize_probe_text(row.get("query", ""))
+            normalized_control = self._normalize_probe_text(row.get("control_type", ""))
+            key = (normalized_query, normalized_control)
+            if not normalized_query or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped[:6]
+
+    def _run_workflow_probes(
+        self,
+        *,
+        action: str,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        capabilities: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        queries = self._workflow_probe_queries(requested_action=action, args=args, advice=advice)
+        target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        app_profile = advice.get("app_profile", {}) if isinstance(advice.get("app_profile", {}), dict) else {}
+        resolved_window_title = str(
+            target_window.get("title", "")
+            or args.get("window_title", "")
+            or app_profile.get("name", "")
+            or args.get("app_name", "")
+            or ""
+        ).strip()
+        accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
+        vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
+        if not queries:
+            return {
+                "status": "skipped",
+                "matched": False,
+                "queries": [],
+                "matches": [],
+                "sources": [],
+                "window_title": resolved_window_title,
+            }
+
+        matches: List[Dict[str, Any]] = []
+        sources: List[str] = []
+        attempted = False
+
+        for row in queries:
+            term = str(row.get("query", "") or "").strip()
+            control_type = str(row.get("control_type", "") or "").strip()
+            source = str(row.get("source", "") or "").strip() or "definition"
+            if accessibility_ready:
+                attempted = True
+                accessibility_payload: Dict[str, Any] = {
+                    "query": term,
+                    "max_results": 6,
+                }
+                if resolved_window_title:
+                    accessibility_payload["window_title"] = resolved_window_title
+                if control_type:
+                    accessibility_payload["control_type"] = control_type
+                accessibility_result = self._call("accessibility_find_element", accessibility_payload)
+                items = accessibility_result.get("items", []) if isinstance(accessibility_result.get("items", []), list) else []
+                count = self._to_int(accessibility_result.get("count"))
+                accessibility_found = bool(
+                    str(accessibility_result.get("status", "") or "").strip().lower() == "success"
+                    and (bool(items) or bool(accessibility_result.get("found")) or (count is not None and count > 0))
+                )
+                if accessibility_found:
+                    matches.append(
+                        {
+                            "query": term,
+                            "control_type": control_type,
+                            "source": source,
+                            "match_source": "accessibility",
+                            "count": count if count is not None else len(items),
+                        }
+                    )
+                    sources.append("accessibility")
+            if vision_ready:
+                attempted = True
+                vision_result = self._call("computer_assert_text_visible", {"text": term})
+                if (
+                    str(vision_result.get("status", "") or "").strip().lower() == "success"
+                    and bool(vision_result.get("found"))
+                ):
+                    matches.append(
+                        {
+                            "query": term,
+                            "control_type": control_type,
+                            "source": source,
+                            "match_source": "ocr",
+                            "chars": self._to_int(vision_result.get("chars")),
+                        }
+                    )
+                    sources.append("ocr")
+        return {
+            "status": "success" if matches else ("no_match" if attempted else "skipped"),
+            "matched": bool(matches),
+            "queries": queries,
+            "matches": matches,
+            "sources": self._dedupe_strings(sources),
+            "window_title": resolved_window_title,
+        }
+
+    @staticmethod
+    def _navigation_verify_text(destination: str) -> str:
+        clean = str(destination or "").strip()
+        if not clean:
+            return ""
+        if clean.startswith(("http://", "https://")):
+            clean = re.sub(r"^https?://", "", clean, flags=re.IGNORECASE)
+        clean = clean.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].strip()
+        return clean.rstrip(".,)")
 
     @staticmethod
     def _sanitize_payload_for_response(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -1157,6 +8552,26 @@ class DesktopActionRouter:
 
             return computer_observe_impl(payload)
 
+        def _computer_assert_text_visible(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _computer_assert_text_visible as computer_assert_text_visible_impl
+
+            return computer_assert_text_visible_impl(payload)
+
+        def _computer_wait_for_text(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _computer_wait_for_text as computer_wait_for_text_impl
+
+            return computer_wait_for_text_impl(payload)
+
+        def _accessibility_list_elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _accessibility_list_elements as accessibility_list_elements_impl
+
+            return accessibility_list_elements_impl(payload)
+
+        def _accessibility_find_element(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _accessibility_find_element as accessibility_find_element_impl
+
+            return accessibility_find_element_impl(payload)
+
         def _accessibility_status(_payload: Dict[str, Any]) -> Dict[str, Any]:
             from backend.python.tools.accessibility_tools import AccessibilityTools
 
@@ -1176,6 +8591,10 @@ class DesktopActionRouter:
             "keyboard_hotkey": _keyboard_hotkey,
             "computer_click_target": _computer_click_target,
             "computer_observe": _computer_observe,
+            "computer_assert_text_visible": _computer_assert_text_visible,
+            "computer_wait_for_text": _computer_wait_for_text,
+            "accessibility_list_elements": _accessibility_list_elements,
+            "accessibility_find_element": _accessibility_find_element,
             "accessibility_status": _accessibility_status,
             "vision_status": _vision_status,
         }

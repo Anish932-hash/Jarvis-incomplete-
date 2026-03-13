@@ -37,6 +37,7 @@ Thumbs.db
 # Large generated files
 NEWS.txt
 LICENSE.txt
+data/desktop_workflow_memory.json
 
 # Environment variables
 .env

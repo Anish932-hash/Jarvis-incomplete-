@@ -242,6 +242,431 @@ def test_desktop_interact_step_routes_click_in_app_context() -> None:
     assert steps[0].args.get("action") == "click"
 
 
+def test_desktop_interact_step_routes_navigation_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "open chrome and navigate to https://openai.com"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("query") == "https://openai.com"
+    assert steps[0].args.get("action") == "navigate"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_command_palette_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'run command "Preferences: Open Settings (JSON)" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("text") == "Preferences: Open Settings (JSON)"
+    assert steps[0].args.get("action") == "command"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_quick_open_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'open file "settings.json" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("query") == "settings.json"
+    assert steps[0].args.get("action") == "quick_open"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_bookmarks_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "open bookmarks in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "open_bookmarks"
+
+
+def test_desktop_interact_step_routes_focus_address_bar_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "focus address bar in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "focus_address_bar"
+
+
+def test_desktop_interact_step_routes_new_folder_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "new folder in file explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "file explorer"
+    assert steps[0].args.get("action") == "new_folder"
+
+
+def test_desktop_interact_step_routes_refresh_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "refresh view in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "refresh_view"
+
+
+def test_desktop_interact_step_routes_go_up_level_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "go up in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "go_up_level"
+
+
+def test_desktop_interact_step_routes_focus_explorer_in_editor_context() -> None:
+    planner = Planner()
+
+    text = "focus explorer in vscode"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("action") == "focus_explorer"
+
+
+def test_desktop_interact_step_routes_workspace_search_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'search workspace for "TODO" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("query") == "TODO"
+    assert steps[0].args.get("action") == "workspace_search"
+    assert steps[0].args.get("press_enter") is not True
+
+
+def test_desktop_interact_step_routes_go_to_symbol_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'go to symbol "AppShell" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("query") == "AppShell"
+    assert steps[0].args.get("action") == "go_to_symbol"
+    assert steps[0].args.get("press_enter") is not True
+
+
+def test_desktop_interact_step_routes_rename_symbol_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'rename symbol to "WorkspaceSearch" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("text") == "WorkspaceSearch"
+    assert steps[0].args.get("action") == "rename_symbol"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_new_tab_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "open new tab in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "new_tab"
+
+
+def test_desktop_interact_step_routes_switch_tab_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "switch to tab 3 in firefox"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "firefox"
+    assert steps[0].args.get("query") == "3"
+    assert steps[0].args.get("action") == "switch_tab"
+
+
+def test_desktop_interact_step_routes_next_tab_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "next tab in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("query") == "next"
+    assert steps[0].args.get("action") == "switch_tab"
+
+
+def test_desktop_interact_step_routes_history_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "open history in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "open_history"
+
+
+def test_desktop_interact_step_routes_go_back_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "go back in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "go_back"
+
+
+def test_desktop_interact_step_routes_go_forward_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "go forward in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "go_forward"
+
+
+def test_desktop_interact_step_routes_folder_tree_and_file_list_in_explorer_context() -> None:
+    planner = Planner()
+
+    folder_tree_text = "focus folder tree in explorer"
+    folder_tree_intent, folder_tree_steps = planner._build_primary_steps(folder_tree_text, folder_tree_text.lower())  # noqa: SLF001
+
+    file_list_text = "focus file list in explorer"
+    file_list_intent, file_list_steps = planner._build_primary_steps(file_list_text, file_list_text.lower())  # noqa: SLF001
+
+    assert folder_tree_intent == "desktop_interact"
+    assert folder_tree_steps[0].args.get("app_name") == "explorer"
+    assert folder_tree_steps[0].args.get("action") == "focus_folder_tree"
+    assert file_list_intent == "desktop_interact"
+    assert file_list_steps[0].args.get("app_name") == "explorer"
+    assert file_list_steps[0].args.get("action") == "focus_file_list"
+
+
+def test_desktop_interact_step_routes_open_tab_search_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "open tab search in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "open_tab_search"
+
+
+def test_desktop_interact_step_routes_search_tabs_query_in_browser_context() -> None:
+    planner = Planner()
+
+    text = 'search tabs for "OpenAI" in chrome'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("query") == "OpenAI"
+    assert steps[0].args.get("action") == "search_tabs"
+
+
+def test_desktop_interact_step_routes_named_tab_switch_to_search_tabs_in_browser_context() -> None:
+    planner = Planner()
+
+    text = 'switch to "OpenAI Docs" tab in chrome'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("query") == "OpenAI Docs"
+    assert steps[0].args.get("action") == "search_tabs"
+
+
+def test_desktop_interact_step_routes_new_tab_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "open new tab in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "new_tab"
+
+
+def test_desktop_interact_step_routes_switch_tab_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "next tab in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("query") == "next"
+    assert steps[0].args.get("action") == "switch_tab"
+
+
+def test_desktop_interact_step_routes_toggle_terminal_in_editor_context() -> None:
+    planner = Planner()
+
+    text = "toggle terminal in vscode"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("action") == "toggle_terminal"
+
+
+def test_desktop_interact_step_routes_format_document_in_editor_context() -> None:
+    planner = Planner()
+
+    text = "format document in vscode"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("action") == "format_document"
+
+
+def test_desktop_interact_step_routes_zoom_in_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "zoom in in firefox"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "firefox"
+    assert steps[0].args.get("action") == "zoom_in"
+
+
+def test_desktop_interact_step_routes_reset_zoom_in_editor_context() -> None:
+    planner = Planner()
+
+    text = "reset zoom in vscode"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("action") == "reset_zoom"
+
+
+def test_desktop_interact_step_routes_jump_to_conversation_in_chat_context() -> None:
+    planner = Planner()
+
+    text = 'open chat with "Alice" in slack'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "slack"
+    assert steps[0].args.get("query") == "Alice"
+    assert steps[0].args.get("action") == "jump_to_conversation"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_send_message_in_chat_context() -> None:
+    planner = Planner()
+
+    text = 'send message to Alice in teams saying "Standup in 10 minutes"'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "teams"
+    assert steps[0].args.get("query") == "Alice"
+    assert steps[0].args.get("text") == "Standup in 10 minutes"
+    assert steps[0].args.get("action") == "send_message"
+    assert steps[0].args.get("press_enter") is True
+
+
+def test_desktop_interact_step_routes_save_document_in_office_context() -> None:
+    planner = Planner()
+
+    text = "save document in word"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "word"
+    assert steps[0].args.get("action") == "save_document"
+
+
+def test_desktop_interact_step_routes_start_presentation_in_office_context() -> None:
+    planner = Planner()
+
+    text = "start presentation in powerpoint"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "powerpoint"
+    assert steps[0].args.get("action") == "start_presentation"
+
+
+def test_desktop_interact_step_routes_terminal_command_in_terminal_context() -> None:
+    planner = Planner()
+
+    text = 'run "npm test" in powershell'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "powershell"
+    assert steps[0].args.get("text") == "npm test"
+    assert steps[0].args.get("action") == "terminal_command"
+    assert steps[0].args.get("press_enter") is True
+
+
 def test_voice_delivery_fallback_uses_notification_when_tts_route_is_blocked() -> None:
     planner = Planner()
 
@@ -755,6 +1180,736 @@ def test_compound_request_supports_and_joined_actions() -> None:
     assert actions[0] == "open_app"
     assert "list_processes" in actions
     assert "active_window" in actions
+
+
+def test_compound_desktop_request_inherits_chat_app_context_in_mixed_chain() -> None:
+    planner = Planner()
+
+    text = 'open slack and list processes and message Alice saying "Standup in 10 minutes"'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "slack"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "slack"
+    assert steps[2].args.get("action") == "send_message"
+    assert steps[2].args.get("query") == "Alice"
+    assert steps[2].args.get("text") == "Standup in 10 minutes"
+    assert steps[2].depends_on == [steps[0].step_id]
+
+
+def test_compound_desktop_request_inherits_office_app_context_in_mixed_chain() -> None:
+    planner = Planner()
+
+    text = "open powerpoint and list processes and start presentation"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "powerpoint"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "powerpoint"
+    assert steps[2].args.get("action") == "start_presentation"
+    assert steps[2].depends_on == [steps[0].step_id]
+
+
+def test_desktop_interact_step_routes_pause_media_in_media_context() -> None:
+    planner = Planner()
+
+    text = "pause playback in spotify"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "spotify"
+    assert steps[0].args.get("action") == "pause_media"
+
+
+def test_desktop_interact_step_routes_find_replace_in_editor_context() -> None:
+    planner = Planner()
+
+    text = 'replace "TODO" with "DONE" in vscode'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "vscode"
+    assert steps[0].args.get("action") == "find_replace"
+    assert steps[0].args.get("query") == "TODO"
+    assert steps[0].args.get("text") == "DONE"
+
+
+def test_desktop_interact_step_routes_focus_search_box_in_browser_context() -> None:
+    planner = Planner()
+
+    text = "focus search box in chrome"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[0].args.get("action") == "focus_search_box"
+
+
+def test_desktop_interact_step_routes_generic_surface_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    sidebar_text = "focus sidebar in settings"
+    sidebar_intent, sidebar_steps = planner._build_primary_steps(sidebar_text, sidebar_text.lower())  # noqa: SLF001
+
+    content_text = "focus main content in settings"
+    content_intent, content_steps = planner._build_primary_steps(content_text, content_text.lower())  # noqa: SLF001
+
+    menu_text = "open context menu in settings"
+    menu_intent, menu_steps = planner._build_primary_steps(menu_text, menu_text.lower())  # noqa: SLF001
+
+    assert sidebar_intent == "desktop_interact"
+    assert sidebar_steps[0].args.get("app_name") == "settings"
+    assert sidebar_steps[0].args.get("action") == "focus_sidebar"
+    assert content_intent == "desktop_interact"
+    assert content_steps[0].args.get("app_name") == "settings"
+    assert content_steps[0].args.get("action") == "focus_main_content"
+    assert menu_intent == "desktop_interact"
+    assert menu_steps[0].args.get("app_name") == "settings"
+    assert menu_steps[0].args.get("action") == "open_context_menu"
+
+
+def test_desktop_interact_step_routes_generic_item_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    sidebar_text = "open bluetooth in settings"
+    sidebar_intent, sidebar_steps = planner._build_primary_steps(sidebar_text, sidebar_text.lower())  # noqa: SLF001
+
+    toolbar_text = "click sync in toolbar in settings"
+    toolbar_intent, toolbar_steps = planner._build_primary_steps(toolbar_text, toolbar_text.lower())  # noqa: SLF001
+
+    dialog_text = "press continue in dialog in settings"
+    dialog_intent, dialog_steps = planner._build_primary_steps(dialog_text, dialog_text.lower())  # noqa: SLF001
+
+    assert sidebar_intent == "desktop_interact"
+    assert sidebar_steps[0].args.get("app_name") == "settings"
+    assert sidebar_steps[0].args.get("action") == "select_sidebar_item"
+    assert sidebar_steps[0].args.get("query") == "bluetooth"
+    assert toolbar_intent == "desktop_interact"
+    assert toolbar_steps[0].args.get("app_name") == "settings"
+    assert toolbar_steps[0].args.get("action") == "invoke_toolbar_action"
+    assert toolbar_steps[0].args.get("query") == "sync"
+    assert dialog_intent == "desktop_interact"
+    assert dialog_steps[0].args.get("app_name") == "settings"
+    assert dialog_steps[0].args.get("action") == "press_dialog_button"
+    assert dialog_steps[0].args.get("query") == "continue"
+
+
+def test_desktop_interact_step_routes_tree_and_table_actions_in_admin_apps() -> None:
+    planner = Planner()
+
+    tree_text = "expand display adapters in device manager"
+    tree_intent, tree_steps = planner._build_primary_steps(tree_text, tree_text.lower())  # noqa: SLF001
+
+    tree_explicit_text = "select windows logs in tree in event viewer"
+    tree_explicit_intent, tree_explicit_steps = planner._build_primary_steps(tree_explicit_text, tree_explicit_text.lower())  # noqa: SLF001
+
+    table_text = "select chrome row in task manager"
+    table_intent, table_steps = planner._build_primary_steps(table_text, table_text.lower())  # noqa: SLF001
+
+    assert tree_intent == "desktop_interact"
+    assert tree_steps[0].args.get("app_name") == "device manager"
+    assert tree_steps[0].args.get("action") == "expand_tree_item"
+    assert tree_steps[0].args.get("query") == "display adapters"
+    assert tree_explicit_intent == "desktop_interact"
+    assert tree_explicit_steps[0].args.get("app_name") == "event viewer"
+    assert tree_explicit_steps[0].args.get("action") == "select_tree_item"
+    assert tree_explicit_steps[0].args.get("query") == "windows logs"
+    assert table_intent == "desktop_interact"
+    assert table_steps[0].args.get("app_name") == "task manager"
+    assert table_steps[0].args.get("action") == "select_table_row"
+    assert table_steps[0].args.get("query") == "chrome"
+
+
+def test_desktop_interact_step_routes_list_surface_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    focus_text = "focus list in settings"
+    focus_intent, focus_steps = planner._build_primary_steps(focus_text, focus_text.lower())  # noqa: SLF001
+
+    select_text = "select bluetooth in list in settings"
+    select_intent, select_steps = planner._build_primary_steps(select_text, select_text.lower())  # noqa: SLF001
+
+    assert focus_intent == "desktop_interact"
+    assert focus_steps[0].args.get("app_name") == "settings"
+    assert focus_steps[0].args.get("action") == "focus_list_surface"
+    assert select_intent == "desktop_interact"
+    assert select_steps[0].args.get("app_name") == "settings"
+    assert select_steps[0].args.get("action") == "select_list_item"
+    assert select_steps[0].args.get("query") == "bluetooth"
+
+
+def test_desktop_interact_step_routes_form_field_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    focus_text = "focus device name field in settings"
+    focus_intent, focus_steps = planner._build_primary_steps(focus_text, focus_text.lower())  # noqa: SLF001
+
+    set_text = 'set device name to "JARVIS" in settings'
+    set_intent, set_steps = planner._build_primary_steps(set_text, set_text.lower())  # noqa: SLF001
+
+    assert focus_intent == "desktop_interact"
+    assert focus_steps[0].args.get("app_name") == "settings"
+    assert focus_steps[0].args.get("action") == "focus_input_field"
+    assert focus_steps[0].args.get("query") == "device name"
+    assert set_intent == "desktop_interact"
+    assert set_steps[0].args.get("app_name") == "settings"
+    assert set_steps[0].args.get("action") == "set_field_value"
+    assert set_steps[0].args.get("query") == "device name"
+    assert set_steps[0].args.get("text") == "JARVIS"
+
+
+def test_desktop_interact_step_routes_dropdown_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    open_text = "open language dropdown in settings"
+    open_intent, open_steps = planner._build_primary_steps(open_text, open_text.lower())  # noqa: SLF001
+
+    select_text = 'select English in language dropdown in settings'
+    select_intent, select_steps = planner._build_primary_steps(select_text, select_text.lower())  # noqa: SLF001
+
+    assert open_intent == "desktop_interact"
+    assert open_steps[0].args.get("app_name") == "settings"
+    assert open_steps[0].args.get("action") == "open_dropdown"
+    assert open_steps[0].args.get("query") == "language"
+    assert select_intent == "desktop_interact"
+    assert select_steps[0].args.get("app_name") == "settings"
+    assert select_steps[0].args.get("action") == "select_dropdown_option"
+    assert select_steps[0].args.get("query") == "language"
+    assert select_steps[0].args.get("text") == "English"
+
+
+def test_desktop_interact_step_routes_checkbox_and_toggle_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    check_text = "check telemetry checkbox in settings"
+    check_intent, check_steps = planner._build_primary_steps(check_text, check_text.lower())  # noqa: SLF001
+
+    uncheck_text = "uncheck notifications checkbox in settings"
+    uncheck_intent, uncheck_steps = planner._build_primary_steps(uncheck_text, uncheck_text.lower())  # noqa: SLF001
+
+    toggle_text = "toggle bluetooth switch in settings"
+    toggle_intent, toggle_steps = planner._build_primary_steps(toggle_text, toggle_text.lower())  # noqa: SLF001
+
+    assert check_intent == "desktop_interact"
+    assert check_steps[0].args.get("app_name") == "settings"
+    assert check_steps[0].args.get("action") == "check_checkbox"
+    assert check_steps[0].args.get("query") == "telemetry"
+    assert uncheck_intent == "desktop_interact"
+    assert uncheck_steps[0].args.get("app_name") == "settings"
+    assert uncheck_steps[0].args.get("action") == "uncheck_checkbox"
+    assert uncheck_steps[0].args.get("query") == "notifications"
+    assert toggle_intent == "desktop_interact"
+    assert toggle_steps[0].args.get("app_name") == "settings"
+    assert toggle_steps[0].args.get("action") == "toggle_switch"
+    assert toggle_steps[0].args.get("query") == "bluetooth"
+
+
+def test_desktop_interact_step_routes_radio_and_value_actions_in_settings_context() -> None:
+    planner = Planner()
+
+    radio_text = "select dark mode radio button in settings"
+    radio_intent, radio_steps = planner._build_primary_steps(radio_text, radio_text.lower())  # noqa: SLF001
+
+    increase_text = "increase brightness slider by 3 in settings"
+    increase_intent, increase_steps = planner._build_primary_steps(increase_text, increase_text.lower())  # noqa: SLF001
+
+    decrease_text = "decrease timeout value by 2 in settings"
+    decrease_intent, decrease_steps = planner._build_primary_steps(decrease_text, decrease_text.lower())  # noqa: SLF001
+
+    assert radio_intent == "desktop_interact"
+    assert radio_steps[0].args.get("app_name") == "settings"
+    assert radio_steps[0].args.get("action") == "select_radio_option"
+    assert radio_steps[0].args.get("query") == "dark mode"
+
+    assert increase_intent == "desktop_interact"
+    assert increase_steps[0].args.get("app_name") == "settings"
+    assert increase_steps[0].args.get("action") == "increase_value"
+    assert increase_steps[0].args.get("query") == "brightness"
+    assert increase_steps[0].args.get("amount") == 3
+
+    assert decrease_intent == "desktop_interact"
+    assert decrease_steps[0].args.get("app_name") == "settings"
+    assert decrease_steps[0].args.get("action") == "decrease_value"
+    assert decrease_steps[0].args.get("query") == "timeout"
+    assert decrease_steps[0].args.get("amount") == 2
+
+
+def test_desktop_interact_step_routes_absolute_value_and_tab_page_actions() -> None:
+    planner = Planner()
+
+    value_text = "set brightness slider to 80 in settings"
+    value_intent, value_steps = planner._build_primary_steps(value_text, value_text.lower())  # noqa: SLF001
+
+    tab_text = "switch to security tab in control panel"
+    tab_intent, tab_steps = planner._build_primary_steps(tab_text, tab_text.lower())  # noqa: SLF001
+
+    assert value_intent == "desktop_interact"
+    assert value_steps[0].args.get("app_name") == "settings"
+    assert value_steps[0].args.get("action") == "set_value_control"
+    assert value_steps[0].args.get("query") == "brightness"
+    assert value_steps[0].args.get("text") == "80"
+
+    assert tab_intent == "desktop_interact"
+    assert tab_steps[0].args.get("app_name") == "control panel"
+    assert tab_steps[0].args.get("action") == "select_tab_page"
+    assert tab_steps[0].args.get("query") == "security"
+
+
+def test_desktop_interact_step_routes_dialog_control_in_settings_context() -> None:
+    planner = Planner()
+
+    dismiss_text = "dismiss dialog in settings"
+    dismiss_intent, dismiss_steps = planner._build_primary_steps(dismiss_text, dismiss_text.lower())  # noqa: SLF001
+
+    confirm_text = "confirm dialog in settings"
+    confirm_intent, confirm_steps = planner._build_primary_steps(confirm_text, confirm_text.lower())  # noqa: SLF001
+
+    assert dismiss_intent == "desktop_interact"
+    assert dismiss_steps[0].args.get("app_name") == "settings"
+    assert dismiss_steps[0].args.get("action") == "dismiss_dialog"
+    assert confirm_intent == "desktop_interact"
+    assert confirm_steps[0].args.get("app_name") == "settings"
+    assert confirm_steps[0].args.get("action") == "confirm_dialog"
+
+
+def test_desktop_interact_step_routes_wizard_actions_for_installer_context() -> None:
+    planner = Planner()
+
+    next_text = "go to next step in installer"
+    next_intent, next_steps = planner._build_primary_steps(next_text, next_text.lower())  # noqa: SLF001
+
+    back_text = "go back in setup wizard"
+    back_intent, back_steps = planner._build_primary_steps(back_text, back_text.lower())  # noqa: SLF001
+
+    finish_text = "finish installer"
+    finish_intent, finish_steps = planner._build_primary_steps(finish_text, finish_text.lower())  # noqa: SLF001
+
+    assert next_intent == "desktop_interact"
+    assert next_steps[0].args.get("app_name") == "installer"
+    assert next_steps[0].args.get("action") == "next_wizard_step"
+
+    assert back_intent == "desktop_interact"
+    assert back_steps[0].args.get("app_name") == "setup wizard"
+    assert back_steps[0].args.get("action") == "previous_wizard_step"
+
+    assert finish_intent == "desktop_interact"
+    assert finish_steps[0].args.get("app_name") == "installer"
+    assert finish_steps[0].args.get("action") == "finish_wizard"
+
+
+def test_desktop_interact_step_routes_complete_wizard_page_for_continue_installer() -> None:
+    planner = Planner()
+
+    text = "continue installer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps[0].args.get("app_name") == "installer"
+    assert steps[0].args.get("action") == "complete_wizard_page"
+
+
+def test_desktop_interact_step_routes_complete_wizard_flow_for_setup_flow_commands() -> None:
+    planner = Planner()
+
+    continue_text = "continue through installer"
+    continue_intent, continue_steps = planner._build_primary_steps(continue_text, continue_text.lower())  # noqa: SLF001
+
+    finish_flow_text = "finish setup flow"
+    finish_flow_intent, finish_flow_steps = planner._build_primary_steps(finish_flow_text, finish_flow_text.lower())  # noqa: SLF001
+
+    assert continue_intent == "desktop_interact"
+    assert continue_steps[0].args.get("app_name") == "installer"
+    assert continue_steps[0].args.get("action") == "complete_wizard_flow"
+
+    assert finish_flow_intent == "desktop_interact"
+    assert finish_flow_steps[0].args.get("app_name") == "setup"
+    assert finish_flow_steps[0].args.get("action") == "complete_wizard_flow"
+
+
+def test_desktop_interact_step_routes_complete_form_page_and_flow_for_settings_commands() -> None:
+    planner = Planner()
+
+    page_text = "apply settings in settings"
+    page_intent, page_steps = planner._build_primary_steps(page_text, page_text.lower())  # noqa: SLF001
+
+    flow_text = "complete settings flow in settings"
+    flow_intent, flow_steps = planner._build_primary_steps(flow_text, flow_text.lower())  # noqa: SLF001
+
+    assert page_intent == "desktop_interact"
+    assert page_steps[0].args.get("app_name") == "settings"
+    assert page_steps[0].args.get("action") == "complete_form_page"
+
+    assert flow_intent == "desktop_interact"
+    assert flow_steps[0].args.get("app_name") == "settings"
+    assert flow_steps[0].args.get("action") == "complete_form_flow"
+
+
+def test_desktop_interact_step_routes_enable_and_disable_switch_for_settings_commands() -> None:
+    planner = Planner()
+
+    enable_text = "turn on bluetooth in settings"
+    enable_intent, enable_steps = planner._build_primary_steps(enable_text, enable_text.lower())  # noqa: SLF001
+
+    disable_text = "turn off bluetooth in settings"
+    disable_intent, disable_steps = planner._build_primary_steps(disable_text, disable_text.lower())  # noqa: SLF001
+
+    assert enable_intent == "desktop_interact"
+    assert enable_steps[0].args.get("app_name") == "settings"
+    assert enable_steps[0].args.get("action") == "enable_switch"
+    assert enable_steps[0].args.get("query") == "bluetooth"
+
+    assert disable_intent == "desktop_interact"
+    assert disable_steps[0].args.get("app_name") == "settings"
+    assert disable_steps[0].args.get("action") == "disable_switch"
+    assert disable_steps[0].args.get("query") == "bluetooth"
+
+
+def test_desktop_interact_step_routes_context_menu_item_in_explorer_context() -> None:
+    planner = Planner()
+
+    text = "select properties in context menu in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "select_context_menu_item"
+    assert steps[0].args.get("query") == "properties"
+
+
+def test_desktop_interact_step_routes_rename_selection_in_file_manager_context() -> None:
+    planner = Planner()
+
+    text = 'rename selected file to "report-final.txt" in explorer'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "rename_selection"
+    assert steps[0].args.get("text") == "report-final.txt"
+
+
+def test_desktop_interact_step_routes_properties_dialog_in_file_manager_context() -> None:
+    planner = Planner()
+
+    text = "open properties in explorer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "explorer"
+    assert steps[0].args.get("action") == "open_properties_dialog"
+
+
+def test_desktop_interact_step_routes_preview_and_details_panes_in_file_manager_context() -> None:
+    planner = Planner()
+
+    preview_text = "open preview pane in explorer"
+    preview_intent, preview_steps = planner._build_primary_steps(preview_text, preview_text.lower())  # noqa: SLF001
+
+    details_text = "open details pane in explorer"
+    details_intent, details_steps = planner._build_primary_steps(details_text, details_text.lower())  # noqa: SLF001
+
+    assert preview_intent == "desktop_interact"
+    assert preview_steps[0].args.get("app_name") == "explorer"
+    assert preview_steps[0].args.get("action") == "open_preview_pane"
+    assert details_intent == "desktop_interact"
+    assert details_steps[0].args.get("app_name") == "explorer"
+    assert details_steps[0].args.get("action") == "open_details_pane"
+
+
+def test_desktop_interact_step_routes_new_chat_in_chat_context() -> None:
+    planner = Planner()
+
+    text = "new chat in slack"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "slack"
+    assert steps[0].args.get("action") == "new_chat"
+
+
+def test_desktop_interact_step_routes_new_email_draft_in_mail_context() -> None:
+    planner = Planner()
+
+    text = "compose email in outlook"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "outlook"
+    assert steps[0].args.get("action") == "new_email_draft"
+
+
+def test_desktop_interact_step_routes_mail_and_calendar_views_in_mail_context() -> None:
+    planner = Planner()
+
+    calendar_text = "open calendar in outlook"
+    calendar_intent, calendar_steps = planner._build_primary_steps(calendar_text, calendar_text.lower())  # noqa: SLF001
+
+    mail_text = "open inbox in outlook"
+    mail_intent, mail_steps = planner._build_primary_steps(mail_text, mail_text.lower())  # noqa: SLF001
+
+    assert calendar_intent == "desktop_interact"
+    assert calendar_steps[0].args.get("app_name") == "outlook"
+    assert calendar_steps[0].args.get("action") == "open_calendar_view"
+    assert mail_intent == "desktop_interact"
+    assert mail_steps[0].args.get("app_name") == "outlook"
+    assert mail_steps[0].args.get("action") == "open_mail_view"
+
+
+def test_desktop_interact_step_routes_people_and_tasks_views_in_mail_context() -> None:
+    planner = Planner()
+
+    people_text = "open contacts in outlook"
+    people_intent, people_steps = planner._build_primary_steps(people_text, people_text.lower())  # noqa: SLF001
+
+    tasks_text = "open tasks in outlook"
+    tasks_intent, tasks_steps = planner._build_primary_steps(tasks_text, tasks_text.lower())  # noqa: SLF001
+
+    assert people_intent == "desktop_interact"
+    assert people_steps[0].args.get("app_name") == "outlook"
+    assert people_steps[0].args.get("action") == "open_people_view"
+    assert tasks_intent == "desktop_interact"
+    assert tasks_steps[0].args.get("app_name") == "outlook"
+    assert tasks_steps[0].args.get("action") == "open_tasks_view"
+
+
+def test_desktop_interact_step_routes_reply_forward_and_event_actions_in_mail_context() -> None:
+    planner = Planner()
+
+    reply_text = "reply to email in outlook"
+    reply_intent, reply_steps = planner._build_primary_steps(reply_text, reply_text.lower())  # noqa: SLF001
+
+    reply_all_text = "reply all in outlook"
+    reply_all_intent, reply_all_steps = planner._build_primary_steps(reply_all_text, reply_all_text.lower())  # noqa: SLF001
+
+    forward_text = "forward email in outlook"
+    forward_intent, forward_steps = planner._build_primary_steps(forward_text, forward_text.lower())  # noqa: SLF001
+
+    event_text = "new meeting in outlook"
+    event_intent, event_steps = planner._build_primary_steps(event_text, event_text.lower())  # noqa: SLF001
+
+    assert reply_intent == "desktop_interact"
+    assert reply_steps[0].args.get("app_name") == "outlook"
+    assert reply_steps[0].args.get("action") == "reply_email"
+    assert reply_all_intent == "desktop_interact"
+    assert reply_all_steps[0].args.get("app_name") == "outlook"
+    assert reply_all_steps[0].args.get("action") == "reply_all_email"
+    assert forward_intent == "desktop_interact"
+    assert forward_steps[0].args.get("app_name") == "outlook"
+    assert forward_steps[0].args.get("action") == "forward_email"
+    assert event_intent == "desktop_interact"
+    assert event_steps[0].args.get("app_name") == "outlook"
+    assert event_steps[0].args.get("action") == "new_calendar_event"
+
+
+def test_desktop_interact_step_routes_outlook_pane_focus_actions() -> None:
+    planner = Planner()
+
+    folder_text = "focus folder pane in outlook"
+    folder_intent, folder_steps = planner._build_primary_steps(folder_text, folder_text.lower())  # noqa: SLF001
+
+    message_text = "focus message list in outlook"
+    message_intent, message_steps = planner._build_primary_steps(message_text, message_text.lower())  # noqa: SLF001
+
+    reading_text = "focus reading pane in outlook"
+    reading_intent, reading_steps = planner._build_primary_steps(reading_text, reading_text.lower())  # noqa: SLF001
+
+    assert folder_intent == "desktop_interact"
+    assert folder_steps[0].args.get("app_name") == "outlook"
+    assert folder_steps[0].args.get("action") == "focus_folder_pane"
+    assert message_intent == "desktop_interact"
+    assert message_steps[0].args.get("app_name") == "outlook"
+    assert message_steps[0].args.get("action") == "focus_message_list"
+    assert reading_intent == "desktop_interact"
+    assert reading_steps[0].args.get("app_name") == "outlook"
+    assert reading_steps[0].args.get("action") == "focus_reading_pane"
+
+
+def test_compound_desktop_request_inherits_media_app_context_in_mixed_chain() -> None:
+    planner = Planner()
+
+    text = "open spotify and list processes and next track"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "spotify"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "spotify"
+    assert steps[2].args.get("action") == "next_track"
+    assert steps[2].depends_on == [steps[0].step_id]
+
+
+def test_compound_desktop_request_inherits_browser_context_for_named_tab_search() -> None:
+    planner = Planner()
+
+    text = 'open chrome and list processes and switch to "OpenAI Docs" tab'
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "chrome"
+    assert steps[2].args.get("query") == "OpenAI Docs"
+    assert steps[2].args.get("action") == "search_tabs"
+    assert steps[2].depends_on == [steps[0].step_id]
+
+
+def test_compound_desktop_request_depends_on_app_context_step_in_mixed_chain() -> None:
+    planner = Planner()
+
+    text = "open chrome and list processes and open new tab"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "chrome"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "chrome"
+    assert steps[2].args.get("action") == "new_tab"
+    assert steps[2].depends_on == [steps[0].step_id]
+
+
+def test_compound_desktop_request_inherits_installer_context_for_wizard_followup() -> None:
+    planner = Planner()
+
+    text = "open installer and list processes and go to next step"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert not intent.startswith("compound_parallel_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "installer"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "installer"
+    assert steps[2].args.get("action") == "next_wizard_step"
+    assert steps[0].step_id in steps[2].depends_on
+
+
+def test_compound_desktop_request_inherits_installer_context_for_complete_wizard_page() -> None:
+    planner = Planner()
+
+    text = "open installer and continue installer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 2
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "installer"
+    assert steps[1].action == "desktop_interact"
+    assert steps[1].args.get("app_name") == "installer"
+    assert steps[1].args.get("action") == "complete_wizard_page"
+    assert steps[0].step_id in steps[1].depends_on
+
+
+def test_compound_desktop_request_inherits_installer_context_for_complete_wizard_flow() -> None:
+    planner = Planner()
+
+    text = "open installer and list processes and continue through installer"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "installer"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "installer"
+    assert steps[2].args.get("action") == "complete_wizard_flow"
+    assert steps[0].step_id in steps[2].depends_on
+
+
+def test_compound_desktop_request_inherits_settings_context_for_complete_form_flow() -> None:
+    planner = Planner()
+
+    text = "open settings and list processes and complete settings flow"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "settings"
+    assert steps[2].args.get("action") == "complete_form_flow"
+    assert steps[0].step_id in steps[2].depends_on
+
+
+def test_compound_desktop_request_builds_settings_change_and_commit_chain() -> None:
+    planner = Planner()
+
+    text = "open settings and set brightness slider to 80 and apply settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[1].action == "desktop_interact"
+    assert steps[1].args.get("app_name") == "settings"
+    assert steps[1].args.get("action") == "set_value_control"
+    assert steps[1].args.get("query") == "brightness"
+    assert steps[1].args.get("text") == "80"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "settings"
+    assert steps[2].args.get("action") == "complete_form_page"
+    assert steps[0].step_id in steps[1].depends_on
+    assert steps[0].step_id in steps[2].depends_on
+
+
+def test_compound_desktop_request_builds_settings_toggle_and_commit_chain() -> None:
+    planner = Planner()
+
+    text = "open settings and turn on bluetooth and apply settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[1].action == "desktop_interact"
+    assert steps[1].args.get("app_name") == "settings"
+    assert steps[1].args.get("action") == "enable_switch"
+    assert steps[1].args.get("query") == "bluetooth"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("action") == "complete_form_page"
 
 
 def test_replan_uses_failure_category_for_browser_timeout() -> None:

@@ -5584,9 +5584,21 @@ class Planner:
             "security",
             "defender",
             "play ",
+            "play pause",
+            "play/pause",
+            "toggle playback",
+            "toggle media",
             "pause",
             "resume",
             "stop",
+            "next track",
+            "next song",
+            "skip track",
+            "skip song",
+            "previous track",
+            "prev track",
+            "last track",
+            "previous song",
             "metrics",
             "system status",
             "list processes",
@@ -5600,6 +5612,8 @@ class Planner:
             "notify",
             "clipboard",
             "hotkey",
+            "search box",
+            "find box",
             "type ",
             "move mouse",
             "click",
@@ -5634,6 +5648,10 @@ class Planner:
             "scan directory",
             "list folder",
             "create folder",
+            "rename selected",
+            "open properties",
+            "show properties",
+            "properties dialog",
             "folder size",
             "read file",
             "write file",
@@ -5642,7 +5660,7 @@ class Planner:
             "hash file",
             "time",
         )
-        return any(marker in lowered for marker in action_markers)
+        return any(marker in lowered for marker in action_markers) or Planner._looks_like_desktop_followup_clause(lowered)
 
     def _split_compound_clauses(self, text: str) -> List[str]:
         normalized = re.sub(r"\s+", " ", text or "").strip()
@@ -5650,7 +5668,7 @@ class Planner:
             return []
 
         raw_parts = re.split(
-            r"\s*(?:;|,\s*then\b|\.?\s+and then\b|\.?\s+after that\b|\.?\s+then\b|\.?\s+next\b)\s*",
+            r"\s*(?:;|,\s*then\b|\.?\s+and then\b|\.?\s+after that\b|\.?\s+then\b|\.?\s+next\b(?!\s+(?:track|song|tab|step)\b))\s*",
             normalized,
             flags=re.IGNORECASE,
         )
@@ -5704,40 +5722,65 @@ class Planner:
             return None
 
         lowered_text = text.lower()
-        has_temporal_connector = any(
-            marker in lowered_text
-            for marker in (" and then ", " then ", " after that ", " next ", ";")
+        has_temporal_connector = bool(
+            " and then " in lowered_text
+            or " then " in lowered_text
+            or " after that " in lowered_text
+            or ";" in lowered_text
+            or re.search(r"\bnext\b(?!\s+(?:track|song|tab)\b)", lowered_text)
         )
-        parallelizable = (" and " in lowered_text) and not has_temporal_connector
+        requested_parallelizable = (" and " in lowered_text) and not has_temporal_connector
 
         merged_steps: List[PlanStep] = []
         intents: List[str] = []
         total_clauses = len(clauses)
         previous_clause_tail: str | None = None
+        current_desktop_context: Dict[str, str] = {}
+        desktop_context_tail: str | None = None
+        has_contextual_dependency = False
 
         for index, clause in enumerate(clauses):
             segment = clause.strip()
             if not segment:
                 continue
 
-            intent, clause_steps = self._build_primary_steps(segment, segment.lower(), allow_compound=False)
+            inherited_desktop_context: Optional[Dict[str, str]] = None
+            if current_desktop_context and self._looks_like_desktop_followup_clause(segment.lower()):
+                explicit_app_name, explicit_window_title = self._extract_explicit_desktop_target_context(text=segment)
+                if not explicit_app_name and not explicit_window_title:
+                    inherited_desktop_context = dict(current_desktop_context)
+
+            intent, clause_steps = self._build_primary_steps(
+                segment,
+                segment.lower(),
+                allow_compound=False,
+                desktop_context=inherited_desktop_context,
+            )
             if intent == "speak":
                 continue
 
             # Suppress per-clause spoken acknowledgements in multi-action chains.
-            if clause_steps and clause_steps[-1].action == "tts_speak" and (parallelizable or index < total_clauses - 1):
+            if clause_steps and clause_steps[-1].action == "tts_speak" and (requested_parallelizable or index < total_clauses - 1):
                 clause_steps = clause_steps[:-1]
 
             if not clause_steps:
                 continue
+
+            clause_uses_inherited_context = bool(
+                inherited_desktop_context and self._steps_use_desktop_context(clause_steps, inherited_desktop_context)
+            )
+            if clause_uses_inherited_context:
+                has_contextual_dependency = True
 
             previous_in_clause: str | None = None
             for step in clause_steps:
                 dependencies: List[str] = []
                 if previous_in_clause:
                     dependencies.append(previous_in_clause)
-                if not parallelizable and previous_clause_tail:
+                if not requested_parallelizable and previous_clause_tail:
                     dependencies.append(previous_clause_tail)
+                if clause_uses_inherited_context and desktop_context_tail:
+                    dependencies.append(desktop_context_tail)
                 if step.depends_on:
                     dependencies.extend(step.depends_on)
                 deduped: List[str] = []
@@ -5747,6 +5790,10 @@ class Planner:
                         deduped.append(clean)
                 step.depends_on = deduped
                 previous_in_clause = step.step_id
+                step_context = self._extract_desktop_context_from_step(step)
+                if step_context:
+                    current_desktop_context.update(step_context)
+                    desktop_context_tail = step.step_id
             if previous_in_clause:
                 previous_clause_tail = previous_in_clause
 
@@ -5759,7 +5806,7 @@ class Planner:
             return None
 
         if intents:
-            prefix = "compound_parallel_" if parallelizable else "compound_"
+            prefix = "compound_parallel_" if requested_parallelizable and not has_contextual_dependency else "compound_"
             intent_name = prefix + "_".join(intents[:3])
         else:
             intent_name = "compound_request"
@@ -5771,33 +5818,71 @@ class Planner:
         original_text: str,
         arguments: Optional[Dict[str, Any]] = None,
         require_target_context: bool = False,
+        desktop_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[PlanStep]:
         args = arguments if isinstance(arguments, dict) else {}
         text = str(original_text or "")
         lowered_text = text.lower()
 
-        app_name = str(args.get("app_name") or args.get("app") or "").strip()
+        app_name, window_title = self._extract_explicit_desktop_target_context(text=text, arguments=args)
         if not app_name:
-            open_and_action = re.search(
-                r"(?:open|launch|start)\s+(?P<app>.+?)\s+and\s+(?P<verb>type|click|press|hotkey)\b",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if open_and_action:
-                app_name = str(open_and_action.group("app") or "").strip().strip(".")
-        if not app_name:
-            click_in_match = re.search(r"\b(?:click|press)\s+.+?\s+in\s+(.+)$", text, flags=re.IGNORECASE)
-            if click_in_match:
-                app_name = str(click_in_match.group(1) or "").strip().strip(".")
-
-        window_title = str(args.get("window_title") or "").strip()
-        if not window_title and any(token in lowered_text for token in ("window", "tab")):
-            window_title = self._extract_window_title(text)
+            app_name = self._extract_desktop_wizard_app_name(text)
+        used_inherited_target_context = False
+        if (
+            not app_name
+            and not window_title
+            and isinstance(desktop_context, dict)
+            and desktop_context
+            and self._looks_like_desktop_followup_clause(lowered_text, arguments=args)
+        ):
+            inherited_app_name = str(desktop_context.get("app_name") or "").strip()
+            inherited_window_title = str(desktop_context.get("window_title") or "").strip()
+            if inherited_app_name and self._is_probable_desktop_app_name(inherited_app_name):
+                app_name = inherited_app_name
+            if inherited_window_title:
+                window_title = inherited_window_title
+            used_inherited_target_context = bool(app_name or window_title)
 
         query = str(args.get("query") or args.get("target") or "").strip()
         typed_text = str(args.get("text") or "").strip()
+        navigation_target = str(args.get("url") or self._extract_url(text) or self._extract_domain_like(text) or "").strip()
+        tab_target = str(args.get("tab_target") or query or "").strip()
+        if not tab_target:
+            tab_target = self._extract_desktop_tab_target(text)
+        tab_search_query = self._extract_desktop_tab_search_query(text)
+        tab_page_query = self._extract_desktop_tab_page_query(text, app_name=app_name)
         keys_raw = args.get("keys")
         action_name = str(args.get("action") or "").strip().lower()
+        probable_terminal_context = bool(app_name and self._is_probable_terminal_app_name(app_name))
+        probable_editor_context = bool(app_name and self._is_probable_editor_app_name(app_name))
+        probable_browser_context = bool(app_name and self._is_probable_browser_app_name(app_name))
+        probable_file_manager_context = bool(app_name and self._is_probable_file_manager_app_name(app_name))
+        probable_chat_context = bool(app_name and self._is_probable_chat_app_name(app_name))
+        probable_office_context = bool(app_name and self._is_probable_office_app_name(app_name))
+        probable_mail_context = bool(app_name and self._is_probable_mail_app_name(app_name))
+        probable_media_context = bool(app_name and self._is_probable_media_app_name(app_name))
+        probable_form_context = bool(app_name and self._is_probable_form_app_name(app_name))
+        probable_generic_context = bool(app_name or window_title)
+        probable_sidebar_navigation_context = bool(app_name and self._is_probable_sidebar_navigation_app_name(app_name))
+        probable_tree_navigation_context = bool(app_name and self._is_probable_tree_navigation_app_name(app_name))
+        probable_table_surface_context = bool(app_name and self._is_probable_table_surface_app_name(app_name))
+        sidebar_item_query = self._extract_desktop_sidebar_item_query(text, app_name=app_name)
+        toolbar_action_query = self._extract_desktop_toolbar_action_query(text)
+        context_menu_item_query = self._extract_desktop_context_menu_item_query(text)
+        dialog_button_query = self._extract_desktop_dialog_button_query(text)
+        field_query = self._extract_desktop_field_query(text, app_name=app_name)
+        field_value = self._extract_desktop_field_value(text, app_name=app_name)
+        dropdown_query = self._extract_desktop_dropdown_query(text, app_name=app_name)
+        dropdown_option = self._extract_desktop_dropdown_option(text, app_name=app_name)
+        checkbox_query = self._extract_desktop_checkbox_query(text)
+        radio_option_query = self._extract_desktop_radio_option_query(text)
+        toggle_query = self._extract_desktop_toggle_query(text)
+        value_control_query = self._extract_desktop_value_control_query(text, app_name=app_name)
+        value_control_target = self._extract_desktop_value_control_target(text, app_name=app_name)
+        adjust_amount = self._extract_desktop_adjust_amount(text)
+        tree_item_query = self._extract_desktop_tree_item_query(text, app_name=app_name)
+        list_item_query = self._extract_desktop_list_item_query(text)
+        table_row_query = self._extract_desktop_table_row_query(text, app_name=app_name)
 
         if isinstance(keys_raw, list):
             hotkey_keys = [str(item).strip().lower() for item in keys_raw if str(item).strip()]
@@ -5807,21 +5892,334 @@ class Planner:
             hotkey_keys = []
 
         if not action_name:
-            if any(token in lowered_text for token in ("press key", "hotkey", "shortcut")) or hotkey_keys:
+            if any(token in lowered_text for token in ("run terminal command", "execute terminal command", "run shell command", "execute shell command")):
+                action_name = "terminal_command"
+            elif any(token in lowered_text for token in ("command palette", "run command", "execute command")):
+                action_name = "command"
+            elif re.search(r"\b(?:focus|open)\s+address bar\b|\baddress bar\b", lowered_text) and (probable_browser_context or probable_file_manager_context):
+                action_name = "focus_address_bar"
+            elif re.search(r"\b(?:open\s+)?bookmarks\b", lowered_text) and bool(app_name or window_title):
+                action_name = "open_bookmarks"
+            elif re.search(r"\b(?:open\s+)?history\b", lowered_text) and bool(app_name or window_title):
+                action_name = "open_history"
+            elif re.search(r"\b(?:open\s+)?downloads\b", lowered_text) and bool(app_name or window_title):
+                action_name = "open_downloads"
+            elif re.search(r"\b(?:open\s+)?(?:developer tools|devtools)\b", lowered_text) and bool(app_name or window_title):
+                action_name = "open_devtools"
+            elif re.search(r"\b(?:go\s+back|back)\b", lowered_text) and (probable_browser_context or probable_file_manager_context):
+                action_name = "go_back"
+            elif re.search(r"\b(?:go\s+forward|forward)\b", lowered_text) and (probable_browser_context or probable_file_manager_context):
+                action_name = "go_forward"
+            elif probable_browser_context and tab_search_query:
+                action_name = "search_tabs"
+            elif re.search(r"\b(?:open|show|focus)\s+(?:the\s+)?(?:tab search|search open tabs|search tabs)\b|\btab search\b", lowered_text) and probable_browser_context:
+                action_name = "open_tab_search"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:search|find)\s+box\b|\bsearch box\b|\bfind box\b", lowered_text) and bool(app_name or window_title):
+                action_name = "focus_search_box"
+            elif re.search(r"\b(?:new chat|start new chat|new conversation|start conversation)\b", lowered_text) and probable_chat_context:
+                action_name = "new_chat"
+            elif re.search(r"\b(?:open chat with|new chat with|open conversation with|jump to conversation|switch conversation|switch to chat|switch to conversation|chat with|conversation with|dm with)\b", lowered_text) and probable_chat_context:
+                action_name = "jump_to_conversation"
+            elif re.search(r"\b(?:send message|message(?: to)?|reply(?: to)?)\b", lowered_text) and probable_chat_context:
+                action_name = "send_message"
+            elif re.search(r"\b(?:new email|compose email|draft email|new mail|compose mail)\b", lowered_text) and probable_mail_context:
+                action_name = "new_email_draft"
+            elif re.search(r"\b(?:reply all|reply to all)\b", lowered_text) and probable_mail_context:
+                action_name = "reply_all_email"
+            elif re.search(r"\b(?:reply(?: to)?(?: the)?(?: email|mail|message)?)\b", lowered_text) and probable_mail_context:
+                action_name = "reply_email"
+            elif re.search(r"\b(?:forward(?: the)?(?: email|mail|message)?)\b", lowered_text) and probable_mail_context:
+                action_name = "forward_email"
+            elif re.search(r"\b(?:new calendar event|create calendar event|new event|create event|new meeting|schedule meeting|create meeting)\b", lowered_text) and probable_mail_context:
+                action_name = "new_calendar_event"
+            elif re.search(r"\b(?:new document|new workbook|new presentation|new note)\b", lowered_text) and (probable_office_context or probable_editor_context):
+                action_name = "new_document"
+            elif re.search(r"\b(?:save(?: document| file| workbook| sheet| presentation)?|save as)\b", lowered_text) and (probable_office_context or probable_editor_context):
+                action_name = "save_document"
+            elif re.search(r"\b(?:open print dialog|print dialog|print)\b", lowered_text) and (probable_office_context or probable_browser_context or probable_editor_context):
+                action_name = "open_print_dialog"
+            elif re.search(r"\b(?:start presentation|start slideshow|slideshow|slide show|present presentation)\b", lowered_text) and probable_office_context:
+                action_name = "start_presentation"
+            elif re.search(r"\b(?:play\s*/\s*pause|play pause|toggle playback|toggle media playback|toggle media)\b", lowered_text) and probable_media_context:
+                action_name = "play_pause_media"
+            elif re.search(r"\b(?:next track|next song|skip track|skip song|skip ahead)\b", lowered_text) and probable_media_context:
+                action_name = "next_track"
+            elif re.search(r"\b(?:previous track|prev track|last track|previous song|back track|rewind track)\b", lowered_text) and probable_media_context:
+                action_name = "previous_track"
+            elif re.search(r"\b(?:pause(?: playback| music| media| song)?|hold music)\b", lowered_text) and probable_media_context:
+                action_name = "pause_media"
+            elif re.search(r"\b(?:resume(?: playback| music| media| song)?|continue playback|continue music)\b", lowered_text) and probable_media_context:
+                action_name = "resume_media"
+            elif re.search(r"\b(?:stop(?: playback| media| music| song)?)\b", lowered_text) and probable_media_context:
+                action_name = "stop_media"
+            elif re.search(r"\b(?:new|create)\s+folder\b", lowered_text) and probable_file_manager_context:
+                action_name = "new_folder"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:folder tree|navigation pane)\b", lowered_text) and probable_file_manager_context:
+                action_name = "focus_folder_tree"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:file list|items view|list view)\b", lowered_text) and probable_file_manager_context:
+                action_name = "focus_file_list"
+            elif re.search(r"\brename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)\b", lowered_text) and probable_file_manager_context:
+                action_name = "rename_selection"
+            elif re.search(r"\b(?:open|show)\s+(?:the\s+)?properties(?:\s+dialog)?\b|\bproperties(?:\s+dialog)?\b", lowered_text) and probable_file_manager_context and not re.search(r"\b(?:context menu|shortcut menu|right click menu)\b", lowered_text):
+                action_name = "open_properties_dialog"
+            elif re.search(r"\b(?:open|show)\s+(?:the\s+)?preview pane\b|\bpreview pane\b", lowered_text) and probable_file_manager_context:
+                action_name = "open_preview_pane"
+            elif re.search(r"\b(?:open|show)\s+(?:the\s+)?details pane\b|\bdetails pane\b", lowered_text) and probable_file_manager_context:
+                action_name = "open_details_pane"
+            elif re.search(r"\b(?:refresh|reload)(?:\s+(?:view|window|page))?\b", lowered_text) and bool(app_name or window_title):
+                action_name = "refresh_view"
+            elif re.search(r"\b(?:go up|up one level|parent folder)\b", lowered_text) and probable_file_manager_context:
+                action_name = "go_up_level"
+            elif re.search(r"\b(?:focus|open)\s+explorer\b", lowered_text) and probable_editor_context:
+                action_name = "focus_explorer"
+            elif re.search(r"\b(?:workspace search|search workspace|find in files)\b", lowered_text) and probable_editor_context:
+                action_name = "workspace_search"
+            elif re.search(r"\b(?:find and replace|replace)\b", lowered_text) and (probable_editor_context or probable_office_context):
+                action_name = "find_replace"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?folder pane\b", lowered_text) and probable_mail_context:
+                action_name = "focus_folder_pane"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?message list\b", lowered_text) and probable_mail_context:
+                action_name = "focus_message_list"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:reading pane|preview pane)\b", lowered_text) and probable_mail_context:
+                action_name = "focus_reading_pane"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:tree|navigation tree|tree view)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_navigation_tree"
+            elif tree_item_query and (probable_tree_navigation_context or re.search(r"\bin\s+(?:the\s+)?(?:tree|navigation tree|tree view)\b", lowered_text)):
+                action_name = "expand_tree_item" if re.search(r"\bexpand\b", lowered_text) else "select_tree_item"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:list|results list|list surface|list pane)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_list_surface"
+            elif list_item_query and re.search(r"\bin\s+(?:the\s+)?(?:list|results list|list view|list surface|list pane)\b", lowered_text):
+                action_name = "select_list_item"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:table|grid|data grid)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_data_table"
+            elif table_row_query and (probable_table_surface_context or re.search(r"\b(?:row|table|grid|data grid)\b", lowered_text)):
+                action_name = "select_table_row"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:form|form surface)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_form_surface"
+            elif field_query and re.search(r"\b(?:focus|open|select)\b", lowered_text) and re.search(r"\b(?:field|input|text box|textbox|edit box)\b", lowered_text):
+                action_name = "focus_input_field"
+            elif value_control_query and value_control_target and re.search(r"\b(?:set|adjust|move)\b", lowered_text):
+                action_name = "set_value_control"
+            elif field_query and field_value and (probable_form_context or re.search(r"\b(?:field|input|text box|textbox|edit box)\b", lowered_text)) and re.search(r"\b(?:set|fill|enter)\b", lowered_text):
+                action_name = "set_field_value"
+            elif dropdown_query and re.search(r"\b(?:focus|open|show)\b", lowered_text) and re.search(r"\b(?:dropdown|combo box)\b", lowered_text):
+                action_name = "open_dropdown"
+            elif dropdown_query and dropdown_option and re.search(r"\b(?:select|choose)\b", lowered_text):
+                action_name = "select_dropdown_option"
+            elif checkbox_query and re.search(r"\b(?:focus|select)\b", lowered_text):
+                action_name = "focus_checkbox"
+            elif toggle_query and re.search(r"\b(?:turn on|enable|switch on)\b", lowered_text):
+                action_name = "enable_switch"
+            elif toggle_query and re.search(r"\b(?:turn off|disable|switch off)\b", lowered_text):
+                action_name = "disable_switch"
+            elif checkbox_query and re.search(r"\buncheck\b", lowered_text):
+                action_name = "uncheck_checkbox"
+            elif checkbox_query and re.search(r"\bcheck\b", lowered_text):
+                action_name = "check_checkbox"
+            elif radio_option_query and re.search(r"\b(?:select|choose|pick)\b", lowered_text):
+                action_name = "select_radio_option"
+            elif value_control_query and re.search(r"\b(?:focus|open|select)\b", lowered_text) and re.search(r"\b(?:slider|spinner|stepper|value control|number input|numeric field|value)\b", lowered_text):
+                action_name = "focus_value_control"
+            elif value_control_query and re.search(r"\b(?:increase|raise|bump up|turn up)\b", lowered_text):
+                action_name = "increase_value"
+            elif value_control_query and re.search(r"\b(?:decrease|lower|reduce|turn down)\b", lowered_text):
+                action_name = "decrease_value"
+            elif toggle_query and re.search(r"\btoggle\b", lowered_text):
+                action_name = "toggle_switch"
+            elif tab_page_query and not probable_browser_context and not probable_editor_context and not probable_file_manager_context and not probable_terminal_context and (probable_form_context or probable_generic_context):
+                action_name = "select_tab_page"
+            elif (probable_form_context or bool(app_name or window_title)) and re.search(r"\b(?:apply|save|submit|commit)\s+(?:the\s+)?(?:settings|changes|form|dialog|options|properties)(?:\s+(?:page|step))?\b|\b(?:save|apply)\s+changes\b|\bcomplete\s+(?:the\s+)?(?:form|dialog|settings)\s+page\b", lowered_text):
+                action_name = "complete_form_page"
+            elif (probable_form_context or bool(app_name or window_title)) and re.search(r"\b(?:continue|work|move|run|go)\s+(?:through|across)\s+(?:the\s+)?(?:form|dialog|settings|options|properties)\b|\b(?:apply|save|submit|finish|complete)\s+(?:the\s+)?(?:form|dialog|settings|options|properties)\s+(?:flow|all the way)\b|\b(?:run|take)\s+(?:the\s+)?(?:form|dialog|settings)\s+to\s+the\s+end\b", lowered_text):
+                action_name = "complete_form_flow"
+            elif probable_form_context and re.search(r"\b(?:continue|work|move|run|go)\s+(?:through|across)\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)\b|\b(?:complete|finish)\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)\s+(?:flow|all the way)\b|\b(?:run|take)\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)\s+to\s+the\s+end\b", lowered_text):
+                action_name = "complete_wizard_flow"
+            elif probable_form_context and re.search(r"\b(?:go to|move to|continue(?: to)?|advance(?: to)?)\s+(?:the\s+)?next\s+step\b|\bnext step\b", lowered_text):
+                action_name = "next_wizard_step"
+            elif probable_form_context and re.search(r"\b(?:go back|move back|return to|previous step|prior step|back step)\b", lowered_text):
+                action_name = "previous_wizard_step"
+            elif probable_form_context and re.search(r"\b(?:finish|complete)\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)\b|\bfinish setup\b|\bcomplete setup\b", lowered_text):
+                action_name = "finish_wizard"
+            elif probable_form_context and re.search(r"\b(?:continue|advance)\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)(?:\s+(?:page|step))?\b|\bcontinue setup\b|\bcontinue installer\b|\bcomplete\s+(?:the\s+)?(?:installer|installation|setup(?: wizard)?|wizard)\s+(?:page|step)\b", lowered_text):
+                action_name = "complete_wizard_page"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:sidebar|side panel)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_sidebar"
+            elif sidebar_item_query and (probable_sidebar_navigation_context or re.search(r"\bin\s+(?:the\s+)?(?:sidebar|side panel)\b", lowered_text)):
+                action_name = "select_sidebar_item"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:main content|content area|main pane|document area)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_main_content"
+            elif re.search(r"\b(?:focus|open)\s+(?:the\s+)?(?:toolbar|command bar|menu bar)\b", lowered_text) and probable_generic_context:
+                action_name = "focus_toolbar"
+            elif toolbar_action_query and probable_generic_context:
+                action_name = "invoke_toolbar_action"
+            elif context_menu_item_query and probable_generic_context:
+                action_name = "select_context_menu_item"
+            elif re.search(r"\b(?:open|show)\s+(?:the\s+)?(?:context menu|shortcut menu|right click menu)\b|\bcontext menu\b", lowered_text) and probable_generic_context:
+                action_name = "open_context_menu"
+            elif re.search(r"\b(?:dismiss|close|cancel)\s+(?:the\s+)?(?:dialog|popup|modal|menu)\b", lowered_text) and probable_generic_context:
+                action_name = "dismiss_dialog"
+            elif re.search(r"\b(?:confirm|accept|approve|ok)\s+(?:the\s+)?(?:dialog|popup|modal)\b|\bpress ok\b", lowered_text) and probable_generic_context:
+                action_name = "confirm_dialog"
+            elif dialog_button_query and probable_generic_context:
+                action_name = "press_dialog_button"
+            elif re.search(r"\b(?:open|switch to|show)\s+(?:the\s+)?(?:people|contacts)(?: view)?\b|\b(?:people|contacts) view\b", lowered_text) and probable_mail_context:
+                action_name = "open_people_view"
+            elif re.search(r"\b(?:open|switch to|show)\s+(?:the\s+)?(?:tasks|to do|todo)(?: view)?\b|\b(?:tasks|to do|todo) view\b", lowered_text) and probable_mail_context:
+                action_name = "open_tasks_view"
+            elif re.search(r"\b(?:open|switch to|show)\s+(?:the\s+)?calendar(?: view)?\b|\bcalendar view\b", lowered_text) and probable_mail_context:
+                action_name = "open_calendar_view"
+            elif re.search(r"\b(?:open|switch to|show)\s+(?:the\s+)?(?:mail|inbox)(?: view)?\b|\bmail view\b|\binbox\b", lowered_text) and probable_mail_context:
+                action_name = "open_mail_view"
+            elif re.search(r"\b(?:go to symbol|symbol search|find symbol|open symbol)\b", lowered_text) and probable_editor_context:
+                action_name = "go_to_symbol"
+            elif re.search(r"\brename symbol\b|\brename to\b", lowered_text) and probable_editor_context:
+                action_name = "rename_symbol"
+            elif re.search(r"\b(?:toggle|open)\s+terminal\b", lowered_text) and probable_editor_context:
+                action_name = "toggle_terminal"
+            elif re.search(r"\bformat\s+(?:document|file|code)\b", lowered_text) and probable_editor_context:
+                action_name = "format_document"
+            elif any(token in lowered_text for token in ("quick open", "switch to file", "go to file")):
+                action_name = "quick_open"
+            elif "open file " in lowered_text and probable_editor_context:
+                action_name = "quick_open"
+            elif probable_browser_context and tab_search_query and re.search(r"\btab\b", lowered_text):
+                action_name = "search_tabs"
+            elif tab_target and bool(app_name or window_title):
+                action_name = "switch_tab"
+            elif any(token in lowered_text for token in ("open new tab", "new tab")) and bool(app_name or window_title):
+                action_name = "new_tab"
+            elif any(token in lowered_text for token in ("reopen tab", "restore tab", "restore closed tab")) and bool(app_name or window_title):
+                action_name = "reopen_tab"
+            elif "close tab" in lowered_text and bool(app_name or window_title):
+                action_name = "close_tab"
+            elif re.search(r"\b(?:reset zoom|zoom reset|actual size|normal size)\b", lowered_text) and bool(app_name or window_title):
+                action_name = "reset_zoom"
+            elif re.search(r"\bzoom in\b", lowered_text) and bool(app_name or window_title):
+                action_name = "zoom_in"
+            elif re.search(r"\bzoom out\b", lowered_text) and bool(app_name or window_title):
+                action_name = "zoom_out"
+            elif probable_terminal_context and re.search(r"\b(?:run|execute)\b", lowered_text):
+                action_name = "terminal_command"
+            elif bool(navigation_target) and bool(app_name or window_title):
+                action_name = "navigate"
+            elif any(token in lowered_text for token in ("navigate to", "go to ", "browse to")) and bool(app_name or window_title):
+                action_name = "navigate"
+            elif any(token in lowered_text for token in ("search for ", "find ")) and bool(app_name or window_title):
+                action_name = "search"
+            elif any(token in lowered_text for token in ("press key", "hotkey", "shortcut")) or hotkey_keys:
                 action_name = "hotkey"
             elif ("type " in lowered_text or " type" in lowered_text) and "type of" not in lowered_text:
                 action_name = "type"
             elif any(token in lowered_text for token in ("click ", "press button", "click button", "select target")):
                 action_name = "click"
-            elif app_name:
+            elif app_name and not used_inherited_target_context:
                 action_name = "launch"
 
+        if action_name == "navigate" and not query:
+            query = navigation_target
+        if action_name == "search" and not query:
+            query = self._extract_desktop_search_query(text)
+        if action_name == "command" and not typed_text:
+            typed_text = self._extract_desktop_command_text(text)
+        if action_name == "quick_open" and not query:
+            query = self._extract_desktop_quick_open_query(text)
+        if action_name == "switch_tab" and not query:
+            query = tab_target
+        if action_name == "search_tabs" and not query:
+            query = tab_search_query
+        if action_name == "jump_to_conversation" and not query:
+            query = self._extract_desktop_conversation_query(text)
+        if action_name == "send_message" and not query:
+            query = self._extract_desktop_conversation_query(text)
+        if action_name == "send_message" and not typed_text:
+            typed_text = self._extract_desktop_message_text(text)
+        if action_name == "select_sidebar_item" and not query:
+            query = sidebar_item_query
+        if action_name == "focus_input_field" and not query:
+            query = field_query
+        if action_name == "set_field_value":
+            if not query:
+                query = field_query
+            if not typed_text:
+                typed_text = field_value
+        if action_name == "set_value_control":
+            if not query:
+                query = value_control_query
+            if not typed_text:
+                typed_text = value_control_target
+        if action_name == "open_dropdown" and not query:
+            query = dropdown_query
+        if action_name == "select_dropdown_option":
+            if not query:
+                query = dropdown_query
+            if not typed_text:
+                typed_text = dropdown_option
+        if action_name == "focus_checkbox" and not query:
+            query = checkbox_query
+        if action_name == "check_checkbox" and not query:
+            query = checkbox_query
+        if action_name == "uncheck_checkbox" and not query:
+            query = checkbox_query
+        if action_name == "select_radio_option" and not query:
+            query = radio_option_query
+        if action_name in {"focus_value_control", "increase_value", "decrease_value"} and not query:
+            query = value_control_query
+        if action_name == "select_tab_page" and not query:
+            query = tab_page_query
+        if action_name == "toggle_switch" and not query:
+            query = toggle_query
+        if action_name == "enable_switch" and not query:
+            query = toggle_query
+        if action_name == "disable_switch" and not query:
+            query = toggle_query
+        if action_name in {"select_tree_item", "expand_tree_item"} and not query:
+            query = tree_item_query
+        if action_name == "select_list_item" and not query:
+            query = list_item_query
+        if action_name == "select_table_row" and not query:
+            query = table_row_query
+        if action_name == "workspace_search" and not query:
+            query = self._extract_desktop_workspace_search_query(text)
+        if action_name == "find_replace" and (not query or not typed_text):
+            replace_query, replace_text = self._extract_desktop_replace_terms(text, app_name=app_name)
+            if not query:
+                query = replace_query
+            if not typed_text:
+                typed_text = replace_text
+        if action_name == "invoke_toolbar_action" and not query:
+            query = toolbar_action_query
+        if action_name == "rename_selection" and not typed_text:
+            typed_text = self._extract_desktop_selection_rename_text(text)
+        if action_name == "select_context_menu_item" and not query:
+            query = context_menu_item_query
+        if action_name == "press_dialog_button" and not query:
+            query = dialog_button_query
+        if action_name == "go_to_symbol" and not query:
+            query = self._extract_desktop_symbol_query(text)
+        if action_name == "rename_symbol" and not typed_text:
+            typed_text = self._extract_desktop_rename_text(text)
+        if action_name == "terminal_command" and not typed_text:
+            typed_text = self._extract_desktop_terminal_command_text(text, permissive=probable_terminal_context)
         if action_name == "type" and not typed_text:
             typed_text = self._extract_clipboard_text(text)
         if action_name in {"click", "click_and_type"} and not query:
             query = self._extract_phrase(text) or self._extract_keyword(text)
         if action_name == "hotkey" and not hotkey_keys:
             hotkey_keys = self._extract_hotkey_keys(text)
+        if action_name == "command" and not typed_text:
+            typed_text = query
+        if action_name == "quick_open" and not query:
+            query = typed_text
+        if action_name == "jump_to_conversation" and not query:
+            query = typed_text
+        if action_name == "workspace_search" and not query:
+            query = typed_text
+        if action_name == "go_to_symbol" and not query:
+            query = typed_text
+        if action_name == "rename_symbol" and not typed_text:
+            typed_text = query
+        if action_name == "terminal_command" and not typed_text:
+            typed_text = query
 
         if action_name == "type" and query and typed_text:
             action_name = "click_and_type"
@@ -5830,13 +6228,17 @@ class Planner:
         if require_target_context and not has_target_context:
             return None
 
-        if action_name not in {"launch", "click", "type", "click_and_type", "hotkey"}:
+        if action_name not in {"launch", "click", "type", "click_and_type", "hotkey", "navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}:
             return None
         if action_name == "launch" and not app_name:
             return None
+        if action_name in {"navigate", "search", "quick_open", "switch_tab", "jump_to_conversation", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "select_sidebar_item", "invoke_toolbar_action", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "select_context_menu_item", "press_dialog_button", "workspace_search", "go_to_symbol", "search_tabs"} and not query:
+            return None
         if action_name in {"click", "click_and_type"} and not query:
             return None
-        if action_name in {"type", "click_and_type"} and not typed_text:
+        if action_name == "find_replace" and (not query or not typed_text):
+            return None
+        if action_name in {"type", "click_and_type", "command", "set_field_value", "set_value_control", "select_dropdown_option", "rename_selection", "rename_symbol", "send_message", "terminal_command"} and not typed_text:
             return None
         if action_name == "hotkey" and not hotkey_keys:
             return None
@@ -5854,19 +6256,39 @@ class Planner:
             step_args["query"] = query
         if typed_text:
             step_args["text"] = typed_text
+        if action_name in {"increase_value", "decrease_value"}:
+            step_args["amount"] = max(1, int(adjust_amount or 1))
         if hotkey_keys:
             step_args["keys"] = hotkey_keys
-        if bool(args.get("press_enter")) or "press enter" in lowered_text or "hit enter" in lowered_text or "submit" in lowered_text:
+        if (
+            bool(args.get("press_enter"))
+            or "press enter" in lowered_text
+            or "hit enter" in lowered_text
+            or "submit" in lowered_text
+            or action_name in {"navigate", "command", "quick_open", "jump_to_conversation", "rename_selection", "rename_symbol", "send_message", "terminal_command"}
+        ):
             step_args["press_enter"] = True
 
         return self._step("desktop_interact", args=step_args, verify={"expect_status": "success"})
 
-    def _build_primary_steps(self, text: str, lowered: str, allow_compound: bool = True) -> tuple[str, List[PlanStep]]:
+    def _build_primary_steps(
+        self,
+        text: str,
+        lowered: str,
+        allow_compound: bool = True,
+        desktop_context: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, List[PlanStep]]:
         chained_desktop_interact = self._build_desktop_interact_step(
             original_text=text,
             require_target_context=True,
+            desktop_context=desktop_context,
         )
         if chained_desktop_interact is not None and chained_desktop_interact.args.get("action") != "launch":
+            if chained_desktop_interact.args.get("action") in {"navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}:
+                has_open_prefix = bool(re.match(r"^\s*(?:open|launch|start)\b", text, flags=re.IGNORECASE))
+                has_clause_separator = any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";"))
+                if not (allow_compound and has_open_prefix and has_clause_separator):
+                    return ("desktop_interact", [chained_desktop_interact])
             if any(marker in lowered for marker in (" and ", " then ", " after ", " next ", ";")):
                 return ("desktop_interact", [chained_desktop_interact])
 
@@ -8172,6 +8594,395 @@ class Planner:
             return ""
         return match.group(1).strip().strip(".")
 
+    def _extract_explicit_desktop_target_context(
+        self,
+        *,
+        text: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> tuple[str, str]:
+        args = arguments if isinstance(arguments, dict) else {}
+        normalized_text = str(text or "")
+        lowered_text = normalized_text.lower()
+
+        app_name = str(args.get("app_name") or args.get("app") or "").strip()
+        if not app_name:
+            open_and_action = re.search(
+                r"\b(?:open|launch|start)\b\s+(?P<app>.+?)\s+and\s+(?P<verb>type|click|press|hotkey|navigate|go to|search|focus search box|open search box|focus find box|open find box|run command|command|quick open|open file|focus address bar|address bar|open new tab|new tab|switch(?: to)?(?: the)?\s+(?:next|previous|prev|last|first|final|\d+(?:st|nd|rd|th)?|tab\s+\d+)\s+tab|switch(?: to)?\s+.+?\s+tab|go to\s+.+?\s+tab|focus\s+.+?\s+tab|next tab|previous tab|last tab|close tab|reopen tab|restore tab|open history|history|open downloads|downloads|open devtools|developer tools|devtools|open bookmarks|bookmarks|go back|back|go forward|forward|open chat|new chat|open conversation|jump to conversation|switch conversation|send message|message|reply all|reply to all|reply|forward email|new email|compose email|draft email|new event|new meeting|schedule meeting|open calendar|calendar view|open mail|mail view|open inbox|open contacts|contacts view|open tasks|tasks view|focus folder pane|focus message list|focus reading pane|focus preview pane|focus sidebar|open sidebar|focus main content|content area|main pane|document area|focus toolbar|command bar|menu bar|focus form|open form|focus\s+.+?\s+(?:field|input|text box|textbox|edit box)|set\s+.+?\s+to\s+.+?|fill\s+.+?\s+with\s+.+?|open\s+.+?\s+(?:dropdown|combo box)|select\s+.+?\s+in\s+.+?\s+(?:dropdown|combo box)|focus\s+.+?\s+(?:checkbox|check box)|check\s+.+?\s+(?:checkbox|check box)|uncheck\s+.+?\s+(?:checkbox|check box)|select\s+.+?\s+(?:radio button|radio option)|focus\s+.+?\s+(?:slider|spinner|stepper|value control|number input|numeric field)|(?:increase|decrease|raise|lower)\s+.+?\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field)|toggle\s+.+?\s+(?:switch|toggle)|open context menu|context menu|shortcut menu|right click menu|dismiss dialog|close dialog|cancel dialog|dismiss popup|close popup|confirm dialog|accept dialog|ok dialog|press ok|new document|save document|save file|open print dialog|print dialog|print|start presentation|start slideshow|slideshow|play\s*/\s*pause|play pause|toggle playback|toggle media|pause|resume|continue playback|next track|next song|skip track|skip song|previous track|prev track|last track|stop playback|stop media|stop music|new folder|create folder|focus folder tree|focus navigation pane|focus file list|focus items view|rename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)|open properties|show properties|properties dialog|open preview pane|preview pane|open details pane|details pane|refresh|refresh view|reload|go up|parent folder|focus explorer|open explorer|workspace search|search workspace|find in files|find and replace|replace|go to symbol|symbol search|rename symbol|toggle terminal|open terminal|format document|format file|format code|zoom in|zoom out|reset zoom|actual size|normal size|run terminal command|run shell command|execute terminal command|execute shell command|run|execute)\b",
+                normalized_text,
+                flags=re.IGNORECASE,
+            )
+            if open_and_action:
+                candidate_app = str(open_and_action.group("app") or "").strip().strip(".")
+                if self._is_viable_desktop_target_candidate(candidate_app):
+                    app_name = candidate_app
+        if not app_name:
+            context_patterns = (
+                r"\b(?:expand|open|select|choose|focus)\s+.+?\s+in\s+(?:the\s+)?(?:tree|navigation tree|tree view)\s+in\s+(.+)$",
+                r"\b(?:select|choose|click|focus)\s+.+?\s+in\s+(?:the\s+)?(?:list|results list|list view|list surface|list pane)\s+in\s+(.+)$",
+                r"\b(?:select|choose|click|focus)\s+.+?(?:\s+row)?\s+in\s+(?:the\s+)?(?:table|grid|data grid)\s+in\s+(.+)$",
+                r"\b(?:expand|open|select|choose|focus)\s+.+?\s+in\s+(device manager|event viewer|registry editor|regedit)\b$",
+                r"\b(?:select|choose|click|focus)\s+.+?(?:\s+row)?\s+in\s+(task manager|resource monitor)\b$",
+                r"\b(?:open|show|go to|switch to|select|focus)\s+.+?\s+in\s+(?:the\s+)?(?:sidebar|side panel)\s+in\s+(.+)$",
+                r"\b(?:click|press|select|choose|invoke|trigger|run)\s+.+?\s+in\s+(?:the\s+)?(?:toolbar|command bar|menu bar)\s+in\s+(.+)$",
+                r"\b(?:focus|open)\s+(?:the\s+)?(?:form|form surface)\s+in\s+(.+)$",
+                r"\b(?:apply|save|submit|commit)\s+(?:the\s+)?(?:settings|changes|form|dialog|options|properties)(?:\s+(?:page|step))?\s+in\s+(.+)$",
+                r"\b(?:continue|work|move|run|go)\s+(?:through|across)\s+(?:the\s+)?(?:form|dialog|settings|options|properties)\s+in\s+(.+)$",
+                r"\b(?:apply|save|submit|finish|complete)\s+(?:the\s+)?(?:form|dialog|settings|options|properties)\s+(?:flow|all the way)\s+in\s+(.+)$",
+                r"\b(?:focus|open|select)\s+.+?\s+(?:field|input|text box|textbox|edit box)\s+in\s+(.+)$",
+                r"\b(?:set|fill|enter)\s+.+?\s+(?:to|with)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:open|show|focus)\s+.+?\s+(?:dropdown|combo box)\s+in\s+(.+)$",
+                r"\b(?:select|choose)\s+.+?\s+in\s+.+?\s+(?:dropdown|combo box)\s+in\s+(.+)$",
+                r"\b(?:focus|check|uncheck)\s+.+?\s+(?:checkbox|check box)\s+in\s+(.+)$",
+                r"\b(?:select|choose|pick)\s+.+?\s+(?:radio button|radio option)\s+in\s+(.+)$",
+                r"\b(?:focus|open|select)\s+.+?\s+(?:slider|spinner|stepper|value control|number input|numeric field)\s+in\s+(.+)$",
+                r"\b(?:increase|decrease|raise|lower)\s+.+?(?:\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field))?(?:\s+by\s+.+?)?\s+in\s+(.+)$",
+                r"\b(?:toggle)\s+.+?\s+(?:switch|toggle)\s+in\s+(.+)$",
+                r"\b(?:click|press|select|choose|invoke|open)\s+.+?\s+in\s+(?:the\s+)?(?:context menu|shortcut menu|right click menu)\s+in\s+(.+)$",
+                r"\b(?:press|click|select|choose|confirm|accept)\s+.+?(?:\s+button)?\s+in\s+(?:the\s+)?(?:dialog|popup|modal)\s+in\s+(.+)$",
+                r"\b(?:open|show|go to|switch to|select|focus)\s+.+?\s+in\s+(settings|task manager|control panel|event viewer|device manager)\b$",
+                r"\b(?:click|press)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:focus search box|open search box|focus find box|open find box)\s+in\s+(.+)$",
+                r"\b(?:search(?: for)?|find|focus search box|open search box|focus find box|open find box)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:navigate(?: to)?|go to|browse to)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:run command|execute command|open command palette|command palette)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:quick open|open file|switch to file|go to file)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:open history|history|open downloads|downloads|open devtools|developer tools|devtools|open bookmarks|bookmarks|open tab search|show tab search|focus tab search|go back|back|go forward|forward|focus address bar|address bar|focus search box|open search box|focus find box|open find box|new folder|create folder|focus folder tree|focus navigation pane|focus file list|focus items view|focus sidebar|open sidebar|focus main content|content area|main pane|document area|focus toolbar|command bar|menu bar|open context menu|context menu|shortcut menu|right click menu|dismiss dialog|close dialog|cancel dialog|dismiss popup|close popup|confirm dialog|accept dialog|ok dialog|press ok|open properties|show properties|properties dialog|open preview pane|preview pane|open details pane|details pane|refresh|refresh view|reload|go up|parent folder)\s+in\s+(.+)$",
+                r"\b(?:switch(?: to)?(?: the)?\s+(?:next|previous|prev|last|first|final|\d+(?:st|nd|rd|th)?\s+tab|tab\s+\d+)|next tab|previous tab|prev tab|last tab)\s+in\s+(.+)$",
+                r"\b(?:switch(?: to)?|go to|focus|open)\s+.+?\s+tab\s+in\s+(.+)$",
+                r"\b(?:new chat|start new chat|new conversation|start conversation)\s+in\s+(.+)$",
+                r"\b(?:open chat with|new chat with|open conversation with|jump to conversation|switch conversation|send message(?: to)?|message(?: to)?|reply(?: to)?)\s+.+?\s+in\s+(.+?)(?:\s+(?:saying|with message|message:|text:)\b.*)?$",
+                r"\b(?:new email|compose email|draft email|new mail|compose mail|reply all|reply to all|reply|forward email|new calendar event|create calendar event|new event|create event|new meeting|schedule meeting|create meeting|open calendar|calendar view|open mail|mail view|open inbox|open people|people view|open contacts|contacts view|open tasks|open to do|open todo|tasks view|to do view|todo view|focus folder pane|focus message list|focus reading pane|focus preview pane)\s+in\s+(.+)$",
+                r"\b(?:new document|save document|save file|save workbook|save presentation|open print dialog|print dialog|print|start presentation|start slideshow|slideshow)\s+in\s+(.+)$",
+                r"\b(?:play\s*/\s*pause|play pause|toggle playback|toggle media|pause(?: playback| music| media| song)?|resume(?: playback| music| media| song)?|continue playback|continue music|next track|next song|skip track|skip song|previous track|prev track|last track|previous song|stop(?: playback| music| media| song)?)\s+in\s+(.+)$",
+                r"\b(?:rename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)(?:\s+to)?)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:focus explorer|open explorer|workspace search(?: for)?|search workspace(?: for)?|find in files|find and replace|replace|go to symbol|symbol search|rename symbol(?: to)?)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:focus explorer|open explorer|toggle terminal|open terminal|format document|format file|format code)\s+in\s+(.+)$",
+                r"\b(?:zoom in|zoom out|reset zoom|actual size|normal size)\s+in\s+(.+)$",
+                r"\b(?:run terminal command|execute terminal command|run shell command|execute shell command|run|execute)\s+.+?\s+in\s+(.+)$",
+                r"\b(?:open new tab|new tab|close tab|reopen tab|restore tab|restore closed tab)\s+in\s+(.+)$",
+            )
+            for pattern in context_patterns:
+                context_match = re.search(pattern, normalized_text, flags=re.IGNORECASE)
+                if not context_match:
+                    continue
+                candidate_app = str(context_match.group(1) or "").strip().strip(".")
+                if self._is_viable_desktop_target_candidate(candidate_app):
+                    app_name = candidate_app
+                    break
+
+        window_title = str(args.get("window_title") or "").strip()
+        if not window_title and "window" in lowered_text:
+            window_title = self._extract_window_title(normalized_text)
+
+        return (app_name, window_title)
+
+    def _is_viable_desktop_target_candidate(self, value: str) -> bool:
+        candidate = str(value or "").strip().strip(".")
+        if not candidate:
+            return False
+        if re.search(r"['\"]", candidate):
+            return False
+        if re.search(r"\b\d+\s+(?:second|seconds|minute|minutes|hour|hours|day|days)\b", candidate, flags=re.IGNORECASE):
+            return False
+        if self._looks_like_action_clause(candidate.lower()):
+            return False
+        return self._is_probable_desktop_app_name(candidate)
+
+    @staticmethod
+    def _extract_desktop_context_from_step(step: PlanStep) -> Dict[str, str]:
+        if not isinstance(step.args, dict):
+            return {}
+
+        app_name = ""
+        window_title = ""
+        if step.action == "open_app":
+            app_name = str(step.args.get("app_name") or "").strip()
+        elif step.action == "desktop_interact":
+            app_name = str(step.args.get("app_name") or "").strip()
+            window_title = str(step.args.get("window_title") or "").strip()
+
+        context: Dict[str, str] = {}
+        if app_name:
+            context["app_name"] = app_name
+        if window_title:
+            context["window_title"] = window_title
+        return context
+
+    @staticmethod
+    def _steps_use_desktop_context(steps: List[PlanStep], desktop_context: Dict[str, Any]) -> bool:
+        context_app_name = str(desktop_context.get("app_name") or "").strip().lower()
+        context_window_title = str(desktop_context.get("window_title") or "").strip().lower()
+        if not context_app_name and not context_window_title:
+            return False
+
+        for step in steps:
+            if step.action != "desktop_interact" or not isinstance(step.args, dict):
+                continue
+            step_app_name = str(step.args.get("app_name") or "").strip().lower()
+            step_window_title = str(step.args.get("window_title") or "").strip().lower()
+            if context_app_name and step_app_name == context_app_name:
+                return True
+            if context_window_title and step_window_title == context_window_title:
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_desktop_followup_clause(lowered: str, arguments: Optional[Dict[str, Any]] = None) -> bool:
+        if isinstance(arguments, dict) and str(arguments.get("action") or "").strip():
+            return True
+
+        followup_markers = (
+            "click ",
+            "press ",
+            "type ",
+            "hotkey",
+            "shortcut",
+            "navigate",
+            "go to ",
+            "browse to",
+            "search ",
+            "find ",
+            "search box",
+            "find box",
+            "run command",
+            "execute command",
+            "command palette",
+            "quick open",
+            "open file",
+            "switch to file",
+            "go to file",
+            "address bar",
+            "bookmarks",
+            "history",
+            "downloads",
+            "devtools",
+            "developer tools",
+            "go back",
+            "go forward",
+            "tab search",
+            "search tabs",
+            "search open tabs",
+            "open chat",
+            "new chat",
+            "start new chat",
+            "new conversation",
+            "start conversation",
+            "conversation",
+            "message",
+            "reply",
+            "new email",
+            "compose email",
+            "draft email",
+            "new mail",
+            "compose mail",
+            "reply all",
+            "reply to all",
+            "forward email",
+            "new calendar event",
+            "new event",
+            "new meeting",
+            "schedule meeting",
+            "focus folder pane",
+            "focus message list",
+            "focus reading pane",
+            "focus preview pane",
+            "expand ",
+            "focus tree",
+            "navigation tree",
+            "tree view",
+            "in tree",
+            "focus list",
+            "results list",
+            "list surface",
+            "list pane",
+            "in list",
+            "focus table",
+            "data grid",
+            "in table",
+            "row in",
+            "focus sidebar",
+            "open sidebar",
+            "in sidebar",
+            "in side panel",
+            "focus main content",
+            "content area",
+            "main pane",
+            "document area",
+            "focus toolbar",
+            "command bar",
+            "menu bar",
+            "focus form",
+            "form surface",
+            "input field",
+            "text box",
+            "edit box",
+            "set ",
+            "fill ",
+            "dropdown",
+            "combo box",
+            "checkbox",
+            "check box",
+            "radio button",
+            "radio option",
+            "tab page",
+            "property tab",
+            "settings tab",
+            "slider",
+            "spinner",
+            "stepper",
+            "value control",
+            "number input",
+            "numeric field",
+            "increase ",
+            "decrease ",
+            "raise ",
+            "lower ",
+            "toggle switch",
+            "in toolbar",
+            "in command bar",
+            "in menu bar",
+            "context menu",
+            "shortcut menu",
+            "right click menu",
+            "dismiss dialog",
+            "close dialog",
+            "cancel dialog",
+            "dismiss popup",
+            "close popup",
+            "confirm dialog",
+            "accept dialog",
+            "ok dialog",
+            "press ok",
+            "apply settings",
+            "save settings",
+            "save changes",
+            "apply changes",
+            "complete settings page",
+            "complete settings flow",
+            "settings flow",
+            "complete form page",
+            "complete form flow",
+            "dialog flow",
+            "continue installer",
+            "continue installation",
+            "continue setup",
+            "continue through installer",
+            "continue through installation",
+            "continue through setup",
+            "advance installer",
+            "advance setup",
+            "complete installer page",
+            "complete setup page",
+            "installer flow",
+            "setup flow",
+            "wizard flow",
+            "to the end",
+            "all the way",
+            "next step",
+            "previous step",
+            "prior step",
+            "finish installer",
+            "finish wizard",
+            "complete setup",
+            "in dialog",
+            "button in dialog",
+            "new document",
+            "save document",
+            "save file",
+            "save workbook",
+            "save presentation",
+            "print dialog",
+            "print",
+            "start presentation",
+            "slideshow",
+            "slide show",
+            "calendar view",
+            "open calendar",
+            "people view",
+            "contacts view",
+            "open people",
+            "open contacts",
+            "tasks view",
+            "open tasks",
+            "open to do",
+            "open todo",
+            "focus folder tree",
+            "focus navigation pane",
+            "focus file list",
+            "focus items view",
+            "mail view",
+            "open mail",
+            "open inbox",
+            "play pause",
+            "play/pause",
+            "toggle playback",
+            "toggle media",
+            "pause ",
+            "resume ",
+            "continue playback",
+            "continue music",
+            "next track",
+            "next song",
+            "skip track",
+            "skip song",
+            "previous track",
+            "prev track",
+            "last track",
+            "previous song",
+            "stop playback",
+            "stop media",
+            "stop music",
+            "new folder",
+            "create folder",
+            "rename selected",
+            "open properties",
+            "show properties",
+            "properties dialog",
+            "preview pane",
+            "details pane",
+            "refresh",
+            "reload",
+            "go up",
+            "parent folder",
+            "focus explorer",
+            "workspace search",
+            "search workspace",
+            "find in files",
+            "find and replace",
+            "replace ",
+            "go to symbol",
+            "symbol search",
+            "rename symbol",
+            "rename to",
+            "toggle terminal",
+            "open terminal",
+            "format document",
+            "format file",
+            "format code",
+            "run terminal command",
+            "run shell command",
+            "execute terminal command",
+            "execute shell command",
+            "new tab",
+            "next tab",
+            "previous tab",
+            "switch to tab",
+            "switch tab",
+            "close tab",
+            "reopen tab",
+            "restore tab",
+            "zoom in",
+            "zoom out",
+            "reset zoom",
+            "actual size",
+            "normal size",
+        )
+        if any(marker in lowered for marker in followup_markers):
+            return True
+        if re.search(r"\b(?:set|fill|enter)\s+.+?\s+(?:to|with)\s+.+$", lowered):
+            return True
+        return bool(re.search(r"\b(?:switch(?: to)?|go to|focus|open)\s+.+?\s+tab\b", lowered))
+
     @staticmethod
     def _extract_notification_message(text: str) -> str:
         match = re.search(r"(?:notify|notification|remind me)\s*(?:to)?\s*(.+)$", text, flags=re.IGNORECASE)
@@ -8197,6 +9008,716 @@ class Planner:
         if not match:
             return ""
         return match.group(1).strip().strip(".")
+
+    @staticmethod
+    def _extract_desktop_search_query(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:search(?: for)?|find)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:look for)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_command_text(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:run command|execute command)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:command palette)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:open command palette)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_quick_open_query(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:quick open|switch to file|go to file)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:open file)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_tab_target(text: str) -> str:
+        lowered = " ".join(str(text or "").strip().lower().split())
+        if not lowered:
+            return ""
+        alias_map = {
+            "next tab": "next",
+            "previous tab": "previous",
+            "prev tab": "previous",
+            "last tab": "last",
+            "switch to next tab": "next",
+            "switch to previous tab": "previous",
+            "switch to prev tab": "previous",
+            "switch to last tab": "last",
+            "switch tab": "",
+            "first tab": "1",
+        }
+        for phrase, target in alias_map.items():
+            if phrase and phrase in lowered and target:
+                return target
+        if re.search(r"\b(?:next|forward|following|right)\s+tab\b", lowered):
+            return "next"
+        if re.search(r"\b(?:previous|prev|prior|back|left)\s+tab\b", lowered):
+            return "previous"
+        if re.search(r"\b(?:last|final|end)\s+tab\b", lowered):
+            return "last"
+        if re.search(r"\b(?:first|1st|one)\s+tab\b", lowered):
+            return "1"
+        tab_match = re.search(r"\b(?:switch(?: to)?|go to|focus)\s+(?:the\s+)?tab\s+([1-9])\b", lowered)
+        if tab_match:
+            return str(tab_match.group(1))
+        ordinal_match = re.search(r"\b(?:switch(?: to)?|go to|focus)\s+(?:the\s+)?([1-9])(?:st|nd|rd|th)?\s+tab\b", lowered)
+        if ordinal_match:
+            return str(ordinal_match.group(1))
+        standalone_match = re.search(r"\btab\s+([1-9])\b", lowered)
+        if standalone_match:
+            return str(standalone_match.group(1))
+        return ""
+
+    @staticmethod
+    def _is_named_tab_query(value: str) -> bool:
+        clean = " ".join(str(value or "").strip().lower().split())
+        if not clean:
+            return False
+        if clean in {"next", "previous", "prev", "last", "first", "final", "back", "forward", "new", "current"}:
+            return False
+        if re.fullmatch(r"(?:tab\s+)?[1-9](?:st|nd|rd|th)?", clean):
+            return False
+        if re.fullmatch(r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)\s+tab", clean):
+            return False
+        return True
+
+    @staticmethod
+    def _extract_desktop_tab_search_query(text: str) -> str:
+        lowered = " ".join(str(text or "").strip().lower().split())
+        if not any(
+            marker in lowered
+            for marker in (
+                "search tabs for",
+                "search open tabs for",
+                "find tab ",
+                "find tabs ",
+                "find open tab ",
+                "find open tabs ",
+                "switch to ",
+                "go to ",
+                "focus ",
+                "open ",
+            )
+        ) or "tab" not in lowered:
+            return ""
+        quoted = Planner._extract_quoted(text)
+        if quoted and Planner._is_named_tab_query(quoted):
+            return quoted
+        patterns = (
+            r"(?:search(?:\s+open)?\s+tabs?\s+for)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:find(?:\s+open)?\s+tabs?)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:switch(?:\s+to)?|go to|focus|open)\s+(?:the\s+)?(.+?)\s+tab(?:\s+in\s+.+)?$",
+            r"(?:switch(?:\s+to)?|go to|focus)\s+(?:the\s+)?tab\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+                if value and Planner._is_named_tab_query(value):
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_tab_page_query(text: str, *, app_name: str = "") -> str:
+        del app_name
+        patterns = [
+            r"(?:open|show|switch to|select|focus)\s+(.+?)\s+tab(?:\s+in\s+.+)?$",
+            r"(?:open|show|switch to|select|focus)\s+(?:the\s+)?tab\s+(.+?)(?:\s+in\s+.+)?$",
+        ]
+        blocked_values = {
+            "tab",
+            "next",
+            "previous",
+            "prev",
+            "last",
+            "first",
+            "new",
+            "current",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values and Planner._is_named_tab_query(value):
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_conversation_query(text: str) -> str:
+        patterns = (
+            r"(?:open chat with|new chat with|open conversation with|jump to conversation|switch conversation|switch to chat|switch to conversation|chat with|conversation with|dm with)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:send message to|message to|reply to)\s+(.+?)(?:\s+(?:in\s+.+|saying|with message|message:|text:)\b|$)",
+            r"(?:send message|message|reply)\s+(.+?)(?:\s+(?:in\s+.+|saying|with message|message:|text:)\b|$)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_message_text(text: str) -> str:
+        patterns = (
+            r"(?:saying|with message|reply with|message:|text:)\s+(.+)$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+                if value:
+                    return value
+        quoted_values = [item for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if quoted_values:
+            return str(quoted_values[-1]).strip()
+        return ""
+
+    @staticmethod
+    def _clean_desktop_control_query(value: str) -> str:
+        clean = str(value or "").strip().strip(".").strip("\"'")
+        clean = re.sub(r"^(?:the|a|an)\s+", "", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\s+button$", "", clean, flags=re.IGNORECASE)
+        return Planner._strip_desktop_followup_suffix(clean).strip()
+
+    @staticmethod
+    def _strip_desktop_followup_suffix(value: str) -> str:
+        clean = str(value or "").strip()
+        if not clean:
+            return ""
+        clean = re.sub(
+            r"\s+(?:and|then|after that)\s+(?:apply|save|submit|commit|complete|finish)\s+(?:the\s+)?(?:settings|changes|form|dialog|options|properties)(?:\s+(?:page|flow|all the way|to the end))?$",
+            "",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        clean = re.sub(
+            r"\s+(?:and|then|after that)\s+(?:apply|save)\s+changes$",
+            "",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        return clean.strip()
+
+    @staticmethod
+    def _extract_desktop_field_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:focus|open|select)\s+(.+?)\s+(?:field|input|text box|textbox|edit box)(?:\s+in\s+.+)?$",
+            r"(?:set|fill)\s+(.+?)\s+(?:field|input|text box|textbox|edit box)\s+(?:to|with)\s+.+?(?:\s+in\s+.+)?$",
+            r"(?:enter|type)\s+.+?\s+in\s+(.+?)\s+(?:field|input|text box|textbox|edit box)(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_form_app_name(app_name):
+            patterns.append(r"(?:set|fill)\s+(.+?)\s+(?:to|with)\s+.+?(?:\s+in\s+.+)?$")
+        blocked_values = {
+            "field",
+            "input",
+            "text box",
+            "textbox",
+            "edit box",
+            "dropdown",
+            "combo box",
+            "checkbox",
+            "check box",
+            "switch",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_field_value(text: str, *, app_name: str = "") -> str:
+        quoted_values = [str(item).strip() for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if len(quoted_values) >= 2:
+            return quoted_values[-1]
+        patterns = (
+            r"(?:set|fill)\s+.+?(?:\s+(?:field|input|text box|textbox|edit box))?\s+(?:to|with)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:enter|type)\s+(.+?)\s+in\s+.+?\s+(?:field|input|text box|textbox|edit box)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+            if app_name:
+                suffix = f" in {app_name.strip()}".lower()
+                lowered_value = value.lower()
+                if lowered_value.endswith(suffix):
+                    value = value[: -len(suffix)].strip().strip(".")
+            value = Planner._strip_desktop_followup_suffix(value)
+            if value:
+                return value
+        if quoted_values:
+            return quoted_values[-1]
+        return ""
+
+    @staticmethod
+    def _extract_desktop_dropdown_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:open|show|focus)\s+(.+?)\s+(?:dropdown|combo box)(?:\s+in\s+.+)?$",
+            r"(?:select|choose)\s+.+?\s+in\s+(.+?)\s+(?:dropdown|combo box)(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_form_app_name(app_name):
+            patterns.append(r"(?:open|show|focus)\s+(.+?)(?:\s+in\s+.+)?$")
+        blocked_values = {
+            "dropdown",
+            "combo box",
+            "field",
+            "input",
+            "checkbox",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_dropdown_option(text: str, *, app_name: str = "") -> str:
+        del app_name
+        patterns = (
+            r"(?:select|choose)\s+(.+?)\s+in\s+.+?\s+(?:dropdown|combo box)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._strip_desktop_followup_suffix(str(match.group(1) or "").strip().strip(".").strip("\"'"))
+            if value:
+                return value
+        quoted_values = [str(item).strip() for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if quoted_values:
+            return quoted_values[0]
+        return ""
+
+    @staticmethod
+    def _extract_desktop_checkbox_query(text: str) -> str:
+        patterns = (
+            r"(?:focus|check|uncheck)\s+(.+?)\s+(?:checkbox|check box)(?:\s+in\s+.+)?$",
+        )
+        blocked_values = {"checkbox", "check box", "switch", "toggle"}
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_radio_option_query(text: str) -> str:
+        patterns = (
+            r"(?:select|choose|pick)\s+(.+?)\s+(?:radio button|radio option)(?:\s+in\s+.+)?$",
+        )
+        blocked_values = {"radio", "radio button", "radio option", "option"}
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_toggle_query(text: str) -> str:
+        patterns = (
+            r"(?:toggle)\s+(.+?)\s+(?:switch|toggle)(?:\s+in\s+.+)?$",
+            r"(?:turn on|turn off|enable|disable)\s+(.+?)(?:\s+(?:switch|toggle))?(?:\s+in\s+.+)?$",
+        )
+        blocked_values = {"switch", "toggle"}
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_value_control_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:focus|open|select)\s+(.+?)\s+(?:slider|spinner|stepper|value control|number input|numeric field)(?:\s+in\s+.+)?$",
+            r"(?:increase|decrease|raise|lower)\s+(.+?)\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field)(?:\s+by\s+.+)?(?:\s+in\s+.+)?$",
+            r"(?:set|adjust|move)\s+(.+?)\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field)(?:\s+to\s+.+)?(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_form_app_name(app_name):
+            patterns.append(
+                r"(?:increase|decrease|raise|lower)\s+(.+?)(?:\s+by\s+.+)?(?:\s+in\s+.+)?$"
+            )
+        blocked_values = {
+            "slider",
+            "spinner",
+            "stepper",
+            "value",
+            "value control",
+            "number input",
+            "numeric field",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_value_control_target(text: str, *, app_name: str = "") -> str:
+        del app_name
+        patterns = (
+            r"(?:set|adjust|move)\s+.+?(?:\s+(?:slider|spinner|stepper|value(?: control)?|number input|numeric field))?\s+to\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._strip_desktop_followup_suffix(str(match.group(1) or "").strip().strip(".").strip("\"'"))
+            if value:
+                return value
+        quoted_values = [str(item).strip() for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if quoted_values:
+            return quoted_values[-1]
+        return ""
+
+    @staticmethod
+    def _extract_desktop_adjust_amount(text: str) -> int:
+        match = re.search(r"\bby\s+(\d+)\b", text, flags=re.IGNORECASE)
+        if not match:
+            match = re.search(r"\b(\d+)\s+times\b", text, flags=re.IGNORECASE)
+        if match:
+            try:
+                return max(1, min(int(match.group(1)), 20))
+            except Exception:
+                return 1
+        word_map = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+        word_match = re.search(
+            r"\bby\s+(one|two|three|four|five|six|seven|eight|nine|ten)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if word_match:
+            return word_map.get(str(word_match.group(1) or "").strip().lower(), 1)
+        return 1
+
+    @staticmethod
+    def _extract_desktop_sidebar_item_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:open|show|go to|switch to|select|focus)\s+(.+?)\s+in\s+(?:the\s+)?(?:sidebar|side panel)(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_sidebar_navigation_app_name(app_name):
+            patterns.append(r"(?:open|show|go to|switch to|select|focus)\s+(.+?)(?:\s+in\s+.+)?$")
+        blocked_values = {
+            "sidebar",
+            "side panel",
+            "main content",
+            "content area",
+            "main pane",
+            "document area",
+            "toolbar",
+            "command bar",
+            "menu bar",
+            "context menu",
+            "shortcut menu",
+            "right click menu",
+            "dialog",
+            "popup",
+            "modal",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_toolbar_action_query(text: str) -> str:
+        patterns = (
+            r"(?:click|press|select|choose|invoke|trigger|run)\s+(.+?)\s+in\s+(?:the\s+)?(?:toolbar|command bar|menu bar)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = Planner._clean_desktop_control_query(match.group(1))
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_context_menu_item_query(text: str) -> str:
+        patterns = (
+            r"(?:click|press|select|choose|invoke|open)\s+(.+?)\s+in\s+(?:the\s+)?(?:context menu|shortcut menu|right click menu)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = Planner._clean_desktop_control_query(match.group(1))
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_dialog_button_query(text: str) -> str:
+        patterns = (
+            r"(?:press|click|select|choose|confirm|accept)\s+(.+?)(?:\s+button)?\s+in\s+(?:the\s+)?(?:dialog|popup|modal)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = Planner._clean_desktop_control_query(match.group(1))
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_wizard_app_name(text: str) -> str:
+        if re.search(
+            r"\b(?:open|launch|start)\s+(?:the\s+)?(?:setup wizard|installation wizard|install wizard|installer|setup|wizard)\b\s+(?:and|then)\b",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            return ""
+        match = re.search(r"\b(setup wizard|installation wizard|install wizard|installer|setup|wizard)\b", text, flags=re.IGNORECASE)
+        if not match:
+            return ""
+        return str(match.group(1) or "").strip().lower()
+
+    @staticmethod
+    def _extract_desktop_tree_item_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:expand|open|select|choose|focus)\s+(.+?)\s+in\s+(?:the\s+)?(?:tree|navigation tree|tree view)(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_tree_navigation_app_name(app_name):
+            patterns.extend(
+                [
+                    r"(?:expand|open|select|choose|focus)\s+(.+?)(?:\s+in\s+.+)?$",
+                ]
+            )
+        blocked_values = {
+            "tree",
+            "navigation tree",
+            "tree view",
+            "list",
+            "table",
+            "grid",
+            "sidebar",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_list_item_query(text: str) -> str:
+        patterns = (
+            r"(?:select|choose|click|focus)\s+(.+?)\s+in\s+(?:the\s+)?(?:list|results list|list view|list surface|list pane)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = Planner._clean_desktop_control_query(match.group(1))
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_table_row_query(text: str, *, app_name: str = "") -> str:
+        patterns = [
+            r"(?:select|choose|click|focus)\s+(.+?)(?:\s+row)?\s+in\s+(?:the\s+)?(?:table|grid|data grid)(?:\s+in\s+.+)?$",
+            r"(?:select|choose|click|focus)\s+(.+?)\s+row(?:\s+in\s+.+)?$",
+        ]
+        if app_name and Planner._is_probable_table_surface_app_name(app_name):
+            patterns.append(r"(?:select|choose|click|focus)\s+(.+?)(?:\s+in\s+.+)?$")
+        blocked_values = {
+            "table",
+            "grid",
+            "data grid",
+            "row",
+        }
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            value = Planner._clean_desktop_control_query(match.group(1))
+            if value and value.lower() not in blocked_values:
+                return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_workspace_search_query(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:search workspace for|workspace search for|find in files)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:search workspace|workspace search)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_replace_terms(text: str, *, app_name: str = "") -> tuple[str, str]:
+        quoted_values = [str(item).strip() for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if len(quoted_values) >= 2:
+            return (quoted_values[0], quoted_values[1])
+
+        patterns = (
+            r"(?:find and replace|replace)\s+(.+?)\s+with\s+(.+)$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            query_value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+            replacement_value = str(match.group(2) or "").strip().strip(".").strip("\"'")
+            if app_name:
+                suffix = f" in {app_name.strip()}".lower()
+                lowered_replacement = replacement_value.lower()
+                if lowered_replacement.endswith(suffix):
+                    replacement_value = replacement_value[: -len(suffix)].strip().strip(".")
+            if query_value and replacement_value:
+                return (query_value, replacement_value)
+        return ("", "")
+
+    @staticmethod
+    def _extract_desktop_selection_rename_text(text: str) -> str:
+        quoted_values = [str(item).strip() for item in re.findall(r"['\"]([^'\"]+)['\"]", text) if str(item).strip()]
+        if quoted_values:
+            return quoted_values[-1]
+        patterns = (
+            r"(?:rename(?:\s+the)?\s+(?:selected\s+)?(?:file|folder|item|selection)\s+to)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = str(match.group(1) or "").strip().strip(".").strip("\"'")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_symbol_query(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:go to symbol|find symbol|open symbol)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:symbol search)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_rename_text(text: str) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = (
+            r"(?:rename symbol to|rename to)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:rename symbol)\s+(.+?)(?:\s+in\s+.+)?$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _extract_desktop_terminal_command_text(text: str, *, permissive: bool = False) -> str:
+        quoted = Planner._extract_quoted(text)
+        if quoted:
+            return quoted
+        patterns = [
+            r"(?:run terminal command|execute terminal command|run shell command|execute shell command)\s+(.+?)(?:\s+in\s+.+)?$",
+            r"(?:run in terminal|execute in terminal)\s+(.+?)(?:\s+in\s+.+)?$",
+        ]
+        if permissive:
+            patterns.extend(
+                [
+                    r"(?:open|launch|start)\s+.+?\s+and\s+(?:run|execute)\s+(.+)$",
+                    r"(?:run|execute)\s+(.+?)(?:\s+in\s+.+)?$",
+                ]
+            )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip().strip(".")
+                if value:
+                    return value
+        return ""
 
     @staticmethod
     def _extract_phrase(text: str) -> str:
@@ -8265,6 +9786,230 @@ class Planner:
         value = match.group(1) if match else source
         keys = [part.strip().lower() for part in re.split(r"[+, ]+", value) if part.strip()]
         return keys[:5]
+
+    @staticmethod
+    def _is_probable_desktop_app_name(value: str) -> bool:
+        clean = str(value or "").strip().strip(".")
+        if not clean:
+            return False
+        lowered = clean.lower()
+        if any(token in clean for token in ("\\", "/", ":")):
+            return False
+        blocked = {
+            "desktop",
+            "documents",
+            "downloads",
+            "folder",
+            "directory",
+            "filesystem",
+            "file system",
+            "workspace",
+            "project",
+            "repo",
+            "repository",
+            "web",
+            "website",
+            "internet",
+            "screen",
+            "window",
+            "tab",
+        }
+        return lowered not in blocked
+
+    @staticmethod
+    def _is_probable_terminal_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "powershell",
+                "pwsh",
+                "windows terminal",
+                "terminal",
+                "command prompt",
+                "cmd",
+                "warp",
+                "tabby",
+                "hyper",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_browser_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "chrome",
+                "google chrome",
+                "edge",
+                "microsoft edge",
+                "brave",
+                "firefox",
+                "opera",
+                "vivaldi",
+                "browser",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_file_manager_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "file explorer",
+                "windows explorer",
+                "explorer",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_chat_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "slack",
+                "discord",
+                "telegram",
+                "whatsapp",
+                "teams",
+                "signal",
+                "messenger",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_office_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "word",
+                "excel",
+                "powerpoint",
+                "onenote",
+                "outlook",
+                "office",
+                "mail",
+                "calendar",
+                "notion",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_mail_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "outlook",
+                "mail",
+                "proton mail",
+                "thunderbird",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_media_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "spotify",
+                "vlc",
+                "obs",
+                "media player",
+                "musicbee",
+                "itunes",
+                "winamp",
+                "potplayer",
+                "kodi",
+                "foobar",
+                "plex",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_sidebar_navigation_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "settings",
+                "task manager",
+                "control panel",
+                "event viewer",
+                "device manager",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_tree_navigation_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "device manager",
+                "event viewer",
+                "registry editor",
+                "regedit",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_table_surface_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "task manager",
+                "resource monitor",
+                "performance monitor",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_form_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "settings",
+                "control panel",
+                "installer",
+                "setup",
+                "wizard",
+                "preferences",
+                "options",
+                "properties",
+                "account",
+                "sign in",
+                "login",
+            )
+        )
+
+    @staticmethod
+    def _is_probable_editor_app_name(value: str) -> bool:
+        lowered = " ".join(str(value or "").strip().lower().split())
+        return any(
+            token in lowered
+            for token in (
+                "vscode",
+                "visual studio code",
+                "visual studio",
+                "pycharm",
+                "intellij",
+                "cursor",
+                "zed",
+                "notepad++",
+                "sublime",
+                "android studio",
+                "webstorm",
+                "rider",
+            )
+        )
 
     @staticmethod
     def _extract_email_addresses(text: str) -> List[str]:

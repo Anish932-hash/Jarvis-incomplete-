@@ -7177,6 +7177,10 @@ class DesktopBackendService:
         verify_text: str = "",
         retry_on_verification_failure: Optional[bool] = None,
         max_strategy_attempts: Optional[int] = None,
+        max_wizard_pages: Optional[int] = None,
+        allow_warning_pages: Optional[bool] = None,
+        max_form_pages: Optional[int] = None,
+        allow_destructive_forms: Optional[bool] = None,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -7204,6 +7208,14 @@ class DesktopBackendService:
                 payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
             if max_strategy_attempts is not None:
                 payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            if max_wizard_pages is not None:
+                payload["max_wizard_pages"] = int(max_wizard_pages or 6)
+            if allow_warning_pages is not None:
+                payload["allow_warning_pages"] = bool(allow_warning_pages)
+            if max_form_pages is not None:
+                payload["max_form_pages"] = int(max_form_pages or 5)
+            if allow_destructive_forms is not None:
+                payload["allow_destructive_forms"] = bool(allow_destructive_forms)
             return router.advise(payload)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
@@ -7224,6 +7236,10 @@ class DesktopBackendService:
         verify_text: str = "",
         retry_on_verification_failure: Optional[bool] = None,
         max_strategy_attempts: Optional[int] = None,
+        max_wizard_pages: Optional[int] = None,
+        allow_warning_pages: Optional[bool] = None,
+        max_form_pages: Optional[int] = None,
+        allow_destructive_forms: Optional[bool] = None,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -7251,6 +7267,14 @@ class DesktopBackendService:
                 payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
             if max_strategy_attempts is not None:
                 payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            if max_wizard_pages is not None:
+                payload["max_wizard_pages"] = int(max_wizard_pages or 6)
+            if allow_warning_pages is not None:
+                payload["allow_warning_pages"] = bool(allow_warning_pages)
+            if max_form_pages is not None:
+                payload["max_form_pages"] = int(max_form_pages or 5)
+            if allow_destructive_forms is not None:
+                payload["allow_destructive_forms"] = bool(allow_destructive_forms)
             return router.execute(payload)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
@@ -7262,6 +7286,104 @@ class DesktopBackendService:
         try:
             payload = router.app_profile_catalog(query=query, category=category, limit=limit)
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app profile payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_workflows(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.workflow_catalog(
+                query=query,
+                category=category,
+                app_name=app_name,
+                window_title=window_title,
+                limit=limit,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop workflow payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_surface_snapshot(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 24,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.surface_snapshot(
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                limit=limit,
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop surface payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_workflow_memory_status(
+        self,
+        *,
+        limit: int = 200,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.workflow_memory_snapshot(
+                limit=limit,
+                action=action,
+                app_name=app_name,
+                profile_id=profile_id,
+                intent=intent,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid workflow memory payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_desktop_workflow_memory(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        profile_id: str = "",
+        intent: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.workflow_memory_reset(
+                action=action,
+                app_name=app_name,
+                profile_id=profile_id,
+                intent=intent,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid workflow memory reset payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -36882,6 +37004,26 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         minimum=1,
                         maximum=4,
                     ) if "max_strategy_attempts" in query else None,
+                    max_wizard_pages=self._parse_int(
+                        str(query.get("max_wizard_pages", ["6"])[0]),
+                        6,
+                        minimum=1,
+                        maximum=12,
+                    ) if "max_wizard_pages" in query else None,
+                    allow_warning_pages=self._parse_bool(
+                        str(query.get("allow_warning_pages", ["0"])[0]),
+                        default=False,
+                    ) if "allow_warning_pages" in query else None,
+                    max_form_pages=self._parse_int(
+                        str(query.get("max_form_pages", ["5"])[0]),
+                        5,
+                        minimum=1,
+                        maximum=10,
+                    ) if "max_form_pages" in query else None,
+                    allow_destructive_forms=self._parse_bool(
+                        str(query.get("allow_destructive_forms", ["0"])[0]),
+                        default=False,
+                    ) if "allow_destructive_forms" in query else None,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -36893,6 +37035,41 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     limit=limit,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/desktop/workflows":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                payload = self.server.service.desktop_workflows(
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    window_title=str(query.get("window_title", [""])[0] or "").strip(),
+                    limit=limit,
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/desktop/surfaces":
+                limit = self._parse_int(str(query.get("limit", ["24"])[0]), 24, minimum=1, maximum=80)
+                payload = self.server.service.desktop_surface_snapshot(
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    window_title=str(query.get("window_title", [""])[0] or "").strip(),
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    limit=limit,
+                    include_observation=self._parse_bool(str(query.get("include_observation", ["1"])[0]), default=True),
+                    include_elements=self._parse_bool(str(query.get("include_elements", ["1"])[0]), default=True),
+                    include_workflow_probes=self._parse_bool(str(query.get("include_workflow_probes", ["1"])[0]), default=True),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/runtime/desktop-workflows":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
+                payload = self.server.service.desktop_workflow_memory_status(
+                    limit=limit,
+                    action=str(query.get("action", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    profile_id=str(query.get("profile_id", [""])[0] or "").strip(),
+                    intent=str(query.get("intent", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
             if path == "/models/local-inventory":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
@@ -38383,6 +38560,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     verify_text=str(body.get("verify_text", "") or "").strip(),
                     retry_on_verification_failure=bool(body.get("retry_on_verification_failure")) if "retry_on_verification_failure" in body else None,
                     max_strategy_attempts=self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
+                    max_wizard_pages=self._parse_int(str(body.get("max_wizard_pages", 6)), 6, minimum=1, maximum=12) if "max_wizard_pages" in body else None,
+                    allow_warning_pages=bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
+                    max_form_pages=self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,
+                    allow_destructive_forms=bool(body.get("allow_destructive_forms")) if "allow_destructive_forms" in body else None,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -38536,6 +38717,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 action = str(body.get("action", "") or "").strip()
                 query_text = str(body.get("query", "") or "").strip()
                 payload = self.server.service.reset_desktop_anchor_quarantine(key=key, action=action, query=query_text)
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-workflows/reset":
+                payload = self.server.service.reset_desktop_workflow_memory(
+                    action=str(body.get("action", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    profile_id=str(body.get("profile_id", "") or "").strip(),
+                    intent=str(body.get("intent", "") or "").strip(),
+                )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
 

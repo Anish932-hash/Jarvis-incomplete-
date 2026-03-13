@@ -134,14 +134,20 @@ class AccessibilityTools:
                 continue
             name = str(item.get("name", "")).strip()
             item_type = str(item.get("control_type", "")).strip().lower()
-            haystack = name.lower()
+            haystack = cls._search_text(item)
+            name_haystack = " ".join(name.lower().split())
+            automation_haystack = " ".join(str(item.get("automation_id", "") or "").strip().lower().split())
+            state_haystack = " ".join(str(item.get("state_text", "") or "").strip().lower().split())
+            value_haystack = " ".join(str(item.get("value_text", "") or "").strip().lower().split())
             if not haystack:
                 continue
 
-            if haystack == lowered:
+            if name_haystack == lowered or haystack == lowered:
                 score = 1.0
+            elif lowered in name_haystack:
+                score = 0.88 + min(0.1, len(lowered) / max(1.0, len(name_haystack)))
             elif lowered in haystack:
-                score = 0.8 + min(0.15, len(lowered) / max(1.0, len(haystack)))
+                score = 0.76 + min(0.18, len(lowered) / max(1.0, len(haystack)))
             else:
                 query_tokens = {token for token in lowered.split() if token}
                 name_tokens = {token for token in haystack.split() if token}
@@ -149,6 +155,8 @@ class AccessibilityTools:
                 if overlap <= 0:
                     continue
                 score = overlap / max(1.0, len(query_tokens))
+            if lowered and any(lowered in field for field in (automation_haystack, state_haystack, value_haystack) if field):
+                score += 0.04
             if control_type and item_type == control_type.lower():
                 score += 0.05
             ranked.append((score, dict(item, match_score=round(score, 6))))
@@ -263,9 +271,10 @@ class AccessibilityTools:
         name = str(row.get("name", "")).strip().lower()
         window_title = str(row.get("window_title", "")).strip().lower()
         control_type = str(row.get("control_type", "")).strip().lower()
+        query_haystack = AccessibilityTools._search_text(row)
         if title_filter and title_filter not in window_title:
             return False
-        if query_filter and query_filter not in name:
+        if query_filter and query_filter not in query_haystack:
             return False
         if type_filter and type_filter != control_type:
             return False
@@ -282,6 +291,16 @@ class AccessibilityTools:
         visible = None
         window_title = ""
         left = top = width = height = center_x = center_y = None
+        selected = None
+        checked = None
+        toggle_state = ""
+        expanded = None
+        value_text = ""
+        state_text = ""
+        range_value = None
+        range_min = None
+        range_max = None
+        properties: Dict[str, Any] = {}
 
         try:
             name = str(element.window_text() or "").strip()
@@ -317,6 +336,82 @@ class AccessibilityTools:
             visible = bool(element.is_visible())
         except Exception:
             visible = None
+        properties_raw = AccessibilityTools._safe_call(element, "get_properties")
+        if isinstance(properties_raw, dict):
+            properties = dict(properties_raw)
+        selected_raw = AccessibilityTools._first_present(
+            properties.get("is_selected"),
+            properties.get("selected"),
+            AccessibilityTools._safe_call(element, "is_selected"),
+            AccessibilityTools._safe_path(element, "iface_selection_item", "CurrentIsSelected"),
+        )
+        checked_raw = AccessibilityTools._first_present(
+            properties.get("is_checked"),
+            properties.get("checked"),
+            AccessibilityTools._safe_call(element, "is_checked"),
+        )
+        toggle_state_raw = AccessibilityTools._first_present(
+            properties.get("toggle_state"),
+            AccessibilityTools._safe_call(element, "get_toggle_state"),
+            AccessibilityTools._safe_path(element, "iface_toggle", "CurrentToggleState"),
+        )
+        expanded_raw = AccessibilityTools._first_present(
+            properties.get("is_expanded"),
+            properties.get("expanded"),
+            AccessibilityTools._safe_call(element, "is_expanded"),
+            AccessibilityTools._safe_path(element, "iface_expand_collapse", "CurrentExpandCollapseState"),
+        )
+        value_raw = AccessibilityTools._first_present(
+            properties.get("value"),
+            properties.get("legacy_value"),
+            AccessibilityTools._safe_call(element, "get_value"),
+            AccessibilityTools._safe_path(element, "iface_value", "CurrentValue"),
+            AccessibilityTools._safe_path(element, "iface_range_value", "CurrentValue"),
+        )
+        range_value_raw = AccessibilityTools._first_present(
+            properties.get("range_value"),
+            AccessibilityTools._safe_path(element, "iface_range_value", "CurrentValue"),
+        )
+        range_min_raw = AccessibilityTools._first_present(
+            properties.get("range_min"),
+            AccessibilityTools._safe_path(element, "iface_range_value", "CurrentMinimum"),
+        )
+        range_max_raw = AccessibilityTools._first_present(
+            properties.get("range_max"),
+            AccessibilityTools._safe_path(element, "iface_range_value", "CurrentMaximum"),
+        )
+        selected = AccessibilityTools._coerce_bool(selected_raw)
+        checked = AccessibilityTools._coerce_bool(checked_raw)
+        toggle_state = AccessibilityTools._normalize_toggle_state(toggle_state_raw)
+        if checked is None and toggle_state in {"on", "checked"}:
+            checked = True
+        elif checked is None and toggle_state in {"off", "unchecked"}:
+            checked = False
+        expanded = AccessibilityTools._coerce_expand_state(expanded_raw)
+        value_text = AccessibilityTools._normalize_text_value(value_raw)
+        range_value = AccessibilityTools._coerce_number(range_value_raw)
+        range_min = AccessibilityTools._coerce_number(range_min_raw)
+        range_max = AccessibilityTools._coerce_number(range_max_raw)
+        state_tokens: List[str] = []
+        if selected is True:
+            state_tokens.append("selected")
+        elif selected is False:
+            state_tokens.append("not selected")
+        if checked is True:
+            state_tokens.append("checked")
+        elif checked is False:
+            state_tokens.append("unchecked")
+        if toggle_state:
+            state_tokens.append(toggle_state)
+        if expanded is True:
+            state_tokens.append("expanded")
+        elif expanded is False:
+            state_tokens.append("collapsed")
+        if value_text:
+            state_tokens.extend(["value", value_text])
+        elif range_value is not None:
+            state_tokens.extend(["value", str(range_value)])
+        state_text = " ".join(token for token in state_tokens if token)
         if not window_title:
             window_title = name
 
@@ -335,6 +430,15 @@ class AccessibilityTools:
             "handle": handle,
             "enabled": enabled,
             "visible": visible,
+            "selected": selected,
+            "checked": checked,
+            "toggle_state": toggle_state,
+            "expanded": expanded,
+            "value_text": value_text,
+            "state_text": state_text,
+            "range_value": range_value,
+            "range_min": range_min,
+            "range_max": range_max,
             "left": left,
             "top": top,
             "width": width,
@@ -344,6 +448,144 @@ class AccessibilityTools:
             "captured_at": datetime_now_iso(),
         }
         return {key: value for key, value in payload.items() if value not in {None, ""}}
+
+    @staticmethod
+    def _safe_call(target: Any, attr_name: str) -> Any:
+        if target is None or not attr_name:
+            return None
+        try:
+            attr = getattr(target, attr_name)
+        except Exception:
+            return None
+        if callable(attr):
+            try:
+                return attr()
+            except Exception:
+                return None
+        return attr
+
+    @staticmethod
+    def _safe_path(target: Any, *parts: str) -> Any:
+        current = target
+        for part in parts:
+            if current is None or not part:
+                return None
+            try:
+                current = getattr(current, part)
+            except Exception:
+                return None
+        return current
+
+    @staticmethod
+    def _first_present(*values: Any) -> Any:
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            return value
+        return None
+
+    @staticmethod
+    def _normalize_text_value(value: Any) -> str:
+        if value is None:
+            return ""
+        numeric = AccessibilityTools._coerce_number(value)
+        if numeric is not None:
+            return str(numeric)
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if int(value) in {0, 1}:
+                return bool(int(value))
+            return None
+        clean = " ".join(str(value or "").strip().lower().split())
+        if clean in {"true", "yes", "on", "checked", "selected", "expanded", "open"}:
+            return True
+        if clean in {"false", "no", "off", "unchecked", "unselected", "collapsed", "closed"}:
+            return False
+        return None
+
+    @staticmethod
+    def _coerce_expand_state(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            state = int(value)
+            if state in {1, 2}:
+                return True
+            if state in {0, 3}:
+                return False
+            return None
+        clean = " ".join(str(value or "").strip().lower().split())
+        if clean in {"expanded", "partially expanded", "open", "opened"}:
+            return True
+        if clean in {"collapsed", "closed", "leaf", "leaf node"}:
+            return False
+        return AccessibilityTools._coerce_bool(value)
+
+    @staticmethod
+    def _coerce_number(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value) if value.is_integer() else round(value, 6)
+        clean = str(value).strip().rstrip("%")
+        if not clean:
+            return None
+        try:
+            number = float(clean)
+        except Exception:
+            return None
+        return int(number) if number.is_integer() else round(number, 6)
+
+    @staticmethod
+    def _normalize_toggle_state(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        if isinstance(value, (int, float)):
+            mapping = {0: "off", 1: "on", 2: "indeterminate"}
+            return mapping.get(int(value), str(int(value)))
+        clean = " ".join(str(value or "").strip().lower().split())
+        mapping = {
+            "0": "off",
+            "1": "on",
+            "2": "indeterminate",
+            "true": "on",
+            "false": "off",
+            "checked": "checked",
+            "unchecked": "unchecked",
+        }
+        return mapping.get(clean, clean)
+
+    @staticmethod
+    def _search_text(row: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        for field in (
+            "name",
+            "automation_id",
+            "class_name",
+            "window_title",
+            "control_type",
+            "state_text",
+            "value_text",
+        ):
+            value = str(row.get(field, "") or "").strip()
+            if value:
+                parts.append(value.replace("_", " ").replace("-", " "))
+        if row.get("range_value") is not None:
+            parts.append(str(row.get("range_value")))
+        return " ".join(" ".join(parts).strip().lower().split())
 
     @staticmethod
     def _pywinauto_desktop():
