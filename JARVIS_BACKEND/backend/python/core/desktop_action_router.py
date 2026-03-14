@@ -2843,6 +2843,11 @@ class DesktopActionRouter:
                 args.update(runtime_overrides.get("arg_updates", {}))
             warnings.extend([str(item).strip() for item in runtime_overrides.get("warnings", []) if str(item).strip()])
             surface_preflight["target_state_ready"] = bool(runtime_overrides.get("target_state_ready", False))
+            surface_preflight["form_target_state"] = (
+                runtime_overrides.get("form_target_state", {})
+                if isinstance(runtime_overrides.get("form_target_state", {}), dict)
+                else {}
+            )
             if bool(runtime_overrides.get("target_state_ready", False)):
                 surface_preflight["prep_steps"] = []
                 surface_preflight["prep_actions"] = []
@@ -3051,6 +3056,7 @@ class DesktopActionRouter:
             },
             "surface_snapshot": surface_snapshot,
             "safety_signals": safety_signals,
+            "form_target_state": surface_preflight.get("form_target_state", {}) if isinstance(surface_preflight.get("form_target_state", {}), dict) else {},
             "surface_branch": {
                 "enabled": bool(surface_preflight.get("enabled", False)),
                 "surface_flag": str(surface_preflight.get("surface_flag", "") or ""),
@@ -3060,6 +3066,7 @@ class DesktopActionRouter:
                 "prep_actions": list(surface_preflight.get("prep_actions", [])),
                 "target_query_already_active": bool(surface_preflight.get("target_query_already_active", False)),
                 "target_state_ready": bool(surface_preflight.get("target_state_ready", False)),
+                "form_target_state": surface_preflight.get("form_target_state", {}) if isinstance(surface_preflight.get("form_target_state", {}), dict) else {},
             },
             "verification_plan": self._verification_plan(
                 args=args,
@@ -3372,6 +3379,8 @@ class DesktopActionRouter:
                     "max_strategy_attempts": ("max_strategy_attempts",),
                     "max_wizard_pages": ("max_wizard_pages",),
                     "allow_warning_pages": ("allow_warning_pages",),
+                    "form_target_plan": ("form_target_plan",),
+                    "expected_form_target_count": ("expected_form_target_count",),
                     "control_type": ("control_type",),
                     "element_id": ("element_id",),
                     "include_targets": ("include_targets",),
@@ -3426,6 +3435,8 @@ class DesktopActionRouter:
             "allow_warning_pages": bool(raw.get("allow_warning_pages", False)),
             "max_form_pages": max(1, min(int(raw.get("max_form_pages", 5) or 5), 10)),
             "allow_destructive_forms": bool(raw.get("allow_destructive_forms", False)),
+            "form_target_plan": [dict(row) for row in raw.get("form_target_plan", []) if isinstance(row, dict)] if isinstance(raw.get("form_target_plan", []), list) else [],
+            "expected_form_target_count": max(0, int(raw.get("expected_form_target_count", 0) or 0)),
             "control_type": str(raw.get("control_type", "") or "").strip(),
             "element_id": str(raw.get("element_id", "") or "").strip(),
             "include_targets": bool(raw.get("include_targets", False)),
@@ -3553,6 +3564,18 @@ class DesktopActionRouter:
         max_pages = max(1, min(int(args.get("max_wizard_pages", 6) or 6), 12))
         allow_warning_pages = bool(args.get("allow_warning_pages", False))
         pre_context = self._capture_verification_context(args=args, advice=advice)
+        wizard_window_hint = str(args.get("window_title", "") or "").strip()
+        wizard_window_locked = False
+
+        def _remember_wizard_window(summary: Dict[str, Any]) -> None:
+            nonlocal wizard_window_hint, wizard_window_locked
+            if not isinstance(summary, dict):
+                return
+            hinted_title = str(summary.get("window_title", "") or "").strip()
+            if hinted_title:
+                wizard_window_hint = hinted_title
+            if bool(summary.get("window_adopted", False)):
+                wizard_window_locked = True
 
         bootstrap_plan = [dict(step) for step in advice.get("execution_plan", []) if isinstance(step, dict)]
         if bootstrap_plan:
@@ -3599,16 +3622,23 @@ class DesktopActionRouter:
         last_snapshot = self._wizard_flow_snapshot(args=args, advice=advice)
         for page_index in range(1, max_pages + 1):
             page_args = dict(args)
+            if wizard_window_hint:
+                page_args["window_title"] = wizard_window_hint
+            if wizard_window_locked and wizard_window_hint:
+                page_args["app_name"] = ""
+                page_args["focus_first"] = True
             page_args["action"] = "complete_wizard_page"
             page_args["_provided_fields"] = self._dedupe_strings(
                 list(page_args.get("_provided_fields", [])) + ["action"]
             )
             page_advice = self.advise(page_args)
-            page_snapshot = page_advice.get("surface_snapshot", {}) if isinstance(page_advice.get("surface_snapshot", {}), dict) else last_snapshot
+            page_snapshot = self._wizard_flow_snapshot(args=page_args, advice=page_advice)
+            page_advice["surface_snapshot"] = page_snapshot
             page_state = page_snapshot.get("wizard_page_state", {}) if isinstance(page_snapshot.get("wizard_page_state", {}), dict) else {}
             safety_signals = page_snapshot.get("safety_signals", {}) if isinstance(page_snapshot.get("safety_signals", {}), dict) else {}
             surface_flags = page_snapshot.get("surface_flags", {}) if isinstance(page_snapshot.get("surface_flags", {}), dict) else {}
             before_summary = self._wizard_flow_summary(snapshot=page_snapshot)
+            _remember_wizard_window(before_summary)
             page_record: Dict[str, Any] = {
                 "page_index": page_index,
                 "before": before_summary,
@@ -3617,6 +3647,56 @@ class DesktopActionRouter:
             }
 
             if not bool(surface_flags.get("wizard_surface_visible", False)):
+                dialog_followup = self._resolve_wizard_dialog_interstitial(
+                    args=page_args,
+                    snapshot=page_snapshot,
+                    page_index=page_index,
+                )
+                if bool(dialog_followup.get("handled", False)):
+                    dialog_execution = dialog_followup.get("execution", {}) if isinstance(dialog_followup.get("execution", {}), dict) else {}
+                    dialog_after_snapshot = dialog_followup.get("after_snapshot", {}) if isinstance(dialog_followup.get("after_snapshot", {}), dict) else page_snapshot
+                    dialog_after_summary = dialog_followup.get("after_summary", {}) if isinstance(dialog_followup.get("after_summary", {}), dict) else before_summary
+                    _remember_wizard_window(dialog_after_summary)
+                    results.extend(dialog_execution.get("results", []) if isinstance(dialog_execution.get("results", []), list) else [])
+                    page_record["after"] = dialog_after_summary
+                    page_record["status"] = str(dialog_followup.get("status", "dialog_resolved") or "dialog_resolved")
+                    page_record["message"] = str(dialog_followup.get("message", "") or "")
+                    page_record["progressed"] = bool(dialog_followup.get("progressed", False))
+                    page_record["dialog_followup"] = {
+                        "action": str(dialog_followup.get("action", "") or "").strip(),
+                        "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
+                        "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                        "route_mode": str(dialog_followup.get("route_mode", "") or "").strip(),
+                    }
+                    page_record["executed_actions"] = [
+                        str(row.get("action", "") or "").strip()
+                        for row in dialog_execution.get("results", [])
+                        if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                    ]
+                    page_history.append(page_record)
+                    mission_warnings.extend([str(item).strip() for item in dialog_followup.get("warnings", []) if str(item).strip()])
+                    last_snapshot = dialog_after_snapshot
+                    if not bool(dialog_after_summary.get("wizard_visible", False)) and not bool(dialog_after_summary.get("dialog_visible", False)):
+                        completed = True
+                        message = "wizard flow completed and the setup surface closed"
+                        break
+                    continue
+                if bool(dialog_followup.get("blocked", False)):
+                    stop_reason_code = str(dialog_followup.get("stop_reason_code", "") or "wizard_dialog_review_required")
+                    stop_reason = str(dialog_followup.get("stop_reason", "") or "wizard mission paused on an interstitial dialog that requires review")
+                    page_record["status"] = "blocked"
+                    page_record["stop_reason_code"] = stop_reason_code
+                    page_record["stop_reason"] = stop_reason
+                    page_record["dialog_followup"] = {
+                        "blocked": True,
+                        "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
+                        "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                    }
+                    if stop_reason:
+                        mission_warnings.append(stop_reason)
+                    page_history.append(page_record)
+                    last_snapshot = page_snapshot
+                    break
                 if page_index == 1 and not results:
                     stop_reason_code = "wizard_not_visible"
                     stop_reason = "No active setup wizard surface could be detected after focusing the requested app."
@@ -3624,6 +3704,7 @@ class DesktopActionRouter:
                     page_record["stop_reason_code"] = stop_reason_code
                     page_record["stop_reason"] = stop_reason
                     page_history.append(page_record)
+                    last_snapshot = page_snapshot
                 else:
                     completed = True
                     message = "wizard flow completed and the setup surface closed"
@@ -3668,6 +3749,7 @@ class DesktopActionRouter:
             results.extend(page_execution.get("results", []) if isinstance(page_execution.get("results", []), list) else [])
             after_snapshot = self._wizard_flow_snapshot(args=page_args, advice=page_advice)
             after_summary = self._wizard_flow_summary(snapshot=after_snapshot)
+            _remember_wizard_window(after_summary)
             progressed = self._wizard_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_snapshot)
             page_record["after"] = after_summary
             page_record["status"] = str(page_execution.get("status", "success") or "success")
@@ -3687,14 +3769,21 @@ class DesktopActionRouter:
                 stop_reason = str(page_execution.get("message", "wizard page execution failed") or "wizard page execution failed")
                 break
 
-            if progressed or not bool(after_summary.get("wizard_visible", False)):
+            interstitial_dialog_only = bool(after_summary.get("dialog_visible", False)) and not bool(after_summary.get("wizard_visible", False))
+            if (
+                progressed
+                and not interstitial_dialog_only
+            ) or (
+                not bool(after_summary.get("wizard_visible", False))
+                and not bool(after_summary.get("dialog_visible", False))
+            ):
                 pages_completed += 1
-            if not bool(after_summary.get("wizard_visible", False)):
+            if not bool(after_summary.get("wizard_visible", False)) and not bool(after_summary.get("dialog_visible", False)):
                 completed = True
                 message = "wizard flow completed and the setup surface closed"
                 last_snapshot = after_snapshot
                 break
-            if not progressed:
+            if not progressed and not bool(after_summary.get("dialog_visible", False)):
                 stop_reason_code = "wizard_page_stalled"
                 stop_reason = "Wizard page execution completed, but the setup surface did not advance to a new state."
                 break
@@ -3752,11 +3841,142 @@ class DesktopActionRouter:
             },
         }
 
+    def _resolve_wizard_dialog_interstitial(
+        self,
+        *,
+        args: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        page_index: int,
+    ) -> Dict[str, Any]:
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        if not bool(flags.get("dialog_visible", False)):
+            return {"handled": False, "blocked": False}
+
+        destructive_warning_visible = bool(safety_signals.get("destructive_warning_visible", False))
+        warning_surface_visible = bool(safety_signals.get("warning_surface_visible", False))
+        elevation_prompt_visible = bool(safety_signals.get("elevation_prompt_visible", False))
+        preferred_confirmation_button = str(safety_signals.get("preferred_confirmation_button", "") or "").strip()
+        preferred_confirmation_target = safety_signals.get("preferred_confirmation_target", {}) if isinstance(safety_signals.get("preferred_confirmation_target", {}), dict) else {}
+        preferred_dismiss_button = str(safety_signals.get("preferred_dismiss_button", "") or "").strip()
+        preferred_dismiss_target = safety_signals.get("preferred_dismiss_target", {}) if isinstance(safety_signals.get("preferred_dismiss_target", {}), dict) else {}
+
+        action = ""
+        button_label = ""
+        button_role = ""
+        button_target: Dict[str, Any] = {}
+        normalized_dismiss = self._normalize_probe_text(preferred_dismiss_button)
+        if preferred_confirmation_button and not destructive_warning_visible and not warning_surface_visible and not elevation_prompt_visible:
+            action = "press_dialog_button"
+            button_label = preferred_confirmation_button
+            button_role = "confirm"
+            button_target = preferred_confirmation_target
+        elif preferred_dismiss_button and normalized_dismiss in {"close", "dismiss"} and not destructive_warning_visible and not warning_surface_visible and not elevation_prompt_visible:
+            action = "press_dialog_button"
+            button_label = preferred_dismiss_button
+            button_role = "dismiss"
+            button_target = preferred_dismiss_target
+        else:
+            blocker_message = "Wizard mission paused on an interstitial dialog that requires review before automation can continue."
+            blocker_code = "wizard_dialog_review_required"
+            if elevation_prompt_visible:
+                blocker_code = "elevation_prompt_requires_approval"
+                blocker_message = "Wizard mission paused because an interstitial dialog is requesting elevated privileges."
+            elif destructive_warning_visible or warning_surface_visible:
+                blocker_code = "wizard_dialog_review_required"
+                blocker_message = "Wizard mission paused on an interstitial warning dialog so JARVIS does not auto-confirm a risky step."
+            elif not preferred_confirmation_button and not preferred_dismiss_button:
+                blocker_code = "wizard_dialog_route_unavailable"
+                blocker_message = "Wizard mission found an interstitial dialog, but it does not expose a reliable button target for autonomous continuation."
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": blocker_code,
+                "stop_reason": blocker_message,
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "confirm" if preferred_confirmation_button else ("dismiss" if preferred_dismiss_button else ""),
+            }
+
+        dialog_args = dict(args)
+        summary = self._wizard_flow_summary(snapshot=snapshot)
+        dialog_window_title = str(summary.get("window_title", "") or "").strip()
+        if dialog_window_title:
+            dialog_args["window_title"] = dialog_window_title
+            dialog_args["app_name"] = ""
+            dialog_args["focus_first"] = True
+        dialog_args["action"] = action
+        dialog_args["query"] = button_label
+        dialog_args["control_type"] = "Button"
+        element_id = str(button_target.get("element_id", "") or "").strip()
+        if element_id:
+            dialog_args["element_id"] = element_id
+        dialog_args["_provided_fields"] = self._dedupe_strings(
+            list(dialog_args.get("_provided_fields", []))
+            + ["action", "query", "control_type"]
+            + ([] if not element_id else ["element_id"])
+        )
+
+        dialog_advice = self.advise(dialog_args)
+        if dialog_advice.get("status") != "success":
+            blockers = "; ".join(str(item).strip() for item in dialog_advice.get("blockers", []) if str(item).strip())
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "wizard_dialog_route_unavailable",
+                "stop_reason": blockers or str(dialog_advice.get("message", "wizard dialog route unavailable") or "wizard dialog route unavailable"),
+                "button_label": button_label,
+                "button_role": button_role,
+            }
+
+        dialog_execution = self._run_execution_plan(
+            plan=dialog_advice.get("execution_plan", []),
+            result_metadata={
+                "wizard_stage": "dialog_followup",
+                "wizard_page_index": page_index,
+                "dialog_button": button_label,
+                "dialog_button_role": button_role,
+            },
+        )
+        after_snapshot = self._wizard_flow_snapshot(args=dialog_args, advice=dialog_advice)
+        after_summary = self._wizard_flow_summary(snapshot=after_snapshot)
+        progressed = self._wizard_flow_progressed(before_snapshot=snapshot, after_snapshot=after_snapshot)
+        if bool(flags.get("dialog_visible", False)) and not bool(after_summary.get("dialog_visible", False)):
+            progressed = True
+        if str(dialog_execution.get("status", "success") or "success") != "success":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "wizard_dialog_execution_failed",
+                "stop_reason": str(dialog_execution.get("message", "wizard dialog execution failed") or "wizard dialog execution failed"),
+                "button_label": button_label,
+                "button_role": button_role,
+            }
+
+        return {
+            "handled": str(dialog_execution.get("status", "success") or "success") == "success",
+            "blocked": False,
+            "action": action,
+            "button_label": button_label,
+            "button_role": button_role,
+            "route_mode": str(dialog_advice.get("route_mode", "") or "").strip(),
+            "status": "dialog_confirmed" if button_role == "confirm" else "dialog_dismissed",
+            "message": (
+                f"Resolved the interstitial dialog through '{button_label}' and continued the wizard mission."
+                if button_label
+                else "Resolved the interstitial dialog and continued the wizard mission."
+            ),
+            "warnings": [str(item).strip() for item in dialog_advice.get("warnings", []) if str(item).strip()],
+            "execution": dialog_execution,
+            "after_snapshot": after_snapshot,
+            "after_summary": after_summary,
+            "progressed": progressed,
+        }
+
     def _wizard_flow_snapshot(self, *, args: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
         target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
         focus_title = str(
-            target_window.get("title", "")
-            or args.get("window_title", "")
+            args.get("window_title", "")
+            or target_window.get("title", "")
             or args.get("app_name", "")
             or ""
         ).strip()
@@ -3777,6 +3997,61 @@ class DesktopActionRouter:
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
         active_matches = self._window_matches(active_window, app_name=app_name, window_title=window_title or focus_title)
+        adopted_title = str(active_window.get("title", "") or "").strip()
+        normalized_adopted = self._normalize_probe_text(adopted_title)
+        normalized_focus = self._normalize_probe_text(focus_title)
+        normalized_target = self._normalize_probe_text(target_window.get("title", ""))
+        active_hwnd = self._to_int(active_window.get("hwnd"))
+        target_hwnd = self._to_int(target_window.get("hwnd"))
+        should_try_adopt = bool(
+            adopted_title
+            and (
+                not active_matches
+                or (
+                    active_hwnd is not None
+                    and target_hwnd is not None
+                    and active_hwnd != target_hwnd
+                    and normalized_adopted != normalized_target
+                )
+            )
+        )
+        if should_try_adopt:
+            if adopted_title and (normalized_adopted != normalized_focus or active_hwnd != target_hwnd):
+                adopted_snapshot = self.surface_snapshot(
+                    app_name="",
+                    window_title=adopted_title,
+                    query="",
+                    limit=18,
+                    include_observation=True,
+                    include_elements=True,
+                    include_workflow_probes=True,
+                    preferred_actions=["complete_wizard_flow", "complete_wizard_page", "finish_wizard", "next_wizard_step", "dismiss_dialog"],
+                )
+                adopted_flags = adopted_snapshot.get("surface_flags", {}) if isinstance(adopted_snapshot.get("surface_flags", {}), dict) else {}
+                adopted_page_state = adopted_snapshot.get("wizard_page_state", {}) if isinstance(adopted_snapshot.get("wizard_page_state", {}), dict) else {}
+                adopted_target_window = adopted_snapshot.get("target_window", {}) if isinstance(adopted_snapshot.get("target_window", {}), dict) else {}
+                adopted_active_window = adopted_snapshot.get("active_window", {}) if isinstance(adopted_snapshot.get("active_window", {}), dict) else {}
+                adopted_actionable_surface = bool(
+                    adopted_flags.get("wizard_surface_visible", False)
+                    or adopted_flags.get("dialog_visible", False)
+                    or adopted_page_state
+                )
+                if adopted_actionable_surface and (adopted_target_window or adopted_active_window):
+                    adopted_active_title = str(adopted_active_window.get("title", "") or adopted_title).strip()
+                    adopted_target_title = str(adopted_target_window.get("title", "") or "").strip()
+                    resolved_adopted_title = adopted_active_title or adopted_target_title or adopted_title
+                    adopted_snapshot["adopted_wizard_window"] = {
+                        "title": resolved_adopted_title,
+                        "hwnd": self._to_int(adopted_active_window.get("hwnd")) or self._to_int(adopted_target_window.get("hwnd")),
+                        "previous_title": focus_title,
+                        "reason": "active_child_window",
+                    }
+                    snapshot = adopted_snapshot
+                    candidate_windows = snapshot.get("candidate_windows", []) if isinstance(snapshot.get("candidate_windows", []), list) else []
+                    active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+                    target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+                    target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
+                    active_matches = self._window_matches(active_window, app_name=app_name, window_title=adopted_title)
         if not target_visible and not active_matches:
             flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
             snapshot["surface_flags"] = {
@@ -3794,27 +4069,46 @@ class DesktopActionRouter:
         flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
         page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
         observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        adopted_window = snapshot.get("adopted_wizard_window", {}) if isinstance(snapshot.get("adopted_wizard_window", {}), dict) else {}
         return {
             "wizard_visible": bool(flags.get("wizard_surface_visible", False)),
+            "dialog_visible": bool(flags.get("dialog_visible", False)),
             "page_kind": str(page_state.get("page_kind", "") or "").strip(),
             "advance_action": str(page_state.get("advance_action", "") or "").strip(),
             "ready_for_advance": bool(page_state.get("ready_for_advance", False)),
             "pending_requirement_count": int(page_state.get("pending_requirement_count", 0) or 0),
             "preferred_confirmation_button": str(page_state.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dialog_confirmation_button": str(safety_signals.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dialog_dismiss_button": str(safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+            "window_title": str(adopted_window.get("title", "") or target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "window_hwnd": int(adopted_window.get("hwnd", 0) or target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+            "window_adopted": bool(adopted_window),
             "autonomous_progress_supported": bool(page_state.get("autonomous_progress_supported", False)),
             "autonomous_blocker": str(page_state.get("autonomous_blocker", "") or "").strip(),
             "manual_input_likely": bool(page_state.get("manual_input_likely", False)),
+            "warning_surface_visible": bool(safety_signals.get("warning_surface_visible", False)),
+            "destructive_warning_visible": bool(safety_signals.get("destructive_warning_visible", False)),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
         }
 
     @classmethod
-    def _wizard_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str]:
+    def _wizard_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, str, str, str, int, bool, bool]:
         summary = cls._wizard_flow_summary(snapshot=snapshot)
         return (
             str(summary.get("screen_hash", "") or "").strip(),
             str(summary.get("page_kind", "") or "").strip(),
             int(summary.get("pending_requirement_count", 0) or 0),
             str(summary.get("preferred_confirmation_button", "") or "").strip().lower(),
+            bool(summary.get("dialog_visible", False)),
+            str(summary.get("preferred_dialog_confirmation_button", "") or "").strip().lower(),
+            str(summary.get("preferred_dialog_dismiss_button", "") or "").strip().lower(),
+            str(summary.get("window_title", "") or "").strip().lower(),
+            int(summary.get("window_hwnd", 0) or 0),
+            bool(summary.get("warning_surface_visible", False)),
+            bool(summary.get("destructive_warning_visible", False)),
         )
 
     @classmethod
@@ -3934,6 +4228,59 @@ class DesktopActionRouter:
         max_pages = max(1, min(int(args.get("max_form_pages", 5) or 5), 10))
         allow_destructive_forms = bool(args.get("allow_destructive_forms", False))
         pre_context = self._capture_verification_context(args=args, advice=advice)
+        requested_form_targets = self._normalize_form_target_plan(args.get("form_target_plan", []))
+        remaining_form_targets = [dict(row) for row in requested_form_targets]
+        resolved_form_targets: List[Dict[str, Any]] = []
+        visited_form_tabs: set[str] = set()
+        visited_form_navigation_targets: set[str] = set()
+        visited_form_drilldown_targets: set[str] = set()
+        visited_form_expandable_groups: set[str] = set()
+        form_scroll_hunts_used = 0
+        max_form_scroll_hunts = max(1, min(max_pages, 4))
+        form_window_hint = str(args.get("window_title", "") or "").strip()
+        form_window_locked = False
+
+        def _remember_form_window(summary: Dict[str, Any]) -> None:
+            nonlocal form_window_hint, form_window_locked
+            if not isinstance(summary, dict):
+                return
+            hinted_title = str(summary.get("window_title", "") or "").strip()
+            if hinted_title:
+                form_window_hint = hinted_title
+            if bool(summary.get("window_adopted", False)):
+                form_window_locked = True
+
+        def _record_resolved_targets(targets: List[Dict[str, Any]]) -> None:
+            seen_keys = {self._form_target_key(row) for row in resolved_form_targets if isinstance(row, dict)}
+            for row in targets:
+                if not isinstance(row, dict):
+                    continue
+                clean = {
+                    "action": str(row.get("action", "") or "").strip(),
+                    "query": str(row.get("query", "") or "").strip(),
+                    "text": str(row.get("text", "") or "").strip(),
+                    "family": str(row.get("family", "") or "").strip(),
+                }
+                target_key = self._form_target_key(clean)
+                if not target_key or target_key in seen_keys:
+                    continue
+                seen_keys.add(target_key)
+                resolved_form_targets.append(clean)
+
+        def _remove_resolved_targets(targets: List[Dict[str, Any]]) -> None:
+            nonlocal remaining_form_targets
+            resolved_keys = {
+                self._form_target_key(row)
+                for row in targets
+                if isinstance(row, dict) and self._form_target_key(row)
+            }
+            if not resolved_keys:
+                return
+            remaining_form_targets = [
+                row
+                for row in remaining_form_targets
+                if self._form_target_key(row) not in resolved_keys
+            ]
 
         bootstrap_plan = [dict(step) for step in advice.get("execution_plan", []) if isinstance(step, dict)]
         if bootstrap_plan:
@@ -3980,24 +4327,58 @@ class DesktopActionRouter:
         last_snapshot = self._form_flow_snapshot(args=args, advice=advice)
         for page_index in range(1, max_pages + 1):
             page_args = dict(args)
+            if form_window_hint:
+                page_args["window_title"] = form_window_hint
+            if form_window_locked and form_window_hint:
+                page_args["app_name"] = ""
+                page_args["focus_first"] = True
             page_args["action"] = "complete_form_page"
+            if remaining_form_targets:
+                page_args["form_target_plan"] = [dict(row) for row in remaining_form_targets]
             page_args["_provided_fields"] = self._dedupe_strings(
-                list(page_args.get("_provided_fields", [])) + ["action"]
+                list(page_args.get("_provided_fields", [])) + ["action", *([] if not remaining_form_targets else ["form_target_plan"])]
             )
             page_advice = self.advise(page_args)
-            page_snapshot = page_advice.get("surface_snapshot", {}) if isinstance(page_advice.get("surface_snapshot", {}), dict) else last_snapshot
+            page_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+            page_advice["surface_snapshot"] = page_snapshot
             page_state = page_snapshot.get("form_page_state", {}) if isinstance(page_snapshot.get("form_page_state", {}), dict) else {}
             safety_signals = page_snapshot.get("safety_signals", {}) if isinstance(page_snapshot.get("safety_signals", {}), dict) else {}
             surface_flags = page_snapshot.get("surface_flags", {}) if isinstance(page_snapshot.get("surface_flags", {}), dict) else {}
+            raw_page_target_state = page_advice.get("form_target_state", {}) if isinstance(page_advice.get("form_target_state", {}), dict) else {}
+            live_page_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=page_snapshot)
+            page_target_state = {
+                **raw_page_target_state,
+                **live_page_target_state,
+            } if raw_page_target_state or live_page_target_state else {}
+            if page_target_state:
+                page_advice["form_target_state"] = page_target_state
             before_summary = self._form_flow_summary(snapshot=page_snapshot)
+            _remember_form_window(before_summary)
+            selected_tab = str(page_state.get("selected_tab", "") or "").strip()
+            if selected_tab:
+                visited_form_tabs.add(self._normalize_probe_text(selected_tab))
+            selected_navigation_target = str(page_state.get("selected_navigation_target", "") or "").strip()
+            if selected_navigation_target:
+                visited_form_navigation_targets.add(self._normalize_probe_text(selected_navigation_target))
             page_record: Dict[str, Any] = {
                 "page_index": page_index,
                 "before": before_summary,
                 "warnings": [str(item).strip() for item in page_advice.get("warnings", []) if str(item).strip()],
                 "recommended_actions": [str(item).strip() for item in page_snapshot.get("recommended_actions", []) if str(item).strip()] if isinstance(page_snapshot.get("recommended_actions", []), list) else [],
             }
+            if page_target_state:
+                page_record["target_state_before"] = page_target_state
+                resolved_before = page_target_state.get("resolved_targets", []) if isinstance(page_target_state.get("resolved_targets", []), list) else []
+                _record_resolved_targets(resolved_before)
+                _remove_resolved_targets(resolved_before)
 
-            if not bool(surface_flags.get("form_visible", False) or surface_flags.get("dialog_visible", False) or surface_flags.get("tab_page_visible", False)):
+            current_form_surface_visible = bool(
+                surface_flags.get("form_visible", False)
+                or surface_flags.get("dialog_visible", False)
+                or surface_flags.get("tab_page_visible", False)
+                or page_state
+            )
+            if not current_form_surface_visible:
                 if page_index == 1 and not results:
                     stop_reason_code = "form_not_visible"
                     stop_reason = "No active settings or dialog form surface could be detected after focusing the requested app."
@@ -4008,6 +4389,578 @@ class DesktopActionRouter:
                 else:
                     completed = True
                     message = "form flow completed and the settings surface closed"
+                break
+
+            dialog_followup = self._resolve_form_dialog_interstitial(
+                args=page_args,
+                snapshot=page_snapshot,
+                page_index=page_index,
+            )
+            if bool(dialog_followup.get("handled", False)):
+                dialog_execution = dialog_followup.get("execution", {}) if isinstance(dialog_followup.get("execution", {}), dict) else {}
+                dialog_after_snapshot = dialog_followup.get("after_snapshot", {}) if isinstance(dialog_followup.get("after_snapshot", {}), dict) else page_snapshot
+                dialog_after_summary = dialog_followup.get("after_summary", {}) if isinstance(dialog_followup.get("after_summary", {}), dict) else before_summary
+                _remember_form_window(dialog_after_summary)
+                results.extend(dialog_execution.get("results", []) if isinstance(dialog_execution.get("results", []), list) else [])
+                dialog_after_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=dialog_after_snapshot)
+                if dialog_after_target_state:
+                    page_record["target_state_after"] = dialog_after_target_state
+                    resolved_after = dialog_after_target_state.get("resolved_targets", []) if isinstance(dialog_after_target_state.get("resolved_targets", []), list) else []
+                    _record_resolved_targets(resolved_after)
+                    _remove_resolved_targets(resolved_after)
+                page_record["after"] = dialog_after_summary
+                page_record["status"] = str(dialog_followup.get("status", "dialog_confirmed") or "dialog_confirmed")
+                page_record["message"] = str(dialog_followup.get("message", "") or "")
+                page_record["progressed"] = bool(dialog_followup.get("progressed", False))
+                page_record["dialog_followup"] = {
+                    "action": str(dialog_followup.get("action", "") or "").strip(),
+                    "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
+                    "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                    "route_mode": str(dialog_followup.get("route_mode", "") or "").strip(),
+                }
+                page_record["executed_actions"] = [
+                    str(row.get("action", "") or "").strip()
+                    for row in dialog_execution.get("results", [])
+                    if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                ]
+                page_history.append(page_record)
+                mission_warnings.extend([str(item).strip() for item in dialog_followup.get("warnings", []) if str(item).strip()])
+                if bool(dialog_followup.get("progressed", False)) or not bool(dialog_after_summary.get("form_visible", False)):
+                    pages_completed += 1
+                last_snapshot = dialog_after_snapshot
+                if not bool(dialog_after_summary.get("form_visible", False)):
+                    completed = True
+                    message = "form flow completed and the settings surface closed"
+                    break
+                continue
+            if bool(dialog_followup.get("blocked", False)):
+                stop_reason_code = str(dialog_followup.get("stop_reason_code", "") or "form_dialog_review_required")
+                stop_reason = str(dialog_followup.get("stop_reason", "") or "form mission paused on an interstitial dialog that requires review")
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                page_record["dialog_followup"] = {
+                    "blocked": True,
+                    "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
+                    "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                }
+                if stop_reason:
+                    mission_warnings.append(stop_reason)
+                page_history.append(page_record)
+                last_snapshot = page_snapshot
+                break
+
+            remaining_target_count = int(page_target_state.get("remaining_count", 0) or 0) if isinstance(page_target_state, dict) else 0
+            visible_pending_target_count = int(page_target_state.get("visible_pending_count", 0) or 0) if isinstance(page_target_state, dict) else 0
+            hidden_requested_targets = bool(
+                remaining_form_targets
+                and remaining_target_count > 0
+                and visible_pending_target_count <= 0
+            )
+            tab_candidates = self._rank_form_target_tabs(
+                page_state=page_state,
+                remaining_targets=remaining_form_targets,
+                visited_tabs=visited_form_tabs,
+            )
+            tab_search_supported = int(page_state.get("tab_count", 0) or 0) > 1
+            tab_hunt_record: Optional[Dict[str, Any]] = None
+            reveal_progressed = False
+            if hidden_requested_targets and tab_search_supported:
+                tab_hunt_record = {
+                    "reason": "requested_targets_not_visible_on_current_tab",
+                    "selected_tab": selected_tab,
+                    "candidate_tabs": [
+                        {
+                            "name": str(row.get("name", "") or "").strip(),
+                            "match_score": float(row.get("match_score", 0.0) or 0.0),
+                            "fallback_candidate": bool(row.get("fallback_candidate", False)),
+                            "matched_targets": [dict(item) for item in row.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        }
+                        for row in tab_candidates[:6]
+                    ],
+                    "attempts": [],
+                }
+                for tab_candidate in tab_candidates[:4]:
+                    tab_name = str(tab_candidate.get("name", "") or "").strip()
+                    normalized_tab_name = self._normalize_probe_text(tab_name)
+                    if not tab_name:
+                        continue
+                    if normalized_tab_name:
+                        visited_form_tabs.add(normalized_tab_name)
+                    tab_args: Dict[str, Any] = {
+                        "query": tab_name,
+                        "control_type": "TabItem",
+                    }
+                    tab_element_id = str(tab_candidate.get("element_id", "") or "").strip()
+                    if tab_element_id:
+                        tab_args["element_id"] = tab_element_id
+                    tab_execution = self._run_execution_plan(
+                        plan=[
+                            self._plan_step(
+                                action="accessibility_invoke_element",
+                                args=tab_args,
+                                phase="act",
+                                optional=False,
+                                reason=f"Switch to the '{tab_name}' tab so JARVIS can keep hunting for the remaining requested settings targets.",
+                            )
+                        ],
+                        result_metadata={
+                            "form_stage": "tab_hunt",
+                            "form_page_index": page_index,
+                            "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                            "form_tab": tab_name,
+                        },
+                    )
+                    results.extend(tab_execution.get("results", []) if isinstance(tab_execution.get("results", []), list) else [])
+                    after_tab_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+                    after_tab_summary = self._form_flow_summary(snapshot=after_tab_snapshot)
+                    _remember_form_window(after_tab_summary)
+                    after_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_tab_snapshot)
+                    progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_tab_snapshot)
+                    tab_attempt = {
+                        "tab_name": tab_name,
+                        "match_score": float(tab_candidate.get("match_score", 0.0) or 0.0),
+                        "fallback_candidate": bool(tab_candidate.get("fallback_candidate", False)),
+                        "matched_targets": [dict(item) for item in tab_candidate.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        "status": str(tab_execution.get("status", "success") or "success"),
+                        "message": str(tab_execution.get("message", "") or ""),
+                        "progressed": progressed,
+                        "after": after_tab_summary,
+                    }
+                    if after_target_state:
+                        tab_attempt["target_state_after"] = after_target_state
+                        resolved_after = after_target_state.get("resolved_targets", []) if isinstance(after_target_state.get("resolved_targets", []), list) else []
+                        _record_resolved_targets(resolved_after)
+                        _remove_resolved_targets(resolved_after)
+                    tab_hunt_record["attempts"].append(tab_attempt)
+                    if str(tab_execution.get("status", "success") or "success") == "success" and progressed:
+                        page_record["tab_hunt"] = tab_hunt_record
+                        page_record["after"] = after_tab_summary
+                        page_record["status"] = "tab_switched"
+                        page_record["message"] = f"Switched to the '{tab_name}' tab to continue resolving the requested settings targets."
+                        page_record["progressed"] = True
+                        page_record["executed_actions"] = [
+                            str(row.get("action", "") or "").strip()
+                            for row in tab_execution.get("results", [])
+                            if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                        ]
+                        if after_target_state:
+                            page_record["target_state_after"] = after_target_state
+                        page_history.append(page_record)
+                        last_snapshot = after_tab_snapshot
+                        reveal_progressed = True
+                        break
+            if reveal_progressed:
+                continue
+
+            navigation_target_count = int(page_state.get("navigation_target_count", 0) or 0)
+            navigation_candidates = self._rank_form_navigation_targets(
+                page_state=page_state,
+                remaining_targets=remaining_form_targets,
+                visited_targets=visited_form_navigation_targets,
+            )
+            navigation_hunt_record: Optional[Dict[str, Any]] = None
+            if hidden_requested_targets and navigation_target_count > 0:
+                navigation_hunt_record = {
+                    "reason": "requested_targets_not_visible_in_current_section",
+                    "selected_navigation_target": selected_navigation_target,
+                    "candidate_targets": [
+                        {
+                            "name": str(row.get("name", "") or "").strip(),
+                            "navigation_action": str(row.get("navigation_action", "") or "").strip(),
+                            "navigation_role": str(row.get("navigation_role", "") or "").strip(),
+                            "match_score": float(row.get("match_score", 0.0) or 0.0),
+                            "matched_targets": [dict(item) for item in row.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        }
+                        for row in navigation_candidates[:6]
+                    ],
+                    "attempts": [],
+                }
+                for navigation_candidate in navigation_candidates[:4]:
+                    candidate_name = str(navigation_candidate.get("name", "") or "").strip()
+                    normalized_candidate_name = self._normalize_probe_text(candidate_name)
+                    navigation_action = str(navigation_candidate.get("navigation_action", "") or "").strip().lower()
+                    if not candidate_name or not navigation_action:
+                        continue
+                    if normalized_candidate_name:
+                        visited_form_navigation_targets.add(normalized_candidate_name)
+                    navigation_args: Dict[str, Any] = {"query": candidate_name}
+                    control_type = str(navigation_candidate.get("control_type", "") or "").strip()
+                    if navigation_action == "select_tree_item":
+                        navigation_args["control_type"] = "TreeItem"
+                    elif navigation_action == "select_list_item":
+                        navigation_args["control_type"] = "ListItem"
+                    elif control_type:
+                        navigation_args["control_type"] = control_type
+                    candidate_element_id = str(navigation_candidate.get("element_id", "") or "").strip()
+                    if candidate_element_id:
+                        navigation_args["element_id"] = candidate_element_id
+                    navigation_execution = self._run_execution_plan(
+                        plan=[
+                            self._plan_step(
+                                action="accessibility_invoke_element",
+                                args=navigation_args,
+                                phase="act",
+                                optional=False,
+                                reason=f"Switch to the '{candidate_name}' section so JARVIS can keep hunting for the remaining requested settings targets.",
+                            )
+                        ],
+                        result_metadata={
+                            "form_stage": "navigation_hunt",
+                            "form_page_index": page_index,
+                            "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                            "form_navigation_action": navigation_action,
+                            "form_navigation_target": candidate_name,
+                        },
+                    )
+                    results.extend(navigation_execution.get("results", []) if isinstance(navigation_execution.get("results", []), list) else [])
+                    after_navigation_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+                    after_navigation_summary = self._form_flow_summary(snapshot=after_navigation_snapshot)
+                    _remember_form_window(after_navigation_summary)
+                    after_navigation_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_navigation_snapshot)
+                    progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_navigation_snapshot)
+                    navigation_attempt = {
+                        "name": candidate_name,
+                        "navigation_action": navigation_action,
+                        "navigation_role": str(navigation_candidate.get("navigation_role", "") or "").strip(),
+                        "match_score": float(navigation_candidate.get("match_score", 0.0) or 0.0),
+                        "matched_targets": [dict(item) for item in navigation_candidate.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        "status": str(navigation_execution.get("status", "success") or "success"),
+                        "message": str(navigation_execution.get("message", "") or ""),
+                        "progressed": progressed,
+                        "after": after_navigation_summary,
+                    }
+                    if after_navigation_target_state:
+                        navigation_attempt["target_state_after"] = after_navigation_target_state
+                        resolved_after = after_navigation_target_state.get("resolved_targets", []) if isinstance(after_navigation_target_state.get("resolved_targets", []), list) else []
+                        _record_resolved_targets(resolved_after)
+                        _remove_resolved_targets(resolved_after)
+                    navigation_hunt_record["attempts"].append(navigation_attempt)
+                    if str(navigation_execution.get("status", "success") or "success") == "success" and progressed:
+                        page_record["navigation_hunt"] = navigation_hunt_record
+                        page_record["after"] = after_navigation_summary
+                        page_record["status"] = "navigation_switched"
+                        page_record["message"] = f"Switched to the '{candidate_name}' section to continue resolving the requested settings targets."
+                        page_record["progressed"] = True
+                        page_record["executed_actions"] = [
+                            str(row.get("action", "") or "").strip()
+                            for row in navigation_execution.get("results", [])
+                            if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                        ]
+                        if after_navigation_target_state:
+                            page_record["target_state_after"] = after_navigation_target_state
+                        page_history.append(page_record)
+                        last_snapshot = after_navigation_snapshot
+                        reveal_progressed = True
+                        break
+            if reveal_progressed:
+                continue
+
+            drilldown_target_count = int(page_state.get("drilldown_target_count", 0) or 0)
+            drilldown_candidates = self._rank_form_drilldown_targets(
+                page_state=page_state,
+                remaining_targets=remaining_form_targets,
+                visited_targets=visited_form_drilldown_targets,
+            )
+            drilldown_hunt_record: Optional[Dict[str, Any]] = None
+            if hidden_requested_targets and drilldown_target_count > 0:
+                drilldown_hunt_record = {
+                    "reason": "requested_targets_hidden_on_child_surface",
+                    "breadcrumb_path": [str(item).strip() for item in page_state.get("breadcrumb_path", []) if str(item).strip()] if isinstance(page_state.get("breadcrumb_path", []), list) else [],
+                    "candidate_targets": [
+                        {
+                            "name": str(row.get("name", "") or "").strip(),
+                            "drilldown_action": str(row.get("drilldown_action", "") or "").strip(),
+                            "invoke_action": str(row.get("invoke_action", "") or "").strip(),
+                            "match_score": float(row.get("match_score", 0.0) or 0.0),
+                            "fallback_candidate": bool(row.get("fallback_candidate", False)),
+                            "matched_targets": [dict(item) for item in row.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        }
+                        for row in drilldown_candidates[:6]
+                    ],
+                    "attempts": [],
+                }
+                for drilldown_candidate in drilldown_candidates[:4]:
+                    candidate_name = str(drilldown_candidate.get("name", "") or "").strip()
+                    normalized_candidate_name = self._normalize_probe_text(candidate_name)
+                    invoke_action = str(drilldown_candidate.get("invoke_action", "") or "").strip().lower() or "click"
+                    if not candidate_name:
+                        continue
+                    if normalized_candidate_name:
+                        visited_form_drilldown_targets.add(normalized_candidate_name)
+                    drilldown_args: Dict[str, Any] = {"query": candidate_name}
+                    control_type = str(drilldown_candidate.get("control_type", "") or "").strip()
+                    if control_type:
+                        drilldown_args["control_type"] = control_type
+                    if invoke_action and invoke_action != "click":
+                        drilldown_args["action"] = invoke_action
+                    candidate_element_id = str(drilldown_candidate.get("element_id", "") or "").strip()
+                    if candidate_element_id:
+                        drilldown_args["element_id"] = candidate_element_id
+                    drilldown_execution = self._run_execution_plan(
+                        plan=[
+                            self._plan_step(
+                                action="accessibility_invoke_element",
+                                args=drilldown_args,
+                                phase="act",
+                                optional=False,
+                                reason=f"Open the '{candidate_name}' child surface so JARVIS can keep hunting for the remaining requested settings targets.",
+                            )
+                        ],
+                        result_metadata={
+                            "form_stage": "drilldown_hunt",
+                            "form_page_index": page_index,
+                            "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                            "form_drilldown_target": candidate_name,
+                        },
+                    )
+                    results.extend(drilldown_execution.get("results", []) if isinstance(drilldown_execution.get("results", []), list) else [])
+                    after_drilldown_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+                    after_drilldown_summary = self._form_flow_summary(snapshot=after_drilldown_snapshot)
+                    _remember_form_window(after_drilldown_summary)
+                    after_drilldown_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_drilldown_snapshot)
+                    progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_drilldown_snapshot)
+                    drilldown_attempt = {
+                        "name": candidate_name,
+                        "invoke_action": invoke_action,
+                        "match_score": float(drilldown_candidate.get("match_score", 0.0) or 0.0),
+                        "fallback_candidate": bool(drilldown_candidate.get("fallback_candidate", False)),
+                        "matched_targets": [dict(item) for item in drilldown_candidate.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        "status": str(drilldown_execution.get("status", "success") or "success"),
+                        "message": str(drilldown_execution.get("message", "") or ""),
+                        "progressed": progressed,
+                        "after": after_drilldown_summary,
+                    }
+                    if after_drilldown_target_state:
+                        drilldown_attempt["target_state_after"] = after_drilldown_target_state
+                        resolved_after = after_drilldown_target_state.get("resolved_targets", []) if isinstance(after_drilldown_target_state.get("resolved_targets", []), list) else []
+                        _record_resolved_targets(resolved_after)
+                        _remove_resolved_targets(resolved_after)
+                    drilldown_hunt_record["attempts"].append(drilldown_attempt)
+                    if str(drilldown_execution.get("status", "success") or "success") == "success" and progressed:
+                        page_record["drilldown_hunt"] = drilldown_hunt_record
+                        page_record["after"] = after_drilldown_summary
+                        page_record["status"] = "drilldown_opened"
+                        page_record["message"] = f"Opened the '{candidate_name}' child surface to continue resolving the requested settings targets."
+                        page_record["progressed"] = True
+                        page_record["executed_actions"] = [
+                            str(row.get("action", "") or "").strip()
+                            for row in drilldown_execution.get("results", [])
+                            if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                        ]
+                        if after_drilldown_target_state:
+                            page_record["target_state_after"] = after_drilldown_target_state
+                        page_history.append(page_record)
+                        last_snapshot = after_drilldown_snapshot
+                        reveal_progressed = True
+                        break
+            if reveal_progressed:
+                continue
+
+            expandable_group_count = int(page_state.get("expandable_group_count", 0) or 0)
+            expandable_group_candidates = self._rank_form_expandable_groups(
+                page_state=page_state,
+                remaining_targets=remaining_form_targets,
+                visited_groups=visited_form_expandable_groups,
+            )
+            group_hunt_record: Optional[Dict[str, Any]] = None
+            if hidden_requested_targets and expandable_group_count > 0:
+                group_hunt_record = {
+                    "reason": "requested_targets_hidden_inside_collapsed_group",
+                    "candidate_groups": [
+                        {
+                            "name": str(row.get("name", "") or "").strip(),
+                            "expand_action": str(row.get("expand_action", "") or "").strip(),
+                            "invoke_action": str(row.get("invoke_action", "") or "").strip(),
+                            "match_score": float(row.get("match_score", 0.0) or 0.0),
+                            "fallback_candidate": bool(row.get("fallback_candidate", False)),
+                            "matched_targets": [dict(item) for item in row.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        }
+                        for row in expandable_group_candidates[:6]
+                    ],
+                    "attempts": [],
+                }
+                for group_candidate in expandable_group_candidates[:4]:
+                    candidate_name = str(group_candidate.get("name", "") or "").strip()
+                    normalized_candidate_name = self._normalize_probe_text(candidate_name)
+                    expand_action = str(group_candidate.get("expand_action", "") or "").strip().lower()
+                    invoke_action = str(group_candidate.get("invoke_action", "") or "").strip().lower() or "click"
+                    if not candidate_name or not expand_action:
+                        continue
+                    if normalized_candidate_name:
+                        visited_form_expandable_groups.add(normalized_candidate_name)
+                    group_args: Dict[str, Any] = {"query": candidate_name}
+                    control_type = str(group_candidate.get("control_type", "") or "").strip()
+                    if control_type:
+                        group_args["control_type"] = control_type
+                    if invoke_action and invoke_action != "click":
+                        group_args["action"] = invoke_action
+                    candidate_element_id = str(group_candidate.get("element_id", "") or "").strip()
+                    if candidate_element_id:
+                        group_args["element_id"] = candidate_element_id
+                    group_execution = self._run_execution_plan(
+                        plan=[
+                            self._plan_step(
+                                action="accessibility_invoke_element",
+                                args=group_args,
+                                phase="act",
+                                optional=False,
+                                reason=f"Expand the '{candidate_name}' group so JARVIS can reveal hidden settings targets before committing changes.",
+                            )
+                        ],
+                        result_metadata={
+                            "form_stage": "group_hunt",
+                            "form_page_index": page_index,
+                            "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                            "form_group": candidate_name,
+                            "form_group_action": expand_action,
+                        },
+                    )
+                    results.extend(group_execution.get("results", []) if isinstance(group_execution.get("results", []), list) else [])
+                    after_group_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+                    after_group_summary = self._form_flow_summary(snapshot=after_group_snapshot)
+                    _remember_form_window(after_group_summary)
+                    after_group_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_group_snapshot)
+                    progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_group_snapshot)
+                    group_attempt = {
+                        "name": candidate_name,
+                        "expand_action": expand_action,
+                        "invoke_action": invoke_action,
+                        "match_score": float(group_candidate.get("match_score", 0.0) or 0.0),
+                        "fallback_candidate": bool(group_candidate.get("fallback_candidate", False)),
+                        "matched_targets": [dict(item) for item in group_candidate.get("matched_targets", []) if isinstance(item, dict)][:4],
+                        "status": str(group_execution.get("status", "success") or "success"),
+                        "message": str(group_execution.get("message", "") or ""),
+                        "progressed": progressed,
+                        "after": after_group_summary,
+                    }
+                    if after_group_target_state:
+                        group_attempt["target_state_after"] = after_group_target_state
+                        resolved_after = after_group_target_state.get("resolved_targets", []) if isinstance(after_group_target_state.get("resolved_targets", []), list) else []
+                        _record_resolved_targets(resolved_after)
+                        _remove_resolved_targets(resolved_after)
+                    group_hunt_record["attempts"].append(group_attempt)
+                    if str(group_execution.get("status", "success") or "success") == "success" and progressed:
+                        page_record["group_hunt"] = group_hunt_record
+                        page_record["after"] = after_group_summary
+                        page_record["status"] = "group_expanded"
+                        page_record["message"] = f"Expanded the '{candidate_name}' group to continue resolving the requested settings targets."
+                        page_record["progressed"] = True
+                        page_record["executed_actions"] = [
+                            str(row.get("action", "") or "").strip()
+                            for row in group_execution.get("results", [])
+                            if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                        ]
+                        if after_group_target_state:
+                            page_record["target_state_after"] = after_group_target_state
+                        page_history.append(page_record)
+                        last_snapshot = after_group_snapshot
+                        reveal_progressed = True
+                        break
+            if reveal_progressed:
+                continue
+
+            scroll_search_supported = bool(page_state.get("scroll_search_supported", False)) and form_scroll_hunts_used < max_form_scroll_hunts
+            scroll_hunt_record: Optional[Dict[str, Any]] = None
+            if hidden_requested_targets and scroll_search_supported:
+                form_scroll_hunts_used += 1
+                scroll_hunt_record = {
+                    "reason": "requested_targets_not_visible_in_current_viewport",
+                    "attempt_index": form_scroll_hunts_used,
+                    "max_attempts": max_form_scroll_hunts,
+                    "attempts": [],
+                }
+                scroll_strategies = [
+                    ("mouse_scroll", {"amount": -700}, "mouse_wheel_down"),
+                    ("keyboard_hotkey", {"keys": ["pagedown"]}, "page_down"),
+                ]
+                for action_name, action_args, method_name in scroll_strategies:
+                    scroll_execution = self._run_execution_plan(
+                        plan=[
+                            self._plan_step(
+                                action=action_name,
+                                args=dict(action_args),
+                                phase="act",
+                                optional=False,
+                                reason="Scroll the current form surface so JARVIS can keep hunting below the visible viewport for the requested settings targets.",
+                            )
+                        ],
+                        result_metadata={
+                            "form_stage": "scroll_hunt",
+                            "form_page_index": page_index,
+                            "form_page_kind": str(page_state.get("page_kind", "") or ""),
+                            "form_scroll_method": method_name,
+                        },
+                    )
+                    results.extend(scroll_execution.get("results", []) if isinstance(scroll_execution.get("results", []), list) else [])
+                    after_scroll_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
+                    after_scroll_summary = self._form_flow_summary(snapshot=after_scroll_snapshot)
+                    _remember_form_window(after_scroll_summary)
+                    after_scroll_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_scroll_snapshot)
+                    progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_scroll_snapshot)
+                    scroll_attempt = {
+                        "method": method_name,
+                        "action": action_name,
+                        "status": str(scroll_execution.get("status", "success") or "success"),
+                        "message": str(scroll_execution.get("message", "") or ""),
+                        "progressed": progressed,
+                        "after": after_scroll_summary,
+                    }
+                    if after_scroll_target_state:
+                        scroll_attempt["target_state_after"] = after_scroll_target_state
+                        resolved_after = after_scroll_target_state.get("resolved_targets", []) if isinstance(after_scroll_target_state.get("resolved_targets", []), list) else []
+                        _record_resolved_targets(resolved_after)
+                        _remove_resolved_targets(resolved_after)
+                    scroll_hunt_record["attempts"].append(scroll_attempt)
+                    if str(scroll_execution.get("status", "success") or "success") == "success" and progressed:
+                        page_record["scroll_hunt"] = scroll_hunt_record
+                        page_record["after"] = after_scroll_summary
+                        page_record["status"] = "scroll_progressed"
+                        page_record["message"] = "Scrolled the current form surface to continue resolving the requested settings targets."
+                        page_record["progressed"] = True
+                        page_record["executed_actions"] = [
+                            str(row.get("action", "") or "").strip()
+                            for row in scroll_execution.get("results", [])
+                            if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                        ]
+                        if after_scroll_target_state:
+                            page_record["target_state_after"] = after_scroll_target_state
+                        page_history.append(page_record)
+                        last_snapshot = after_scroll_snapshot
+                        reveal_progressed = True
+                        break
+            if reveal_progressed:
+                continue
+
+            if hidden_requested_targets:
+                if tab_hunt_record:
+                    page_record["tab_hunt"] = tab_hunt_record
+                if navigation_hunt_record:
+                    page_record["navigation_hunt"] = navigation_hunt_record
+                if drilldown_hunt_record:
+                    page_record["drilldown_hunt"] = drilldown_hunt_record
+                if group_hunt_record:
+                    page_record["group_hunt"] = group_hunt_record
+                if scroll_hunt_record:
+                    page_record["scroll_hunt"] = scroll_hunt_record
+                discovery_supported = bool(
+                    tab_search_supported
+                    or navigation_target_count > 0
+                    or drilldown_target_count > 0
+                    or expandable_group_count > 0
+                    or page_state.get("scroll_search_supported", False)
+                )
+                if discovery_supported:
+                    stop_reason_code = "form_target_discovery_exhausted"
+                    stop_reason = "Requested settings targets are not visible on the current form surface, and JARVIS could not reveal them by switching tabs or sections, opening child pages, expanding groups, or scrolling safely."
+                else:
+                    stop_reason_code = "form_target_visibility_unknown"
+                    stop_reason = "Requested settings targets are not currently visible, and the form does not expose tabs, sections, child pages, expandable groups, or scrolling that JARVIS can use to reveal them safely."
+                page_record["status"] = "blocked"
+                page_record["stop_reason_code"] = stop_reason_code
+                page_record["stop_reason"] = stop_reason
+                mission_warnings.append(stop_reason)
+                page_history.append(page_record)
                 break
 
             gate = self._form_flow_gate(
@@ -4047,10 +5000,21 @@ class DesktopActionRouter:
                 },
             )
             results.extend(page_execution.get("results", []) if isinstance(page_execution.get("results", []), list) else [])
+            if str(page_execution.get("status", "success") or "success") == "success" and page_target_state:
+                planned_targets = page_target_state.get("planned_targets", []) if isinstance(page_target_state.get("planned_targets", []), list) else []
+                _record_resolved_targets(planned_targets)
+                _remove_resolved_targets(planned_targets)
             after_snapshot = self._form_flow_snapshot(args=page_args, advice=page_advice)
             after_summary = self._form_flow_summary(snapshot=after_snapshot)
+            _remember_form_window(after_summary)
+            after_target_state = self._form_target_plan_state(plan=remaining_form_targets, snapshot=after_snapshot)
             progressed = self._form_flow_progressed(before_snapshot=page_snapshot, after_snapshot=after_snapshot)
             page_record["after"] = after_summary
+            if after_target_state:
+                page_record["target_state_after"] = after_target_state
+                resolved_after = after_target_state.get("resolved_targets", []) if isinstance(after_target_state.get("resolved_targets", []), list) else []
+                _record_resolved_targets(resolved_after)
+                _remove_resolved_targets(resolved_after)
             page_record["status"] = str(page_execution.get("status", "success") or "success")
             page_record["message"] = str(page_execution.get("message", "") or "")
             page_record["progressed"] = progressed
@@ -4092,6 +5056,10 @@ class DesktopActionRouter:
 
         post_context = self._capture_verification_context(args=args, advice=advice) if status == "success" else {}
         final_summary = self._form_flow_summary(snapshot=last_snapshot)
+        if completed and remaining_form_targets:
+            mission_warnings.append(
+                f"Form flow completed, but {len(remaining_form_targets)} requested target state(s) could not be confirmed before the surface closed."
+            )
         verification = self._verify_form_flow_execution(
             args=args,
             pre_context=pre_context,
@@ -4103,6 +5071,9 @@ class DesktopActionRouter:
             stop_reason=stop_reason,
             final_summary=final_summary,
             warnings=mission_warnings,
+            requested_target_count=len(requested_form_targets),
+            resolved_target_count=len(resolved_form_targets),
+            remaining_target_count=len(remaining_form_targets),
         )
         if status == "success" and bool(verification.get("enabled", False)) and not bool(verification.get("verified", False)):
             message = str(verification.get("message", message) or message)
@@ -4128,16 +5099,208 @@ class DesktopActionRouter:
                 "allow_destructive_forms": allow_destructive_forms,
                 "stop_reason_code": stop_reason_code,
                 "stop_reason": stop_reason,
+                "requested_target_count": len(requested_form_targets),
+                "resolved_target_count": len(resolved_form_targets),
+                "remaining_target_count": len(remaining_form_targets),
+                "resolved_targets": resolved_form_targets[:12],
+                "remaining_targets": [dict(row) for row in remaining_form_targets[:12]],
                 "page_history": page_history,
                 "final_page": final_summary,
             },
         }
 
+    def _resolve_form_dialog_interstitial(
+        self,
+        *,
+        args: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        page_index: int,
+    ) -> Dict[str, Any]:
+        flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        if not bool(flags.get("dialog_visible", False)):
+            return {"handled": False, "blocked": False}
+
+        page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        pending_requirement_count = int(page_state.get("pending_requirement_count", 0) or 0)
+        if pending_requirement_count > 0 or bool(page_state.get("manual_input_likely", False)):
+            return {"handled": False, "blocked": False}
+        if any(
+            int(page_state.get(count_key, 0) or 0) > 0
+            for count_key in ("tab_count", "navigation_target_count", "drilldown_target_count", "expandable_group_count")
+        ) or bool(page_state.get("scroll_search_supported", False)):
+            return {"handled": False, "blocked": False}
+
+        element_payload = snapshot.get("elements", {}) if isinstance(snapshot.get("elements", {}), dict) else {}
+        element_rows = element_payload.get("items", []) if isinstance(element_payload.get("items", []), list) else []
+        interactive_control_types = {
+            "checkbox",
+            "radiobutton",
+            "combobox",
+            "edit",
+            "slider",
+            "spinner",
+            "togglebutton",
+            "tabitem",
+            "treeitem",
+            "listitem",
+            "menuitem",
+            "dataitem",
+            "table",
+            "toolbar",
+        }
+        if any(
+            self._normalize_probe_text(row.get("control_type", "")) in interactive_control_types
+            for row in element_rows
+            if isinstance(row, dict)
+        ):
+            return {"handled": False, "blocked": False}
+
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        destructive_warning_visible = bool(safety_signals.get("destructive_warning_visible", False))
+        warning_surface_visible = bool(safety_signals.get("warning_surface_visible", False))
+        elevation_prompt_visible = bool(safety_signals.get("elevation_prompt_visible", False))
+        preferred_confirmation_button = str(
+            safety_signals.get("preferred_confirmation_button", "")
+            or page_state.get("preferred_commit_button", "")
+            or ""
+        ).strip()
+        preferred_confirmation_target = (
+            safety_signals.get("preferred_confirmation_target", {})
+            if isinstance(safety_signals.get("preferred_confirmation_target", {}), dict)
+            else {}
+        )
+        if not preferred_confirmation_target and isinstance(page_state.get("preferred_commit_target", {}), dict):
+            preferred_confirmation_target = dict(page_state.get("preferred_commit_target", {}))
+        preferred_dismiss_button = str(
+            safety_signals.get("preferred_dismiss_button", "")
+            or page_state.get("preferred_dismiss_button", "")
+            or ""
+        ).strip()
+        preferred_dismiss_target = (
+            safety_signals.get("preferred_dismiss_target", {})
+            if isinstance(safety_signals.get("preferred_dismiss_target", {}), dict)
+            else {}
+        )
+
+        action = ""
+        button_label = ""
+        button_role = ""
+        button_target: Dict[str, Any] = {}
+        normalized_dismiss = self._normalize_probe_text(preferred_dismiss_button)
+        if preferred_confirmation_button and not destructive_warning_visible and not warning_surface_visible and not elevation_prompt_visible:
+            action = "press_dialog_button"
+            button_label = preferred_confirmation_button
+            button_role = "confirm"
+            button_target = preferred_confirmation_target
+        elif preferred_dismiss_button and normalized_dismiss in {"close", "dismiss"} and not destructive_warning_visible and not warning_surface_visible and not elevation_prompt_visible:
+            action = "press_dialog_button"
+            button_label = preferred_dismiss_button
+            button_role = "dismiss"
+            button_target = preferred_dismiss_target
+        else:
+            blocker_code = "form_dialog_review_required"
+            blocker_message = "Form mission paused on an interstitial dialog that requires review before automation can continue."
+            if elevation_prompt_visible:
+                blocker_code = "elevation_confirmation_required"
+                blocker_message = "Form mission paused because an interstitial dialog is requesting elevated privileges."
+            elif destructive_warning_visible:
+                blocker_code = "destructive_form_review_required"
+                blocker_message = "Form mission paused on an interstitial destructive confirmation so JARVIS does not auto-commit a risky settings change."
+            elif warning_surface_visible:
+                blocker_code = "form_dialog_review_required"
+                blocker_message = "Form mission paused on an interstitial warning dialog so JARVIS does not auto-confirm a risky settings step."
+            elif not preferred_confirmation_button and not preferred_dismiss_button:
+                blocker_code = "form_dialog_route_unavailable"
+                blocker_message = "Form mission found an interstitial dialog, but it does not expose a reliable button target for autonomous continuation."
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": blocker_code,
+                "stop_reason": blocker_message,
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "confirm" if preferred_confirmation_button else ("dismiss" if preferred_dismiss_button else ""),
+            }
+
+        dialog_args = dict(args)
+        summary = self._form_flow_summary(snapshot=snapshot)
+        dialog_window_title = str(summary.get("window_title", "") or "").strip()
+        if dialog_window_title:
+            dialog_args["window_title"] = dialog_window_title
+            dialog_args["app_name"] = ""
+            dialog_args["focus_first"] = True
+        dialog_args["action"] = action
+        dialog_args["query"] = button_label
+        dialog_args["control_type"] = "Button"
+        element_id = str(button_target.get("element_id", "") or "").strip()
+        if element_id:
+            dialog_args["element_id"] = element_id
+        dialog_args["_provided_fields"] = self._dedupe_strings(
+            list(dialog_args.get("_provided_fields", []))
+            + ["action", "query", "control_type"]
+            + ([] if not element_id else ["element_id"])
+        )
+
+        dialog_advice = self.advise(dialog_args)
+        if dialog_advice.get("status") != "success":
+            blockers = "; ".join(str(item).strip() for item in dialog_advice.get("blockers", []) if str(item).strip())
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "form_dialog_route_unavailable",
+                "stop_reason": blockers or str(dialog_advice.get("message", "form dialog route unavailable") or "form dialog route unavailable"),
+                "button_label": button_label,
+                "button_role": button_role,
+            }
+
+        dialog_execution = self._run_execution_plan(
+            plan=dialog_advice.get("execution_plan", []),
+            result_metadata={
+                "form_stage": "dialog_followup",
+                "form_page_index": page_index,
+                "dialog_button": button_label,
+                "dialog_button_role": button_role,
+            },
+        )
+        after_snapshot = self._form_flow_snapshot(args=dialog_args, advice=dialog_advice)
+        after_summary = self._form_flow_summary(snapshot=after_snapshot)
+        progressed = self._form_flow_progressed(before_snapshot=snapshot, after_snapshot=after_snapshot)
+        if bool(flags.get("dialog_visible", False)) and not bool(after_summary.get("dialog_visible", False)):
+            progressed = True
+        if str(dialog_execution.get("status", "success") or "success") != "success":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "form_dialog_execution_failed",
+                "stop_reason": str(dialog_execution.get("message", "form dialog execution failed") or "form dialog execution failed"),
+                "button_label": button_label,
+                "button_role": button_role,
+            }
+
+        return {
+            "handled": str(dialog_execution.get("status", "success") or "success") == "success",
+            "blocked": False,
+            "action": action,
+            "button_label": button_label,
+            "button_role": button_role,
+            "route_mode": str(dialog_advice.get("route_mode", "") or "").strip(),
+            "status": "dialog_confirmed" if button_role == "confirm" else "dialog_dismissed",
+            "message": (
+                f"Resolved the interstitial dialog through '{button_label}' and continued the form mission."
+                if button_label
+                else "Resolved the interstitial dialog and continued the form mission."
+            ),
+            "warnings": [str(item).strip() for item in dialog_advice.get("warnings", []) if str(item).strip()],
+            "execution": dialog_execution,
+            "after_snapshot": after_snapshot,
+            "after_summary": after_summary,
+            "progressed": progressed,
+        }
+
     def _form_flow_snapshot(self, *, args: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
         target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
         focus_title = str(
-            target_window.get("title", "")
-            or args.get("window_title", "")
+            args.get("window_title", "")
+            or target_window.get("title", "")
             or args.get("app_name", "")
             or ""
         ).strip()
@@ -4158,6 +5321,56 @@ class DesktopActionRouter:
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
         active_matches = self._window_matches(active_window, app_name=app_name, window_title=window_title or focus_title)
+        adopted_title = str(active_window.get("title", "") or "").strip()
+        normalized_adopted = self._normalize_probe_text(adopted_title)
+        normalized_focus = self._normalize_probe_text(focus_title)
+        normalized_target = self._normalize_probe_text(target_window.get("title", ""))
+        active_hwnd = self._to_int(active_window.get("hwnd"))
+        target_hwnd = self._to_int(target_window.get("hwnd"))
+        should_try_adopt = bool(
+            adopted_title
+            and (
+                not active_matches
+                or normalized_adopted != normalized_focus
+                or normalized_adopted != normalized_target
+                or (active_hwnd is not None and target_hwnd is not None and active_hwnd != target_hwnd and normalized_adopted != normalized_target)
+            )
+        )
+        if should_try_adopt:
+            if adopted_title and (normalized_adopted != normalized_focus or active_hwnd != target_hwnd):
+                adopted_snapshot = self.surface_snapshot(
+                    app_name="",
+                    window_title=adopted_title,
+                    query="",
+                    limit=18,
+                    include_observation=True,
+                    include_elements=True,
+                    include_workflow_probes=True,
+                    preferred_actions=["complete_form_flow", "complete_form_page", "confirm_dialog", "dismiss_dialog", "focus_form_surface"],
+                )
+                adopted_flags = adopted_snapshot.get("surface_flags", {}) if isinstance(adopted_snapshot.get("surface_flags", {}), dict) else {}
+                adopted_page_state = adopted_snapshot.get("form_page_state", {}) if isinstance(adopted_snapshot.get("form_page_state", {}), dict) else {}
+                adopted_target_window = adopted_snapshot.get("target_window", {}) if isinstance(adopted_snapshot.get("target_window", {}), dict) else {}
+                adopted_active_window = adopted_snapshot.get("active_window", {}) if isinstance(adopted_snapshot.get("active_window", {}), dict) else {}
+                adopted_form_visible = bool(
+                    adopted_flags.get("form_visible", False)
+                    or adopted_flags.get("dialog_visible", False)
+                    or adopted_flags.get("tab_page_visible", False)
+                    or adopted_page_state
+                )
+                if adopted_form_visible and (adopted_target_window or adopted_active_window):
+                    adopted_snapshot["adopted_form_window"] = {
+                        "title": str(adopted_active_window.get("title", "") or adopted_target_window.get("title", "") or adopted_title).strip(),
+                        "hwnd": self._to_int(adopted_active_window.get("hwnd")) or self._to_int(adopted_target_window.get("hwnd")),
+                        "previous_title": focus_title,
+                        "reason": "active_child_window",
+                    }
+                    snapshot = adopted_snapshot
+                    candidate_windows = snapshot.get("candidate_windows", []) if isinstance(snapshot.get("candidate_windows", []), list) else []
+                    active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+                    target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+                    target_visible = bool(target_window) or any(isinstance(row, dict) for row in candidate_windows)
+                    active_matches = self._window_matches(active_window, app_name=app_name, window_title=adopted_title)
         if not target_visible and not active_matches:
             flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
             snapshot["surface_flags"] = {
@@ -4174,7 +5387,15 @@ class DesktopActionRouter:
         page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
         observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
         safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
-        form_visible = bool(flags.get("form_visible", False) or flags.get("dialog_visible", False) or flags.get("tab_page_visible", False))
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        adopted_window = snapshot.get("adopted_form_window", {}) if isinstance(snapshot.get("adopted_form_window", {}), dict) else {}
+        form_visible = bool(
+            flags.get("form_visible", False)
+            or flags.get("dialog_visible", False)
+            or flags.get("tab_page_visible", False)
+            or page_state
+        )
         return {
             "form_visible": form_visible,
             "dialog_visible": bool(flags.get("dialog_visible", False)),
@@ -4183,15 +5404,30 @@ class DesktopActionRouter:
             "ready_for_commit": bool(page_state.get("ready_for_commit", False)),
             "pending_requirement_count": int(page_state.get("pending_requirement_count", 0) or 0),
             "preferred_commit_button": str(page_state.get("preferred_commit_button", "") or "").strip(),
+            "selected_tab": str(page_state.get("selected_tab", "") or "").strip(),
+            "tab_count": int(page_state.get("tab_count", 0) or 0),
+            "selected_navigation_target": str(page_state.get("selected_navigation_target", "") or "").strip(),
+            "navigation_target_count": int(page_state.get("navigation_target_count", 0) or 0),
+            "drilldown_target_count": int(page_state.get("drilldown_target_count", 0) or 0),
+            "expandable_group_count": int(page_state.get("expandable_group_count", 0) or 0),
+            "expanded_group_count": int(page_state.get("expanded_group_count", 0) or 0),
+            "scroll_search_supported": bool(page_state.get("scroll_search_supported", False)),
+            "breadcrumb_path": [str(item).strip() for item in page_state.get("breadcrumb_path", []) if str(item).strip()] if isinstance(page_state.get("breadcrumb_path", []), list) else [],
+            "window_title": str(adopted_window.get("title", "") or target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "window_hwnd": int(adopted_window.get("hwnd", 0) or target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+            "window_adopted": bool(adopted_window),
             "autonomous_progress_supported": bool(page_state.get("autonomous_progress_supported", False)),
             "autonomous_blocker": str(page_state.get("autonomous_blocker", "") or "").strip(),
             "manual_input_likely": bool(page_state.get("manual_input_likely", False)),
+            "preferred_dialog_confirmation_button": str(safety_signals.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dialog_dismiss_button": str(safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+            "warning_surface_visible": bool(safety_signals.get("warning_surface_visible", False)),
             "destructive_warning_visible": bool(safety_signals.get("destructive_warning_visible", False)),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
         }
 
     @classmethod
-    def _form_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool]:
+    def _form_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, bool, str, str, str, str, int, int, str, str, int, bool, bool]:
         summary = cls._form_flow_summary(snapshot=snapshot)
         return (
             str(summary.get("page_kind", "") or "").strip().lower(),
@@ -4199,6 +5435,18 @@ class DesktopActionRouter:
             int(summary.get("pending_requirement_count", 0) or 0),
             str(summary.get("screen_hash", "") or "").strip(),
             bool(summary.get("form_visible", False)),
+            bool(summary.get("dialog_visible", False)),
+            str(summary.get("preferred_dialog_confirmation_button", "") or "").strip().lower(),
+            str(summary.get("preferred_dialog_dismiss_button", "") or "").strip().lower(),
+            str(summary.get("selected_tab", "") or "").strip().lower(),
+            str(summary.get("selected_navigation_target", "") or "").strip().lower(),
+            int(summary.get("drilldown_target_count", 0) or 0),
+            int(summary.get("expanded_group_count", 0) or 0),
+            " > ".join(str(item).strip().lower() for item in summary.get("breadcrumb_path", []) if str(item).strip()),
+            str(summary.get("window_title", "") or "").strip().lower(),
+            int(summary.get("window_hwnd", 0) or 0),
+            bool(summary.get("warning_surface_visible", False)),
+            bool(summary.get("destructive_warning_visible", False)),
         )
 
     @classmethod
@@ -4260,6 +5508,9 @@ class DesktopActionRouter:
         stop_reason: str,
         final_summary: Dict[str, Any],
         warnings: List[str],
+        requested_target_count: int = 0,
+        resolved_target_count: int = 0,
+        remaining_target_count: int = 0,
     ) -> Dict[str, Any]:
         checks = [
             {
@@ -4275,6 +5526,16 @@ class DesktopActionRouter:
                 "final_page_kind": str(final_summary.get("page_kind", "") or "").strip(),
             },
         ]
+        if requested_target_count > 0:
+            checks.append(
+                {
+                    "name": "form_targets_confirmed",
+                    "passed": remaining_target_count == 0,
+                    "requested_target_count": requested_target_count,
+                    "resolved_target_count": resolved_target_count,
+                    "remaining_target_count": remaining_target_count,
+                }
+            )
         if stop_reason_code:
             checks.append(
                 {
@@ -4284,8 +5545,11 @@ class DesktopActionRouter:
                     "reason": stop_reason,
                 }
             )
-        verified = completed
-        message = "form flow completed" if verified else (stop_reason or "form flow stopped before completion")
+        verified = bool(completed and remaining_target_count == 0)
+        if completed and remaining_target_count > 0:
+            message = "form flow completed, but some requested target states were not confirmed"
+        else:
+            message = "form flow completed" if verified else (stop_reason or "form flow stopped before completion")
         status = "degraded" if verified and warnings else ("success" if verified else "failed")
         return {
             "enabled": True,
@@ -4848,6 +6112,7 @@ class DesktopActionRouter:
             "target_window": advice.get("target_window", base_advice.get("target_window", {})),
             "surface_snapshot": advice.get("surface_snapshot", base_advice.get("surface_snapshot", {})),
             "safety_signals": advice.get("safety_signals", base_advice.get("safety_signals", {})),
+            "form_target_state": advice.get("form_target_state", base_advice.get("form_target_state", {})),
             "surface_branch": advice.get("surface_branch", base_advice.get("surface_branch", {})),
             "results": selected_attempt.get("results", []),
             "advice": advice,
@@ -5043,7 +6308,7 @@ class DesktopActionRouter:
         bounded = max(1, min(int(limit or 24), 80))
         accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
         vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
-        focus_title = str(primary_candidate.get("title", "") or args.get("window_title", "") or args.get("app_name", "") or "").strip()
+        focus_title = str(args.get("window_title", "") or primary_candidate.get("title", "") or args.get("app_name", "") or "").strip()
 
         observation: Dict[str, Any] = {}
         if include_observation and vision_ready:
@@ -5488,14 +6753,21 @@ class DesktopActionRouter:
         toolbar_visible = "focus_toolbar" in matched_actions or any(
             phrase in observation_text for phrase in ("toolbar", "command bar", "menu bar", "ribbon")
         )
+        scrollbar_visible = bool(
+            any(_element_control_type(row) == "scrollbar" for row in element_rows)
+            or any(phrase in observation_text for phrase in ("scroll bar", "scrollbar", "scroll down", "scroll up"))
+        )
         form_visible = (
             "focus_form_surface" in matched_actions
             or "set_field_value" in matched_actions
             or "select_dropdown_option" in matched_actions
+            or "toggle_switch" in matched_actions
+            or "enable_switch" in matched_actions
+            or "disable_switch" in matched_actions
             or bool(edit_elements or combo_elements or checkbox_elements or radio_elements or value_control_elements)
             or any(
                 phrase in observation_text
-                for phrase in ("form", "text box", "input field", "combo box", "dropdown", "checkbox", "radio button", "slider", "spinner")
+                for phrase in ("form", "text box", "input field", "combo box", "dropdown", "checkbox", "radio button", "slider", "spinner", "switch", "toggle")
             )
         )
         input_field_visible = (
@@ -5547,6 +6819,7 @@ class DesktopActionRouter:
             or any(phrase in observation_text for phrase in ("toggle", "switch"))
             or any(_element_has_toggle_state(row) for row in (query_elements or element_rows))
         )
+        form_visible = bool(form_visible or toggle_visible)
         query_haystacks = [haystack for haystack in (observation_text, target_title, active_title) if haystack]
         checkbox_target_checked = (
             bool(normalized_query)
@@ -5674,6 +6947,7 @@ class DesktopActionRouter:
             "sidebar_visible": sidebar_visible,
             "main_content_visible": bool(main_content_visible or form_visible),
             "toolbar_visible": toolbar_visible,
+            "scrollbar_visible": scrollbar_visible,
             "form_visible": form_visible,
             "input_field_visible": input_field_visible,
             "dropdown_visible": dropdown_visible,
@@ -5763,6 +7037,7 @@ class DesktopActionRouter:
         active_title = self._normalize_probe_text(active_window.get("title", ""))
         target_title = self._normalize_probe_text(target_window.get("title", ""))
         combined_text = " ".join(value for value in (observation_text, active_title, target_title, profile_name, category) if value)
+        live_surface_text = " ".join(value for value in (observation_text, active_title, target_title) if value)
         element_rows = [dict(row) for row in (elements or []) if isinstance(row, dict)]
 
         def _element_control_type(row: Dict[str, Any]) -> str:
@@ -5983,7 +7258,7 @@ class DesktopActionRouter:
         )
 
         wizard_surface_visible = bool(
-            any(marker in combined_text for marker in wizard_text_markers)
+            any(marker in live_surface_text for marker in wizard_text_markers)
             or (
                 bool(normalized_button_labels)
                 and (wizard_next_available or wizard_back_available or wizard_finish_available)
@@ -5991,8 +7266,8 @@ class DesktopActionRouter:
             )
         )
         warning_surface_visible = bool(
-            any(marker in combined_text for marker in warning_markers)
-            or (wizard_surface_visible and any(marker in combined_text for marker in ("license", "agreement", "ready to install", "review")))
+            any(marker in live_surface_text for marker in warning_markers)
+            or (wizard_surface_visible and any(marker in live_surface_text for marker in ("license", "agreement", "ready to install", "review")))
         )
         requires_confirmation = bool(
             warning_surface_visible
@@ -6185,7 +7460,21 @@ class DesktopActionRouter:
         flags = dict(surface_flags) if isinstance(surface_flags, dict) else {}
         if bool(safety_payload.get("wizard_surface_visible", False)):
             return {}
-        if not bool(flags.get("form_visible", False) or flags.get("dialog_visible", False) or flags.get("tab_page_visible", False) or safety_payload.get("requires_confirmation", False)):
+        settings_navigation_surface = bool(
+            flags.get("settings_window_ready", False)
+            and (
+                flags.get("sidebar_visible", False)
+                or flags.get("tree_visible", False)
+                or flags.get("list_visible", False)
+            )
+        )
+        if not bool(
+            flags.get("form_visible", False)
+            or flags.get("dialog_visible", False)
+            or flags.get("tab_page_visible", False)
+            or safety_payload.get("requires_confirmation", False)
+            or settings_navigation_surface
+        ):
             return {}
         observation_text = cls._normalize_probe_text(observation.get("text", ""))
         element_rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
@@ -6205,13 +7494,65 @@ class DesktopActionRouter:
         edit_rows = [row for row in element_rows if _control_type(row) == "edit"]
         value_rows = [row for row in element_rows if _control_type(row) in {"slider", "spinner"}]
         tab_rows = [row for row in element_rows if _control_type(row) == "tabitem"]
+        tree_item_rows = [row for row in element_rows if _control_type(row) == "treeitem"]
+        list_item_rows = [row for row in element_rows if _control_type(row) == "listitem"]
+        menu_item_rows = [row for row in element_rows if _control_type(row) == "menuitem"]
         button_rows = [row for row in element_rows if _control_type(row) in {"button", "splitbutton"}]
+        hyperlink_rows = [row for row in element_rows if _control_type(row) == "hyperlink"]
+        group_rows = [row for row in element_rows if _control_type(row) == "group"]
+        available_tabs = [
+            cls._element_state_summary(row)
+            for row in tab_rows
+            if str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+        ][:12]
+        selected_tab_target = next(
+            (
+                row
+                for row in available_tabs
+                if cls._coerce_surface_bool(row.get("selected")) is True
+            ),
+            {},
+        )
+        selected_tab = str(selected_tab_target.get("name", "") or "").strip()
 
         acknowledgement_markers = ("accept", "agree", "acknowledge", "understand", "confirm", "consent", "reviewed", "review")
         negative_markers = ("decline", "do not", "don't", "refuse", "reject")
         required_input_markers = ("name", "path", "folder", "directory", "location", "address", "email", "server", "key", "token", "value", "username", "password")
         commit_markers = ("save", "apply", "ok", "done", "submit", "continue", "finish", "next", "confirm")
         safe_exit_markers = ("cancel", "close", "back", "later", "skip", "not now")
+        expandable_group_markers = (
+            "advanced",
+            "more",
+            "additional",
+            "details",
+            "extra",
+            "optional",
+            "show",
+            "hide",
+            "expand",
+            "collapse",
+            "related settings",
+            "advanced settings",
+            "more settings",
+            "advanced display",
+            "advanced options",
+        )
+        drilldown_target_markers = (
+            "advanced",
+            "more",
+            "additional",
+            "details",
+            "settings",
+            "options",
+            "properties",
+            "configure",
+            "manage",
+            "related",
+            "adapter",
+            "open",
+            "view",
+            "show",
+        )
 
         pending_requirements: List[Dict[str, Any]] = []
         seen_ids: set[str] = set()
@@ -6282,6 +7623,32 @@ class DesktopActionRouter:
             page_kind = "settings_form"
         elif bool(flags.get("dialog_visible", False)):
             page_kind = "dialog_form"
+        sidebar_hint_visible = bool(
+            flags.get("sidebar_visible", False)
+            or any(marker in observation_text for marker in ("sidebar", "navigation", "left pane", "side panel"))
+        )
+        selected_list_navigation = any(
+            cls._coerce_surface_bool(row.get("selected")) is True or cls._coerce_surface_bool(row.get("checked")) is True
+            for row in [*list_item_rows, *menu_item_rows]
+        )
+        sidebar_surface_visible = bool(
+            sidebar_hint_visible
+            or (
+                page_kind in {"settings_form", "property_sheet"}
+                and len([*list_item_rows, *menu_item_rows]) >= 2
+                and selected_list_navigation
+            )
+        )
+        tree_surface_visible = bool(
+            flags.get("tree_visible", False)
+            or bool(tree_item_rows)
+            or any(marker in observation_text for marker in ("tree view", "navigation tree", "nodes", "folder tree"))
+        )
+        list_surface_visible = bool(
+            flags.get("list_visible", False)
+            or any(marker in observation_text for marker in ("results list", "items list", "list view", "list pane"))
+            or (bool([*list_item_rows, *menu_item_rows]) and not sidebar_surface_visible)
+        )
 
         def _row_empty(row: Dict[str, Any]) -> bool:
             value_text = str(row.get("value_text", "") or "").strip()
@@ -6312,6 +7679,173 @@ class DesktopActionRouter:
             cls._element_state_summary(row)
             for row in [*checkbox_rows, *radio_rows, *combo_rows, *edit_rows, *value_rows, *tab_rows, *button_rows]
         ][:16]
+        navigation_candidates: List[Dict[str, Any]] = []
+        navigation_seen: set[str] = set()
+        drilldown_targets: List[Dict[str, Any]] = []
+        drilldown_seen: set[str] = set()
+        expandable_groups: List[Dict[str, Any]] = []
+        expandable_seen: set[str] = set()
+
+        def _navigation_action_for_row(row: Dict[str, Any]) -> tuple[str, str]:
+            control_type = _control_type(row)
+            label_text = _label_text(row)
+            if control_type == "treeitem" and tree_surface_visible:
+                return ("select_tree_item", "tree_item")
+            if control_type in {"listitem", "menuitem"} and sidebar_surface_visible:
+                return ("select_sidebar_item", "sidebar_item")
+            if control_type in {"listitem", "menuitem"} and list_surface_visible:
+                return ("select_list_item", "list_item")
+            if control_type in {"button", "splitbutton"} and sidebar_surface_visible:
+                if not label_text or any(marker in label_text for marker in [*commit_markers, *safe_exit_markers]):
+                    return ("", "")
+                return ("select_sidebar_item", "sidebar_item")
+            return ("", "")
+
+        def _append_navigation_candidate(row: Dict[str, Any]) -> None:
+            action_name, navigation_role = _navigation_action_for_row(row)
+            if not action_name:
+                return
+            summary = cls._element_state_summary(row)
+            candidate_name = str(summary.get("name", "") or "").strip()
+            if not candidate_name:
+                return
+            candidate_key = str(summary.get("element_id", "") or "").strip() or f"{action_name}:{cls._normalize_probe_text(candidate_name)}"
+            if not candidate_key or candidate_key in navigation_seen:
+                return
+            navigation_seen.add(candidate_key)
+            navigation_candidates.append(
+                {
+                    **summary,
+                    "navigation_action": action_name,
+                    "navigation_role": navigation_role,
+                }
+            )
+
+        def _drilldown_target_config(row: Dict[str, Any]) -> tuple[str, str]:
+            control_type = _control_type(row)
+            label_text = _label_text(row)
+            state_text = cls._normalize_probe_text(row.get("state_text", ""))
+            expanded_state = cls._coerce_surface_bool(row.get("expanded"))
+            if not label_text:
+                return ("", "")
+            if any(marker in label_text for marker in [*commit_markers, *safe_exit_markers]):
+                return ("", "")
+            if control_type not in {"button", "splitbutton", "hyperlink", "listitem", "menuitem", "treeitem"}:
+                return ("", "")
+            if expanded_state is not None and control_type in {"button", "splitbutton", "treeitem"}:
+                return ("", "")
+            if control_type in {"listitem", "menuitem", "treeitem"} and sidebar_surface_visible:
+                return ("", "")
+            if not any(marker in label_text or marker in state_text for marker in drilldown_target_markers):
+                return ("", "")
+            return ("open_subpage", "double_click" if control_type == "treeitem" else "click")
+
+        def _append_drilldown_target(row: Dict[str, Any]) -> None:
+            drilldown_action, invoke_action = _drilldown_target_config(row)
+            if not drilldown_action:
+                return
+            summary = cls._element_state_summary(row)
+            candidate_name = str(summary.get("name", "") or "").strip()
+            if not candidate_name:
+                return
+            candidate_key = str(summary.get("element_id", "") or "").strip() or f"{drilldown_action}:{cls._normalize_probe_text(candidate_name)}"
+            if not candidate_key or candidate_key in drilldown_seen:
+                return
+            drilldown_seen.add(candidate_key)
+            drilldown_targets.append(
+                {
+                    **summary,
+                    "drilldown_action": drilldown_action,
+                    "invoke_action": invoke_action,
+                }
+            )
+
+        def _expandable_group_config(row: Dict[str, Any]) -> tuple[str, str]:
+            control_type = _control_type(row)
+            label_text = _label_text(row)
+            state_text = cls._normalize_probe_text(row.get("state_text", ""))
+            expanded_state = cls._coerce_surface_bool(row.get("expanded"))
+            if not label_text:
+                return ("", "")
+            if any(marker in label_text for marker in [*commit_markers, *safe_exit_markers]):
+                return ("", "")
+            if control_type == "treeitem":
+                if expanded_state is None and not any(marker in label_text or marker in state_text for marker in expandable_group_markers):
+                    return ("", "")
+                return ("expand_tree_item", "double_click")
+            if control_type == "group":
+                return ("expand_group", "click")
+            if expanded_state is not None:
+                return ("expand_group", "click")
+            if control_type in {"button", "splitbutton", "hyperlink"} and any(
+                marker in label_text or marker in state_text
+                for marker in expandable_group_markers
+            ):
+                return ("expand_group", "click")
+            return ("", "")
+
+        def _append_expandable_group(row: Dict[str, Any]) -> None:
+            expand_action, invoke_action = _expandable_group_config(row)
+            if not expand_action:
+                return
+            summary = cls._element_state_summary(row)
+            candidate_name = str(summary.get("name", "") or "").strip()
+            if not candidate_name:
+                return
+            candidate_key = str(summary.get("element_id", "") or "").strip() or f"{expand_action}:{cls._normalize_probe_text(candidate_name)}"
+            if not candidate_key or candidate_key in expandable_seen:
+                return
+            expandable_seen.add(candidate_key)
+            expandable_groups.append(
+                {
+                    **summary,
+                    "expand_action": expand_action,
+                    "invoke_action": invoke_action,
+                }
+            )
+
+        for row in tree_item_rows:
+            _append_navigation_candidate(row)
+        for row in list_item_rows:
+            _append_navigation_candidate(row)
+        for row in menu_item_rows:
+            _append_navigation_candidate(row)
+        if sidebar_surface_visible:
+            for row in button_rows:
+                _append_navigation_candidate(row)
+        for row in [*button_rows, *hyperlink_rows, *list_item_rows, *menu_item_rows, *tree_item_rows]:
+            _append_drilldown_target(row)
+        for row in [*group_rows, *tree_item_rows, *button_rows, *hyperlink_rows]:
+            _append_expandable_group(row)
+        selected_navigation_target = next(
+            (
+                str(row.get("name", "") or "").strip()
+                for row in navigation_candidates
+                if cls._coerce_surface_bool(row.get("selected")) is True or cls._coerce_surface_bool(row.get("checked")) is True
+            ),
+            "",
+        )
+        expanded_group_count = sum(
+            1
+            for row in expandable_groups
+            if cls._coerce_surface_bool(row.get("expanded")) is True
+        )
+        scroll_search_supported = bool(
+            (page_kind in {"settings_form", "property_sheet"} or flags.get("settings_window_ready", False))
+            and (
+                flags.get("scrollbar_visible", False)
+                or any(marker in observation_text for marker in ("scroll", "below", "more settings"))
+                or len(available_controls) >= 4
+                or bool(navigation_candidates)
+                or len(available_tabs) > 1
+                or bool(expandable_groups)
+            )
+        )
+        breadcrumb_path = [
+            item
+            for item in (selected_navigation_target, selected_tab)
+            if str(item or "").strip()
+        ]
         return {
             "page_kind": page_kind,
             "commit_action": commit_action,
@@ -6323,6 +7857,20 @@ class DesktopActionRouter:
             "pending_requirements": pending_requirements[:8],
             "pending_requirement_count": len(pending_requirements),
             "available_controls": available_controls,
+            "available_tabs": available_tabs,
+            "selected_tab": selected_tab,
+            "tab_count": len(available_tabs),
+            "available_navigation_targets": navigation_candidates[:16],
+            "selected_navigation_target": selected_navigation_target,
+            "navigation_target_count": len(navigation_candidates),
+            "available_drilldown_targets": drilldown_targets[:16],
+            "drilldown_target_count": len(drilldown_targets),
+            "available_expandable_groups": expandable_groups[:16],
+            "expandable_group_count": len(expandable_groups),
+            "expanded_group_count": expanded_group_count,
+            "scroll_search_supported": scroll_search_supported,
+            "breadcrumb_path": breadcrumb_path,
+            "breadcrumb_depth": len(breadcrumb_path),
             "manual_required_controls": manual_required_controls,
             "preferred_commit_button": preferred_commit_button,
             "preferred_commit_target": preferred_commit_target,
@@ -6335,6 +7883,11 @@ class DesktopActionRouter:
                     "Form page exposes acknowledgement-style prerequisites." if pending_requirements else "",
                     "Preferred commit button is available through accessibility." if preferred_commit_button else "",
                     "Form likely still needs manual text or option input before it can be committed." if manual_input_likely else "",
+                    "Form exposes multiple tabs, so JARVIS can hunt across the property sheet for requested targets." if len(available_tabs) > 1 else "",
+                    "Form exposes section navigation, so JARVIS can hunt across sidebar, tree, or list surfaces for requested targets." if navigation_candidates else "",
+                    "Form exposes child-page links, so JARVIS can open deeper settings surfaces before committing requested changes." if drilldown_targets else "",
+                    "Form exposes expandable groups, so JARVIS can drill into collapsed sections before committing requested changes." if expandable_groups else "",
+                    "Form looks scrollable, so JARVIS can keep hunting below the visible viewport for requested targets." if scroll_search_supported else "",
                 ]
                 if note
             ],
@@ -6691,6 +8244,12 @@ class DesktopActionRouter:
         warnings: List[str] = []
         arg_updates: Dict[str, Any] = {}
         target_state_ready = False
+        form_target_state: Dict[str, Any] = {}
+        if clean_action in {"complete_form_page", "complete_form_flow"}:
+            form_target_state = self._form_target_plan_state(
+                plan=args.get("form_target_plan", []),
+                snapshot=snapshot_payload,
+            )
 
         selected = self._coerce_surface_bool(target.get("selected"))
         checked = self._coerce_surface_bool(target.get("checked"))
@@ -6798,6 +8357,7 @@ class DesktopActionRouter:
                 "arg_updates": arg_updates,
                 "warnings": warnings,
                 "target_state_ready": True,
+                "form_target_state": form_target_state,
             }
 
         dispatch_override_specs: Dict[str, Dict[str, Any]] = {
@@ -7081,6 +8641,105 @@ class DesktopActionRouter:
             form_page_state = snapshot_payload.get("form_page_state", {}) if isinstance(snapshot_payload.get("form_page_state", {}), dict) else {}
             pending_requirements = form_page_state.get("pending_requirements", []) if isinstance(form_page_state.get("pending_requirements", []), list) else []
             followup_steps: List[Dict[str, Any]] = []
+            target_followup_steps: List[Dict[str, Any]] = []
+            planned_target_count = 0
+            planned_targets: List[Dict[str, Any]] = []
+            for target_row in form_target_state.get("targets", []) if isinstance(form_target_state.get("targets", []), list) else []:
+                if not isinstance(target_row, dict) or bool(target_row.get("satisfied", False)) or not bool(target_row.get("visible", False)):
+                    continue
+                target_action = str(target_row.get("action", "") or "").strip().lower()
+                target_query = str(target_row.get("query", "") or "").strip()
+                target_text = str(target_row.get("text", "") or "").strip()
+                target_descriptor = {
+                    "action": target_action,
+                    "query": target_query,
+                    "text": target_text,
+                    "family": str(target_row.get("family", "") or "").strip(),
+                }
+                control_candidate = target_row.get("control_candidate", {}) if isinstance(target_row.get("control_candidate", {}), dict) else {}
+                option_candidate = target_row.get("option_candidate", {}) if isinstance(target_row.get("option_candidate", {}), dict) else {}
+                candidate = control_candidate or option_candidate
+                if target_action in {"check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page"} and candidate:
+                    planned_target_count += 1
+                    planned_targets.append(target_descriptor)
+                    target_followup_steps.append(
+                        _followup_accessibility_step(
+                            candidate=candidate,
+                            reason=f"Apply the requested {target_query} target state before committing the current settings page.",
+                        )
+                    )
+                    continue
+                if target_action in {"set_field_value", "set_value_control"} and control_candidate and target_text:
+                    planned_target_count += 1
+                    planned_targets.append(target_descriptor)
+                    target_followup_steps.extend(
+                        [
+                            _followup_accessibility_step(
+                                candidate=control_candidate,
+                                reason=f"Focus the '{target_query}' control before applying the requested target value.",
+                            ),
+                            self._plan_step(
+                                action="keyboard_hotkey",
+                                args={"keys": ["ctrl", "a"]},
+                                phase="input",
+                                optional=False,
+                                reason=f"Replace the existing value in '{target_query}' with the requested target state.",
+                            ),
+                            self._plan_step(
+                                action="keyboard_type",
+                                args={"text": target_text, "press_enter": False},
+                                phase="input",
+                                optional=False,
+                                reason=f"Type the requested value for '{target_query}' before committing the current settings page.",
+                            ),
+                        ]
+                    )
+                    continue
+                if target_action == "select_dropdown_option" and target_text:
+                    if option_candidate:
+                        planned_target_count += 1
+                        planned_targets.append(target_descriptor)
+                        target_followup_steps.append(
+                            _followup_accessibility_step(
+                                candidate=option_candidate,
+                                reason=f"Select the visible '{target_text}' option for '{target_query}' before committing the current settings page.",
+                            )
+                        )
+                        continue
+                    if control_candidate:
+                        planned_target_count += 1
+                        planned_targets.append(target_descriptor)
+                        target_followup_steps.extend(
+                            [
+                                _followup_accessibility_step(
+                                    candidate=control_candidate,
+                                    reason=f"Open the '{target_query}' control before choosing the requested option.",
+                                ),
+                                self._plan_step(
+                                    action="keyboard_type",
+                                    args={"text": target_text, "press_enter": True},
+                                    phase="input",
+                                    optional=False,
+                                    reason=f"Type the requested '{target_text}' option for '{target_query}' before committing the current settings page.",
+                                ),
+                            ]
+                        )
+            if target_followup_steps:
+                followup_steps.extend(target_followup_steps)
+                warnings.append(
+                    f"Form target planning found {planned_target_count} visible requested setting target(s), so JARVIS will reconcile them before committing this page."
+                )
+            visible_pending_target_count = int(form_target_state.get("visible_pending_count", 0) or 0) if isinstance(form_target_state, dict) else 0
+            if visible_pending_target_count and planned_target_count < visible_pending_target_count:
+                warnings.append(
+                    f"Form target planning could not auto-stage every visible requested target on this page ({planned_target_count}/{visible_pending_target_count}), so JARVIS will continue with best-effort commit sequencing."
+                )
+            if form_target_state:
+                form_target_state = {
+                    **form_target_state,
+                    "planned_target_count": planned_target_count,
+                    "planned_targets": planned_targets[:12],
+                }
             for row in pending_requirements[:4]:
                 if not isinstance(row, dict):
                     continue
@@ -7131,6 +8790,7 @@ class DesktopActionRouter:
                 "arg_updates": arg_updates,
                 "warnings": warnings,
                 "target_state_ready": target_state_ready,
+                "form_target_state": form_target_state,
             }
 
         if clean_action == "select_dropdown_option":
@@ -7172,6 +8832,7 @@ class DesktopActionRouter:
                 "arg_updates": arg_updates,
                 "warnings": warnings,
                 "target_state_ready": target_state_ready,
+                "form_target_state": form_target_state,
             }
 
         if desired_numeric is not None:
@@ -7219,6 +8880,7 @@ class DesktopActionRouter:
             "arg_updates": arg_updates,
             "warnings": warnings,
             "target_state_ready": target_state_ready,
+            "form_target_state": form_target_state,
         }
 
     def _resolve_app_profile(
@@ -7466,6 +9128,9 @@ class DesktopActionRouter:
         supports_system_action = bool(workflow_action_name) and category in supports_system_action_categories
         supports_action_dispatch = bool(workflow_action_name) and category in supports_action_dispatch_categories
         supports_stateful_execution = category in supports_stateful_categories
+        explicit_window_target = bool(str(args.get("window_title", "") or "").strip())
+        if clean_action in {"complete_form_page", "complete_form_flow", "complete_wizard_page", "complete_wizard_flow"} and explicit_window_target:
+            supports_stateful_execution = True
         supported = bool(hotkeys) or supports_direct_input or supports_system_action or supports_action_dispatch or supports_stateful_execution
         return {
             "action": clean_action,
@@ -8115,6 +9780,599 @@ class DesktopActionRouter:
             if len(candidates) >= bounded:
                 break
         return candidates
+
+    @staticmethod
+    def _form_target_family(action_name: str) -> str:
+        action = str(action_name or "").strip().lower()
+        family_map = {
+            "set_field_value": "field_value",
+            "set_value_control": "value_control",
+            "select_dropdown_option": "dropdown_selection",
+            "check_checkbox": "checkbox_state",
+            "uncheck_checkbox": "checkbox_state",
+            "enable_switch": "switch_state",
+            "disable_switch": "switch_state",
+            "select_radio_option": "radio_selection",
+            "select_tab_page": "tab_selection",
+        }
+        return family_map.get(action, action)
+
+    @classmethod
+    def _form_target_key(cls, target: Dict[str, Any]) -> str:
+        if not isinstance(target, dict):
+            return ""
+        family = cls._form_target_family(str(target.get("action") or ""))
+        query = cls._normalize_probe_text(target.get("query", ""))
+        if not family or not query:
+            return ""
+        return f"{family}:{query}"
+
+    @classmethod
+    def _normalize_form_target_plan(cls, plan: Any) -> List[Dict[str, Any]]:
+        allowed_actions = {
+            "set_field_value",
+            "set_value_control",
+            "select_dropdown_option",
+            "check_checkbox",
+            "uncheck_checkbox",
+            "enable_switch",
+            "disable_switch",
+            "select_radio_option",
+            "select_tab_page",
+        }
+        normalized: List[Dict[str, Any]] = []
+        for row in plan if isinstance(plan, list) else []:
+            if not isinstance(row, dict):
+                continue
+            action_name = str(row.get("action") or "").strip().lower()
+            query = str(row.get("query") or "").strip()
+            text_value = str(row.get("text") or "").strip()
+            if action_name not in allowed_actions or not query:
+                continue
+            if action_name in {"set_field_value", "set_value_control", "select_dropdown_option"} and not text_value:
+                continue
+            target = {
+                "action": action_name,
+                "query": query,
+                "family": cls._form_target_family(action_name),
+            }
+            if text_value:
+                target["text"] = text_value
+            target_key = cls._form_target_key(target)
+            if not target_key:
+                continue
+            normalized = [item for item in normalized if cls._form_target_key(item) != target_key]
+            normalized.append(target)
+        return normalized
+
+    @classmethod
+    def _form_target_control_types(cls, *, action_name: str, option_phase: bool = False) -> set[str]:
+        action = str(action_name or "").strip().lower()
+        if action == "set_field_value":
+            return {"edit", "combobox", "document"}
+        if action == "set_value_control":
+            return {"slider", "spinner", "edit", "combobox"}
+        if action == "select_dropdown_option":
+            return {"listitem", "menuitem", "text", "button"} if option_phase else {"combobox", "button", "edit"}
+        if action in {"check_checkbox", "uncheck_checkbox"}:
+            return {"checkbox"}
+        if action in {"enable_switch", "disable_switch"}:
+            return {"checkbox", "button", "togglebutton"}
+        if action == "select_radio_option":
+            return {"radiobutton"}
+        if action == "select_tab_page":
+            return {"tabitem"}
+        return set()
+
+    @classmethod
+    def _form_target_satisfied(
+        cls,
+        *,
+        target: Dict[str, Any],
+        control_candidate: Dict[str, Any],
+        option_candidate: Dict[str, Any],
+    ) -> bool:
+        action_name = str(target.get("action") or "").strip().lower()
+        desired_text = cls._normalize_probe_text(target.get("text", ""))
+        control_checked = cls._coerce_surface_bool(control_candidate.get("checked"))
+        control_selected = cls._coerce_surface_bool(control_candidate.get("selected"))
+        control_toggle = cls._normalize_probe_text(control_candidate.get("toggle_state", ""))
+        control_value = cls._normalize_probe_text(control_candidate.get("value_text", "") or control_candidate.get("state_text", ""))
+        control_numeric = cls._normalize_surface_number(control_candidate.get("range_value"))
+        if control_numeric is None:
+            control_numeric = cls._normalize_surface_number(control_candidate.get("value_text"))
+        desired_numeric = cls._normalize_surface_number(target.get("text"))
+        option_selected = cls._coerce_surface_bool(option_candidate.get("selected"))
+        option_checked = cls._coerce_surface_bool(option_candidate.get("checked"))
+        option_name = cls._normalize_probe_text(option_candidate.get("name", ""))
+        if action_name in {"check_checkbox", "enable_switch"}:
+            return bool(control_checked is True or control_toggle in {"on", "checked"})
+        if action_name in {"uncheck_checkbox", "disable_switch"}:
+            return bool(control_checked is False or control_toggle in {"off", "unchecked"})
+        if action_name in {"select_radio_option", "select_tab_page"}:
+            return bool(control_selected is True or control_checked is True)
+        if action_name == "set_field_value":
+            return bool(desired_text and desired_text == control_value)
+        if action_name == "set_value_control":
+            if desired_numeric is not None and control_numeric is not None:
+                return abs(control_numeric - desired_numeric) < 0.0001
+            return bool(desired_text and desired_text == control_value)
+        if action_name == "select_dropdown_option":
+            if option_candidate:
+                return bool((option_selected is True or option_checked is True) and option_name == desired_text)
+            return bool(desired_text and desired_text == control_value)
+        return False
+
+    @classmethod
+    def _form_target_plan_state(
+        cls,
+        *,
+        plan: Any,
+        snapshot: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        normalized_plan = cls._normalize_form_target_plan(plan)
+        if not normalized_plan:
+            return {}
+        element_payload = snapshot.get("elements", {}) if isinstance(snapshot.get("elements", {}), dict) else {}
+        elements = element_payload.get("items", []) if isinstance(element_payload.get("items", []), list) else []
+        targets: List[Dict[str, Any]] = []
+        for target in normalized_plan:
+            action_name = str(target.get("action") or "").strip().lower()
+            query = str(target.get("query") or "").strip()
+            text_value = str(target.get("text") or "").strip()
+            control_candidate_rows = cls._query_target_elements(
+                elements=elements,
+                query=query,
+                control_types=cls._form_target_control_types(action_name=action_name),
+                limit=3,
+            )
+            control_candidate = dict(control_candidate_rows[0]) if control_candidate_rows else {}
+            option_candidate_rows: List[Dict[str, Any]] = []
+            if action_name == "select_dropdown_option" and text_value:
+                option_candidate_rows = cls._query_target_elements(
+                    elements=elements,
+                    query=text_value,
+                    control_types=cls._form_target_control_types(action_name=action_name, option_phase=True),
+                    limit=3,
+                )
+            option_candidate = dict(option_candidate_rows[0]) if option_candidate_rows else {}
+            satisfied = cls._form_target_satisfied(
+                target=target,
+                control_candidate=control_candidate,
+                option_candidate=option_candidate,
+            )
+            visible = bool(control_candidate or option_candidate)
+            target_row = {
+                **target,
+                "key": cls._form_target_key(target),
+                "visible": visible,
+                "satisfied": satisfied,
+                "control_candidate": control_candidate,
+                "option_candidate": option_candidate,
+            }
+            if control_candidate or option_candidate:
+                target_row["candidate"] = option_candidate or control_candidate
+            targets.append(target_row)
+        resolved_targets = [
+            {
+                "action": str(row.get("action") or "").strip(),
+                "query": str(row.get("query") or "").strip(),
+                "text": str(row.get("text") or "").strip(),
+                "family": str(row.get("family") or "").strip(),
+            }
+            for row in targets
+            if bool(row.get("satisfied", False))
+        ]
+        remaining_targets = [
+            {
+                "action": str(row.get("action") or "").strip(),
+                "query": str(row.get("query") or "").strip(),
+                "text": str(row.get("text") or "").strip(),
+                "family": str(row.get("family") or "").strip(),
+            }
+            for row in targets
+            if not bool(row.get("satisfied", False))
+        ]
+        visible_pending_targets = [
+            {
+                "action": str(row.get("action") or "").strip(),
+                "query": str(row.get("query") or "").strip(),
+                "text": str(row.get("text") or "").strip(),
+                "family": str(row.get("family") or "").strip(),
+            }
+            for row in targets
+            if bool(row.get("visible", False)) and not bool(row.get("satisfied", False))
+        ]
+        return {
+            "requested_count": len(normalized_plan),
+            "resolved_count": len(resolved_targets),
+            "remaining_count": len(remaining_targets),
+            "visible_pending_count": len(visible_pending_targets),
+            "targets": targets,
+            "resolved_targets": resolved_targets,
+            "remaining_targets": remaining_targets,
+            "visible_pending_targets": visible_pending_targets,
+        }
+
+    @classmethod
+    def _rank_form_target_tabs(
+        cls,
+        *,
+        page_state: Dict[str, Any],
+        remaining_targets: Any,
+        visited_tabs: Any,
+    ) -> List[Dict[str, Any]]:
+        tab_rows = [
+            dict(row)
+            for row in page_state.get("available_tabs", [])
+            if isinstance(row, dict)
+        ]
+        if len(tab_rows) <= 1:
+            return []
+        selected_tab = cls._normalize_probe_text(page_state.get("selected_tab", ""))
+        visited = {
+            cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+            for row in (visited_tabs if isinstance(visited_tabs, (list, set, tuple)) else [visited_tabs])
+            if cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+        }
+        normalized_targets = cls._normalize_form_target_plan(remaining_targets)
+        ranked: List[tuple[int, float, int, str, Dict[str, Any]]] = []
+        for index, row in enumerate(tab_rows):
+            tab_summary = dict(row)
+            tab_name = str(tab_summary.get("name", "") or "").strip()
+            normalized_tab_name = cls._normalize_probe_text(tab_name)
+            if not normalized_tab_name or normalized_tab_name == selected_tab or normalized_tab_name in visited:
+                continue
+            if cls._coerce_surface_bool(tab_summary.get("enabled")) is False:
+                continue
+            if cls._coerce_surface_bool(tab_summary.get("visible")) is False:
+                continue
+            best_match = 0.0
+            matched_targets: List[Dict[str, Any]] = []
+            for target in normalized_targets:
+                if not isinstance(target, dict):
+                    continue
+                query_text = str(target.get("query", "") or "").strip()
+                text_value = str(target.get("text", "") or "").strip()
+                match_score = max(
+                    cls._element_query_match_score({"name": tab_name}, query_text),
+                    cls._element_query_match_score({"name": tab_name}, text_value) if text_value else 0.0,
+                )
+                if match_score <= 0:
+                    continue
+                best_match = max(best_match, match_score)
+                matched_targets.append(
+                    {
+                        "action": str(target.get("action", "") or "").strip(),
+                        "query": query_text,
+                        "text": text_value,
+                        "family": str(target.get("family", "") or "").strip(),
+                        "match_score": round(match_score, 6),
+                    }
+                )
+            ranked.append(
+                (
+                    0 if best_match > 0 else 1,
+                    -best_match,
+                    index,
+                    normalized_tab_name,
+                    {
+                        **tab_summary,
+                        "match_score": round(best_match, 6),
+                        "matched_targets": matched_targets[:6],
+                        "fallback_candidate": best_match <= 0,
+                    },
+                )
+            )
+        ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        return [dict(row) for _, _, _, _, row in ranked]
+
+    @classmethod
+    def _rank_form_navigation_targets(
+        cls,
+        *,
+        page_state: Dict[str, Any],
+        remaining_targets: Any,
+        visited_targets: Any,
+    ) -> List[Dict[str, Any]]:
+        candidate_rows = [
+            dict(row)
+            for row in page_state.get("available_navigation_targets", [])
+            if isinstance(row, dict)
+        ]
+        if not candidate_rows:
+            return []
+        selected_target = cls._normalize_probe_text(page_state.get("selected_navigation_target", ""))
+        visited = {
+            cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+            for row in (visited_targets if isinstance(visited_targets, (list, set, tuple)) else [visited_targets])
+            if cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+        }
+        normalized_targets = cls._normalize_form_target_plan(remaining_targets)
+        if not normalized_targets:
+            return []
+        action_priority = {
+            "select_sidebar_item": 0,
+            "select_tree_item": 1,
+            "select_list_item": 2,
+            "select_table_row": 3,
+        }
+        ranked: List[tuple[int, float, int, int, str, Dict[str, Any]]] = []
+        for index, row in enumerate(candidate_rows):
+            candidate_name = str(row.get("name", "") or "").strip()
+            navigation_action = str(row.get("navigation_action", "") or "").strip().lower()
+            normalized_candidate_name = cls._normalize_probe_text(candidate_name)
+            if not candidate_name or not navigation_action:
+                continue
+            if normalized_candidate_name == selected_target or normalized_candidate_name in visited:
+                continue
+            if cls._coerce_surface_bool(row.get("enabled")) is False:
+                continue
+            if cls._coerce_surface_bool(row.get("visible")) is False:
+                continue
+            best_match = 0.0
+            matched_targets: List[Dict[str, Any]] = []
+            for target in normalized_targets:
+                if not isinstance(target, dict):
+                    continue
+                query_text = str(target.get("query", "") or "").strip()
+                text_value = str(target.get("text", "") or "").strip()
+                match_score = max(
+                    cls._element_query_match_score({"name": candidate_name}, query_text),
+                    cls._element_query_match_score({"name": candidate_name}, text_value) if text_value else 0.0,
+                )
+                if match_score <= 0:
+                    continue
+                best_match = max(best_match, match_score)
+                matched_targets.append(
+                    {
+                        "action": str(target.get("action", "") or "").strip(),
+                        "query": query_text,
+                        "text": text_value,
+                        "family": str(target.get("family", "") or "").strip(),
+                        "match_score": round(match_score, 6),
+                    }
+                )
+            if best_match <= 0:
+                continue
+            ranked.append(
+                (
+                    action_priority.get(navigation_action, 9),
+                    -best_match,
+                    0 if cls._coerce_surface_bool(row.get("selected")) is not True else 1,
+                    index,
+                    normalized_candidate_name,
+                    {
+                        **row,
+                        "match_score": round(best_match, 6),
+                        "matched_targets": matched_targets[:6],
+                    },
+                )
+            )
+        ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+        return [dict(row) for _, _, _, _, _, row in ranked]
+
+    @classmethod
+    def _rank_form_drilldown_targets(
+        cls,
+        *,
+        page_state: Dict[str, Any],
+        remaining_targets: Any,
+        visited_targets: Any,
+    ) -> List[Dict[str, Any]]:
+        candidate_rows = [
+            dict(row)
+            for row in page_state.get("available_drilldown_targets", [])
+            if isinstance(row, dict)
+        ]
+        if not candidate_rows:
+            return []
+        visited = {
+            cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+            for row in (visited_targets if isinstance(visited_targets, (list, set, tuple)) else [visited_targets])
+            if cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+        }
+        normalized_targets = cls._normalize_form_target_plan(remaining_targets)
+        fallback_markers = (
+            "advanced",
+            "more",
+            "additional",
+            "details",
+            "settings",
+            "options",
+            "properties",
+            "configure",
+            "manage",
+            "related",
+            "adapter",
+        )
+        control_priority = {
+            "hyperlink": 0,
+            "button": 1,
+            "splitbutton": 2,
+            "listitem": 3,
+            "menuitem": 4,
+            "treeitem": 5,
+        }
+        ranked: List[tuple[int, int, float, int, str, Dict[str, Any]]] = []
+        for index, row in enumerate(candidate_rows):
+            candidate_name = str(row.get("name", "") or "").strip()
+            normalized_candidate_name = cls._normalize_probe_text(candidate_name)
+            candidate_text = cls._normalize_probe_text(
+                " ".join(
+                    value
+                    for value in (
+                        candidate_name,
+                        row.get("state_text", ""),
+                        row.get("automation_id", ""),
+                        row.get("class_name", ""),
+                    )
+                    if str(value or "").strip()
+                )
+            )
+            control_type = cls._normalize_probe_text(row.get("control_type", ""))
+            if not candidate_name or normalized_candidate_name in visited:
+                continue
+            if cls._coerce_surface_bool(row.get("enabled")) is False:
+                continue
+            if cls._coerce_surface_bool(row.get("visible")) is False:
+                continue
+            best_match = 0.0
+            matched_targets: List[Dict[str, Any]] = []
+            for target in normalized_targets:
+                if not isinstance(target, dict):
+                    continue
+                query_text = str(target.get("query", "") or "").strip()
+                text_value = str(target.get("text", "") or "").strip()
+                match_score = max(
+                    cls._element_query_match_score({"name": candidate_name, "state_text": candidate_text}, query_text),
+                    cls._element_query_match_score({"name": candidate_name, "state_text": candidate_text}, text_value) if text_value else 0.0,
+                )
+                if match_score <= 0:
+                    continue
+                best_match = max(best_match, match_score)
+                matched_targets.append(
+                    {
+                        "action": str(target.get("action", "") or "").strip(),
+                        "query": query_text,
+                        "text": text_value,
+                        "family": str(target.get("family", "") or "").strip(),
+                        "match_score": round(match_score, 6),
+                    }
+                )
+            fallback_candidate = bool(best_match <= 0 and any(marker in candidate_text for marker in fallback_markers))
+            if best_match <= 0 and not fallback_candidate:
+                continue
+            ranked.append(
+                (
+                    0 if best_match > 0 else 1,
+                    control_priority.get(control_type, 9),
+                    -best_match,
+                    index,
+                    normalized_candidate_name,
+                    {
+                        **row,
+                        "match_score": round(best_match, 6),
+                        "matched_targets": matched_targets[:6],
+                        "fallback_candidate": fallback_candidate,
+                    },
+                )
+            )
+        ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+        return [dict(row) for _, _, _, _, _, row in ranked]
+
+    @classmethod
+    def _rank_form_expandable_groups(
+        cls,
+        *,
+        page_state: Dict[str, Any],
+        remaining_targets: Any,
+        visited_groups: Any,
+    ) -> List[Dict[str, Any]]:
+        candidate_rows = [
+            dict(row)
+            for row in page_state.get("available_expandable_groups", [])
+            if isinstance(row, dict)
+        ]
+        if not candidate_rows:
+            return []
+        visited = {
+            cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+            for row in (visited_groups if isinstance(visited_groups, (list, set, tuple)) else [visited_groups])
+            if cls._normalize_probe_text(row.get("name", "") if isinstance(row, dict) else row)
+        }
+        normalized_targets = cls._normalize_form_target_plan(remaining_targets)
+        fallback_markers = (
+            "advanced",
+            "more",
+            "additional",
+            "details",
+            "extra",
+            "optional",
+            "show",
+            "expand",
+            "collapse",
+        )
+        action_priority = {
+            "expand_tree_item": 0,
+            "expand_group": 1,
+        }
+        ranked: List[tuple[int, int, float, int, str, Dict[str, Any]]] = []
+        for index, row in enumerate(candidate_rows):
+            candidate_name = str(row.get("name", "") or "").strip()
+            normalized_candidate_name = cls._normalize_probe_text(candidate_name)
+            expand_action = str(row.get("expand_action", "") or "").strip().lower()
+            candidate_text = cls._normalize_probe_text(
+                " ".join(
+                    value
+                    for value in (
+                        candidate_name,
+                        row.get("state_text", ""),
+                        row.get("automation_id", ""),
+                        row.get("class_name", ""),
+                    )
+                    if str(value or "").strip()
+                )
+            )
+            if not candidate_name or not expand_action:
+                continue
+            if normalized_candidate_name in visited:
+                continue
+            if cls._coerce_surface_bool(row.get("enabled")) is False:
+                continue
+            if cls._coerce_surface_bool(row.get("visible")) is False:
+                continue
+            if cls._coerce_surface_bool(row.get("expanded")) is True:
+                continue
+            best_match = 0.0
+            matched_targets: List[Dict[str, Any]] = []
+            for target in normalized_targets:
+                if not isinstance(target, dict):
+                    continue
+                query_text = str(target.get("query", "") or "").strip()
+                text_value = str(target.get("text", "") or "").strip()
+                match_score = max(
+                    cls._element_query_match_score({"name": candidate_name, "state_text": candidate_text}, query_text),
+                    cls._element_query_match_score({"name": candidate_name, "state_text": candidate_text}, text_value) if text_value else 0.0,
+                )
+                if match_score <= 0:
+                    continue
+                best_match = max(best_match, match_score)
+                matched_targets.append(
+                    {
+                        "action": str(target.get("action", "") or "").strip(),
+                        "query": query_text,
+                        "text": text_value,
+                        "family": str(target.get("family", "") or "").strip(),
+                        "match_score": round(match_score, 6),
+                    }
+                )
+            fallback_candidate = bool(
+                best_match <= 0
+                and (
+                    expand_action == "expand_tree_item"
+                    or any(marker in candidate_text for marker in fallback_markers)
+                )
+            )
+            if best_match <= 0 and not fallback_candidate:
+                continue
+            ranked.append(
+                (
+                    0 if best_match > 0 else 1,
+                    action_priority.get(expand_action, 9),
+                    -best_match,
+                    index,
+                    normalized_candidate_name,
+                    {
+                        **row,
+                        "match_score": round(best_match, 6),
+                        "matched_targets": matched_targets[:6],
+                        "fallback_candidate": fallback_candidate,
+                    },
+                )
+            )
+        ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+        return [dict(row) for _, _, _, _, _, row in ranked]
 
     @classmethod
     def _related_target_elements(cls, *, elements: Any, target: Any, limit: int = 12) -> List[Dict[str, Any]]:

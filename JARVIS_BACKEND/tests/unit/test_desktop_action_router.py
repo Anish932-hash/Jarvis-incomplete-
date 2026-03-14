@@ -2126,6 +2126,359 @@ def test_desktop_action_router_executes_complete_wizard_flow_until_setup_closes(
     ]
 
 
+def test_desktop_action_router_complete_wizard_flow_adopts_child_window_after_page_transition(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "launcher_open": True,
+        "child_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["launcher_open"]):
+            rows.append({"hwnd": 7105, "title": "Installer Launcher", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["child_open"]):
+            rows.append({"hwnd": 7106, "title": "Nested Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if title == "Nested Setup Wizard" and bool(state["child_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-child-complete", "name": "Installation Complete", "control_type": "Pane"},
+                    {"element_id": "btn-finish", "parent_id": "page-child-complete", "name": "Finish", "control_type": "Button"},
+                    {"element_id": "btn-cancel-child", "parent_id": "page-child-complete", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if bool(state["launcher_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-parent-welcome", "name": "Welcome", "control_type": "Pane"},
+                    {"element_id": "btn-next-parent", "parent_id": "page-parent-welcome", "name": "Next", "control_type": "Button"},
+                    {"element_id": "btn-cancel-parent", "parent_id": "page-parent-welcome", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["child_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_child_complete_page",
+                "text": "Setup Wizard installation complete. Click Finish to close setup.",
+                "screenshot_path": "E:/tmp/wizard_child_complete_page.png",
+            }
+        if bool(state["launcher_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_launcher_page",
+                "text": "Setup Wizard welcome page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/wizard_launcher_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_ready_after_wizard",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_ready_after_wizard.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"btn-next-parent", "next"} and bool(state["launcher_open"]) and not bool(state["child_open"]):
+            state["child_open"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-finish", "finish"} and bool(state["child_open"]):
+            state["launcher_open"] = False
+            state["child_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 7106, "title": "Nested Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                    if bool(state["child_open"])
+                    else {"hwnd": 7105, "title": "Installer Launcher", "exe": r"C:\Installers\setup.exe"}
+                    if bool(state["launcher_open"])
+                    else {"hwnd": 9105, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {
+                    "hwnd": payload.get("hwnd", 7105),
+                    "title": str(payload.get("window_title", "") or "Installer Launcher"),
+                },
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["wizard_mission"]["completed"] is True
+    assert payload["wizard_mission"]["pages_completed"] == 2
+    assert payload["wizard_mission"]["page_history"][0]["after"]["window_title"] == "Nested Setup Wizard"
+    assert payload["wizard_mission"]["page_history"][0]["after"]["window_adopted"] is True
+    assert payload["wizard_mission"]["page_history"][1]["before"]["window_title"] == "Nested Setup Wizard"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_wizard_flow_resolves_benign_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) < 2:
+            rows.append({"hwnd": 7110, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 7111, "title": "Component Check", "exe": r"C:\Installers\setup.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "dialog-body", "name": "Component check completed", "control_type": "Pane"},
+                    {"element_id": "btn-ok", "name": "OK", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-welcome", "name": "Welcome", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-welcome", "name": "Next", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "parent_id": "page-welcome", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-complete", "name": "Installation Complete", "control_type": "Pane"},
+                    {"element_id": "btn-finish", "parent_id": "page-complete", "name": "Finish", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_notice_dialog",
+                "text": "Component check dialog completed successfully. Click OK to continue.",
+                "screenshot_path": "E:/tmp/wizard_notice_dialog.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "wizard_welcome_page",
+                "text": "Setup Wizard welcome page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/wizard_welcome_page.png",
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "screen_hash": "wizard_completion_page",
+                "text": "Setup Wizard installation complete. Click Finish to close setup.",
+                "screenshot_path": "E:/tmp/wizard_completion_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_benign_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_benign_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        if bool(state["dialog_open"]) and target in {"btn-ok", "ok"}:
+            state["dialog_open"] = False
+            state["page"] = 1
+            return {"status": "success", "invoked": target}
+        if int(state["page"]) == 1 and target in {"btn-finish", "finish"}:
+            state["page"] = 2
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 7111, "title": "Component Check", "exe": r"C:\Installers\setup.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 7110, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                    if int(state["page"]) < 2
+                    else {"hwnd": 9110, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 7110), "title": str(payload.get("window_title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 5})
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["wizard_mission"]["completed"] is True
+    assert payload["wizard_mission"]["pages_completed"] == 3
+    assert payload["wizard_mission"]["page_history"][1]["status"] == "success"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["screen_hash"] == "wizard_notice_dialog"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["preferred_confirmation_button"] == "OK"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_stops_complete_wizard_flow_on_risky_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) == 0:
+            rows.append({"hwnd": 7120, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 7121, "title": "Review Required", "exe": r"C:\Installers\setup.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "dialog-warning", "name": "Ready to continue", "control_type": "Pane"},
+                    {"element_id": "btn-continue", "name": "Continue", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-ready", "name": "Ready", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-ready", "name": "Next", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "parent_id": "page-ready", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_warning_dialog",
+                "text": "Warning dialog: continuing will skip the validation review step. Continue or Cancel.",
+                "screenshot_path": "E:/tmp/wizard_warning_dialog.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "wizard_ready_root",
+                "text": "Setup Wizard ready page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/wizard_ready_root.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_warning",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_warning.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 7121, "title": "Review Required", "exe": r"C:\Installers\setup.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 7120, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 7120), "title": str(payload.get("window_title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["wizard_mission"]["completed"] is False
+    assert payload["wizard_mission"]["stop_reason_code"] == "warning_confirmation_requires_review"
+    assert payload["wizard_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["screen_hash"] == "wizard_warning_dialog"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["preferred_confirmation_button"] == "Continue"
+    assert payload["wizard_mission"]["final_page"]["screen_hash"] == "wizard_warning_dialog"
+    assert [row["action"] for row in payload["results"]] == ["accessibility_invoke_element"]
+
+
 def test_desktop_action_router_stops_complete_wizard_flow_when_manual_input_is_required(tmp_path: Path) -> None:
     registry = _build_registry(tmp_path, [])
     router = DesktopActionRouter(
@@ -2525,6 +2878,1163 @@ def test_desktop_action_router_executes_complete_form_flow_until_settings_surfac
     assert payload["form_mission"]["final_page"]["form_visible"] is False
     assert payload["form_mission"]["page_history"][0]["before"]["page_kind"] == "review_confirmation"
     assert payload["form_mission"]["page_history"][1]["before"]["preferred_commit_button"] == "OK"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_resolves_benign_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "settings_open": True,
+        "dialog_open": False,
+        "acknowledged": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["settings_open"]):
+            rows.append({"hwnd": 2322, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 2323, "title": "Settings saved", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Settings":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "dialog-complete", "name": "Settings saved", "control_type": "Pane"},
+                    {"element_id": "btn-ok", "name": "OK", "control_type": "Button"},
+                ],
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "check-review", "name": "I understand the pending changes", "control_type": "CheckBox", "checked": bool(state["acknowledged"])},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_saved_dialog",
+                "text": "Settings saved dialog. Click OK to close this message.",
+                "screenshot_path": "E:/tmp/settings_saved_dialog.png",
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_review_page",
+                "text": "Settings review changes. I understand the pending changes before applying.",
+                "screenshot_path": "E:/tmp/settings_review_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_settings_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_settings_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"check-review", "i understand the pending changes"} and bool(state["settings_open"]) and not bool(state["dialog_open"]):
+            state["acknowledged"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["settings_open"]) and bool(state["acknowledged"]) and not bool(state["dialog_open"]):
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-ok", "ok"} and bool(state["dialog_open"]):
+            state["dialog_open"] = False
+            state["settings_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 2323, "title": "Settings saved", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 2322, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                    if bool(state["settings_open"])
+                    else {"hwnd": 9009, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2322), "title": str(payload.get("window_title", "") or "Settings")}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_form_flow", "app_name": "settings", "max_form_pages": 4})
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["pages_completed"] == 2
+    assert payload["form_mission"]["page_history"][1]["status"] == "dialog_confirmed"
+    assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "Settings saved"
+    assert payload["form_mission"]["page_history"][1]["before"]["preferred_dialog_confirmation_button"] == "OK"
+    assert payload["form_mission"]["page_history"][1]["dialog_followup"]["button_label"] == "OK"
+    assert payload["form_mission"]["final_page"]["form_visible"] is False
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_stops_complete_form_flow_on_risky_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "settings_open": True,
+        "dialog_open": False,
+        "acknowledged": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["settings_open"]):
+            rows.append({"hwnd": 2324, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 2325, "title": "Confirm changes", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Settings":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "dialog-warning", "name": "Warning", "control_type": "Pane"},
+                    {"element_id": "btn-continue", "name": "Continue", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "check-review", "name": "I understand the pending changes", "control_type": "CheckBox", "checked": bool(state["acknowledged"])},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_warning_dialog",
+                "text": "Warning dialog: continuing will skip the review step. Continue or Cancel.",
+                "screenshot_path": "E:/tmp/settings_warning_dialog.png",
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_review_page",
+                "text": "Settings review changes. I understand the pending changes before applying.",
+                "screenshot_path": "E:/tmp/settings_review_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_risky_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_risky_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"check-review", "i understand the pending changes"} and bool(state["settings_open"]) and not bool(state["dialog_open"]):
+            state["acknowledged"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["settings_open"]) and bool(state["acknowledged"]) and not bool(state["dialog_open"]):
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 2325, "title": "Confirm changes", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 2324, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2324), "title": str(payload.get("window_title", "") or "Settings")}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_form_flow", "app_name": "settings", "max_form_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["form_mission"]["completed"] is False
+    assert payload["form_mission"]["stop_reason_code"] == "form_dialog_review_required"
+    assert payload["form_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "Confirm changes"
+    assert payload["form_mission"]["page_history"][1]["before"]["preferred_dialog_confirmation_button"] == "Continue"
+    assert payload["form_mission"]["final_page"]["screen_hash"] == "settings_warning_dialog"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_page_reconciles_requested_targets_before_commit(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2320, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2320, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "toggle-bluetooth", "name": "Bluetooth", "control_type": "ToggleButton", "checked": False, "toggle_state": "Off"},
+                    {"element_id": "slider-brightness", "name": "Brightness", "control_type": "Slider", "value_text": "40", "range_value": 40, "range_min": 0, "range_max": 100},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_targets_page",
+                "text": "Settings brightness 40 bluetooth disabled. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/settings_targets_page.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.advise(
+        {
+            "action": "complete_form_page",
+            "app_name": "settings",
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Bluetooth"},
+                {"action": "set_value_control", "query": "Brightness", "text": "80"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["form_target_state"]["requested_count"] == 2
+    assert payload["form_target_state"]["planned_target_count"] == 2
+    assert [step["action"] for step in payload["execution_plan"][-5:]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "keyboard_hotkey",
+        "keyboard_type",
+        "accessibility_invoke_element",
+    ]
+    assert payload["execution_plan"][-5]["args"]["element_id"] == "toggle-bluetooth"
+    assert payload["execution_plan"][-4]["args"]["element_id"] == "slider-brightness"
+    assert payload["execution_plan"][-3]["args"]["keys"] == ["ctrl", "a"]
+    assert payload["execution_plan"][-2]["args"]["text"] == "80"
+    assert payload["execution_plan"][-1]["args"]["element_id"] == "btn-apply"
+
+
+def test_desktop_action_router_complete_form_flow_tracks_requested_form_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {"form_open": True, "bluetooth_on": False, "brightness": 40, "focused": ""}
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        return {
+            "status": "success",
+            "items": [
+                {
+                    "element_id": "toggle-bluetooth",
+                    "name": "Bluetooth",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["bluetooth_on"]),
+                    "toggle_state": "On" if state["bluetooth_on"] else "Off",
+                },
+                {
+                    "element_id": "slider-brightness",
+                    "name": "Brightness",
+                    "control_type": "Slider",
+                    "value_text": str(state["brightness"]),
+                    "range_value": int(state["brightness"]),
+                    "range_min": 0,
+                    "range_max": 100,
+                },
+                {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+            ],
+        }
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": f"settings_targets_{int(state['brightness'])}_{'on' if state['bluetooth_on'] else 'off'}",
+                "text": f"Settings brightness {state['brightness']} bluetooth {'enabled' if state['bluetooth_on'] else 'disabled'}. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/settings_targets_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_ready",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_ready.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"toggle-bluetooth", "bluetooth"}:
+            state["bluetooth_on"] = not state["bluetooth_on"]
+            return {"status": "success", "invoked": target}
+        if target in {"slider-brightness", "brightness"}:
+            state["focused"] = "brightness"
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["bluetooth_on"]) and int(state["brightness"]) == 80:
+            state["form_open"] = False
+            state["focused"] = ""
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    def _keyboard_hotkey(payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"status": "success", "keys": payload.get("keys", [])}
+
+    def _keyboard_type(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if state["focused"] == "brightness":
+            state["brightness"] = int(str(payload.get("text", "0") or "0"))
+            return {"status": "success", "text": payload.get("text", "")}
+        return {"status": "error", "message": "no focused control"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2321, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2321, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"} if bool(state["form_open"]) else {"hwnd": 9002, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2321), "title": "Settings"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "keyboard_hotkey": _keyboard_hotkey,
+            "keyboard_type": _keyboard_type,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 3,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Bluetooth"},
+                {"action": "set_value_control", "query": "Brightness", "text": "80"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["requested_target_count"] == 2
+    assert payload["form_mission"]["resolved_target_count"] == 2
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["target_state_before"]["remaining_count"] == 2
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "keyboard_hotkey",
+        "keyboard_type",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_switches_tabs_to_find_requested_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Control Panel                             Microsoft.ControlPanel       1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "form_open": True,
+        "selected_tab": "General",
+        "security_alerts_enabled": False,
+    }
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        selected_tab = str(state["selected_tab"])
+        items: List[Dict[str, Any]] = [
+            {"element_id": "tab-general", "name": "General", "control_type": "TabItem", "selected": selected_tab == "General"},
+            {"element_id": "tab-security", "name": "Security", "control_type": "TabItem", "selected": selected_tab == "Security"},
+            {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+        ]
+        if selected_tab == "Security":
+            items.insert(
+                2,
+                {
+                    "element_id": "toggle-security-alerts",
+                    "name": "Security Alerts",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["security_alerts_enabled"]),
+                    "toggle_state": "On" if state["security_alerts_enabled"] else "Off",
+                },
+            )
+        return {"status": "success", "items": items}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "desktop_ready",
+                "text": "Desktop ready",
+                "screenshot_path": "E:/tmp/desktop_ready.png",
+            }
+        selected_tab = str(state["selected_tab"])
+        if selected_tab == "Security":
+            return {
+                "status": "success",
+                "screen_hash": f"control_panel_security_{'on' if state['security_alerts_enabled'] else 'off'}",
+                "text": f"Control panel security tab security alerts {'enabled' if state['security_alerts_enabled'] else 'disabled'}. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/control_panel_security.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "control_panel_general",
+            "text": "Control panel general tab selected. Apply changes when ready.",
+            "screenshot_path": "E:/tmp/control_panel_general.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"tab-security", "security"}:
+            state["selected_tab"] = "Security"
+            return {"status": "success", "invoked": target}
+        if target in {"toggle-security-alerts", "security alerts"}:
+            state["security_alerts_enabled"] = not state["security_alerts_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and str(state["selected_tab"]) == "Security" and bool(state["security_alerts_enabled"]):
+            state["form_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2410, "title": "Control Panel", "exe": r"C:\Windows\System32\control.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2410, "title": "Control Panel", "exe": r"C:\Windows\System32\control.exe"} if bool(state["form_open"]) else {"hwnd": 9003, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2410), "title": "Control Panel"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "control panel",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Security Alerts"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["status"] == "tab_switched"
+    assert payload["form_mission"]["page_history"][0]["tab_hunt"]["candidate_tabs"][0]["name"] == "Security"
+    assert payload["form_mission"]["page_history"][0]["tab_hunt"]["attempts"][0]["progressed"] is True
+    assert payload["form_mission"]["page_history"][1]["before"]["selected_tab"] == "Security"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_switches_sidebar_sections_to_find_requested_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "form_open": True,
+        "selected_section": "Display",
+        "bluetooth_enabled": False,
+    }
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        selected_section = str(state["selected_section"])
+        items: List[Dict[str, Any]] = [
+            {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": selected_section == "Display"},
+            {"element_id": "nav-bluetooth", "name": "Bluetooth", "control_type": "ListItem", "selected": selected_section == "Bluetooth"},
+            {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+        ]
+        if selected_section == "Bluetooth":
+            items.insert(
+                2,
+                {
+                    "element_id": "toggle-bluetooth",
+                    "name": "Bluetooth",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["bluetooth_enabled"]),
+                    "toggle_state": "On" if state["bluetooth_enabled"] else "Off",
+                },
+            )
+        return {"status": "success", "items": items}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "desktop_ready",
+                "text": "Desktop ready",
+                "screenshot_path": "E:/tmp/desktop_ready.png",
+            }
+        selected_section = str(state["selected_section"])
+        if selected_section == "Bluetooth":
+            return {
+                "status": "success",
+                "screen_hash": f"settings_bluetooth_{'on' if state['bluetooth_enabled'] else 'off'}",
+                "text": f"Settings sidebar bluetooth section bluetooth {'enabled' if state['bluetooth_enabled'] else 'disabled'}. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/settings_bluetooth_section.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "settings_display_section",
+            "text": "Settings sidebar display section brightness layout content",
+            "screenshot_path": "E:/tmp/settings_display_section.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"nav-bluetooth", "bluetooth"} and str(state["selected_section"]) != "Bluetooth":
+            state["selected_section"] = "Bluetooth"
+            return {"status": "success", "invoked": target}
+        if target in {"toggle-bluetooth"} or (target == "bluetooth" and str(state["selected_section"]) == "Bluetooth"):
+            state["bluetooth_enabled"] = not state["bluetooth_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and str(state["selected_section"]) == "Bluetooth" and bool(state["bluetooth_enabled"]):
+            state["form_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2411, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2411, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"} if bool(state["form_open"]) else {"hwnd": 9004, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2411), "title": "Settings"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Bluetooth"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["status"] == "navigation_switched"
+    assert payload["form_mission"]["page_history"][0]["navigation_hunt"]["candidate_targets"][0]["name"] == "Bluetooth"
+    assert payload["form_mission"]["page_history"][0]["navigation_hunt"]["attempts"][0]["progressed"] is True
+    assert payload["form_mission"]["page_history"][1]["before"]["selected_navigation_target"] == "Bluetooth"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_expands_group_to_find_requested_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "form_open": True,
+        "advanced_display_expanded": False,
+        "hdr_enabled": False,
+    }
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        items: List[Dict[str, Any]] = [
+            {
+                "element_id": "group-advanced-display",
+                "name": "Advanced display",
+                "control_type": "Button",
+                "expanded": bool(state["advanced_display_expanded"]),
+                "state_text": "expanded" if state["advanced_display_expanded"] else "collapsed",
+            },
+            {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+        ]
+        if bool(state["advanced_display_expanded"]):
+            items.insert(
+                1,
+                {
+                    "element_id": "toggle-hdr",
+                    "name": "HDR",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["hdr_enabled"]),
+                    "toggle_state": "On" if state["hdr_enabled"] else "Off",
+                },
+            )
+        return {"status": "success", "items": items}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "desktop_ready",
+                "text": "Desktop ready",
+                "screenshot_path": "E:/tmp/desktop_ready.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": f"settings_hdr_{'expanded' if state['advanced_display_expanded'] else 'collapsed'}_{'on' if state['hdr_enabled'] else 'off'}",
+            "text": (
+                "Settings advanced display section "
+                f"{'expanded' if state['advanced_display_expanded'] else 'collapsed'} "
+                f"HDR {'enabled' if state['hdr_enabled'] else 'disabled'}."
+            ),
+            "screenshot_path": "E:/tmp/settings_hdr_page.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"group-advanced-display", "advanced display"}:
+            state["advanced_display_expanded"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"toggle-hdr", "hdr"} and bool(state["advanced_display_expanded"]):
+            state["hdr_enabled"] = not state["hdr_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["hdr_enabled"]):
+            state["form_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2412, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2412, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"} if bool(state["form_open"]) else {"hwnd": 9005, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2412), "title": "Settings"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "HDR"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["status"] == "group_expanded"
+    assert payload["form_mission"]["page_history"][0]["group_hunt"]["candidate_groups"][0]["name"] == "Advanced display"
+    assert payload["form_mission"]["page_history"][0]["group_hunt"]["attempts"][0]["progressed"] is True
+    assert payload["form_mission"]["page_history"][1]["before"]["expanded_group_count"] == 1
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_scrolls_to_find_requested_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "form_open": True,
+        "scroll_position": 0,
+        "night_light_enabled": False,
+    }
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        items: List[Dict[str, Any]] = [
+            {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+            {"element_id": "scroll-main", "name": "Main scroll", "control_type": "ScrollBar"},
+            {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+        ]
+        if int(state["scroll_position"]) > 0:
+            items.insert(
+                1,
+                {
+                    "element_id": "toggle-night-light",
+                    "name": "Night light",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["night_light_enabled"]),
+                    "toggle_state": "On" if state["night_light_enabled"] else "Off",
+                },
+            )
+        return {"status": "success", "items": items}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "desktop_ready",
+                "text": "Desktop ready",
+                "screenshot_path": "E:/tmp/desktop_ready.png",
+            }
+        if int(state["scroll_position"]) > 0:
+            return {
+                "status": "success",
+                "screen_hash": f"settings_scrolled_night_light_{'on' if state['night_light_enabled'] else 'off'}",
+                "text": f"Settings list pane scrolled content night light {'enabled' if state['night_light_enabled'] else 'disabled'}. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/settings_scrolled_night_light.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "settings_top_of_page",
+            "text": "Settings list pane top of page with scroll bar available",
+            "screenshot_path": "E:/tmp/settings_top_of_page.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"toggle-night-light", "night light"} and int(state["scroll_position"]) > 0:
+            state["night_light_enabled"] = not state["night_light_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["night_light_enabled"]):
+            state["form_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    def _mouse_scroll(payload: Dict[str, Any]) -> Dict[str, Any]:
+        amount = int(payload.get("amount", 0) or 0)
+        if amount < 0:
+            state["scroll_position"] = 1
+        return {"status": "success", "amount": amount}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2413, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2413, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"} if bool(state["form_open"]) else {"hwnd": 9006, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2413), "title": "Settings"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "mouse_scroll": _mouse_scroll,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Night light"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["status"] == "scroll_progressed"
+    assert payload["form_mission"]["page_history"][0]["scroll_hunt"]["attempts"][0]["method"] == "mouse_wheel_down"
+    assert payload["form_mission"]["page_history"][0]["scroll_hunt"]["attempts"][0]["progressed"] is True
+    assert payload["form_mission"]["page_history"][1]["target_state_before"]["visible_pending_count"] == 1
+    assert [row["action"] for row in payload["results"]] == [
+        "mouse_scroll",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_opens_drilldown_target_to_find_requested_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "form_open": True,
+        "surface": "Display",
+        "hardware_acceleration_enabled": False,
+    }
+
+    def _elements(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {"status": "success", "items": []}
+        items: List[Dict[str, Any]] = [
+            {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+            {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+        ]
+        if str(state["surface"]) == "Display":
+            items.insert(
+                1,
+                {
+                    "element_id": "link-advanced-graphics-settings",
+                    "name": "Advanced graphics settings",
+                    "control_type": "Hyperlink",
+                },
+            )
+        else:
+            items.insert(
+                1,
+                {
+                    "element_id": "toggle-hardware-acceleration",
+                    "name": "Hardware acceleration",
+                    "control_type": "ToggleButton",
+                    "checked": bool(state["hardware_acceleration_enabled"]),
+                    "toggle_state": "On" if state["hardware_acceleration_enabled"] else "Off",
+                },
+            )
+        return {"status": "success", "items": items}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["form_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "desktop_ready",
+                "text": "Desktop ready",
+                "screenshot_path": "E:/tmp/desktop_ready.png",
+            }
+        if str(state["surface"]) == "Display":
+            return {
+                "status": "success",
+                "screen_hash": "settings_display_root",
+                "text": "Settings list pane display page advanced graphics settings link available",
+                "screenshot_path": "E:/tmp/settings_display_root.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": f"settings_advanced_graphics_{'on' if state['hardware_acceleration_enabled'] else 'off'}",
+            "text": f"Settings list pane advanced graphics page hardware acceleration {'enabled' if state['hardware_acceleration_enabled'] else 'disabled'}. Apply changes when ready.",
+            "screenshot_path": "E:/tmp/settings_advanced_graphics.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"link-advanced-graphics-settings", "advanced graphics settings"} and str(state["surface"]) == "Display":
+            state["surface"] = "Advanced graphics"
+            return {"status": "success", "invoked": target}
+        if target in {"toggle-hardware-acceleration", "hardware acceleration"} and str(state["surface"]) == "Advanced graphics":
+            state["hardware_acceleration_enabled"] = not state["hardware_acceleration_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and str(state["surface"]) == "Advanced graphics" and bool(state["hardware_acceleration_enabled"]):
+            state["form_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2414, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}] if bool(state["form_open"]) else [],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2414, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"} if bool(state["form_open"]) else {"hwnd": 9007, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"},
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2414), "title": "Settings"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Hardware acceleration"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["remaining_target_count"] == 0
+    assert payload["form_mission"]["page_history"][0]["status"] == "drilldown_opened"
+    assert payload["form_mission"]["page_history"][0]["drilldown_hunt"]["candidate_targets"][0]["name"] == "Advanced graphics settings"
+    assert payload["form_mission"]["page_history"][0]["drilldown_hunt"]["attempts"][0]["progressed"] is True
+    assert payload["form_mission"]["page_history"][1]["before"]["breadcrumb_path"] == ["Display"]
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_complete_form_flow_adopts_child_window_after_drilldown(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        [
+            "Windows Settings                          Microsoft.WindowsSettings   1.0                  winget",
+            "Control Panel                             Microsoft.ControlPanel       1.0                  winget",
+        ],
+    )
+    state: Dict[str, Any] = {
+        "settings_open": True,
+        "child_open": False,
+        "legacy_toggle_enabled": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["settings_open"]):
+            rows.append({"hwnd": 2510, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        if bool(state["child_open"]):
+            rows.append({"hwnd": 2511, "title": "Adapter Properties", "exe": r"C:\Windows\System32\control.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(state["settings_open"] or state["child_open"]):
+            return {"status": "success", "items": []}
+        title = str(payload.get("window_title", "") or "").strip()
+        if title == "Adapter Properties":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "toggle-legacy-gpu", "name": "Legacy GPU Scheduling", "control_type": "ToggleButton", "checked": bool(state["legacy_toggle_enabled"]), "toggle_state": "On" if state["legacy_toggle_enabled"] else "Off"},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            }
+        return {
+            "status": "success",
+            "items": [
+                {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+                {"element_id": "link-adapter-properties", "name": "Related adapter properties", "control_type": "Hyperlink"},
+                {"element_id": "btn-settings-apply", "name": "Apply", "control_type": "Button"},
+            ],
+        }
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["child_open"]):
+            return {
+                "status": "success",
+                "screen_hash": f"adapter_properties_{'on' if state['legacy_toggle_enabled'] else 'off'}",
+                "text": f"Adapter properties dialog legacy gpu scheduling {'enabled' if state['legacy_toggle_enabled'] else 'disabled'}. Apply changes when ready.",
+                "screenshot_path": "E:/tmp/adapter_properties.png",
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_display_root",
+                "text": "Settings list pane display page related adapter properties link available",
+                "screenshot_path": "E:/tmp/settings_display_root.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_ready",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_ready.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"link-adapter-properties", "related adapter properties"} and bool(state["settings_open"]):
+            state["child_open"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"toggle-legacy-gpu", "legacy gpu scheduling"} and bool(state["child_open"]):
+            state["legacy_toggle_enabled"] = not state["legacy_toggle_enabled"]
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["child_open"]) and bool(state["legacy_toggle_enabled"]):
+            state["settings_open"] = False
+            state["child_open"] = False
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 2511, "title": "Adapter Properties", "exe": r"C:\Windows\System32\control.exe"}
+                    if bool(state["child_open"])
+                    else {"hwnd": 2510, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                    if bool(state["settings_open"])
+                    else {"hwnd": 9008, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2510), "title": str(payload.get("window_title", "") or "Settings")}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute(
+        {
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "max_form_pages": 4,
+            "form_target_plan": [
+                {"action": "enable_switch", "query": "Legacy GPU Scheduling"},
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["verification"]["verified"] is True
+    assert payload["form_mission"]["completed"] is True
+    assert payload["form_mission"]["resolved_target_count"] == 1
+    assert payload["form_mission"]["page_history"][0]["status"] == "drilldown_opened"
+    assert payload["form_mission"]["page_history"][0]["after"]["window_title"] == "Adapter Properties"
+    assert payload["form_mission"]["page_history"][0]["after"]["window_adopted"] is True
+    assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "Adapter Properties"
     assert [row["action"] for row in payload["results"]] == [
         "accessibility_invoke_element",
         "accessibility_invoke_element",
@@ -3233,6 +4743,194 @@ def test_desktop_action_router_surface_snapshot_detects_tab_target_state(tmp_pat
     assert payload["target_control_state"]["control_type"] == "TabItem"
     assert payload["target_control_state"]["selected"] is True
     assert payload["query_targets"][0]["name"] == "Security"
+
+
+def test_desktop_action_router_surface_snapshot_exposes_form_page_tabs(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Control Panel                             Microsoft.ControlPanel       1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2092, "title": "Control Panel", "exe": r"C:\Windows\System32\control.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2092, "title": "Control Panel", "exe": r"C:\Windows\System32\control.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "tab-general", "name": "General", "control_type": "TabItem", "selected": True},
+                    {"element_id": "tab-security", "name": "Security", "control_type": "TabItem", "selected": False},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "control_panel_property_sheet_general",
+                "text": "Control panel properties general tab selected",
+                "screenshot_path": "E:/tmp/control_panel_property_sheet_general.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(app_name="control panel", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["form_page_state"]["page_kind"] == "property_sheet"
+    assert payload["form_page_state"]["tab_count"] == 2
+    assert payload["form_page_state"]["selected_tab"] == "General"
+    assert [row["name"] for row in payload["form_page_state"]["available_tabs"]] == ["General", "Security"]
+
+
+def test_desktop_action_router_surface_snapshot_exposes_form_page_navigation_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2093, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2093, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+                    {"element_id": "nav-bluetooth", "name": "Bluetooth", "control_type": "ListItem", "selected": False},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_navigation_display",
+                "text": "Settings sidebar display bluetooth section",
+                "screenshot_path": "E:/tmp/settings_navigation_display.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(app_name="settings", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["form_page_state"]["navigation_target_count"] == 2
+    assert payload["form_page_state"]["selected_navigation_target"] == "Display"
+    assert payload["form_page_state"]["available_navigation_targets"][0]["navigation_action"] == "select_sidebar_item"
+    assert [row["name"] for row in payload["form_page_state"]["available_navigation_targets"]] == ["Display", "Bluetooth"]
+
+
+def test_desktop_action_router_surface_snapshot_exposes_expandable_groups_and_scroll_search(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2094, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2094, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+                    {"element_id": "group-advanced-display", "name": "Advanced display", "control_type": "Button", "expanded": False},
+                    {"element_id": "scroll-main", "name": "Main scroll", "control_type": "ScrollBar"},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_advanced_display_page",
+                "text": "Settings list pane advanced display page with scroll bar available",
+                "screenshot_path": "E:/tmp/settings_advanced_display_page.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(app_name="settings", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["form_page_state"]["expandable_group_count"] == 1
+    assert payload["form_page_state"]["available_expandable_groups"][0]["name"] == "Advanced display"
+    assert payload["form_page_state"]["available_expandable_groups"][0]["expand_action"] == "expand_group"
+    assert payload["form_page_state"]["scroll_search_supported"] is True
+
+
+def test_desktop_action_router_surface_snapshot_exposes_form_page_drilldown_targets(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2095, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2095, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "nav-display", "name": "Display", "control_type": "ListItem", "selected": True},
+                    {"element_id": "link-adapter-properties", "name": "Related adapter properties", "control_type": "Hyperlink"},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_display_related_adapter_properties",
+                "text": "Settings list pane display page related adapter properties link available",
+                "screenshot_path": "E:/tmp/settings_display_related_adapter_properties.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(app_name="settings", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["form_page_state"]["drilldown_target_count"] == 1
+    assert payload["form_page_state"]["available_drilldown_targets"][0]["name"] == "Related adapter properties"
+    assert payload["form_page_state"]["breadcrumb_path"] == ["Display"]
 
 
 def test_desktop_action_router_preflights_navigation_tree_before_select_tree_item_in_device_manager(tmp_path: Path) -> None:

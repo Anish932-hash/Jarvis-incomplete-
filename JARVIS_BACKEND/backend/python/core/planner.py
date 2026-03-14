@@ -5738,6 +5738,8 @@ class Planner:
         current_desktop_context: Dict[str, str] = {}
         desktop_context_tail: str | None = None
         desktop_context_anchor: str | None = None
+        current_form_target_plan: List[Dict[str, Any]] = []
+        current_form_target_identity: tuple[str, str] = ("", "")
         has_contextual_dependency = False
 
         for index, clause in enumerate(clauses):
@@ -5794,6 +5796,31 @@ class Planner:
                 step.depends_on = deduped
                 previous_in_clause = step.step_id
                 step_context = self._extract_desktop_context_from_step(step)
+                effective_context = step_context or current_desktop_context
+                effective_identity = self._desktop_context_identity(effective_context)
+                if effective_identity != ("", "") and current_form_target_identity not in {("", ""), effective_identity}:
+                    current_form_target_plan = []
+                    current_form_target_identity = ("", "")
+                form_target_spec = self._desktop_form_target_spec_from_step(step)
+                if form_target_spec and effective_identity != ("", ""):
+                    if current_form_target_identity != effective_identity:
+                        current_form_target_plan = []
+                        current_form_target_identity = effective_identity
+                    current_form_target_plan = self._merge_desktop_form_target_plan(
+                        current_form_target_plan,
+                        form_target_spec,
+                    )
+                elif (
+                    step.action == "desktop_interact"
+                    and isinstance(step.args, dict)
+                    and str(step.args.get("action") or "").strip().lower() in {"complete_form_page", "complete_form_flow"}
+                    and current_form_target_plan
+                    and current_form_target_identity == effective_identity
+                ):
+                    step.args["form_target_plan"] = [dict(row) for row in current_form_target_plan]
+                    step.args["expected_form_target_count"] = len(current_form_target_plan)
+                    current_form_target_plan = []
+                    current_form_target_identity = ("", "")
                 if step_context:
                     previous_app = str(current_desktop_context.get("app_name") or "").strip().lower()
                     previous_window = str(current_desktop_context.get("window_title") or "").strip().lower()
@@ -8775,6 +8802,90 @@ class Planner:
             if context_window_title and step_window_title == context_window_title:
                 return True
         return False
+
+    @staticmethod
+    def _desktop_context_identity(context: Dict[str, Any]) -> tuple[str, str]:
+        if not isinstance(context, dict):
+            return ("", "")
+        return (
+            str(context.get("app_name") or "").strip().lower(),
+            str(context.get("window_title") or "").strip().lower(),
+        )
+
+    @staticmethod
+    def _desktop_form_target_family(action_name: str) -> str:
+        action = str(action_name or "").strip().lower()
+        family_map = {
+            "set_field_value": "field_value",
+            "set_value_control": "value_control",
+            "select_dropdown_option": "dropdown_selection",
+            "check_checkbox": "checkbox_state",
+            "uncheck_checkbox": "checkbox_state",
+            "enable_switch": "switch_state",
+            "disable_switch": "switch_state",
+            "select_radio_option": "radio_selection",
+            "select_tab_page": "tab_selection",
+        }
+        return family_map.get(action, action)
+
+    @classmethod
+    def _desktop_form_target_key(cls, target: Dict[str, Any]) -> str:
+        if not isinstance(target, dict):
+            return ""
+        family = cls._desktop_form_target_family(str(target.get("action") or ""))
+        query = Planner._clean_desktop_control_query(str(target.get("query") or ""))
+        if not family or not query:
+            return ""
+        return f"{family}:{query.lower()}"
+
+    @classmethod
+    def _merge_desktop_form_target_plan(
+        cls,
+        existing: List[Dict[str, Any]],
+        target: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        merged = [dict(row) for row in existing if isinstance(row, dict)]
+        target_key = cls._desktop_form_target_key(target)
+        if not target_key:
+            return merged
+        filtered = [
+            row for row in merged
+            if cls._desktop_form_target_key(row) != target_key
+        ]
+        filtered.append(dict(target))
+        return filtered
+
+    @classmethod
+    def _desktop_form_target_spec_from_step(cls, step: PlanStep) -> Dict[str, Any]:
+        if step.action != "desktop_interact" or not isinstance(step.args, dict):
+            return {}
+        action_name = str(step.args.get("action") or "").strip().lower()
+        query = Planner._clean_desktop_control_query(str(step.args.get("query") or ""))
+        text_value = str(step.args.get("text") or "").strip()
+        if action_name not in {
+            "set_field_value",
+            "set_value_control",
+            "select_dropdown_option",
+            "check_checkbox",
+            "uncheck_checkbox",
+            "enable_switch",
+            "disable_switch",
+            "select_radio_option",
+            "select_tab_page",
+        }:
+            return {}
+        if not query:
+            return {}
+        if action_name in {"set_field_value", "set_value_control", "select_dropdown_option"} and not text_value:
+            return {}
+        spec: Dict[str, Any] = {
+            "action": action_name,
+            "query": query,
+            "family": cls._desktop_form_target_family(action_name),
+        }
+        if text_value:
+            spec["text"] = text_value
+        return spec
 
     @staticmethod
     def _looks_like_desktop_followup_clause(lowered: str, arguments: Optional[Dict[str, Any]] = None) -> bool:

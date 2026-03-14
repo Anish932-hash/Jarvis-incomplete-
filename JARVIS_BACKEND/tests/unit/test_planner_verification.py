@@ -1912,6 +1912,33 @@ def test_compound_desktop_request_builds_settings_toggle_and_commit_chain() -> N
     assert steps[2].args.get("action") == "complete_form_page"
 
 
+def test_compound_desktop_request_attaches_form_target_plan_to_settings_commit_step() -> None:
+    planner = Planner()
+
+    text = "open settings and turn on bluetooth and set brightness slider to 80 and apply settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 4
+    assert steps[3].action == "desktop_interact"
+    assert steps[3].args.get("action") == "complete_form_page"
+    assert steps[3].args.get("expected_form_target_count") == 2
+    form_target_plan = steps[3].args.get("form_target_plan", [])
+    assert isinstance(form_target_plan, list)
+    assert {
+        (
+            str(row.get("action", "") or ""),
+            str(row.get("query", "") or ""),
+            str(row.get("text", "") or ""),
+        )
+        for row in form_target_plan
+        if isinstance(row, dict)
+    } == {
+        ("enable_switch", "bluetooth", ""),
+        ("set_value_control", "brightness", "80"),
+    }
+
+
 def test_replan_uses_failure_category_for_browser_timeout() -> None:
     planner = Planner()
 
