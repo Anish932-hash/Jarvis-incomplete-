@@ -1,0 +1,11 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Mozilla Firefox                           Mozilla.Firefox              146.0                winget
+Cursor                                    Cursor.Cursor                0.51.0               winget
+Windows Settings                          Microsoft.WindowsSettings   1.0                  winget
+Task Manager                              Microsoft.TaskManager       11.0                 winget
+Adobe Acrobat Reader                      Adobe.Acrobat.Reader        2026.001             winget
+Spotify                                   Spotify.Spotify             1.2.71               winget
+VLC media player                          VideoLAN.VLC                3.0.21               winget
+OBS Studio                                OBSProject.OBSStudio        31.0                 winget
+Outlook for Windows                       Microsoft.Outlook           1.2026               winget

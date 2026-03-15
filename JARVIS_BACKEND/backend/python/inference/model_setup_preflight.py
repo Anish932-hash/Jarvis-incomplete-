@@ -58,6 +58,7 @@ def build_model_setup_preflight(
     ready_count = 0
     warning_count = 0
     blocked_count = 0
+    launchable_count = 0
     trusted_count = 0
     writable_count = 0
     required_bytes_total = 0
@@ -65,6 +66,10 @@ def build_model_setup_preflight(
     remote_cache_hits = 0
     remote_known_size_count = 0
     remote_success_count = 0
+    download_ready_count = 0
+    auth_missing_count = 0
+    access_blocked_count = 0
+    manual_attention_count = 0
 
     for item in selected_items:
         item_key = str(item.get("key", "") or "").strip().lower()
@@ -82,6 +87,8 @@ def build_model_setup_preflight(
             warning_count += 1
         else:
             blocked_count += 1
+        if bool(row.get("launch_ready", False)):
+            launchable_count += 1
         trust = row.get("source_trust", {}) if isinstance(row.get("source_trust", {}), dict) else {}
         if bool(trust.get("trusted", False)):
             trusted_count += 1
@@ -99,6 +106,15 @@ def build_model_setup_preflight(
                 remote_known_size_count += 1
             if str(remote_probe.get("status", "") or "").strip().lower() == "success":
                 remote_success_count += 1
+            if bool(remote_probe.get("download_ready", False)):
+                download_ready_count += 1
+            credential_state = str(remote_probe.get("credential_state", "") or "").strip().lower()
+            if credential_state == "missing":
+                auth_missing_count += 1
+            elif credential_state == "access_denied":
+                access_blocked_count += 1
+            if bool(remote_probe.get("manual_attention_required", False)):
+                manual_attention_count += 1
 
     return {
         "status": "success",
@@ -107,6 +123,7 @@ def build_model_setup_preflight(
             "ready_count": ready_count,
             "warning_count": warning_count,
             "blocked_count": blocked_count,
+            "launchable_count": launchable_count,
             "trusted_count": trusted_count,
             "writable_count": writable_count,
             "required_bytes_total": required_bytes_total,
@@ -116,6 +133,10 @@ def build_model_setup_preflight(
             "remote_cache_hits": remote_cache_hits,
             "remote_known_size_count": remote_known_size_count,
             "remote_success_count": remote_success_count,
+            "download_ready_count": download_ready_count,
+            "auth_missing_count": auth_missing_count,
+            "access_blocked_count": access_blocked_count,
+            "manual_attention_count": manual_attention_count,
         },
         "items": rows,
     }
@@ -133,6 +154,7 @@ def _build_item_preflight(
     disk = _disk_snapshot(target_path=target_path, required_bytes=required_bytes, reserve_bytes=reserve_bytes)
     trust = _source_trust_snapshot(item, remote_item=remote_item)
     remote_probe = _remote_probe_snapshot(remote_item)
+    remote_acquisition = _remote_acquisition_snapshot(remote_item)
     blockers: List[str] = []
     warnings: List[str] = []
 
@@ -148,10 +170,11 @@ def _build_item_preflight(
         warnings.append("Required download size is unknown, so disk sufficiency could not be fully verified.")
     remote_status = str(remote_probe.get("status", "") or "").strip().lower()
     if remote_probe:
+        credential_state = str(remote_probe.get("credential_state", "") or "").strip().lower()
         auth_configured = bool(remote_probe.get("auth_configured", False))
-        if bool(remote_probe.get("requires_auth", False)) and not auth_configured:
+        if credential_state == "missing" or (bool(remote_probe.get("requires_auth", False)) and not auth_configured):
             blockers.append("Remote source requires a configured Hugging Face access token before automation can download it.")
-        elif remote_status == "auth_required" and auth_configured:
+        elif credential_state == "access_denied" or (remote_status == "auth_required" and auth_configured):
             blockers.append("Configured Hugging Face credentials could not access this repository; confirm the token or repo grant.")
         elif remote_status not in {"", "success"}:
             message = str(remote_probe.get("message", "") or "").strip()
@@ -180,6 +203,7 @@ def _build_item_preflight(
         "source_trust": trust,
         "remote_probe": remote_probe,
         "remote_metadata": remote_probe,
+        "remote_acquisition": remote_acquisition,
         "blockers": blockers,
         "warnings": warnings,
     }
@@ -390,7 +414,99 @@ def _remote_probe_snapshot(remote_item: Optional[Dict[str, Any]]) -> Dict[str, A
         "requires_auth": bool(remote_item.get("requires_auth", False)),
         "auth_configured": bool(remote_item.get("auth_configured", False)),
         "auth_used": bool(remote_item.get("auth_used", False)),
+        "access_mode": str(remote_item.get("access_mode", "") or ""),
+        "credential_state": str(remote_item.get("credential_state", "") or ""),
+        "acquisition_stage": str(remote_item.get("acquisition_stage", "") or ""),
+        "download_ready": bool(remote_item.get("download_ready", False)),
+        "acquisition_blocked": bool(remote_item.get("acquisition_blocked", False)),
+        "manual_attention_required": bool(remote_item.get("manual_attention_required", False)),
         "sibling_count": int(remote_item.get("sibling_count", 0) or 0),
         "siblings_with_size": int(remote_item.get("siblings_with_size", 0) or 0),
     }
+    inferred = _infer_remote_acquisition(remote_item)
+    for key, value in inferred.items():
+        if snapshot.get(key) in {"", False}:
+            snapshot[key] = value
     return snapshot
+
+
+def _remote_acquisition_snapshot(remote_item: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    remote_probe = _remote_probe_snapshot(remote_item)
+    if not remote_probe:
+        return {}
+    return {
+        "access_mode": str(remote_probe.get("access_mode", "") or ""),
+        "credential_state": str(remote_probe.get("credential_state", "") or ""),
+        "acquisition_stage": str(remote_probe.get("acquisition_stage", "") or ""),
+        "download_ready": bool(remote_probe.get("download_ready", False)),
+        "acquisition_blocked": bool(remote_probe.get("acquisition_blocked", False)),
+        "manual_attention_required": bool(remote_probe.get("manual_attention_required", False)),
+    }
+
+
+def _infer_remote_acquisition(remote_item: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    row = remote_item if isinstance(remote_item, dict) else {}
+    source_kind = str(row.get("source_kind", "") or "").strip().lower()
+    status_name = str(row.get("status", "") or "").strip().lower()
+    requires_auth = bool(row.get("requires_auth", False))
+    auth_configured = bool(row.get("auth_configured", False))
+    gated = bool(row.get("gated", False))
+    private = bool(row.get("private", False))
+
+    access_mode = "unknown"
+    credential_state = "unknown"
+    acquisition_stage = "unavailable"
+    download_ready = False
+    acquisition_blocked = False
+    manual_attention_required = False
+
+    if source_kind == "huggingface" or str(row.get("repo_id", "") or "").strip():
+        if private:
+            access_mode = "private"
+        elif gated or requires_auth:
+            access_mode = "gated"
+        else:
+            access_mode = "public"
+        if status_name == "success":
+            if requires_auth:
+                credential_state = "configured" if auth_configured else "missing"
+                if auth_configured:
+                    acquisition_stage = "ready_authenticated"
+                    download_ready = True
+                else:
+                    acquisition_stage = "blocked_missing_auth"
+                    acquisition_blocked = True
+                    manual_attention_required = True
+            else:
+                credential_state = "not_required"
+                acquisition_stage = "ready_public"
+                download_ready = True
+        elif status_name == "auth_required":
+            credential_state = "access_denied" if auth_configured else "missing"
+            acquisition_stage = "blocked_access_denied" if auth_configured else "blocked_missing_auth"
+            acquisition_blocked = True
+            manual_attention_required = True
+        elif status_name in {"error", "unavailable"}:
+            credential_state = "configured" if auth_configured else ("missing" if requires_auth else "not_required")
+            acquisition_stage = "probe_error"
+            manual_attention_required = True
+        else:
+            credential_state = "configured" if auth_configured else ("missing" if requires_auth else "not_required")
+    elif source_kind == "direct_url":
+        access_mode = "public"
+        credential_state = "not_required"
+        if status_name == "success":
+            acquisition_stage = "ready_public"
+            download_ready = True
+        elif status_name in {"error", "unavailable"}:
+            acquisition_stage = "probe_error"
+            manual_attention_required = True
+
+    return {
+        "access_mode": access_mode,
+        "credential_state": credential_state,
+        "acquisition_stage": acquisition_stage,
+        "download_ready": download_ready,
+        "acquisition_blocked": acquisition_blocked,
+        "manual_attention_required": manual_attention_required,
+    }

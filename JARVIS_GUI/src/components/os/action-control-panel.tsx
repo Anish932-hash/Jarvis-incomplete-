@@ -63,6 +63,8 @@ import {
   type DesktopActionAdviceResponse,
   type DesktopInteractInput,
   type DesktopInteractResponse,
+  type DesktopMissionRecord,
+  type DesktopMissionSnapshotResponse,
   type GoalListItem,
   type ModelBridgeProfile,
   type ModelBridgeProfilesResponse,
@@ -71,11 +73,17 @@ import {
   type ModelLaunchTemplateHealth,
   type ModelSetupInstallHistoryResponse,
   type ModelSetupInstallResponse,
+  type ModelSetupRecoveryWatchdogHistoryResponse,
   type ModelSetupManualPipelineResponse,
   type ModelSetupManualRun,
   type ModelSetupManualRunHistoryResponse,
   type ModelSetupManualRunLaunchResponse,
   type ModelLocalInventoryResponse,
+  type ModelSetupResumeAdviceResponse,
+  type ModelSetupMissionResponse,
+  type ModelSetupMissionLaunchResponse,
+  type ModelSetupWorkspaceResponse,
+  type ModelSetupWorkspaceScaffoldResponse,
   type ModelSetupPreflightResponse,
   type ModelSetupPlanResponse,
   type LocalNeuralTtsBridgeStatus,
@@ -141,7 +149,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Activity, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, TerminalSquare } from 'lucide-react';
+import { Activity, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, TerminalSquare, Trash2 } from 'lucide-react';
 import { ARG_TEMPLATES, QUICK_ACTIONS } from './action-templates';
 import { validateActionArgs } from './action-arg-validation';
 import VoiceContinuousLifecyclePanel from './voice-continuous-lifecycle-panel';
@@ -736,6 +744,70 @@ function asObjectRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+interface ModelSetupScopeDescriptor {
+  manifestPath: string;
+  workspaceRoot: string;
+  scopeKey: string;
+}
+
+function normalizeModelSetupScopeValue(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\\/g, '/');
+}
+
+function buildModelSetupScopeDescriptor(value: unknown): ModelSetupScopeDescriptor | null {
+  const row = asObjectRecord(value);
+  const manifestPath = normalizeModelSetupScopeValue(row.manifest_path ?? row.manifestPath ?? row.path);
+  const workspaceRoot = normalizeModelSetupScopeValue(row.workspace_root ?? row.workspaceRoot);
+  if (!manifestPath && !workspaceRoot) {
+    return null;
+  }
+  const scopeKey = [workspaceRoot, manifestPath]
+    .filter(Boolean)
+    .map((item) => item.toLowerCase())
+    .join('::');
+  return {
+    manifestPath,
+    workspaceRoot,
+    scopeKey,
+  };
+}
+
+function pickModelSetupScope(...values: unknown[]): ModelSetupScopeDescriptor | null {
+  for (const value of values) {
+    const scope = buildModelSetupScopeDescriptor(value);
+    if (scope) {
+      return scope;
+    }
+  }
+  return null;
+}
+
+function withModelSetupScope<T extends Record<string, unknown>>(
+  input: T,
+  scope?: ModelSetupScopeDescriptor | null
+): T & Record<string, unknown> {
+  if (!scope) {
+    return input;
+  }
+  return {
+    ...input,
+    manifest_path: scope.manifestPath || undefined,
+    workspace_root: scope.workspaceRoot || undefined,
+  };
+}
+
+function formatModelSetupScopeLabel(scope?: ModelSetupScopeDescriptor | null): string {
+  if (!scope) return '';
+  const workspaceName = scope.workspaceRoot.split('/').filter(Boolean).pop() ?? scope.workspaceRoot;
+  const manifestName = scope.manifestPath.split('/').filter(Boolean).pop() ?? scope.manifestPath;
+  if (workspaceName && manifestName) {
+    return `${workspaceName} :: ${manifestName}`;
+  }
+  return manifestName || workspaceName || scope.scopeKey;
+}
+
 function formatUnixTimestamp(value: unknown): string {
   const numeric = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '';
@@ -1022,6 +1094,14 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopCoworkerBusy, setDesktopCoworkerBusy] = useState(false);
   const [desktopCoworkerAdvice, setDesktopCoworkerAdvice] = useState<DesktopActionAdviceResponse | null>(null);
   const [desktopCoworkerResult, setDesktopCoworkerResult] = useState<DesktopInteractResponse | null>(null);
+  const [desktopMissionSnapshot, setDesktopMissionSnapshot] = useState<DesktopMissionSnapshotResponse | null>(null);
+  const [desktopMissionStatusFilter, setDesktopMissionStatusFilter] = useState('paused');
+  const [desktopMissionKindFilter, setDesktopMissionKindFilter] = useState('');
+  const [desktopMissionAppFilter, setDesktopMissionAppFilter] = useState('');
+  const [desktopMissionSelectedId, setDesktopMissionSelectedId] = useState('');
+  const [desktopMissionSnapshotBusy, setDesktopMissionSnapshotBusy] = useState(false);
+  const [desktopMissionResumeBusy, setDesktopMissionResumeBusy] = useState(false);
+  const [desktopMissionResetBusy, setDesktopMissionResetBusy] = useState(false);
   const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
   const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
   const [approvalPrompt, setApprovalPrompt] = useState<PendingApprovalPrompt | null>(null);
@@ -1137,12 +1217,18 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [modelLaunchEventDetailState, setModelLaunchEventDetailState] = useState<ModelLaunchTemplateEventDetailResponse | null>(null);
   const [reasoningBridgeStatus, setReasoningBridgeStatus] = useState<LocalReasoningBridgeStatus | null>(null);
   const [localModelInventoryState, setLocalModelInventoryState] = useState<ModelLocalInventoryResponse | null>(null);
+  const [modelSetupWorkspaceState, setModelSetupWorkspaceState] = useState<ModelSetupWorkspaceResponse | null>(null);
+  const [modelSetupWorkspaceScaffoldResult, setModelSetupWorkspaceScaffoldResult] = useState<ModelSetupWorkspaceScaffoldResponse | null>(null);
+  const [modelSetupMissionState, setModelSetupMissionState] = useState<ModelSetupMissionResponse | null>(null);
+  const [modelSetupMissionLaunchResult, setModelSetupMissionLaunchResult] = useState<ModelSetupMissionLaunchResponse | null>(null);
+  const [modelSetupResumeAdviceState, setModelSetupResumeAdviceState] = useState<ModelSetupResumeAdviceResponse | null>(null);
   const [modelSetupPlanState, setModelSetupPlanState] = useState<ModelSetupPlanResponse | null>(null);
   const [modelSetupManualPipelineState, setModelSetupManualPipelineState] = useState<ModelSetupManualPipelineResponse | null>(null);
   const [modelSetupManualRunsState, setModelSetupManualRunsState] = useState<ModelSetupManualRunHistoryResponse | null>(null);
   const [modelSetupManualRunResult, setModelSetupManualRunResult] = useState<ModelSetupManualRunLaunchResponse | null>(null);
   const [modelSetupPreflightState, setModelSetupPreflightState] = useState<ModelSetupPreflightResponse | null>(null);
   const [modelSetupInstallHistoryState, setModelSetupInstallHistoryState] = useState<ModelSetupInstallHistoryResponse | null>(null);
+  const [modelSetupWatchdogHistoryState, setModelSetupWatchdogHistoryState] = useState<ModelSetupRecoveryWatchdogHistoryResponse | null>(null);
   const [modelSetupInstallResult, setModelSetupInstallResult] = useState<ModelSetupInstallResponse | null>(null);
   const [modelBridgeProfilesState, setModelBridgeProfilesState] = useState<ModelBridgeProfilesResponse | null>(null);
   const [loadingRuntimeHealth, setLoadingRuntimeHealth] = useState(false);
@@ -1151,6 +1237,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [loadingModelLaunchEventDetail, setLoadingModelLaunchEventDetail] = useState(false);
   const [reasoningBridgeBusy, setReasoningBridgeBusy] = useState(false);
   const [loadingLocalModelInventory, setLoadingLocalModelInventory] = useState(false);
+  const [loadingModelSetupWorkspace, setLoadingModelSetupWorkspace] = useState(false);
+  const [loadingModelSetupMission, setLoadingModelSetupMission] = useState(false);
   const [loadingModelSetupPlan, setLoadingModelSetupPlan] = useState(false);
   const [loadingModelSetupManualPipeline, setLoadingModelSetupManualPipeline] = useState(false);
   const [loadingModelSetupManualRuns, setLoadingModelSetupManualRuns] = useState(false);
@@ -1159,6 +1247,10 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [loadingModelBridgeProfiles, setLoadingModelBridgeProfiles] = useState(false);
   const [installingModelSetup, setInstallingModelSetup] = useState(false);
   const [installingModelSetupKey, setInstallingModelSetupKey] = useState('');
+  const [scaffoldingModelSetupWorkspace, setScaffoldingModelSetupWorkspace] = useState(false);
+  const [scaffoldingModelSetupWorkspaceMode, setScaffoldingModelSetupWorkspaceMode] = useState('');
+  const [runningModelSetupMission, setRunningModelSetupMission] = useState(false);
+  const [runningModelSetupMissionMode, setRunningModelSetupMissionMode] = useState('');
   const [runningModelSetupManual, setRunningModelSetupManual] = useState(false);
   const [runningModelSetupManualKey, setRunningModelSetupManualKey] = useState('');
   const [applyingReasoningBridgeProfileId, setApplyingReasoningBridgeProfileId] = useState('');
@@ -1173,18 +1265,24 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [runtimeHealthHistoryLastRefreshAt, setRuntimeHealthHistoryLastRefreshAt] = useState(0);
   const [modelLaunchHistoryLastRefreshAt, setModelLaunchHistoryLastRefreshAt] = useState(0);
   const [localModelInventoryLastRefreshAt, setLocalModelInventoryLastRefreshAt] = useState(0);
+  const [modelSetupWorkspaceLastRefreshAt, setModelSetupWorkspaceLastRefreshAt] = useState(0);
+  const [modelSetupMissionLastRefreshAt, setModelSetupMissionLastRefreshAt] = useState(0);
+  const [modelSetupResumeAdviceLastRefreshAt, setModelSetupResumeAdviceLastRefreshAt] = useState(0);
   const [modelSetupPlanLastRefreshAt, setModelSetupPlanLastRefreshAt] = useState(0);
   const [modelSetupManualPipelineLastRefreshAt, setModelSetupManualPipelineLastRefreshAt] = useState(0);
   const [modelSetupManualRunsLastRefreshAt, setModelSetupManualRunsLastRefreshAt] = useState(0);
   const [modelSetupPreflightLastRefreshAt, setModelSetupPreflightLastRefreshAt] = useState(0);
   const [modelSetupInstallLastRefreshAt, setModelSetupInstallLastRefreshAt] = useState(0);
+  const [modelSetupWatchdogHistoryLastRefreshAt, setModelSetupWatchdogHistoryLastRefreshAt] = useState(0);
   const [modelBridgeProfilesLastRefreshAt, setModelBridgeProfilesLastRefreshAt] = useState(0);
   const [modelOperationsLastRefreshAt, setModelOperationsLastRefreshAt] = useState(0);
   const [coworkerStackLastRefreshAt, setCoworkerStackLastRefreshAt] = useState(0);
   const [coworkerRecoveryLastRefreshAt, setCoworkerRecoveryLastRefreshAt] = useState(0);
   const [providerSetupDrafts, setProviderSetupDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [providerSetupOutcomeState, setProviderSetupOutcomeState] = useState<Record<string, Record<string, unknown>>>({});
   const [updatingProviderName, setUpdatingProviderName] = useState('');
   const [verifyingProviderName, setVerifyingProviderName] = useState('');
+  const [recoveringProviderName, setRecoveringProviderName] = useState('');
   const [modelRuntimeStackName, setModelRuntimeStackName] = useState('desktop_agent');
   const [modelRuntimeMissionProfile, setModelRuntimeMissionProfile] = useState('balanced');
   const [modelRuntimeRequiresOffline, setModelRuntimeRequiresOffline] = useState(false);
@@ -1540,11 +1638,14 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const runtimeHealthHistoryRefreshLockRef = useRef(false);
   const modelLaunchHistoryRefreshLockRef = useRef(false);
   const localModelInventoryRefreshLockRef = useRef(false);
+  const modelSetupWorkspaceRefreshLockRef = useRef(false);
+  const modelSetupMissionRefreshLockRef = useRef(false);
   const modelSetupPlanRefreshLockRef = useRef(false);
-  const modelSetupManualPipelineRefreshLockRef = useRef(false);
-  const modelSetupManualRunsRefreshLockRef = useRef(false);
-  const modelSetupPreflightRefreshLockRef = useRef(false);
-  const modelSetupInstallHistoryRefreshLockRef = useRef(false);
+const modelSetupManualPipelineRefreshLockRef = useRef(false);
+const modelSetupManualRunsRefreshLockRef = useRef(false);
+const modelSetupPreflightRefreshLockRef = useRef(false);
+const modelSetupInstallHistoryRefreshLockRef = useRef(false);
+const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
   const modelSetupManualRunActiveCountRef = useRef(0);
   const modelSetupInstallActiveCountRef = useRef(0);
   const modelBridgeProfilesRefreshLockRef = useRef(false);
@@ -1608,6 +1709,74 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     if (!missionId) return null;
     return missionRows.find((item) => String(item.mission_id ?? '').trim() === missionId) ?? null;
   }, [missionIdInput, missionRows]);
+  const desktopMissionRows = useMemo(() => {
+    const items = Array.isArray(desktopMissionSnapshot?.items) ? desktopMissionSnapshot.items : [];
+    return [...items].sort((left, right) => {
+      const priorityGap = Number(right.recovery_priority ?? 0) - Number(left.recovery_priority ?? 0);
+      if (priorityGap !== 0) return priorityGap;
+      return String(right.updated_at ?? right.created_at ?? '').localeCompare(String(left.updated_at ?? left.created_at ?? ''));
+    });
+  }, [desktopMissionSnapshot]);
+  const selectedDesktopMission = useMemo(() => {
+    const selectedId = desktopMissionSelectedId.trim();
+    if (!selectedId) return desktopMissionRows[0] ?? null;
+    return desktopMissionRows.find((item) => String(item.mission_id ?? '').trim() === selectedId) ?? desktopMissionRows[0] ?? null;
+  }, [desktopMissionRows, desktopMissionSelectedId]);
+  const desktopMissionStatusCountRows = useMemo(() => {
+    const statusCounts = isObjectRecord(desktopMissionSnapshot?.status_counts)
+      ? (desktopMissionSnapshot.status_counts as Record<string, unknown>)
+      : null;
+    if (!statusCounts) return [] as Array<[string, number]>;
+    return Object.entries(statusCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
+  const desktopMissionKindCountRows = useMemo(() => {
+    const missionKindCounts = isObjectRecord(desktopMissionSnapshot?.mission_kind_counts)
+      ? (desktopMissionSnapshot.mission_kind_counts as Record<string, unknown>)
+      : null;
+    if (!missionKindCounts) return [] as Array<[string, number]>;
+    return Object.entries(missionKindCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
+  const desktopMissionApprovalCountRows = useMemo(() => {
+    const approvalCounts = isObjectRecord(desktopMissionSnapshot?.approval_kind_counts)
+      ? (desktopMissionSnapshot.approval_kind_counts as Record<string, unknown>)
+      : null;
+    if (!approvalCounts) return [] as Array<[string, number]>;
+    return Object.entries(approvalCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
+  const desktopMissionRecoveryProfileCountRows = useMemo(() => {
+    const recoveryCounts = isObjectRecord(desktopMissionSnapshot?.recovery_profile_counts)
+      ? (desktopMissionSnapshot.recovery_profile_counts as Record<string, unknown>)
+      : null;
+    if (!recoveryCounts) return [] as Array<[string, number]>;
+    return Object.entries(recoveryCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
+  const desktopMissionAppCountRows = useMemo(() => {
+    const appCounts = isObjectRecord(desktopMissionSnapshot?.app_counts)
+      ? (desktopMissionSnapshot.app_counts as Record<string, unknown>)
+      : null;
+    if (!appCounts) return [] as Array<[string, number]>;
+    return Object.entries(appCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
+  const desktopMissionLatestPaused = useMemo(() => {
+    if (
+      !desktopMissionSnapshot?.latest_paused ||
+      typeof desktopMissionSnapshot.latest_paused !== 'object' ||
+      Array.isArray(desktopMissionSnapshot.latest_paused)
+    ) {
+      return null;
+    }
+    return desktopMissionSnapshot.latest_paused as DesktopMissionRecord;
+  }, [desktopMissionSnapshot]);
   const selectedRecoveryProfileMeta = useMemo(() => {
     const normalized = selectedRecoveryProfile.trim().toLowerCase();
     if (!normalized) return null;
@@ -1820,6 +1989,262 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     const inventoryManifest = asObjectRecord(localModelInventorySummary.manifest);
     return Object.keys(inventoryManifest).length > 0 ? inventoryManifest : asObjectRecord(localModelInventoryState?.manifest);
   }, [localModelInventoryState, localModelInventorySummary]);
+  const modelSetupWorkspaceSummary = useMemo(
+    () => asObjectRecord(modelSetupWorkspaceState?.summary),
+    [modelSetupWorkspaceState]
+  );
+  const modelSetupWorkspaceDirectories = useMemo(
+    () =>
+      Array.isArray(modelSetupWorkspaceState?.directories)
+        ? modelSetupWorkspaceState.directories.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupWorkspaceState]
+  );
+  const modelSetupWorkspaceActions = useMemo(
+    () =>
+      Array.isArray(modelSetupWorkspaceScaffoldResult?.actions)
+        ? modelSetupWorkspaceScaffoldResult.actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupWorkspaceScaffoldResult]
+  );
+  const modelSetupWorkspaceRecommendations = useMemo(
+    () =>
+      Array.isArray(modelSetupWorkspaceState?.recommendations)
+        ? modelSetupWorkspaceState.recommendations.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [],
+    [modelSetupWorkspaceState]
+  );
+  const modelSetupMissionSummary = useMemo(
+    () => asObjectRecord(modelSetupMissionState?.summary),
+    [modelSetupMissionState]
+  );
+  const modelSetupMissionActions = useMemo(
+    () =>
+      Array.isArray(modelSetupMissionState?.actions)
+        ? modelSetupMissionState.actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupMissionState]
+  );
+  const modelSetupMissionRecommendations = useMemo(
+    () =>
+      Array.isArray(modelSetupMissionState?.recommendations)
+        ? modelSetupMissionState.recommendations.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [],
+    [modelSetupMissionState]
+  );
+  const modelSetupResumeAdvice = useMemo(() => {
+    const direct = asObjectRecord(modelSetupResumeAdviceState);
+    if (Object.keys(direct).length > 0) {
+      return direct;
+    }
+    return asObjectRecord(modelSetupMissionState?.resume_advice);
+  }, [modelSetupMissionState, modelSetupResumeAdviceState]);
+  const modelSetupMissionRunItems = useMemo(
+    () =>
+      Array.isArray(modelSetupMissionLaunchResult?.items)
+        ? modelSetupMissionLaunchResult.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupMissionLaunchResult]
+  );
+  const modelSetupStoredMission = useMemo(
+    () => asObjectRecord(modelSetupMissionState?.stored_mission),
+    [modelSetupMissionState]
+  );
+  const modelSetupMissionHistory = useMemo(
+    () => asObjectRecord(modelSetupMissionState?.mission_history),
+    [modelSetupMissionState]
+  );
+  const modelSetupMissionHistoryItems = useMemo(
+    () =>
+      Array.isArray(modelSetupMissionHistory.items)
+        ? modelSetupMissionHistory.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupMissionHistory]
+  );
+  const modelSetupWatchdogHistory = useMemo(
+    () => asObjectRecord(modelSetupWatchdogHistoryState),
+    [modelSetupWatchdogHistoryState]
+  );
+  const modelSetupWatchdogHistoryItems = useMemo(
+    () =>
+      Array.isArray(modelSetupWatchdogHistory.items)
+        ? modelSetupWatchdogHistory.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [modelSetupWatchdogHistory]
+  );
+  const modelSetupLatestWatchdogRun = useMemo(
+    () => asObjectRecord(modelSetupWatchdogHistory.latest_run),
+    [modelSetupWatchdogHistory]
+  );
+  const modelSetupStoredMissionRunSummary = useMemo(
+    () => asObjectRecord(modelSetupStoredMission.active_run_summary),
+    [modelSetupStoredMission]
+  );
+  const modelSetupStoredMissionStalledCount = useMemo(
+    () => Number(modelSetupStoredMission.stalled_run_count ?? modelSetupStoredMissionRunSummary.stalled_count ?? 0),
+    [modelSetupStoredMission, modelSetupStoredMissionRunSummary]
+  );
+  const modelSetupStoredMissionWaitingCount = useMemo(
+    () => Number(modelSetupStoredMission.waiting_run_count ?? modelSetupStoredMissionRunSummary.waiting_count ?? 0),
+    [modelSetupStoredMission, modelSetupStoredMissionRunSummary]
+  );
+  const modelSetupStoredMissionNextPollS = useMemo(
+    () => Number(modelSetupStoredMission.next_poll_s ?? modelSetupStoredMissionRunSummary.next_poll_s ?? 0),
+    [modelSetupStoredMission, modelSetupStoredMissionRunSummary]
+  );
+  const modelSetupCurrentScope = useMemo(
+    () =>
+      pickModelSetupScope(
+        modelSetupStoredMission,
+        modelSetupMissionHistory.filters,
+        modelSetupMissionState?.workspace,
+        modelSetupMissionState?.setup_plan,
+        modelSetupWorkspaceState,
+        modelSetupWorkspaceScaffoldResult?.workspace,
+        modelSetupWorkspaceScaffoldResult?.setup_plan,
+        modelSetupInstallHistoryState?.filters,
+        modelSetupManualRunsState?.filters,
+        modelSetupInstallResult?.run,
+        modelSetupManualRunResult?.run,
+        localModelInventoryState?.manifest
+      ),
+    [
+      localModelInventoryState,
+      modelSetupInstallHistoryState,
+      modelSetupInstallResult,
+      modelSetupManualRunResult,
+      modelSetupManualRunsState,
+      modelSetupMissionHistory,
+      modelSetupMissionState,
+      modelSetupStoredMission,
+      modelSetupWorkspaceScaffoldResult,
+      modelSetupWorkspaceState,
+    ]
+  );
+  const modelSetupCurrentScopeLabel = useMemo(
+    () => formatModelSetupScopeLabel(modelSetupCurrentScope),
+    [modelSetupCurrentScope]
+  );
+  const modelSetupStoredMissionScopeLabel = useMemo(
+    () => formatModelSetupScopeLabel(pickModelSetupScope(modelSetupStoredMission)),
+    [modelSetupStoredMission]
+  );
+  const resolveModelSetupScope = useCallback(
+    (...values: unknown[]) => pickModelSetupScope(...values, modelSetupCurrentScope),
+    [modelSetupCurrentScope]
+  );
+  const modelSetupMissionInstallRunItems = useMemo(() => {
+    const installRuns = asObjectRecord(modelSetupMissionState?.install_runs);
+    return Array.isArray(installRuns.items)
+      ? installRuns.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      : [];
+  }, [modelSetupMissionState]);
+  const modelSetupMissionManualRunItems = useMemo(() => {
+    const manualRuns = asObjectRecord(modelSetupMissionState?.manual_runs);
+    return Array.isArray(manualRuns.items)
+      ? manualRuns.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      : [];
+  }, [modelSetupMissionState]);
+  const modelSetupMissionActiveRunItems = useMemo<Array<Record<string, unknown>>>(() => {
+    const rankStatus = (status: string) => {
+      switch (status) {
+        case 'running':
+          return 4;
+        case 'accepted':
+          return 3;
+        case 'queued':
+          return 2;
+        case 'cancelling':
+          return 1;
+        default:
+          return 0;
+      }
+    };
+    const decorateRun = (item: Record<string, unknown>, runKind: 'install' | 'manual'): Record<string, unknown> => {
+      const progress = asObjectRecord(item.progress);
+      const status = String(item.status ?? '').trim().toLowerCase();
+      const currentItemName = String(progress.current_item_name ?? '').trim();
+      const currentItemKey = String(progress.current_item_key ?? '').trim();
+      const currentStepId = String(progress.current_step_id ?? '').trim();
+      const totalItems = Number(progress.total_items ?? item.selected_count ?? 0);
+      const completedItems = Number(progress.completed_items ?? 0);
+      const percent = Number(progress.percent ?? 0);
+      const progressMessage = String(progress.message ?? item.message ?? '').trim();
+      const label =
+        currentItemName ||
+        currentItemKey ||
+        currentStepId ||
+        String(item.task ?? '').trim() ||
+        String(item.run_id ?? '').trim();
+      return {
+        ...item,
+        run_kind: runKind,
+        status_rank: rankStatus(status),
+        current_item_name: currentItemName,
+        current_item_key: currentItemKey,
+        current_step_id: currentStepId,
+        total_items: Number.isFinite(totalItems) ? totalItems : 0,
+        completed_items: Number.isFinite(completedItems) ? completedItems : 0,
+        percent: Number.isFinite(percent) ? percent : 0,
+        progress_message: progressMessage,
+        label,
+      };
+    };
+    const rows: Array<Record<string, unknown>> = [
+      ...modelSetupMissionInstallRunItems.map((item) => decorateRun(item, 'install')),
+      ...modelSetupMissionManualRunItems.map((item) => decorateRun(item, 'manual')),
+    ].filter((item) => ['queued', 'running', 'cancelling', 'accepted'].includes(String(item.status ?? '').trim().toLowerCase()));
+    rows.sort((left, right) => {
+      const statusDelta = Number(right.status_rank ?? 0) - Number(left.status_rank ?? 0);
+      if (statusDelta !== 0) return statusDelta;
+      const percentDelta = Number(right.percent ?? 0) - Number(left.percent ?? 0);
+      if (percentDelta !== 0) return percentDelta;
+      return String(right.updated_at ?? '').localeCompare(String(left.updated_at ?? ''));
+    });
+    return rows;
+  }, [modelSetupMissionInstallRunItems, modelSetupMissionManualRunItems]);
+  const modelSetupMissionActiveCount = useMemo(() => {
+    const installActiveCount = Number(asObjectRecord(modelSetupMissionState?.install_runs).active_count ?? 0);
+    const manualActiveCount = Number(asObjectRecord(modelSetupMissionState?.manual_runs).active_count ?? 0);
+    const currentCount = installActiveCount + manualActiveCount;
+    if (currentCount > 0) return currentCount;
+    return Number(modelSetupStoredMission.active_run_count ?? 0);
+  }, [modelSetupMissionState, modelSetupStoredMission]);
+  const modelSetupMissionIsLive = useMemo(() => {
+    const missionStatus = String(modelSetupMissionState?.mission_status ?? '').trim().toLowerCase();
+    const storedStatus = String(modelSetupStoredMission.status ?? '').trim().toLowerCase();
+    return modelSetupMissionActiveCount > 0 || missionStatus === 'in_progress' || storedStatus === 'running';
+  }, [modelSetupMissionActiveCount, modelSetupMissionState, modelSetupStoredMission]);
+  const modelSetupResumeAdviceActionIds = useMemo(
+    () =>
+      Array.isArray(modelSetupResumeAdvice.selected_action_ids)
+        ? modelSetupResumeAdvice.selected_action_ids.filter(
+            (item): item is string => typeof item === 'string' && item.trim().length > 0
+          )
+        : [],
+    [modelSetupResumeAdvice]
+  );
+  const modelSetupResumeAdviceBlockers = useMemo(
+    () =>
+      Array.isArray(modelSetupResumeAdvice.resume_blockers)
+        ? modelSetupResumeAdvice.resume_blockers.filter(
+            (item): item is string => typeof item === 'string' && item.trim().length > 0
+          )
+        : [],
+    [modelSetupResumeAdvice]
+  );
+  const modelSetupResumeAdviceStalledCount = useMemo(
+    () => Number(modelSetupResumeAdvice.stalled_run_count ?? 0),
+    [modelSetupResumeAdvice]
+  );
+  const modelSetupResumeAdviceWaitingCount = useMemo(
+    () => Number(modelSetupResumeAdvice.waiting_run_count ?? 0),
+    [modelSetupResumeAdvice]
+  );
+  const modelSetupResumeAdviceNextPollS = useMemo(
+    () => Number(modelSetupResumeAdvice.next_poll_s ?? 0),
+    [modelSetupResumeAdvice]
+  );
   const presentLocalModelInventoryItems = useMemo(
     () => localModelInventoryItems.filter((item) => Boolean(item.present)),
     [localModelInventoryItems]
@@ -1943,6 +2368,11 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         : [],
     [modelSetupPreflightState]
   );
+  const modelSetupPreflightLaunchableCount = useMemo(() => {
+    const summaryCount = Number(modelSetupPreflightSummary.launchable_count ?? NaN);
+    if (Number.isFinite(summaryCount)) return summaryCount;
+    return modelSetupPreflightItems.filter((item) => Boolean(item.launch_ready)).length;
+  }, [modelSetupPreflightItems, modelSetupPreflightSummary]);
   const modelSetupPlanItems = useMemo(
     () =>
       Array.isArray(modelSetupPlanState?.items)
@@ -6887,15 +7317,16 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   );
 
   const refreshLocalModelInventory = useCallback(
-    async (options?: { quiet?: boolean; task?: string }) => {
+    async (options?: { quiet?: boolean; task?: string; scope?: ModelSetupScopeDescriptor | null }) => {
       if (localModelInventoryRefreshLockRef.current) return;
       localModelInventoryRefreshLockRef.current = true;
       setLoadingLocalModelInventory(true);
       try {
-        const payload = await backendClient.modelsLocalInventory({
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelsLocalInventory(withModelSetupScope({
           limit: 160,
           task: options?.task?.trim() || undefined,
-        });
+        }, scope));
         setLocalModelInventoryState(payload);
         setLocalModelInventoryLastRefreshAt(Date.now());
       } catch (error) {
@@ -6911,20 +7342,217 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         localModelInventoryRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
+  );
+
+  const refreshModelSetupWorkspace = useCallback(
+    async (options?: {
+      quiet?: boolean;
+      refreshProviderCredentials?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
+      if (modelSetupWorkspaceRefreshLockRef.current) return;
+      modelSetupWorkspaceRefreshLockRef.current = true;
+      setLoadingModelSetupWorkspace(true);
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupWorkspace(withModelSetupScope({
+          limit: 160,
+          refresh_provider_credentials: options?.refreshProviderCredentials ?? false,
+        }, scope));
+        setModelSetupWorkspaceState(payload);
+        setModelSetupWorkspaceLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Model Workspace Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupWorkspace(false);
+        modelSetupWorkspaceRefreshLockRef.current = false;
+      }
+    },
+    [resolveModelSetupScope, toast]
+  );
+
+  const refreshModelSetupResumeAdvice = useCallback(
+    async (options?: {
+      quiet?: boolean;
+      missionId?: string;
+      refreshProviderCredentials?: boolean;
+      currentScope?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupMissionResumeAdvice(withModelSetupScope({
+          mission_id: options?.missionId?.trim() || undefined,
+          limit: 160,
+          refresh_provider_credentials: options?.refreshProviderCredentials ?? false,
+          current_scope: options?.currentScope ?? true,
+        }, scope));
+        setModelSetupResumeAdviceState(payload);
+        setModelSetupResumeAdviceLastRefreshAt(Date.now());
+        return payload;
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Setup Resume Intelligence Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      }
+    },
+    [resolveModelSetupScope, toast]
+  );
+
+  const refreshModelSetupWatchdogHistory = useCallback(
+    async (options?: { quiet?: boolean; scope?: ModelSetupScopeDescriptor | null }) => {
+      if (modelSetupWatchdogHistoryRefreshLockRef.current) return;
+      modelSetupWatchdogHistoryRefreshLockRef.current = true;
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupMissionRecoveryWatchdogHistory(withModelSetupScope({
+          limit: 12,
+          current_scope: true,
+        }, scope));
+        setModelSetupWatchdogHistoryState(payload);
+        setModelSetupWatchdogHistoryLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Setup Watchdog History Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        modelSetupWatchdogHistoryRefreshLockRef.current = false;
+      }
+    },
+    [resolveModelSetupScope, toast]
+  );
+
+  const refreshModelSetupMission = useCallback(
+    async (options?: {
+      quiet?: boolean;
+      refreshProviderCredentials?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
+      if (modelSetupMissionRefreshLockRef.current) return;
+      modelSetupMissionRefreshLockRef.current = true;
+      setLoadingModelSetupMission(true);
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupMission(withModelSetupScope({
+          limit: 160,
+          refresh_provider_credentials: options?.refreshProviderCredentials ?? false,
+        }, scope));
+        const now = Date.now();
+        const inlineAdvice = isObjectRecord(payload.resume_advice)
+          ? (payload.resume_advice as ModelSetupResumeAdviceResponse)
+          : null;
+        setModelSetupMissionState(payload);
+        setModelSetupMissionLastRefreshAt(now);
+        await refreshModelSetupWatchdogHistory({ quiet: true, scope });
+        if (inlineAdvice) {
+          setModelSetupResumeAdviceState(inlineAdvice);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({
+            quiet: true,
+            missionId: String(asObjectRecord(payload.stored_mission).mission_id ?? '').trim(),
+            refreshProviderCredentials: options?.refreshProviderCredentials ?? false,
+            currentScope: true,
+            scope,
+          });
+        }
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Setup Mission Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        setLoadingModelSetupMission(false);
+        modelSetupMissionRefreshLockRef.current = false;
+      }
+    },
+    [refreshModelSetupResumeAdvice, refreshModelSetupWatchdogHistory, resolveModelSetupScope, toast]
+  );
+
+  const scaffoldModelSetupWorkspace = useCallback(
+    async (options?: { dryRun?: boolean; scope?: ModelSetupScopeDescriptor | null }) => {
+      const dryRun = Boolean(options?.dryRun);
+      setScaffoldingModelSetupWorkspace(true);
+      setScaffoldingModelSetupWorkspaceMode(dryRun ? 'preview' : 'apply');
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupWorkspaceScaffold(withModelSetupScope({
+          dry_run: dryRun,
+          limit: 160,
+        }, scope));
+        const responseScope = resolveModelSetupScope(payload.workspace, payload.setup_plan, payload, scope);
+        setModelSetupWorkspaceScaffoldResult(payload);
+        if (payload.workspace && typeof payload.workspace === 'object') {
+          setModelSetupWorkspaceState(payload.workspace as ModelSetupWorkspaceResponse);
+          setModelSetupWorkspaceLastRefreshAt(Date.now());
+        } else {
+          await refreshModelSetupWorkspace({ quiet: true, scope: responseScope });
+        }
+        if (payload.inventory && typeof payload.inventory === 'object') {
+          setLocalModelInventoryState(payload.inventory as ModelLocalInventoryResponse);
+          setLocalModelInventoryLastRefreshAt(Date.now());
+        }
+        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
+          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+          setModelSetupPlanLastRefreshAt(Date.now());
+        }
+        await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        toast({
+          title: dryRun ? 'Workspace Scaffold Preview Ready' : 'Workspace Directories Scaffolded',
+          description: dryRun
+            ? `${Number(payload.action_count ?? 0)} directory action${Number(payload.action_count ?? 0) === 1 ? '' : 's'} planned.`
+            : `${Number(payload.created_count ?? 0)} directory${Number(payload.created_count ?? 0) === 1 ? '' : 'ies'} created.`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: dryRun ? 'Workspace Scaffold Preview Failed' : 'Workspace Scaffold Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setScaffoldingModelSetupWorkspace(false);
+        setScaffoldingModelSetupWorkspaceMode('');
+      }
+    },
+    [refreshModelSetupMission, refreshModelSetupWorkspace, resolveModelSetupScope, toast]
   );
 
   const refreshModelSetupPlan = useCallback(
-    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean }) => {
+    async (options?: {
+      quiet?: boolean;
+      task?: string;
+      includePresent?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
       if (modelSetupPlanRefreshLockRef.current) return;
       modelSetupPlanRefreshLockRef.current = true;
       setLoadingModelSetupPlan(true);
       try {
-        const payload = await backendClient.modelSetupPlan({
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupPlan(withModelSetupScope({
           limit: 160,
           task: options?.task?.trim() || undefined,
           include_present: options?.includePresent ?? false,
-        });
+        }, scope));
         setModelSetupPlanState(payload);
         setModelSetupPlanLastRefreshAt(Date.now());
       } catch (error) {
@@ -6940,21 +7568,28 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         modelSetupPlanRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
   );
 
   const refreshModelSetupManualPipeline = useCallback(
-    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean; itemKeys?: string[] }) => {
+    async (options?: {
+      quiet?: boolean;
+      task?: string;
+      includePresent?: boolean;
+      itemKeys?: string[];
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
       if (modelSetupManualPipelineRefreshLockRef.current) return;
       modelSetupManualPipelineRefreshLockRef.current = true;
       setLoadingModelSetupManualPipeline(true);
       try {
-        const payload = await backendClient.modelSetupManualPipeline({
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupManualPipeline(withModelSetupScope({
           limit: 160,
           task: options?.task?.trim() || undefined,
           include_present: options?.includePresent ?? false,
           item_keys: Array.isArray(options?.itemKeys) ? options?.itemKeys.filter(Boolean) : undefined,
-        });
+        }, scope));
         setModelSetupManualPipelineState(payload);
         setModelSetupManualPipelineLastRefreshAt(Date.now());
       } catch (error) {
@@ -6970,16 +7605,17 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         modelSetupManualPipelineRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
   );
 
   const refreshModelSetupManualRuns = useCallback(
-    async (options?: { quiet?: boolean }) => {
+    async (options?: { quiet?: boolean; scope?: ModelSetupScopeDescriptor | null }) => {
       if (modelSetupManualRunsRefreshLockRef.current) return;
       modelSetupManualRunsRefreshLockRef.current = true;
       setLoadingModelSetupManualRuns(true);
       try {
-        const payload = await backendClient.modelSetupManualRuns({ limit: 10 });
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupManualRuns(withModelSetupScope({ limit: 10 }, scope));
         setModelSetupManualRunsState(payload);
         setModelSetupManualRunsLastRefreshAt(Date.now());
       } catch (error) {
@@ -6995,22 +7631,29 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         modelSetupManualRunsRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
   );
 
   const refreshModelSetupPreflight = useCallback(
-    async (options?: { quiet?: boolean; task?: string; includePresent?: boolean; refreshRemote?: boolean }) => {
+    async (options?: {
+      quiet?: boolean;
+      task?: string;
+      includePresent?: boolean;
+      refreshRemote?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
       if (modelSetupPreflightRefreshLockRef.current) return;
       modelSetupPreflightRefreshLockRef.current = true;
       setLoadingModelSetupPreflight(true);
       try {
-        const payload = await backendClient.modelSetupPreflight({
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupPreflight(withModelSetupScope({
           limit: 160,
           task: options?.task?.trim() || undefined,
           include_present: options?.includePresent ?? false,
           refresh_remote: options?.refreshRemote ?? false,
           remote_timeout_s: options?.refreshRemote ? 10 : undefined,
-        });
+        }, scope));
         setModelSetupPreflightState(payload);
         setModelSetupPreflightLastRefreshAt(Date.now());
       } catch (error) {
@@ -7026,31 +7669,39 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         modelSetupPreflightRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
   );
 
   const runModelSetupManualPipeline = useCallback(
-    async (options?: { dryRun?: boolean; itemKey?: string; force?: boolean }) => {
+    async (options?: {
+      dryRun?: boolean;
+      itemKey?: string;
+      force?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
       const requestedKey = String(options?.itemKey ?? '').trim();
       const busyKey = requestedKey || (options?.dryRun ? '__manual_preview__' : '__manual_auto__');
       setRunningModelSetupManual(true);
       setRunningModelSetupManualKey(busyKey);
       try {
-        const payload = await backendClient.modelSetupManualRunLaunch({
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupManualRunLaunch(withModelSetupScope({
           task: undefined,
           item_keys: requestedKey ? [requestedKey] : undefined,
           dry_run: options?.dryRun ?? false,
           force: options?.force ?? false,
           limit: 160,
-        });
+        }, scope));
+        const responseScope = resolveModelSetupScope(payload.run, payload.manual_pipeline, payload, scope);
         setModelSetupManualRunResult(payload);
         if (payload.manual_pipeline && typeof payload.manual_pipeline === 'object') {
           setModelSetupManualPipelineState(payload.manual_pipeline as ModelSetupManualPipelineResponse);
           setModelSetupManualPipelineLastRefreshAt(Date.now());
         }
         await Promise.all([
-          refreshModelSetupManualPipeline({ quiet: true }),
-          refreshModelSetupManualRuns({ quiet: true }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupMission({ quiet: true, scope: responseScope }),
         ]);
         const runRow = asObjectRecord(payload.run);
         toast({
@@ -7068,7 +7719,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         setRunningModelSetupManualKey('');
       }
     },
-    [refreshModelSetupManualPipeline, refreshModelSetupManualRuns, toast]
+    [refreshModelSetupManualPipeline, refreshModelSetupManualRuns, refreshModelSetupMission, resolveModelSetupScope, toast]
   );
 
   const cancelModelSetupManualRun = useCallback(
@@ -7077,7 +7728,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
       if (!cleanRunId) return;
       try {
         await backendClient.cancelModelSetupManualRun({ run_id: cleanRunId });
-        await refreshModelSetupManualRuns({ quiet: true });
+        await refreshModelSetupManualRuns({ quiet: true, scope: modelSetupCurrentScope });
+        await refreshModelSetupMission({ quiet: true, scope: modelSetupCurrentScope });
         toast({
           title: 'Manual Pipeline Cancel Requested',
           description: cleanRunId,
@@ -7090,16 +7742,17 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         });
       }
     },
-    [refreshModelSetupManualRuns, toast]
+    [modelSetupCurrentScope, refreshModelSetupManualRuns, refreshModelSetupMission, toast]
   );
 
   const refreshModelSetupInstallHistory = useCallback(
-    async (options?: { quiet?: boolean }) => {
+    async (options?: { quiet?: boolean; scope?: ModelSetupScopeDescriptor | null }) => {
       if (modelSetupInstallHistoryRefreshLockRef.current) return;
       modelSetupInstallHistoryRefreshLockRef.current = true;
       setLoadingModelSetupInstallHistory(true);
       try {
-        const payload = await backendClient.modelSetupInstallRuns({ limit: 10 });
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupInstallRuns(withModelSetupScope({ limit: 10 }, scope));
         setModelSetupInstallHistoryState(payload);
         setModelSetupInstallLastRefreshAt(Date.now());
       } catch (error) {
@@ -7115,7 +7768,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         modelSetupInstallHistoryRefreshLockRef.current = false;
       }
     },
-    [toast]
+    [resolveModelSetupScope, toast]
   );
 
   const refreshModelBridgeProfiles = useCallback(
@@ -7147,29 +7800,39 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   );
 
   const runModelSetupInstall = useCallback(
-    async (options?: { dryRun?: boolean; itemKey?: string; force?: boolean; includePresent?: boolean }) => {
+    async (options?: {
+      dryRun?: boolean;
+      itemKey?: string;
+      force?: boolean;
+      includePresent?: boolean;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
       const requestedKey = String(options?.itemKey ?? '').trim();
       const busyKey = requestedKey || (options?.dryRun ? '__preview__' : '__auto__');
       setInstallingModelSetup(true);
       setInstallingModelSetupKey(busyKey);
       try {
+        const scope = resolveModelSetupScope(options?.scope);
         if (options?.dryRun) {
-          const payload = await backendClient.modelSetupInstall({
+          const payload = await backendClient.modelSetupInstall(withModelSetupScope({
             limit: 160,
             dry_run: true,
             force: options?.force ?? false,
             include_present: options?.includePresent ?? Boolean(options?.force),
             item_keys: requestedKey ? [requestedKey] : undefined,
             verify_integrity: false,
-          });
+          }, scope));
+          const responseScope = resolveModelSetupScope(payload.install, payload.preflight, payload.setup_plan, payload, scope);
           setModelSetupInstallResult(payload);
           await Promise.all([
-            refreshLocalModelInventory({ quiet: true }),
-            refreshModelSetupPlan({ quiet: true }),
-            refreshModelSetupManualPipeline({ quiet: true }),
-            refreshModelSetupPreflight({ quiet: true }),
+            refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+            refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+            refreshModelSetupMission({ quiet: true, scope: responseScope }),
+            refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+            refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+            refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
             refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' }),
-            refreshModelSetupInstallHistory({ quiet: true }),
+            refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
           ]);
           const installSummary = asObjectRecord(payload.install);
           const successCount = Number(installSummary.success_count ?? 0);
@@ -7181,7 +7844,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
             description: `${String(payload.status ?? 'unknown')} • ok:${successCount} • skip:${skippedCount} • block:${blockedCount} • error:${errorCount}`,
           });
         } else {
-          const payload = await backendClient.modelSetupInstallLaunch({
+          const payload = await backendClient.modelSetupInstallLaunch(withModelSetupScope({
             limit: 160,
             dry_run: false,
             force: options?.force ?? false,
@@ -7190,8 +7853,10 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
             refresh_remote: true,
             remote_timeout_s: 10,
             verify_integrity: true,
-          });
+          }, scope));
+          const responseScope = resolveModelSetupScope(payload.run, payload.preflight, payload.setup_plan, payload, scope);
           setModelSetupInstallResult({
+            ...payload,
             status: String(payload.status ?? 'accepted'),
             task: payload.task,
             selected_item_keys: payload.selected_item_keys,
@@ -7204,15 +7869,22 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
             setModelSetupPreflightLastRefreshAt(Date.now());
           }
           await Promise.all([
-            refreshModelSetupPlan({ quiet: true }),
-            refreshModelSetupManualPipeline({ quiet: true }),
-            refreshModelSetupPreflight({ quiet: true }),
-            refreshModelSetupInstallHistory({ quiet: true }),
+            refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+            refreshModelSetupMission({ quiet: true, scope: responseScope }),
+            refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+            refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+            refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+            refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
           ]);
           const runRow = asObjectRecord(payload.run);
+          const launchScope = String(payload.launch_scope ?? '').trim();
+          const deferredCount = Number(payload.deferred_count ?? 0);
           toast({
             title: 'Model Setup Run Started',
-            description: `${String(runRow.run_id ?? 'pending')} • ${String(runRow.status ?? payload.status ?? 'accepted')}`,
+            description:
+              launchScope === 'partial' && deferredCount > 0
+                ? `${String(runRow.run_id ?? 'pending')} • partial launch • ready:${Number(payload.launchable_count ?? 0)} • deferred:${deferredCount}`
+                : `${String(runRow.run_id ?? 'pending')} • ${String(runRow.status ?? payload.status ?? 'accepted')}`,
           });
         }
       } catch (error) {
@@ -7226,7 +7898,18 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         setInstallingModelSetupKey('');
       }
     },
-    [refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupInstallHistory, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight, toast]
+    [
+      refreshLocalModelInventory,
+      refreshModelBridgeProfiles,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
   );
 
   const cancelModelSetupInstallRun = useCallback(
@@ -7235,7 +7918,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
       if (!cleanRunId) return;
       try {
         await backendClient.cancelModelSetupInstall({ run_id: cleanRunId });
-        await refreshModelSetupInstallHistory({ quiet: true });
+        await refreshModelSetupInstallHistory({ quiet: true, scope: modelSetupCurrentScope });
+        await refreshModelSetupMission({ quiet: true, scope: modelSetupCurrentScope });
         toast({
           title: 'Model Setup Cancel Requested',
           description: cleanRunId,
@@ -7248,7 +7932,556 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         });
       }
     },
-    [refreshModelSetupInstallHistory, toast]
+    [modelSetupCurrentScope, refreshModelSetupInstallHistory, refreshModelSetupMission, toast]
+  );
+
+  const launchModelSetupMission = useCallback(
+    async (options?: { dryRun?: boolean; scope?: ModelSetupScopeDescriptor | null }) => {
+      const dryRun = Boolean(options?.dryRun);
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode(dryRun ? 'preview' : 'apply');
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.modelSetupMissionLaunch(withModelSetupScope({
+          dry_run: dryRun,
+          continue_on_error: true,
+          limit: 160,
+        }, scope));
+        const now = Date.now();
+        const updatedMission = payload.updated_mission && typeof payload.updated_mission === 'object'
+          ? (payload.updated_mission as ModelSetupMissionResponse)
+          : null;
+        const responseScope = resolveModelSetupScope(updatedMission, payload.workspace, payload.setup_plan, payload.mission_record, payload, scope);
+        const inlineAdvice = isObjectRecord(payload.resume_advice)
+          ? (payload.resume_advice as ModelSetupResumeAdviceResponse)
+          : updatedMission && isObjectRecord(updatedMission.resume_advice)
+            ? (updatedMission.resume_advice as ModelSetupResumeAdviceResponse)
+            : null;
+        setModelSetupMissionLaunchResult(payload);
+        if (updatedMission) {
+          setModelSetupMissionState(updatedMission);
+          setModelSetupMissionLastRefreshAt(now);
+        } else {
+          await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        }
+        if (inlineAdvice) {
+          setModelSetupResumeAdviceState(inlineAdvice);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({ quiet: true, currentScope: true, scope: responseScope });
+        }
+        if (payload.workspace && typeof payload.workspace === 'object') {
+          setModelSetupWorkspaceState(payload.workspace as ModelSetupWorkspaceResponse);
+          setModelSetupWorkspaceLastRefreshAt(now);
+        }
+        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
+          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+          setModelSetupPlanLastRefreshAt(now);
+        }
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+          refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+          refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
+        ]);
+        toast({
+          title: dryRun ? 'Setup Mission Preview Ready' : 'Setup Mission Started',
+          description: dryRun
+            ? `${Number(payload.executed_count ?? 0)} runnable action${Number(payload.executed_count ?? 0) === 1 ? '' : 's'} selected.`
+            : `${Number(payload.executed_count ?? 0)} setup action${Number(payload.executed_count ?? 0) === 1 ? '' : 's'} executed or launched.`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: dryRun ? 'Setup Mission Preview Failed' : 'Setup Mission Launch Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [
+      refreshLocalModelInventory,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupResumeAdvice,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
+  );
+
+  const resumeModelSetupMission = useCallback(
+    async (missionId?: string, scopeOverride?: ModelSetupScopeDescriptor | null) => {
+      const cleanMissionId = String(missionId ?? '').trim();
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('resume');
+      try {
+        const scope = resolveModelSetupScope(scopeOverride);
+        const payload = await backendClient.modelSetupMissionResume(withModelSetupScope({
+          mission_id: cleanMissionId || undefined,
+          continue_on_error: true,
+          limit: 160,
+        }, scope));
+        const now = Date.now();
+        const updatedMission = payload.updated_mission && typeof payload.updated_mission === 'object'
+          ? (payload.updated_mission as ModelSetupMissionResponse)
+          : null;
+        const responseScope = resolveModelSetupScope(updatedMission, payload.workspace, payload.setup_plan, payload.resolved_mission, payload, scope);
+        const inlineAdvice = isObjectRecord(payload.resume_advice)
+          ? (payload.resume_advice as ModelSetupResumeAdviceResponse)
+          : updatedMission && isObjectRecord(updatedMission.resume_advice)
+            ? (updatedMission.resume_advice as ModelSetupResumeAdviceResponse)
+            : null;
+        setModelSetupMissionLaunchResult(payload);
+        if (updatedMission) {
+          setModelSetupMissionState(updatedMission);
+          setModelSetupMissionLastRefreshAt(now);
+        } else {
+          await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        }
+        if (inlineAdvice) {
+          setModelSetupResumeAdviceState(inlineAdvice);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({
+            quiet: true,
+            missionId: cleanMissionId || undefined,
+            currentScope: !cleanMissionId,
+            scope: responseScope,
+          });
+        }
+        if (payload.workspace && typeof payload.workspace === 'object') {
+          setModelSetupWorkspaceState(payload.workspace as ModelSetupWorkspaceResponse);
+          setModelSetupWorkspaceLastRefreshAt(now);
+        }
+        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
+          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+          setModelSetupPlanLastRefreshAt(now);
+        }
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+          refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+          refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
+        ]);
+        toast({
+          title: 'Setup Mission Resume Updated',
+          description:
+            String(payload.message ?? '').trim() ||
+            `${Number(payload.executed_count ?? 0)} action${Number(payload.executed_count ?? 0) === 1 ? '' : 's'} executed while resuming.`,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Mission Resume Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [
+      refreshLocalModelInventory,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupResumeAdvice,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
+  );
+
+  const autoResumeModelSetupMission = useCallback(
+    async (missionId?: string, scopeOverride?: ModelSetupScopeDescriptor | null) => {
+      const cleanMissionId = String(missionId ?? '').trim();
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('auto_resume');
+      try {
+        const scope = resolveModelSetupScope(scopeOverride);
+        const payload = await backendClient.autoResumeModelSetupMission(withModelSetupScope({
+          mission_id: cleanMissionId || undefined,
+          continue_on_error: true,
+          limit: 160,
+          current_scope: !cleanMissionId,
+        }, scope));
+        const now = Date.now();
+        const updatedMission = payload.updated_mission && typeof payload.updated_mission === 'object'
+          ? (payload.updated_mission as ModelSetupMissionResponse)
+          : null;
+        const responseScope = resolveModelSetupScope(updatedMission, payload.workspace, payload.setup_plan, payload.resolved_mission, payload, scope);
+        const inlineAdvice = isObjectRecord(payload.resume_advice)
+          ? (payload.resume_advice as ModelSetupResumeAdviceResponse)
+          : updatedMission && isObjectRecord(updatedMission.resume_advice)
+            ? (updatedMission.resume_advice as ModelSetupResumeAdviceResponse)
+            : null;
+        setModelSetupMissionLaunchResult(payload);
+        if (updatedMission) {
+          setModelSetupMissionState(updatedMission);
+          setModelSetupMissionLastRefreshAt(now);
+        } else {
+          await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        }
+        if (inlineAdvice) {
+          setModelSetupResumeAdviceState(inlineAdvice);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({
+            quiet: true,
+            missionId: cleanMissionId || undefined,
+            currentScope: !cleanMissionId,
+            scope: responseScope,
+          });
+        }
+        if (payload.workspace && typeof payload.workspace === 'object') {
+          setModelSetupWorkspaceState(payload.workspace as ModelSetupWorkspaceResponse);
+          setModelSetupWorkspaceLastRefreshAt(now);
+        }
+        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
+          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+          setModelSetupPlanLastRefreshAt(now);
+        }
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+          refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+          refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
+        ]);
+        const triggered = Boolean(payload.auto_resume_triggered);
+        toast(
+          triggered
+            ? {
+                title: 'Setup Mission Auto-Resume Triggered',
+                description:
+                  String(payload.message ?? '').trim() ||
+                  `${Number(payload.executed_count ?? 0)} action${Number(payload.executed_count ?? 0) === 1 ? '' : 's'} continued automatically.`,
+              }
+            : {
+                variant: String(payload.status ?? '').trim().toLowerCase() === 'error' ? 'destructive' : 'default',
+                title: 'Setup Mission Auto-Resume Not Ready',
+                description:
+                  String(payload.message ?? '').trim() ||
+                  String(asObjectRecord(payload.resume_advice).message ?? '').trim() ||
+                  'No auto-resumable setup actions are ready right now.',
+              }
+        );
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Mission Auto-Resume Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [
+      refreshLocalModelInventory,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupResumeAdvice,
+      refreshModelSetupWatchdogHistory,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
+  );
+
+  const sweepModelSetupRecovery = useCallback(
+    async (missionId?: string, scopeOverride?: ModelSetupScopeDescriptor | null) => {
+      const cleanMissionId = String(missionId ?? '').trim();
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('recovery_sweep');
+      try {
+        const scope = resolveModelSetupScope(scopeOverride);
+        const payload = await backendClient.modelSetupMissionRecoverySweep(withModelSetupScope({
+          mission_id: cleanMissionId || undefined,
+          current_scope: !cleanMissionId,
+          continue_on_error: true,
+          continue_followup_actions: true,
+          max_auto_resume_passes: 3,
+          max_followup_waves: 3,
+          limit: 160,
+        }, scope));
+        const now = Date.now();
+        const finalAdvice = isObjectRecord(payload.final_resume_advice)
+          ? (payload.final_resume_advice as ModelSetupResumeAdviceResponse)
+          : null;
+        const finalPayload = isObjectRecord(payload.final_payload)
+          ? (payload.final_payload as ModelSetupMissionLaunchResponse)
+          : null;
+        const updatedMission = finalPayload && isObjectRecord(finalPayload.updated_mission)
+          ? (finalPayload.updated_mission as ModelSetupMissionResponse)
+          : null;
+        const responseScope = resolveModelSetupScope(updatedMission, finalPayload?.workspace, finalPayload?.setup_plan, payload, scope);
+        if (updatedMission) {
+          setModelSetupMissionState(updatedMission);
+          setModelSetupMissionLastRefreshAt(now);
+        } else {
+          await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        }
+        if (finalAdvice) {
+          setModelSetupResumeAdviceState(finalAdvice);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({
+            quiet: true,
+            missionId: cleanMissionId || undefined,
+            currentScope: !cleanMissionId,
+            scope: responseScope,
+          });
+        }
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+          refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+          refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+        ]);
+        const triggered = Number(payload.auto_resume_triggered_count ?? 0);
+        toast(
+          triggered > 0
+            ? {
+                title: 'Setup Recovery Sweep Completed',
+                description:
+                  String(payload.message ?? '').trim() ||
+                  `JARVIS auto-resumed ${triggered} setup recovery pass${triggered === 1 ? '' : 'es'}.`,
+              }
+            : {
+                variant: String(payload.status ?? '').trim().toLowerCase() === 'error' ? 'destructive' : 'default',
+                title: 'Setup Recovery Sweep Idle',
+                description:
+                  String(payload.message ?? '').trim() ||
+                  'No auto-resumable setup actions were ready during the sweep.',
+              }
+        );
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Recovery Sweep Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [
+      refreshLocalModelInventory,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupResumeAdvice,
+      refreshModelSetupWatchdogHistory,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
+  );
+
+  const watchdogModelSetupRecovery = useCallback(
+    async (missionId?: string, scopeOverride?: ModelSetupScopeDescriptor | null) => {
+      const cleanMissionId = String(missionId ?? '').trim();
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('recovery_watchdog');
+      try {
+        const scope = resolveModelSetupScope(scopeOverride);
+        const payload = await backendClient.modelSetupMissionRecoveryWatchdog(withModelSetupScope({
+          mission_id: cleanMissionId || undefined,
+          current_scope: !cleanMissionId,
+          continue_on_error: true,
+          continue_followup_actions: true,
+          max_missions: 6,
+          max_auto_resumes: 2,
+          max_followup_waves: 3,
+          limit: 160,
+        }, scope));
+        const now = Date.now();
+        const latestTriggeredPayload = isObjectRecord(payload.latest_triggered_payload)
+          ? (payload.latest_triggered_payload as ModelSetupMissionLaunchResponse)
+          : null;
+        const updatedMission = latestTriggeredPayload && isObjectRecord(latestTriggeredPayload.updated_mission)
+          ? (latestTriggeredPayload.updated_mission as ModelSetupMissionResponse)
+          : null;
+        const responseScope = resolveModelSetupScope(
+          updatedMission,
+          latestTriggeredPayload?.workspace,
+          latestTriggeredPayload?.setup_plan,
+          payload,
+          scope
+        );
+        if (latestTriggeredPayload) {
+          setModelSetupMissionLaunchResult(latestTriggeredPayload);
+        }
+        if (updatedMission) {
+          setModelSetupMissionState(updatedMission);
+          setModelSetupMissionLastRefreshAt(now);
+        } else {
+          await refreshModelSetupMission({ quiet: true, scope: responseScope });
+        }
+        if (latestTriggeredPayload && isObjectRecord(latestTriggeredPayload.resume_advice)) {
+          setModelSetupResumeAdviceState(latestTriggeredPayload.resume_advice as ModelSetupResumeAdviceResponse);
+          setModelSetupResumeAdviceLastRefreshAt(now);
+        } else {
+          await refreshModelSetupResumeAdvice({
+            quiet: true,
+            missionId: cleanMissionId || undefined,
+            currentScope: !cleanMissionId,
+            scope: responseScope,
+          });
+        }
+        await Promise.all([
+          refreshLocalModelInventory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWorkspace({ quiet: true, scope: responseScope }),
+          refreshModelSetupPlan({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualPipeline({ quiet: true, scope: responseScope }),
+          refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
+          refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+        ]);
+        const triggered = Number(payload.auto_resume_triggered_count ?? 0);
+        const watched = Number(payload.watch_count ?? 0);
+        const stalled = Number(payload.stalled_count ?? 0);
+        toast(
+          triggered > 0
+            ? {
+                title: 'Setup Recovery Watchdog Continued Work',
+                description:
+                  String(payload.message ?? '').trim() ||
+                  `JARVIS auto-resumed ${triggered} stored setup mission${triggered === 1 ? '' : 's'}.`,
+              }
+            : watched > 0 || stalled > 0
+              ? {
+                  title: 'Setup Recovery Watchdog Watching',
+                  description:
+                    String(payload.message ?? '').trim() ||
+                    `Watch:${watched} • stalled:${stalled}`,
+                }
+              : {
+                  variant: String(payload.status ?? '').trim().toLowerCase() === 'error' ? 'destructive' : 'default',
+                  title: 'Setup Recovery Watchdog Idle',
+                  description:
+                    String(payload.message ?? '').trim() ||
+                    'No stored setup missions needed automatic continuation.',
+                }
+        );
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Recovery Watchdog Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [
+      refreshLocalModelInventory,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualPipeline,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshModelSetupPlan,
+      refreshModelSetupPreflight,
+      refreshModelSetupResumeAdvice,
+      refreshModelSetupWatchdogHistory,
+      refreshModelSetupWorkspace,
+      resolveModelSetupScope,
+      toast,
+    ]
+  );
+
+  const resetModelSetupWatchdogHistory = useCallback(
+    async (options?: { runId?: string; scope?: ModelSetupScopeDescriptor | null }) => {
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('watchdog_reset');
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.resetModelSetupMissionRecoveryWatchdog(withModelSetupScope({
+          run_id: String(options?.runId ?? '').trim() || undefined,
+        }, scope));
+        await refreshModelSetupWatchdogHistory({ quiet: true, scope });
+        toast({
+          title: 'Setup Watchdog History Cleared',
+          description:
+            Number(payload.removed ?? 0) > 0
+              ? `${Number(payload.removed ?? 0)} watchdog run${Number(payload.removed ?? 0) === 1 ? '' : 's'} cleared for this scope.`
+              : 'There were no stored watchdog runs to clear for this scope.',
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Watchdog Reset Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [refreshModelSetupWatchdogHistory, resolveModelSetupScope, toast]
+  );
+
+  const resetStoredModelSetupMission = useCallback(
+    async (missionId?: string) => {
+      const cleanMissionId = String(missionId ?? '').trim();
+      if (!cleanMissionId) return;
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('reset');
+      try {
+        await backendClient.resetModelSetupMission({ mission_id: cleanMissionId });
+        setModelSetupMissionLaunchResult(null);
+        setModelSetupResumeAdviceState(null);
+        await refreshModelSetupMission({ quiet: true });
+        toast({
+          title: 'Stored Setup Mission Cleared',
+          description: cleanMissionId,
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Mission Reset Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [refreshModelSetupMission, toast]
   );
 
   const updateProviderSetupDraft = useCallback((provider: string, field: string, value: string) => {
@@ -7267,6 +8500,180 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         ),
       };
     });
+  }, []);
+
+  const syncProviderSetupPayload = useCallback((payload: Record<string, unknown>) => {
+    const now = Date.now();
+    const recoveryLaunchPayload = isObjectRecord(payload.recovery_launch) ? payload.recovery_launch : null;
+    if (isObjectRecord(payload.inventory)) {
+      setLocalModelInventoryState(payload.inventory as ModelLocalInventoryResponse);
+      setLocalModelInventoryLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.workspace)) {
+      setModelSetupWorkspaceState(payload.workspace as ModelSetupWorkspaceResponse);
+      setModelSetupWorkspaceLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.setup_plan)) {
+      setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
+      setModelSetupPlanLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.preflight)) {
+      setModelSetupPreflightState(payload.preflight as ModelSetupPreflightResponse);
+      setModelSetupPreflightLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.manual_pipeline)) {
+      setModelSetupManualPipelineState(payload.manual_pipeline as ModelSetupManualPipelineResponse);
+      setModelSetupManualPipelineLastRefreshAt(now);
+    }
+    const missionPayload = isObjectRecord(payload.updated_mission)
+      ? payload.updated_mission
+      : recoveryLaunchPayload && isObjectRecord(recoveryLaunchPayload.updated_mission)
+        ? recoveryLaunchPayload.updated_mission
+      : isObjectRecord(payload.mission)
+        ? payload.mission
+        : recoveryLaunchPayload && isObjectRecord(recoveryLaunchPayload.mission)
+          ? recoveryLaunchPayload.mission
+        : null;
+    if (missionPayload) {
+      setModelSetupMissionState(missionPayload as ModelSetupMissionResponse);
+      setModelSetupMissionLastRefreshAt(now);
+    }
+    const resumeAdvicePayload = isObjectRecord(payload.resume_advice)
+      ? payload.resume_advice
+      : recoveryLaunchPayload && isObjectRecord(recoveryLaunchPayload.resume_advice)
+        ? recoveryLaunchPayload.resume_advice
+        : missionPayload && isObjectRecord(missionPayload.resume_advice)
+          ? missionPayload.resume_advice
+          : null;
+    if (resumeAdvicePayload) {
+      setModelSetupResumeAdviceState(resumeAdvicePayload as ModelSetupResumeAdviceResponse);
+      setModelSetupResumeAdviceLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.coworker_stack)) {
+      setCoworkerStackState(payload.coworker_stack as CoworkerStackStatusResponse);
+      setCoworkerStackLastRefreshAt(now);
+    }
+    if (isObjectRecord(payload.coworker_recovery)) {
+      setCoworkerRecoveryState(payload.coworker_recovery as CoworkerStackRecoveryPlanResponse);
+      setCoworkerRecoveryLastRefreshAt(now);
+    }
+  }, []);
+
+  const recordProviderSetupOutcome = useCallback((provider: string, payload: Record<string, unknown>) => {
+    const cleanProvider = provider.trim().toLowerCase();
+    if (!cleanProvider) return;
+    const recoveryLaunch = asObjectRecord(payload.recovery_launch);
+    const verification = asObjectRecord(payload.verification);
+    const setupRecovery = Object.keys(recoveryLaunch).length > 0
+      ? asObjectRecord(recoveryLaunch.setup_recovery)
+      : asObjectRecord(payload.setup_recovery);
+    setProviderSetupOutcomeState((current) => ({
+      ...current,
+      [cleanProvider]: {
+        provider: cleanProvider,
+        updated_at: new Date().toISOString(),
+        verification_status: String(payload.verification_status ?? payload.status ?? '').trim(),
+        verification,
+        setup_recovery: setupRecovery,
+        affected_item_keys: Array.isArray(recoveryLaunch.affected_item_keys)
+          ? recoveryLaunch.affected_item_keys.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(payload.affected_item_keys)
+            ? payload.affected_item_keys.filter((value): value is string => typeof value === 'string')
+          : [],
+        affected_tasks: Array.isArray(recoveryLaunch.affected_tasks)
+          ? recoveryLaunch.affected_tasks.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(payload.affected_tasks)
+            ? payload.affected_tasks.filter((value): value is string => typeof value === 'string')
+          : [],
+        requested_action_ids: Array.isArray(recoveryLaunch.requested_action_ids)
+          ? recoveryLaunch.requested_action_ids.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(payload.requested_action_ids)
+            ? payload.requested_action_ids.filter((value): value is string => typeof value === 'string')
+          : [],
+        selected_action_ids: Array.isArray(recoveryLaunch.selected_action_ids)
+          ? recoveryLaunch.selected_action_ids.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(payload.selected_action_ids)
+            ? payload.selected_action_ids.filter((value): value is string => typeof value === 'string')
+            : [],
+        continued_action_ids: Array.isArray(recoveryLaunch.continued_action_ids)
+          ? recoveryLaunch.continued_action_ids.filter((value): value is string => typeof value === 'string')
+          : Array.isArray(payload.continued_action_ids)
+            ? payload.continued_action_ids.filter((value): value is string => typeof value === 'string')
+            : [],
+        executed_count: Number(recoveryLaunch.executed_count ?? payload.executed_count ?? 0),
+        skipped_count: Number(recoveryLaunch.skipped_count ?? payload.skipped_count ?? 0),
+        error_count: Number(recoveryLaunch.error_count ?? payload.error_count ?? 0),
+        launch_status: String(recoveryLaunch.status ?? payload.continue_setup_recovery_status ?? payload.status ?? '').trim(),
+        launch_message: String(recoveryLaunch.message ?? payload.message ?? '').trim(),
+        continue_followup_actions_requested: Boolean(
+          recoveryLaunch.continue_followup_actions_requested ?? payload.continue_followup_actions_requested
+        ),
+        continue_followup_actions_status: String(
+          recoveryLaunch.continue_followup_actions_status ?? payload.continue_followup_actions_status ?? ''
+        ).trim(),
+        continuation: Object.keys(recoveryLaunch).length > 0
+          ? asObjectRecord(recoveryLaunch.continuation)
+          : asObjectRecord(payload.continuation),
+        recovery_before: Object.keys(recoveryLaunch).length > 0 ? asObjectRecord(recoveryLaunch.recovery_before) : asObjectRecord(payload.recovery_before),
+        recovery_after: Object.keys(recoveryLaunch).length > 0 ? asObjectRecord(recoveryLaunch.recovery_after) : asObjectRecord(payload.recovery_after),
+        continue_setup_recovery_requested: Boolean(payload.continue_setup_recovery_requested),
+      },
+    }));
+  }, []);
+
+  const describeProviderSetupOutcome = useCallback((provider: string, payload: Record<string, unknown>, mode: 'save' | 'verify') => {
+    const cleanProvider = provider.trim().toLowerCase();
+    const verification = asObjectRecord(payload.verification);
+    const setupRecovery = asObjectRecord(payload.setup_recovery);
+    const nextAction = asObjectRecord(setupRecovery.next_action);
+    const verified = Boolean(verification.verified);
+    const verificationSummary = String(
+      verification.summary ??
+      verification.message ??
+      payload.message ??
+      cleanProvider
+    ).trim();
+    const launchableCount = Number(setupRecovery.launchable_count ?? 0);
+    const readyActionCount = Number(
+      setupRecovery.auto_runnable_ready_count ??
+      setupRecovery.ready_action_count ??
+      0
+    );
+    const nextActionTitle = String(nextAction.title ?? nextAction.kind ?? '').trim();
+    const descriptionParts = [verificationSummary || cleanProvider];
+    if (launchableCount > 0) {
+      descriptionParts.push(`${launchableCount} launchable`);
+    }
+    if (readyActionCount > 0) {
+      descriptionParts.push(`${readyActionCount} ready action${readyActionCount === 1 ? '' : 's'}`);
+    }
+    if (nextActionTitle) {
+      descriptionParts.push(`next: ${nextActionTitle}`);
+    }
+    const recoveryLaunch = asObjectRecord(payload.recovery_launch);
+    const recoveryExecutedCount = Number(recoveryLaunch.executed_count ?? 0);
+    if (recoveryExecutedCount > 0) {
+      descriptionParts.push(`continued:${recoveryExecutedCount}`);
+    }
+    const continuedActionCount = Array.isArray(recoveryLaunch.continued_action_ids)
+      ? recoveryLaunch.continued_action_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).length
+      : 0;
+    if (continuedActionCount > 0) {
+      descriptionParts.push(`followup:${continuedActionCount}`);
+    }
+    const description = descriptionParts.filter(Boolean).join(' • ');
+    if (mode === 'save') {
+      return {
+        destructive: false,
+        title: verified ? 'Provider Saved And Verified' : 'Provider Saved, Verification Needs Attention',
+        description,
+      };
+    }
+    return {
+      destructive: !verified,
+      title: verified ? 'Provider Verified' : 'Provider Verification Needs Attention',
+      description,
+    };
   }, []);
 
   const saveProviderCredentials = useCallback(
@@ -7296,28 +8703,52 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
       }
       setUpdatingProviderName(cleanProvider);
       try {
-        await backendClient.updateProviderCredentials({
+        const payload = await backendClient.updateProviderCredentials({
           provider: cleanProvider,
           api_key: apiKey || undefined,
           requirements: Object.keys(requirements).length > 0 ? requirements : undefined,
           persist_plaintext: true,
           persist_encrypted: true,
           overwrite_env: true,
+          verify_after_update: true,
+          include_present: true,
+          limit: 160,
+          continue_setup_recovery: true,
+          continue_on_error: true,
+          continue_followup_actions: true,
+          max_followup_waves: 4,
+          include_coworker_status: true,
+          refresh_remote: cleanProvider === 'huggingface',
+          timeout_s: cleanProvider === 'huggingface' ? 12 : 8,
         });
         setProviderSetupDrafts((current) => ({
           ...current,
           [cleanProvider]: {},
         }));
+        syncProviderSetupPayload(payload as unknown as Record<string, unknown>);
+        recordProviderSetupOutcome(cleanProvider, payload as unknown as Record<string, unknown>);
+        if (isObjectRecord((payload as unknown as Record<string, unknown>).recovery_launch)) {
+          setModelSetupMissionLaunchResult(
+            (payload as unknown as Record<string, unknown>).recovery_launch as ModelSetupMissionLaunchResponse
+          );
+        }
         await Promise.all([
-          refreshLocalModelInventory({ quiet: true }),
-          refreshModelSetupPlan({ quiet: true }),
-          refreshModelSetupManualPipeline({ quiet: true }),
-          refreshModelSetupPreflight({ quiet: true }),
-          refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' }),
+          refreshModelSetupInstallHistory({ quiet: true }),
+          refreshModelSetupManualRuns({ quiet: true }),
+          refreshModelSetupMission({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true }),
+          refreshCoworkerStack({ quiet: true }),
+          refreshCoworkerRecovery({ quiet: true }),
+          refreshRuntimeHealthSummary({ quiet: true }),
         ]);
+        const toastSummary = describeProviderSetupOutcome(
+          cleanProvider,
+          payload as unknown as Record<string, unknown>,
+          'save'
+        );
         toast({
-          title: 'Provider Credentials Saved',
-          description: cleanProvider,
+          title: toastSummary.title,
+          description: toastSummary.description,
         });
       } catch (error) {
         toast({
@@ -7329,7 +8760,21 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         setUpdatingProviderName('');
       }
     },
-    [modelSetupPlanProviderMap, providerSetupDrafts, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight, toast]
+    [
+      describeProviderSetupOutcome,
+      modelSetupPlanProviderMap,
+      providerSetupDrafts,
+      recordProviderSetupOutcome,
+      refreshCoworkerRecovery,
+      refreshCoworkerStack,
+      refreshModelBridgeProfiles,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshRuntimeHealthSummary,
+      syncProviderSetupPayload,
+      toast,
+    ]
   );
 
   const verifyProviderCredentials = useCallback(
@@ -7343,35 +8788,47 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
           limit: 160,
           include_present: true,
           force_refresh: true,
+          continue_setup_recovery: true,
+          continue_on_error: true,
+          continue_followup_actions: true,
+          max_followup_waves: 4,
+          include_coworker_status: true,
+          refresh_remote: cleanProvider === 'huggingface',
+          timeout_s: cleanProvider === 'huggingface' ? 12 : 8,
         });
-        if (payload.inventory && typeof payload.inventory === 'object') {
-          setLocalModelInventoryState(payload.inventory as ModelLocalInventoryResponse);
-          setLocalModelInventoryLastRefreshAt(Date.now());
-        } else {
-          await refreshLocalModelInventory({ quiet: true });
+        syncProviderSetupPayload(payload as unknown as Record<string, unknown>);
+        recordProviderSetupOutcome(cleanProvider, payload as unknown as Record<string, unknown>);
+        if (isObjectRecord((payload as unknown as Record<string, unknown>).recovery_launch)) {
+          setModelSetupMissionLaunchResult(
+            (payload as unknown as Record<string, unknown>).recovery_launch as ModelSetupMissionLaunchResponse
+          );
         }
-        if (payload.setup_plan && typeof payload.setup_plan === 'object') {
-          setModelSetupPlanState(payload.setup_plan as ModelSetupPlanResponse);
-          setModelSetupPlanLastRefreshAt(Date.now());
-        } else {
-          await refreshModelSetupPlan({ quiet: true });
-        }
-        await refreshModelSetupManualPipeline({ quiet: true });
-        const verification = asObjectRecord(payload.verification);
-        const verified = Boolean(verification.verified);
-        const summary = String(verification.summary ?? verification.message ?? cleanProvider).trim();
-        if (payload.status === 'success' && verified) {
-          toast({
-            title: 'Provider Verified',
-            description: summary || cleanProvider,
-          });
-        } else {
-          toast({
-            variant: 'destructive',
-            title: 'Provider Verification Needs Attention',
-            description: summary || cleanProvider,
-          });
-        }
+        await Promise.all([
+          refreshModelSetupInstallHistory({ quiet: true }),
+          refreshModelSetupManualRuns({ quiet: true }),
+          refreshModelSetupMission({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true }),
+          refreshCoworkerStack({ quiet: true }),
+          refreshCoworkerRecovery({ quiet: true }),
+          refreshRuntimeHealthSummary({ quiet: true }),
+        ]);
+        const toastSummary = describeProviderSetupOutcome(
+          cleanProvider,
+          payload as unknown as Record<string, unknown>,
+          'verify'
+        );
+        toast(
+          toastSummary.destructive
+            ? {
+                variant: 'destructive',
+                title: toastSummary.title,
+                description: toastSummary.description,
+              }
+            : {
+                title: toastSummary.title,
+                description: toastSummary.description,
+              }
+        );
       } catch (error) {
         toast({
           variant: 'destructive',
@@ -7382,7 +8839,128 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
         setVerifyingProviderName('');
       }
     },
-    [refreshLocalModelInventory, refreshModelSetupManualPipeline, refreshModelSetupPlan, toast]
+    [
+      describeProviderSetupOutcome,
+      recordProviderSetupOutcome,
+      refreshCoworkerRecovery,
+      refreshCoworkerStack,
+      refreshModelBridgeProfiles,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshRuntimeHealthSummary,
+      syncProviderSetupPayload,
+      toast,
+    ]
+  );
+
+  const runProviderSetupRecovery = useCallback(
+    async (provider: string) => {
+      const cleanProvider = provider.trim().toLowerCase();
+      if (!cleanProvider) return;
+      const providerOutcome = asObjectRecord(providerSetupOutcomeState[cleanProvider]);
+      const providerRecovery = asObjectRecord(providerOutcome.setup_recovery);
+      const affectedItemKeys = Array.isArray(providerOutcome.affected_item_keys)
+        ? providerOutcome.affected_item_keys.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : Array.isArray(providerRecovery.affected_item_keys)
+          ? providerRecovery.affected_item_keys.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+      const affectedTasks = Array.isArray(providerOutcome.affected_tasks)
+        ? providerOutcome.affected_tasks.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : Array.isArray(providerRecovery.affected_tasks)
+          ? providerRecovery.affected_tasks.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+      const autoReadyActionIds = Array.isArray(providerRecovery.auto_runnable_ready_action_ids)
+        ? providerRecovery.auto_runnable_ready_action_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : [];
+      setRecoveringProviderName(cleanProvider);
+      try {
+        const payload = await backendClient.launchProviderSetupRecovery({
+          provider: cleanProvider,
+          task: affectedTasks.length === 1 ? affectedTasks[0] : undefined,
+          limit: 160,
+          include_present: true,
+          item_keys: affectedItemKeys.length > 0 ? affectedItemKeys : undefined,
+          selected_action_ids: autoReadyActionIds.length > 0 ? autoReadyActionIds : undefined,
+          continue_on_error: true,
+          continue_followup_actions: true,
+          max_followup_waves: 4,
+          refresh_remote: cleanProvider === 'huggingface',
+          timeout_s: cleanProvider === 'huggingface' ? 12 : 8,
+        });
+        syncProviderSetupPayload(payload as unknown as Record<string, unknown>);
+        recordProviderSetupOutcome(cleanProvider, payload as unknown as Record<string, unknown>);
+        setModelSetupMissionLaunchResult(payload as unknown as ModelSetupMissionLaunchResponse);
+        await Promise.all([
+          refreshModelSetupInstallHistory({ quiet: true }),
+          refreshModelSetupManualRuns({ quiet: true }),
+          refreshModelSetupMission({ quiet: true }),
+          refreshModelBridgeProfiles({ quiet: true }),
+          refreshCoworkerStack({ quiet: true }),
+          refreshCoworkerRecovery({ quiet: true }),
+          refreshRuntimeHealthSummary({ quiet: true }),
+        ]);
+        const statusName = String(payload.status ?? '').trim().toLowerCase();
+        const setupRecovery = asObjectRecord(payload.setup_recovery);
+        const nextAction = asObjectRecord(setupRecovery.next_action);
+        const descriptionParts = [
+          String(payload.message ?? `${cleanProvider} recovery`).trim() || `${cleanProvider} recovery`,
+        ];
+        if (Number(payload.executed_count ?? 0) > 0) {
+          descriptionParts.push(`executed:${Number(payload.executed_count ?? 0)}`);
+        }
+        const continuedActionIds = Array.isArray(payload.continued_action_ids)
+          ? payload.continued_action_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+        if (continuedActionIds.length > 0) {
+          descriptionParts.push(`followup:${continuedActionIds.length}`);
+        }
+        if (Number(payload.error_count ?? 0) > 0) {
+          descriptionParts.push(`errors:${Number(payload.error_count ?? 0)}`);
+        }
+        if (String(nextAction.title ?? nextAction.kind ?? '').trim()) {
+          descriptionParts.push(`next:${String(nextAction.title ?? nextAction.kind ?? '').trim()}`);
+        }
+        toast(
+          statusName === 'error'
+            ? {
+                variant: 'destructive',
+                title: 'Provider Recovery Failed',
+                description: descriptionParts.join(' • '),
+              }
+            : {
+                title:
+                  statusName === 'planned'
+                    ? 'Provider Recovery Previewed'
+                    : statusName === 'blocked'
+                      ? 'Provider Recovery Still Blocked'
+                      : 'Provider Recovery Executed',
+                description: descriptionParts.join(' • '),
+              }
+        );
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Provider Recovery Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRecoveringProviderName('');
+      }
+    },
+    [
+      providerSetupOutcomeState,
+      recordProviderSetupOutcome,
+      refreshCoworkerRecovery,
+      refreshCoworkerStack,
+      refreshModelBridgeProfiles,
+      refreshModelSetupInstallHistory,
+      refreshModelSetupManualRuns,
+      refreshModelSetupMission,
+      refreshRuntimeHealthSummary,
+      syncProviderSetupPayload,
+      toast,
+    ]
   );
 
   const refreshLocalReasoningBridgeStatus = useCallback(
@@ -7905,6 +9483,16 @@ void refreshLocalModelInventory({ quiet: true });
 }, [activeTab, localModelInventoryState, open, refreshLocalModelInventory]);
 
 useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupWorkspaceState) return;
+void refreshModelSetupWorkspace({ quiet: true });
+}, [activeTab, modelSetupWorkspaceState, open, refreshModelSetupWorkspace]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupMissionState) return;
+void refreshModelSetupMission({ quiet: true });
+}, [activeTab, modelSetupMissionState, open, refreshModelSetupMission]);
+
+useEffect(() => {
 if (!open || activeTab !== 'runtime' || modelSetupPlanState) return;
 void refreshModelSetupPlan({ quiet: true });
 }, [activeTab, modelSetupPlanState, open, refreshModelSetupPlan]);
@@ -7930,18 +9518,25 @@ void refreshModelSetupInstallHistory({ quiet: true });
 }, [activeTab, modelSetupInstallHistoryState, open, refreshModelSetupInstallHistory]);
 
 useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupWatchdogHistoryState) return;
+void refreshModelSetupWatchdogHistory({ quiet: true });
+}, [activeTab, modelSetupWatchdogHistoryState, open, refreshModelSetupWatchdogHistory]);
+
+useEffect(() => {
   const activeCount = Number(modelSetupInstallHistoryState?.active_count ?? 0);
   const previousActiveCount = modelSetupInstallActiveCountRef.current;
   modelSetupInstallActiveCountRef.current = activeCount;
   if (!open || activeTab !== 'runtime') return;
   if (previousActiveCount > 0 && activeCount === 0) {
     void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupWorkspace({ quiet: true });
+    void refreshModelSetupMission({ quiet: true });
     void refreshModelSetupPlan({ quiet: true });
     void refreshModelSetupManualPipeline({ quiet: true });
     void refreshModelSetupPreflight({ quiet: true });
     void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }
-}, [activeTab, modelSetupInstallHistoryState?.active_count, open, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan, refreshModelSetupPreflight]);
+}, [activeTab, modelSetupInstallHistoryState?.active_count, open, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupMission, refreshModelSetupPlan, refreshModelSetupPreflight, refreshModelSetupWorkspace]);
 
 useEffect(() => {
   const activeCount = Number(modelSetupInstallHistoryState?.active_count ?? 0);
@@ -7962,12 +9557,14 @@ useEffect(() => {
   if (!open || activeTab !== 'runtime') return;
   if (previousActiveCount > 0 && activeCount === 0) {
     void refreshLocalModelInventory({ quiet: true });
+    void refreshModelSetupWorkspace({ quiet: true });
+    void refreshModelSetupMission({ quiet: true });
     void refreshModelSetupPlan({ quiet: true });
     void refreshModelSetupManualPipeline({ quiet: true });
     void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshCoworkerRecovery({ quiet: true });
   }
-}, [activeTab, modelSetupManualRunsState?.active_count, open, refreshCoworkerRecovery, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupPlan]);
+}, [activeTab, modelSetupManualRunsState?.active_count, open, refreshCoworkerRecovery, refreshLocalModelInventory, refreshModelBridgeProfiles, refreshModelSetupManualPipeline, refreshModelSetupMission, refreshModelSetupPlan, refreshModelSetupWorkspace]);
 
 useEffect(() => {
   const activeCount = Number(modelSetupManualRunsState?.active_count ?? 0);
@@ -7980,6 +9577,17 @@ useEffect(() => {
   }, 2500);
   return () => window.clearInterval(timer);
 }, [activeTab, modelSetupManualRunsState?.active_count, open, refreshModelSetupManualRuns]);
+
+useEffect(() => {
+  if (!open || activeTab !== 'runtime' || !modelSetupMissionIsLive) return;
+  const timer = window.setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    void refreshModelSetupMission({ quiet: true });
+  }, 2500);
+  return () => window.clearInterval(timer);
+}, [activeTab, modelSetupMissionIsLive, open, refreshModelSetupMission]);
 
 useEffect(() => {
 if (!open || activeTab !== 'runtime' || modelBridgeProfilesState) return;
@@ -10557,6 +12165,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       text: desktopCoworkerText.trim() || undefined,
       keys: keys.length > 0 ? keys : undefined,
     };
+    if (desktopCoworkerAction === 'resume_mission') {
+      const selectedMissionId = String(selectedDesktopMission?.mission_id ?? '').trim();
+      const selectedMissionKind = String(selectedDesktopMission?.mission_kind ?? '').trim();
+      const selectedMissionAppName = String(selectedDesktopMission?.app_name ?? '').trim();
+      const selectedWindowTitle = String(
+        selectedDesktopMission?.blocking_window_title ?? selectedDesktopMission?.anchor_window_title ?? ''
+      ).trim();
+      payload.mission_id = selectedMissionId || undefined;
+      payload.mission_kind = (desktopMissionKindFilter.trim() || selectedMissionKind) || undefined;
+      payload.app_name = payload.app_name ?? (selectedMissionAppName || undefined);
+      payload.window_title = payload.window_title ?? (selectedWindowTitle || undefined);
+      delete payload.query;
+      delete payload.text;
+      delete payload.keys;
+    }
     if (!desktopCoworkerUseProfileDefaults) {
       payload.ensure_app_launch = desktopCoworkerEnsureLaunch;
       payload.focus_first = desktopCoworkerFocusFirst;
@@ -10587,7 +12210,53 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     desktopCoworkerVerifyAfterAction,
     desktopCoworkerVerifyText,
     desktopCoworkerWindowTitle,
+    desktopMissionKindFilter,
+    selectedDesktopMission,
   ]);
+
+  const refreshDesktopMissions = useCallback(
+    async ({ quiet = false, preferredMissionId = '' }: { quiet?: boolean; preferredMissionId?: string } = {}) => {
+      setDesktopMissionSnapshotBusy(true);
+      try {
+        const payload = await backendClient.desktopMissions({
+          limit: 40,
+          status: desktopMissionStatusFilter.trim() || undefined,
+          mission_kind: desktopMissionKindFilter.trim() || undefined,
+          app_name: desktopMissionAppFilter.trim() || undefined,
+        });
+        setDesktopMissionSnapshot(payload);
+        const nextRows = Array.isArray(payload.items) ? payload.items : [];
+        const normalizedPreferred = preferredMissionId.trim();
+        setDesktopMissionSelectedId((current) => {
+          const currentId = current.trim();
+          const candidateId = normalizedPreferred || currentId;
+          if (candidateId && nextRows.some((item) => String(item.mission_id ?? '').trim() === candidateId)) {
+            return candidateId;
+          }
+          return String(nextRows[0]?.mission_id ?? '').trim();
+        });
+        if (!quiet) {
+          toast({
+            title: 'Desktop Missions Ready',
+            description: `${Number(payload.count ?? 0)} paused/recoverable desktop mission record(s) matched the active filters.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Desktop Mission Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMissionSnapshotBusy(false);
+      }
+    },
+    [desktopMissionAppFilter, desktopMissionKindFilter, desktopMissionStatusFilter, toast]
+  );
 
   const previewDesktopCoworkerRoute = useCallback(async () => {
     setDesktopCoworkerBusy(true);
@@ -10650,6 +12319,185 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       setDesktopAppProfileCatalogBusy(false);
     }
   }, [desktopCoworkerAppName, toast]);
+
+  const previewSelectedDesktopMissionResume = useCallback(async () => {
+    const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
+    if (!missionId) {
+      toast({
+        variant: 'destructive',
+        title: 'No Desktop Mission Selected',
+        description: 'Pick a paused desktop mission before previewing the resume route.',
+      });
+      return null;
+    }
+    setDesktopCoworkerBusy(true);
+    try {
+      const advice = await backendClient.desktopActionAdvice({
+        action: 'resume_mission',
+        mission_id: missionId,
+        mission_kind: String(selectedDesktopMission?.mission_kind ?? '').trim() || undefined,
+        app_name:
+          desktopCoworkerAppName.trim() ||
+          String(selectedDesktopMission?.app_name ?? '').trim() ||
+          undefined,
+        window_title:
+          desktopCoworkerWindowTitle.trim() ||
+          String(selectedDesktopMission?.blocking_window_title ?? selectedDesktopMission?.anchor_window_title ?? '').trim() ||
+          undefined,
+      });
+      setDesktopCoworkerAdvice(advice);
+      toast({
+        title: 'Resume Route Ready',
+        description:
+          String(advice.route_mode ?? '').trim() ||
+          `JARVIS prepared a resume plan for desktop mission ${missionId}.`,
+      });
+      return advice;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Resume Route Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerWindowTitle, selectedDesktopMission, toast]);
+
+  const resumeSelectedDesktopMission = useCallback(async () => {
+    const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
+    if (!missionId) {
+      toast({
+        variant: 'destructive',
+        title: 'No Desktop Mission Selected',
+        description: 'Choose a paused desktop mission before asking JARVIS to resume it.',
+      });
+      return null;
+    }
+    setDesktopMissionResumeBusy(true);
+    try {
+      const response = await backendClient.desktopResumeMission({
+        mission_id: missionId,
+        mission_kind: String(selectedDesktopMission?.mission_kind ?? '').trim() || undefined,
+        app_name:
+          desktopCoworkerAppName.trim() ||
+          String(selectedDesktopMission?.app_name ?? '').trim() ||
+          undefined,
+        window_title:
+          desktopCoworkerWindowTitle.trim() ||
+          String(selectedDesktopMission?.blocking_window_title ?? selectedDesktopMission?.anchor_window_title ?? '').trim() ||
+          undefined,
+      });
+      setDesktopCoworkerResult(response);
+      const responseAdvice =
+        response.advice && typeof response.advice === 'object' && !Array.isArray(response.advice)
+          ? (response.advice as DesktopActionAdviceResponse)
+          : null;
+      if (responseAdvice) {
+        setDesktopCoworkerAdvice(responseAdvice);
+      }
+      await refreshDesktopMissions({ quiet: true, preferredMissionId: missionId });
+      if (String(response.status ?? '').trim().toLowerCase() === 'success') {
+        toast({
+          title: 'Desktop Mission Resumed',
+          description:
+            String(response.final_action ?? '').trim() ||
+            `JARVIS resumed desktop mission ${missionId}.`,
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Mission Resume Failed',
+          description: String(response.message ?? `Desktop mission ${missionId} did not resume successfully.`),
+        });
+      }
+      return response;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Desktop Mission Resume Error',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMissionResumeBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerWindowTitle, refreshDesktopMissions, selectedDesktopMission, toast]);
+
+  const resetDesktopMissionSelection = useCallback(
+    async ({ selectedOnly = false }: { selectedOnly?: boolean } = {}) => {
+      const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
+      if (selectedOnly && !missionId) {
+        toast({
+          variant: 'destructive',
+          title: 'No Desktop Mission Selected',
+          description: 'Select a paused desktop mission before clearing it from memory.',
+        });
+        return null;
+      }
+      setDesktopMissionResetBusy(true);
+      try {
+        const payload = await backendClient.resetDesktopMissions(
+          selectedOnly
+            ? { mission_id: missionId }
+            : {
+                status: desktopMissionStatusFilter.trim() || undefined,
+                mission_kind: desktopMissionKindFilter.trim() || undefined,
+                app_name: desktopMissionAppFilter.trim() || undefined,
+              }
+        );
+        if (selectedOnly && missionId) {
+          setDesktopMissionSelectedId((current) => (current.trim() === missionId ? '' : current));
+        }
+        await refreshDesktopMissions({ quiet: true });
+        toast({
+          title: selectedOnly ? 'Desktop Mission Cleared' : 'Filtered Desktop Missions Cleared',
+          description: `${Number(payload.removed ?? 0)} desktop mission record(s) were removed from runtime memory.`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Mission Reset Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopMissionResetBusy(false);
+      }
+    },
+    [
+      desktopMissionAppFilter,
+      desktopMissionKindFilter,
+      desktopMissionStatusFilter,
+      refreshDesktopMissions,
+      selectedDesktopMission,
+      toast,
+    ]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    void refreshDesktopMissions({ quiet: true });
+  }, [open, refreshDesktopMissions]);
+
+  useEffect(() => {
+    const missionRecord =
+      desktopCoworkerResult?.mission_record &&
+      typeof desktopCoworkerResult.mission_record === 'object' &&
+      !Array.isArray(desktopCoworkerResult.mission_record)
+        ? (desktopCoworkerResult.mission_record as DesktopMissionRecord)
+        : desktopCoworkerAdvice?.mission_record &&
+            typeof desktopCoworkerAdvice.mission_record === 'object' &&
+            !Array.isArray(desktopCoworkerAdvice.mission_record)
+          ? (desktopCoworkerAdvice.mission_record as DesktopMissionRecord)
+          : null;
+    const missionId = String(missionRecord?.mission_id ?? '').trim();
+    if (!missionId) return;
+    setDesktopMissionSelectedId(missionId);
+    void refreshDesktopMissions({ quiet: true, preferredMissionId: missionId });
+  }, [desktopCoworkerAdvice, desktopCoworkerResult, refreshDesktopMissions]);
 
   const runDesktopCoworkerRoute = useCallback(async () => {
     setDesktopCoworkerBusy(true);
@@ -12870,6 +14718,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   <option value="click_and_type">click_and_type</option>
                                   <option value="hotkey">hotkey</option>
                                   <option value="observe">observe</option>
+                                  <option value="resume_mission">resume_mission</option>
                                 </select>
                               </div>
                               <div className="space-y-1">
@@ -13200,6 +15049,293 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     <pre className="mt-2 max-h-[240px] overflow-auto rounded bg-black/20 p-2 text-[10px] leading-relaxed text-muted-foreground">
                                       {formatJson(desktopCoworkerResult ?? {})}
                                     </pre>
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Paused Desktop Missions
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          Browse blocked wizard/form missions, preview the recovery route, and resume them from the operator panel.
+                                        </p>
+                                      </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <Badge variant="outline">
+                                            {Number(desktopMissionSnapshot?.count ?? 0)} / {Number(desktopMissionSnapshot?.total ?? 0)}
+                                          </Badge>
+                                          {desktopMissionStatusCountRows.slice(0, 2).map(([label, count]) => (
+                                          <Badge key={`desktop-mission-status-${label}`} variant="secondary">
+                                              {label}:{count}
+                                            </Badge>
+                                          ))}
+                                          {Number(desktopMissionSnapshot?.resume_ready_count ?? 0) > 0 ? (
+                                            <Badge variant="secondary">
+                                              ready:{Number(desktopMissionSnapshot?.resume_ready_count ?? 0)}
+                                            </Badge>
+                                          ) : null}
+                                          {Number(desktopMissionSnapshot?.manual_attention_count ?? 0) > 0 ? (
+                                            <Badge variant="outline">
+                                              review:{Number(desktopMissionSnapshot?.manual_attention_count ?? 0)}
+                                            </Badge>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1.1fr_0.9fr]">
+                                      <div className="space-y-2">
+                                        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                                          <div className="space-y-1">
+                                            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Status</p>
+                                            <select
+                                              value={desktopMissionStatusFilter}
+                                              onChange={(event) => setDesktopMissionStatusFilter(event.target.value)}
+                                              className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                            >
+                                              <option value="paused">paused</option>
+                                              <option value="">all</option>
+                                              <option value="completed">completed</option>
+                                              <option value="error">error</option>
+                                              <option value="resuming">resuming</option>
+                                            </select>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Mission Kind</p>
+                                            <select
+                                              value={desktopMissionKindFilter}
+                                              onChange={(event) => setDesktopMissionKindFilter(event.target.value)}
+                                              className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                            >
+                                              <option value="">all</option>
+                                              <option value="wizard">wizard</option>
+                                              <option value="form">form</option>
+                                            </select>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <p className="text-[11px] uppercase tracking-wider text-muted-foreground">App Filter</p>
+                                            <Input
+                                              value={desktopMissionAppFilter}
+                                              onChange={(event) => setDesktopMissionAppFilter(event.target.value)}
+                                              placeholder="installer, settings..."
+                                              className="h-9 border-primary/20 bg-background/60 text-xs"
+                                            />
+                                          </div>
+                                        </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                            className="gap-2 border-primary/30 bg-transparent"
+                                            onClick={() => void refreshDesktopMissions()}
+                                            disabled={desktopMissionSnapshotBusy}
+                                          >
+                                            {desktopMissionSnapshotBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                            Refresh Missions
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="gap-2 border-primary/30 bg-transparent"
+                                            onClick={() => void previewSelectedDesktopMissionResume()}
+                                            disabled={desktopCoworkerBusy || !selectedDesktopMission}
+                                          >
+                                            {desktopCoworkerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                                            Preview Resume
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            className="gap-2"
+                                            onClick={() => void resumeSelectedDesktopMission()}
+                                            disabled={desktopMissionResumeBusy || !selectedDesktopMission}
+                                          >
+                                            {desktopMissionResumeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <TerminalSquare className="h-4 w-4" />}
+                                            Resume Selected
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="gap-2 border-primary/30 bg-transparent"
+                                            onClick={() => void resetDesktopMissionSelection({ selectedOnly: true })}
+                                            disabled={desktopMissionResetBusy || !selectedDesktopMission}
+                                          >
+                                            Clear Selected
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="gap-2 border-primary/30 bg-transparent"
+                                            onClick={() => void resetDesktopMissionSelection()}
+                                            disabled={desktopMissionResetBusy || Number(desktopMissionSnapshot?.count ?? 0) === 0}
+                                          >
+                                            {desktopMissionResetBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                              Clear Filtered
+                                            </Button>
+                                          </div>
+                                          {desktopMissionLatestPaused ? (
+                                            <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <p className="font-semibold uppercase tracking-wider text-primary/80">
+                                                  Latest Paused Recovery
+                                                </p>
+                                                {desktopMissionLatestPaused.recovery_profile ? (
+                                                  <Badge variant="secondary">
+                                                    {String(desktopMissionLatestPaused.recovery_profile)}
+                                                  </Badge>
+                                                ) : null}
+                                                {desktopMissionLatestPaused.approval_kind ? (
+                                                  <Badge variant="outline">
+                                                    approval:{String(desktopMissionLatestPaused.approval_kind)}
+                                                  </Badge>
+                                                ) : null}
+                                              </div>
+                                              <p className="mt-1 text-primary/80">
+                                                {String(
+                                                  desktopMissionLatestPaused.app_name ??
+                                                    desktopMissionLatestPaused.anchor_window_title ??
+                                                    'desktop'
+                                                )}{' '}
+                                                ::{' '}
+                                                {String(
+                                                  desktopMissionLatestPaused.recovery_hint ??
+                                                    desktopMissionLatestPaused.stop_reason ??
+                                                    desktopMissionLatestPaused.latest_result_message ??
+                                                    'Awaiting recovery.'
+                                                )}
+                                              </p>
+                                            </div>
+                                          ) : null}
+                                          <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                                            {desktopMissionKindCountRows.slice(0, 3).map(([label, count]) => (
+                                              <Badge key={`desktop-mission-kind-${label}`} variant="outline">
+                                                {label}:{count}
+                                              </Badge>
+                                            ))}
+                                            {desktopMissionRecoveryProfileCountRows.slice(0, 3).map(([label, count]) => (
+                                              <Badge key={`desktop-mission-recovery-${label}`} variant="secondary">
+                                                {label}:{count}
+                                              </Badge>
+                                            ))}
+                                            {desktopMissionApprovalCountRows.slice(0, 2).map(([label, count]) => (
+                                              <Badge key={`desktop-mission-approval-${label}`} variant="outline">
+                                                approval:{label}:{count}
+                                              </Badge>
+                                            ))}
+                                            {desktopMissionAppCountRows.slice(0, 2).map(([label, count]) => (
+                                              <Badge key={`desktop-mission-app-${label}`} variant="outline">
+                                                app:{label}:{count}
+                                              </Badge>
+                                            ))}
+                                          </div>
+                                          <ScrollArea className="h-[220px] rounded border border-primary/15 bg-background/20 p-2">
+                                          <div className="space-y-2">
+                                            {desktopMissionRows.map((item, index) => {
+                                              const missionId = String(item.mission_id ?? `desktop-mission-${index + 1}`).trim();
+                                              const isSelected = missionId === String(selectedDesktopMission?.mission_id ?? '').trim();
+                                              return (
+                                                <button
+                                                  key={`${missionId}-${index}`}
+                                                  type="button"
+                                                  className={`w-full rounded border px-2 py-2 text-left ${
+                                                    isSelected
+                                                      ? 'border-primary/40 bg-primary/10'
+                                                      : 'border-primary/15 bg-background/20'
+                                                  }`}
+                                                  onClick={() => setDesktopMissionSelectedId(missionId)}
+                                                >
+                                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <p className="font-mono text-[10px] text-primary/80">{missionId}</p>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                      {item.mission_kind ? <Badge variant="secondary">{String(item.mission_kind)}</Badge> : null}
+                                                      {item.status ? (
+                                                        <Badge
+                                                          variant={
+                                                            String(item.status).trim().toLowerCase() === 'paused'
+                                                              ? 'outline'
+                                                              : String(item.status).trim().toLowerCase() === 'completed'
+                                                                ? 'secondary'
+                                                                : 'destructive'
+                                                          }
+                                                        >
+                                                          {String(item.status)}
+                                                        </Badge>
+                                                      ) : null}
+                                                    </div>
+                                                  </div>
+                                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                                    {String(item.app_name ?? item.anchor_window_title ?? 'desktop mission')}
+                                                    {item.stop_reason ? ` • ${String(item.stop_reason)}` : ''}
+                                                  </p>
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                                    updated: {formatIso(String(item.updated_at ?? item.created_at ?? ''))}
+                                                    {item.approval_kind ? ` • approval:${String(item.approval_kind)}` : ''}
+                                                    {item.remaining_target_count !== undefined ? ` • remaining:${String(item.remaining_target_count)}` : ''}
+                                                  </p>
+                                                </button>
+                                              );
+                                            })}
+                                            {desktopMissionRows.length === 0 ? (
+                                              <p className="text-xs text-muted-foreground">
+                                                No desktop missions matched the current filters. Blocked wizard/form recoveries will appear here.
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                        </ScrollArea>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                              Selected Mission
+                                            </p>
+                                            {selectedDesktopMission?.risk_level ? (
+                                              <Badge variant="outline">risk:{String(selectedDesktopMission.risk_level)}</Badge>
+                                            ) : null}
+                                          </div>
+                                          {selectedDesktopMission ? (
+                                            <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                                              <p>id: {String(selectedDesktopMission.mission_id ?? 'n/a')}</p>
+                                              <p>kind: {String(selectedDesktopMission.mission_kind ?? 'n/a')}</p>
+                                              <p>status: {String(selectedDesktopMission.status ?? 'n/a')}</p>
+                                              <p>app: {String(selectedDesktopMission.app_name ?? 'n/a')}</p>
+                                              <p>window: {String(selectedDesktopMission.blocking_window_title ?? selectedDesktopMission.anchor_window_title ?? 'n/a')}</p>
+                                              <p>resume action: {String(selectedDesktopMission.resume_action ?? 'n/a')}</p>
+                                              <p>pause count: {String(selectedDesktopMission.pause_count ?? 0)}</p>
+                                              <p>resume attempts: {String(selectedDesktopMission.resume_attempts ?? 0)}</p>
+                                              {selectedDesktopMission.stop_reason ? (
+                                                <p className="text-amber-300/90">stop: {String(selectedDesktopMission.stop_reason)}</p>
+                                              ) : null}
+                                              {Array.isArray(selectedDesktopMission.warnings) && selectedDesktopMission.warnings.length > 0 ? (
+                                                <p className="text-amber-300/90">warn: {String(selectedDesktopMission.warnings[0])}</p>
+                                              ) : null}
+                                              {Array.isArray(selectedDesktopMission.recommended_actions) && selectedDesktopMission.recommended_actions.length > 0 ? (
+                                                <p className="text-primary/80">
+                                                  next: {selectedDesktopMission.recommended_actions.slice(0, 2).join(' • ')}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          ) : (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                              Select a desktop mission to inspect its paused surface and resume contract.
+                                            </p>
+                                          )}
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            Resume Contract
+                                          </p>
+                                          <pre className="mt-2 max-h-[180px] overflow-auto rounded bg-black/20 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                                            {formatJson(selectedDesktopMission?.resume_contract ?? {})}
+                                          </pre>
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            Blocking Surface
+                                          </p>
+                                          <pre className="mt-2 max-h-[180px] overflow-auto rounded bg-black/20 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                                            {formatJson(selectedDesktopMission?.blocking_surface ?? {})}
+                                          </pre>
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
                                   <div className="rounded-md border border-primary/20 bg-background/30 p-2">
                                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -18773,6 +20909,931 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                 <div className="rounded border border-primary/15 bg-background/20 p-2">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div>
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Workspace Readiness</p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        root:{' '}
+                                        {String(
+                                          modelSetupWorkspaceState?.workspace_root ??
+                                            localModelManifestSummary.workspace_root ??
+                                            'unknown'
+                                        )}
+                                      </p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        refresh:{formatRefreshStamp(modelSetupWorkspaceLastRefreshAt)}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge variant={Boolean(modelSetupWorkspaceSummary.workspace_ready) ? 'outline' : 'secondary'}>
+                                        workspace:{Boolean(modelSetupWorkspaceSummary.workspace_ready) ? 'ready' : 'blocked'}
+                                      </Badge>
+                                      <Badge variant={Boolean(modelSetupWorkspaceSummary.stack_ready) ? 'outline' : 'secondary'}>
+                                        stack:{Boolean(modelSetupWorkspaceSummary.stack_ready) ? 'ready' : 'pending'}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupWorkspaceSummary.missing_directory_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                        dirs:{Number(modelSetupWorkspaceSummary.present_directory_count ?? 0)}/
+                                        {Number(modelSetupWorkspaceSummary.directory_count ?? modelSetupWorkspaceDirectories.length)}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupWorkspaceSummary.missing_required_provider_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                        providers:{Number(modelSetupWorkspaceSummary.ready_required_provider_count ?? 0)}/
+                                        {Number(modelSetupWorkspaceSummary.required_provider_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupWorkspaceSummary.missing_model_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                        models:{Number(modelSetupWorkspaceSummary.present_model_count ?? 0)}/
+                                        {Number(modelSetupWorkspaceSummary.model_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant="outline">
+                                        score:{Number(modelSetupWorkspaceSummary.readiness_score ?? 0)}
+                                      </Badge>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupWorkspace({ refreshProviderCredentials: true })}
+                                        disabled={loadingModelSetupWorkspace}
+                                      >
+                                        {loadingModelSetupWorkspace ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-2 h-3 w-3" />}
+                                        Workspace
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void scaffoldModelSetupWorkspace({ dryRun: true })}
+                                        disabled={scaffoldingModelSetupWorkspace || modelSetupWorkspaceDirectories.length === 0}
+                                      >
+                                        {scaffoldingModelSetupWorkspace && scaffoldingModelSetupWorkspaceMode === 'preview' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Preview Scaffold
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void scaffoldModelSetupWorkspace()}
+                                        disabled={
+                                          scaffoldingModelSetupWorkspace ||
+                                          Number(modelSetupWorkspaceSummary.missing_directory_count ?? 0) <= 0
+                                        }
+                                      >
+                                        {scaffoldingModelSetupWorkspace && scaffoldingModelSetupWorkspaceMode === 'apply' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Create Missing Dirs
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {modelSetupWorkspaceRecommendations.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recommended Next Move</p>
+                                        <p className="mt-1 text-[10px] text-primary/80">
+                                          {modelSetupWorkspaceRecommendations[0]}
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupWorkspaceDirectories.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Declared Model Roots</p>
+                                          <Badge variant={Number(modelSetupWorkspaceSummary.missing_directory_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                            missing:{Number(modelSetupWorkspaceSummary.missing_directory_count ?? 0)}
+                                          </Badge>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupWorkspaceDirectories.slice(0, 8).map((row, index) => {
+                                            const aliasList = Array.isArray(row.aliases)
+                                              ? row.aliases.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+                                              : [];
+                                            return (
+                                              <div
+                                                key={`${String(row.path ?? row.name ?? index)}-${index}`}
+                                                className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                              >
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <p className="font-mono text-[10px] text-primary/80">{String(row.name ?? `dir-${index + 1}`)}</p>
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <Badge variant={Boolean(row.present) ? 'outline' : 'secondary'}>
+                                                      {Boolean(row.present) ? 'present' : 'missing'}
+                                                    </Badge>
+                                                    <Badge variant="outline">{String(row.task ?? 'unknown')}</Badge>
+                                                  </div>
+                                                </div>
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  {String(row.workspace_relative_path ?? row.path ?? '')}
+                                                </p>
+                                                {aliasList.length > 0 ? (
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">aliases: {aliasList.join(', ')}</p>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupWorkspaceActions.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            {Boolean(modelSetupWorkspaceScaffoldResult?.dry_run) ? 'Scaffold Preview' : 'Latest Scaffold Result'}
+                                          </p>
+                                          <div className="flex items-center gap-2">
+                                            <Badge variant="outline">{Number(modelSetupWorkspaceScaffoldResult?.action_count ?? modelSetupWorkspaceActions.length)}</Badge>
+                                            <Badge variant={Number(modelSetupWorkspaceScaffoldResult?.error_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                              error:{Number(modelSetupWorkspaceScaffoldResult?.error_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupWorkspaceActions.slice(0, 6).map((row, index) => (
+                                            <div
+                                              key={`${String(row.path ?? row.name ?? index)}-${index}`}
+                                              className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="font-mono text-[10px] text-primary/80">{String(row.name ?? `action-${index + 1}`)}</p>
+                                                <Badge
+                                                  variant={
+                                                    String(row.status ?? '').trim().toLowerCase() === 'created' || String(row.status ?? '').trim().toLowerCase() === 'exists'
+                                                      ? 'outline'
+                                                      : String(row.status ?? '').trim().toLowerCase() === 'planned'
+                                                        ? 'secondary'
+                                                        : 'destructive'
+                                                  }
+                                                >
+                                                  {String(row.status ?? 'unknown')}
+                                                </Badge>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                {String(row.workspace_relative_path ?? row.path ?? '')}
+                                              </p>
+                                              {String(row.message ?? '').trim() ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">{String(row.message ?? '')}</p>
+                                              ) : null}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Setup Mission</p>
+                                      <p className="text-[10px] text-muted-foreground">
+                                        status:{String(modelSetupMissionState?.mission_status ?? 'unknown')}
+                                        {' • '}refresh:{formatRefreshStamp(modelSetupMissionLastRefreshAt)}
+                                        {modelSetupCurrentScopeLabel ? ` • scope:${modelSetupCurrentScopeLabel}` : ''}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge variant={Boolean(modelSetupMissionSummary.launch_recommended) ? 'outline' : 'secondary'}>
+                                        ready:{Number(modelSetupMissionSummary.ready_action_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupMissionSummary.manual_action_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                        manual:{Number(modelSetupMissionSummary.manual_action_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupMissionSummary.blocked_action_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                        blocked:{Number(modelSetupMissionSummary.blocked_action_count ?? 0)}
+                                      </Badge>
+                                      <Badge variant={Number(modelSetupMissionSummary.in_progress_count ?? 0) > 0 ? 'secondary' : 'outline'}>
+                                        active:{Number(modelSetupMissionSummary.in_progress_count ?? 0)}
+                                      </Badge>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void refreshModelSetupMission({ refreshProviderCredentials: true })}
+                                        disabled={loadingModelSetupMission}
+                                      >
+                                        {loadingModelSetupMission ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-2 h-3 w-3" />}
+                                        Mission
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void launchModelSetupMission({ dryRun: true })}
+                                        disabled={runningModelSetupMission || modelSetupMissionActions.length === 0}
+                                      >
+                                        {runningModelSetupMission && runningModelSetupMissionMode === 'preview' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Preview Mission
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                        onClick={() => void launchModelSetupMission()}
+                                        disabled={
+                                          runningModelSetupMission ||
+                                          Number(modelSetupMissionSummary.ready_action_count ?? 0) <= 0
+                                        }
+                                      >
+                                        {runningModelSetupMission && runningModelSetupMissionMode === 'apply' ? (
+                                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        ) : null}
+                                        Run Mission
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 space-y-2">
+                                    {modelSetupMissionRecommendations.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Mission Guidance</p>
+                                        <p className="mt-1 text-[10px] text-primary/80">{modelSetupMissionRecommendations[0]}</p>
+                                      </div>
+                                    ) : null}
+                                    {Object.keys(modelSetupResumeAdvice).length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                              Resume Intelligence
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              status:{String(modelSetupResumeAdvice.status ?? 'unknown')}
+                                              {' • '}trigger:{String(modelSetupResumeAdvice.resume_trigger ?? 'n/a') || 'n/a'}
+                                              {' • '}refresh:{formatRefreshStamp(modelSetupResumeAdviceLastRefreshAt)}
+                                            </p>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Badge
+                                              variant={
+                                                String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'ready'
+                                                  ? 'outline'
+                                                  : String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'watch'
+                                                    ? 'outline'
+                                                    : String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'stalled'
+                                                      ? 'destructive'
+                                                  : String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'waiting'
+                                                    ? 'secondary'
+                                                    : String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'complete'
+                                                      ? 'outline'
+                                                      : String(modelSetupResumeAdvice.status ?? '').trim().toLowerCase() === 'idle'
+                                                        ? 'secondary'
+                                                        : 'destructive'
+                                              }
+                                            >
+                                              {String(modelSetupResumeAdvice.status ?? 'unknown')}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupResumeAdvice.auto_resume_candidate) ? 'outline' : 'secondary'}
+                                            >
+                                              auto:{Boolean(modelSetupResumeAdvice.auto_resume_candidate) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupResumeAdvice.can_auto_resume_now) ? 'outline' : 'secondary'}
+                                            >
+                                              ready:{modelSetupResumeAdviceActionIds.length}
+                                            </Badge>
+                                            <Badge
+                                              variant={
+                                                Number(modelSetupResumeAdvice.active_run_count ?? 0) > 0 ? 'secondary' : 'outline'
+                                              }
+                                            >
+                                              active:{Number(modelSetupResumeAdvice.active_run_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={modelSetupResumeAdviceStalledCount > 0 ? 'destructive' : 'outline'}
+                                            >
+                                              stalled:{modelSetupResumeAdviceStalledCount}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupResumeAdvice.watch_active_runs) ? 'outline' : 'secondary'}
+                                            >
+                                              watch:{Boolean(modelSetupResumeAdvice.watch_active_runs) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void refreshModelSetupResumeAdvice({
+                                                  quiet: false,
+                                                  missionId: String(modelSetupStoredMission.mission_id ?? '').trim(),
+                                                  currentScope: !String(modelSetupStoredMission.mission_id ?? '').trim(),
+                                                })
+                                              }
+                                              disabled={loadingModelSetupMission || runningModelSetupMission}
+                                            >
+                                              <RefreshCw className="mr-2 h-3 w-3" />
+                                              Advice
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void autoResumeModelSetupMission(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={
+                                                runningModelSetupMission || !Boolean(modelSetupResumeAdvice.can_auto_resume_now)
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'auto_resume' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Auto Resume
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void sweepModelSetupRecovery(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={runningModelSetupMission}
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'recovery_sweep' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Recovery Sweep
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void watchdogModelSetupRecovery(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={runningModelSetupMission}
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'recovery_watchdog' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Recovery Watchdog
+                                            </Button>
+                                          </div>
+                                        </div>
+                                        {String(modelSetupResumeAdvice.message ?? '').trim() ? (
+                                          <p className="mt-1 text-[10px] text-primary/80">
+                                            {String(modelSetupResumeAdvice.message ?? '').trim()}
+                                          </p>
+                                        ) : null}
+                                        {modelSetupResumeAdviceBlockers.length > 0 ? (
+                                          <p className="mt-1 text-[10px] text-amber-300/90">
+                                            blockers: {modelSetupResumeAdviceBlockers.join(', ')}
+                                          </p>
+                                        ) : null}
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          recovery:{String(modelSetupResumeAdvice.recovery_profile ?? 'unknown') || 'unknown'}
+                                          {' • '}manual:{Boolean(modelSetupResumeAdvice.manual_attention_required) ? 'yes' : 'no'}
+                                          {' • '}health:{String(modelSetupResumeAdvice.active_run_health ?? 'n/a') || 'n/a'}
+                                          {' • '}waiting:{modelSetupResumeAdviceWaitingCount}
+                                          {modelSetupResumeAdviceNextPollS > 0 ? ` • poll:${modelSetupResumeAdviceNextPollS}s` : ''}
+                                          {' • '}candidate:{String(modelSetupResumeAdvice.auto_resume_reason ?? '').trim() || 'n/a'}
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                    {Object.keys(modelSetupStoredMission).length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Stored Recovery</p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              status:{String(modelSetupStoredMission.status ?? 'unknown')}
+                                              {' • '}profile:{String(modelSetupStoredMission.recovery_profile ?? 'unknown')}
+                                              {modelSetupStoredMissionScopeLabel ? ` • scope:${modelSetupStoredMissionScopeLabel}` : ''}
+                                              {' • '}updated:{String(modelSetupStoredMission.updated_at ?? 'n/a')}
+                                            </p>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Badge variant={Boolean(modelSetupStoredMission.resume_ready) ? 'outline' : 'secondary'}>
+                                              resumable:{Boolean(modelSetupStoredMission.resume_ready) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupStoredMission.auto_resume_candidate) ? 'outline' : 'secondary'}
+                                            >
+                                              auto:{Boolean(modelSetupStoredMission.auto_resume_candidate) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupStoredMission.manual_attention_required) ? 'secondary' : 'outline'}
+                                            >
+                                              manual:{Boolean(modelSetupStoredMission.manual_attention_required) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupStoredMission.active_run_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                            >
+                                              active:{Number(modelSetupStoredMission.active_run_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={modelSetupStoredMissionStalledCount > 0 ? 'destructive' : 'outline'}
+                                            >
+                                              stalled:{modelSetupStoredMissionStalledCount}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupStoredMission.watch_active_runs) ? 'outline' : 'secondary'}
+                                            >
+                                              watch:{Boolean(modelSetupStoredMission.watch_active_runs) ? 'yes' : 'no'}
+                                            </Badge>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void autoResumeModelSetupMission(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={
+                                                runningModelSetupMission ||
+                                                !Boolean(modelSetupResumeAdvice.can_auto_resume_now)
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'auto_resume' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Auto Resume
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void sweepModelSetupRecovery(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={runningModelSetupMission}
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'recovery_sweep' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Recovery Sweep
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void watchdogModelSetupRecovery(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={runningModelSetupMission}
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'recovery_watchdog' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Recovery Watchdog
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void resumeModelSetupMission(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={
+                                                runningModelSetupMission ||
+                                                !String(modelSetupStoredMission.mission_id ?? '').trim() ||
+                                                Number(modelSetupStoredMission.active_run_count ?? 0) > 0
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'resume' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Resume
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                              onClick={() =>
+                                                void resetStoredModelSetupMission(String(modelSetupStoredMission.mission_id ?? ''))
+                                              }
+                                              disabled={runningModelSetupMission || !String(modelSetupStoredMission.mission_id ?? '').trim()}
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'reset' ? (
+                                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                              ) : null}
+                                              Clear
+                                            </Button>
+                                          </div>
+                                        </div>
+                                        {String(modelSetupStoredMission.recovery_hint ?? '').trim() ? (
+                                          <p className="mt-1 text-[10px] text-primary/80">
+                                            {String(modelSetupStoredMission.recovery_hint ?? '').trim()}
+                                          </p>
+                                        ) : null}
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          pending auto:{Number(modelSetupStoredMission.ready_action_count ?? 0)}
+                                          {' • '}manual:{Number(modelSetupStoredMission.manual_action_count ?? 0)}
+                                          {' • '}blocked:{Number(modelSetupStoredMission.blocked_action_count ?? 0)}
+                                          {' • '}trigger:{String(modelSetupStoredMission.resume_trigger ?? 'n/a') || 'n/a'}
+                                          {' • '}health:{String(modelSetupStoredMission.active_run_health ?? 'n/a') || 'n/a'}
+                                          {' • '}waiting:{modelSetupStoredMissionWaitingCount}
+                                          {modelSetupStoredMissionNextPollS > 0 ? ` • poll:${modelSetupStoredMissionNextPollS}s` : ''}
+                                          {' • '}launches:{Number(modelSetupStoredMission.launch_count ?? 0)}
+                                          {' • '}resumes:{Number(modelSetupStoredMission.resume_count ?? 0)}
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupMissionActiveRunItems.length > 0 || Object.keys(modelSetupStoredMissionRunSummary).length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live Mission Activity</p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              active:{modelSetupMissionActiveCount}
+                                              {' • '}install:{Number(modelSetupStoredMissionRunSummary.install_count ?? 0)}
+                                              {' • '}manual:{Number(modelSetupStoredMissionRunSummary.manual_count ?? 0)}
+                                              {' • '}progress:{Number(modelSetupStoredMissionRunSummary.percent ?? 0).toFixed(1)}%
+                                              {' • '}stalled:{modelSetupStoredMissionStalledCount}
+                                              {' • '}waiting:{modelSetupStoredMissionWaitingCount}
+                                              {modelSetupCurrentScopeLabel ? ` • scope:${modelSetupCurrentScopeLabel}` : ''}
+                                            </p>
+                                          </div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <Badge variant={modelSetupMissionIsLive ? 'secondary' : 'outline'}>
+                                              {modelSetupMissionIsLive ? 'tracking' : 'idle'}
+                                            </Badge>
+                                            <Badge variant="outline">
+                                              {String(modelSetupStoredMissionRunSummary.top_run_kind ?? 'mission') || 'mission'}
+                                            </Badge>
+                                            <Badge
+                                              variant={
+                                                String(modelSetupStoredMissionRunSummary.top_health ?? '').trim().toLowerCase() === 'stalled'
+                                                  ? 'destructive'
+                                                  : String(modelSetupStoredMissionRunSummary.top_health ?? '').trim()
+                                                    ? 'outline'
+                                                    : 'secondary'
+                                              }
+                                            >
+                                              {String(modelSetupStoredMissionRunSummary.top_health ?? 'n/a') || 'n/a'}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        {String(modelSetupStoredMissionRunSummary.top_label ?? '').trim() ? (
+                                          <p className="mt-1 text-[10px] text-primary/80">
+                                            {String(modelSetupStoredMissionRunSummary.top_label ?? '').trim()}
+                                            {String(modelSetupStoredMissionRunSummary.top_message ?? '').trim()
+                                              ? ` • ${String(modelSetupStoredMissionRunSummary.top_message ?? '').trim()}`
+                                              : ''}
+                                          </p>
+                                        ) : String(modelSetupStoredMissionRunSummary.top_message ?? '').trim() ? (
+                                          <p className="mt-1 text-[10px] text-primary/80">
+                                            {String(modelSetupStoredMissionRunSummary.top_message ?? '').trim()}
+                                          </p>
+                                        ) : null}
+                                        {modelSetupMissionActiveRunItems.length > 0 ? (
+                                          <div className="mt-2 space-y-2">
+                                            {modelSetupMissionActiveRunItems.slice(0, 3).map((item, index) => (
+                                              <div
+                                                key={`${String(item.run_kind ?? 'run')}:${String(item.run_id ?? index)}`}
+                                                className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                              >
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <div>
+                                                    <p className="font-mono text-[10px] text-primary/80">
+                                                      {String(item.label ?? item.run_id ?? `active-${index + 1}`)}
+                                                    </p>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      run:{String(item.run_id ?? 'n/a')}
+                                                      {' • '}task:{String(item.task ?? 'general')}
+                                                      {' • '}updated:{String(item.updated_at ?? 'n/a')}
+                                                    </p>
+                                                  </div>
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <Badge variant={String(item.run_kind ?? '').trim().toLowerCase() === 'install' ? 'outline' : 'secondary'}>
+                                                      {String(item.run_kind ?? 'run')}
+                                                    </Badge>
+                                                    <Badge
+                                                      variant={
+                                                        String(item.status ?? '').trim().toLowerCase() === 'running'
+                                                          ? 'secondary'
+                                                          : String(item.status ?? '').trim().toLowerCase() === 'accepted'
+                                                            ? 'outline'
+                                                            : 'secondary'
+                                                      }
+                                                    >
+                                                      {String(item.status ?? 'unknown')}
+                                                    </Badge>
+                                                    <Badge
+                                                      variant={
+                                                        String(item.health ?? '').trim().toLowerCase() === 'stalled'
+                                                          ? 'destructive'
+                                                          : String(item.health ?? '').trim().toLowerCase() === 'waiting'
+                                                            ? 'secondary'
+                                                            : 'outline'
+                                                      }
+                                                    >
+                                                      {String(item.health ?? 'unknown')}
+                                                    </Badge>
+                                                    <Badge variant="outline">
+                                                      {Number(item.percent ?? 0).toFixed(1)}%
+                                                    </Badge>
+                                                  </div>
+                                                </div>
+                                                <p className="mt-1 text-[10px] text-primary/80">
+                                                  {String(item.current_item_name ?? '').trim() ||
+                                                  String(item.current_item_key ?? '').trim() ||
+                                                  String(item.current_step_id ?? '').trim() ||
+                                                  String(item.progress_message ?? '').trim()
+                                                    ? [
+                                                        String(item.current_item_name ?? '').trim() || String(item.current_item_key ?? '').trim(),
+                                                        String(item.current_step_id ?? '').trim(),
+                                                        String(item.progress_message ?? '').trim(),
+                                                      ]
+                                                        .filter((value) => value.length > 0)
+                                                        .join(' • ')
+                                                    : 'Waiting for the next setup progress update.'}
+                                                </p>
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  completed:{Number(item.completed_items ?? 0)}
+                                                  {' / '}
+                                                  {Number(item.total_items ?? item.selected_count ?? 0)}
+                                                  {' • '}idle:{Number(item.idle_s ?? 0)}s
+                                                  {String(item.last_event_name ?? '').trim()
+                                                    ? ` • event:${String(item.last_event_name ?? '').trim()}`
+                                                    : ''}
+                                                </p>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                    {modelSetupMissionHistoryItems.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recovery Timeline</p>
+                                          <div className="flex items-center gap-2">
+                                            <Badge variant="outline">resume:{Number(modelSetupMissionHistory.resume_ready_count ?? 0)}</Badge>
+                                            <Badge
+                                              variant={Number(modelSetupMissionHistory.auto_resume_candidate_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                            >
+                                              auto:{Number(modelSetupMissionHistory.auto_resume_candidate_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupMissionHistory.manual_attention_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                            >
+                                              manual:{Number(modelSetupMissionHistory.manual_attention_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupMissionHistory.running_count ?? 0) > 0 ? 'secondary' : 'outline'}
+                                            >
+                                              active:{Number(modelSetupMissionHistory.running_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupMissionHistoryItems.slice(0, 3).map((entry, index) => (
+                                            <div
+                                              key={`${String(entry.mission_id ?? index)}-${index}`}
+                                              className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="font-mono text-[10px] text-primary/80">
+                                                  {String(entry.mission_id ?? `stored-${index + 1}`)}
+                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge
+                                                    variant={
+                                                      String(entry.status ?? '').trim().toLowerCase() === 'resume_ready'
+                                                        ? 'outline'
+                                                        : String(entry.status ?? '').trim().toLowerCase() === 'running'
+                                                          ? 'secondary'
+                                                          : String(entry.status ?? '').trim().toLowerCase() === 'completed'
+                                                            ? 'outline'
+                                                            : 'destructive'
+                                                    }
+                                                  >
+                                                    {String(entry.status ?? 'unknown')}
+                                                  </Badge>
+                                                  <Badge variant="outline">
+                                                    {String(entry.recovery_profile ?? 'unknown')}
+                                                  </Badge>
+                                                </div>
+                                              </div>
+                                              {String(entry.recovery_hint ?? '').trim() ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  {String(entry.recovery_hint ?? '').trim()}
+                                                </p>
+                                              ) : null}
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                auto:{Number(entry.ready_action_count ?? 0)}
+                                                {' • '}manual:{Number(entry.manual_action_count ?? 0)}
+                                                {' • '}blocked:{Number(entry.blocked_action_count ?? 0)}
+                                                {' • '}updated:{String(entry.updated_at ?? 'n/a')}
+                                              </p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupWatchdogHistoryItems.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Watchdog Runs</p>
+                                          <div className="flex items-center gap-2">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 gap-1 px-2 text-[10px]"
+                                              onClick={() => void resetModelSetupWatchdogHistory()}
+                                              disabled={
+                                                Number(modelSetupWatchdogHistory.count ?? 0) <= 0 ||
+                                                (runningModelSetupMission &&
+                                                  runningModelSetupMissionMode === 'watchdog_reset')
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'watchdog_reset' ? (
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                              ) : (
+                                                <Trash2 className="h-3 w-3" />
+                                              )}
+                                              Clear
+                                            </Button>
+                                            <Badge variant="outline">runs:{Number(modelSetupWatchdogHistory.count ?? 0)}</Badge>
+                                            <Badge
+                                              variant={Number(modelSetupWatchdogHistory.triggered_run_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                            >
+                                              triggered:{Number(modelSetupWatchdogHistory.triggered_run_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupWatchdogHistory.watch_run_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                            >
+                                              watch:{Number(modelSetupWatchdogHistory.watch_run_count ?? 0)}
+                                            </Badge>
+                                            <Badge
+                                              variant={Number(modelSetupWatchdogHistory.stalled_run_count ?? 0) > 0 ? 'destructive' : 'outline'}
+                                            >
+                                              stalled:{Number(modelSetupWatchdogHistory.stalled_run_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        {Object.keys(modelSetupLatestWatchdogRun).length > 0 ? (
+                                          <p className="mt-1 text-[10px] text-muted-foreground">
+                                            latest:{String(modelSetupLatestWatchdogRun.status ?? 'unknown')}
+                                            {' • '}updated:{String(modelSetupLatestWatchdogRun.updated_at ?? 'n/a')}
+                                            {String(modelSetupLatestWatchdogRun.scope_label ?? '').trim()
+                                              ? ` • scope:${String(modelSetupLatestWatchdogRun.scope_label ?? '').trim()}`
+                                              : ''}
+                                            {' • '}stop:{String(modelSetupLatestWatchdogRun.stop_reason ?? 'n/a') || 'n/a'}
+                                          </p>
+                                        ) : null}
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupWatchdogHistoryItems.slice(0, 3).map((entry, index) => (
+                                            <div
+                                              key={`${String(entry.run_id ?? index)}-${index}`}
+                                              className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                            >
+                                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <p className="font-mono text-[10px] text-primary/80">
+                                                  {String(entry.run_id ?? `watchdog-${index + 1}`)}
+                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <Badge
+                                                    variant={
+                                                      Number(entry.auto_resume_triggered_count ?? 0) > 0
+                                                        ? 'outline'
+                                                        : String(entry.status ?? '').trim().toLowerCase() === 'error'
+                                                          ? 'destructive'
+                                                          : 'secondary'
+                                                    }
+                                                  >
+                                                    {String(entry.status ?? 'unknown')}
+                                                  </Badge>
+                                                  <Badge variant="outline">
+                                                    trig:{Number(entry.auto_resume_triggered_count ?? 0)}
+                                                  </Badge>
+                                                  <Badge
+                                                    variant={Number(entry.stalled_count ?? 0) > 0 ? 'destructive' : 'outline'}
+                                                  >
+                                                    stalled:{Number(entry.stalled_count ?? 0)}
+                                                  </Badge>
+                                                </div>
+                                              </div>
+                                              {String(entry.message ?? '').trim() ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  {String(entry.message ?? '').trim()}
+                                                </p>
+                                              ) : null}
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                ready:{Number(entry.ready_count ?? 0)}
+                                                {' • '}watch:{Number(entry.watch_count ?? 0)}
+                                                {' • '}blocked:{Number(entry.blocked_count ?? 0)}
+                                                {' • '}updated:{String(entry.updated_at ?? 'n/a')}
+                                              </p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupMissionActions.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ordered Actions</p>
+                                          <Badge variant="outline">{modelSetupMissionActions.length}</Badge>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupMissionActions.slice(0, 5).map((action, index) => {
+                                            const blockers = Array.isArray(action.blockers)
+                                              ? action.blockers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+                                              : [];
+                                            const warnings = Array.isArray(action.warnings)
+                                              ? action.warnings.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+                                              : [];
+                                            return (
+                                              <div
+                                                key={`${String(action.id ?? action.title ?? index)}-${index}`}
+                                                className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                              >
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <div>
+                                                    <p className="font-mono text-[10px] text-primary/80">{String(action.title ?? action.id ?? `mission-${index + 1}`)}</p>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      stage:{String(action.stage ?? 'unknown')}
+                                                      {' • '}kind:{String(action.kind ?? 'unknown')}
+                                                      {String(action.provider ?? '').trim() ? ` • provider:${String(action.provider ?? '').trim()}` : ''}
+                                                      {String(action.task ?? '').trim() ? ` • task:${String(action.task ?? '').trim()}` : ''}
+                                                    </p>
+                                                  </div>
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <Badge
+                                                      variant={
+                                                        String(action.status ?? '').trim().toLowerCase() === 'ready'
+                                                          ? 'outline'
+                                                          : String(action.status ?? '').trim().toLowerCase() === 'in_progress'
+                                                            ? 'secondary'
+                                                            : String(action.status ?? '').trim().toLowerCase() === 'manual'
+                                                              ? 'secondary'
+                                                              : 'destructive'
+                                                      }
+                                                    >
+                                                      {String(action.status ?? 'unknown')}
+                                                    </Badge>
+                                                    <Badge variant={Boolean(action.auto_runnable) ? 'outline' : 'secondary'}>
+                                                      {Boolean(action.auto_runnable) ? 'auto' : 'manual'}
+                                                    </Badge>
+                                                  </div>
+                                                </div>
+                                                {blockers.length > 0 ? (
+                                                  <p className="mt-1 text-[10px] text-amber-300/90">{blockers[0]}</p>
+                                                ) : warnings.length > 0 ? (
+                                                  <p className="mt-1 text-[10px] text-primary/80">{warnings[0]}</p>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {modelSetupMissionRunItems.length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                            {Boolean(modelSetupMissionLaunchResult?.dry_run) ? 'Mission Preview Result' : 'Latest Mission Run'}
+                                          </p>
+                                          <div className="flex items-center gap-2">
+                                            <Badge variant="outline">ok:{Number(modelSetupMissionLaunchResult?.executed_count ?? 0)}</Badge>
+                                            <Badge variant={Number(modelSetupMissionLaunchResult?.error_count ?? 0) > 0 ? 'destructive' : 'outline'}>
+                                              error:{Number(modelSetupMissionLaunchResult?.error_count ?? 0)}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {modelSetupMissionRunItems.slice(0, 4).map((item, index) => {
+                                            const resultPayload = asObjectRecord(item.result);
+                                            const verification = asObjectRecord(resultPayload.verification);
+                                            const resultMessage = String(
+                                              verification.summary ??
+                                                verification.message ??
+                                                resultPayload.message ??
+                                                item.reason ??
+                                                ''
+                                            ).trim();
+                                            return (
+                                              <div
+                                                key={`${String(item.action_id ?? item.kind ?? index)}-${index}`}
+                                                className="rounded border border-primary/15 bg-background/20 px-2 py-2"
+                                              >
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                  <p className="font-mono text-[10px] text-primary/80">{String(item.action_id ?? item.kind ?? `run-${index + 1}`)}</p>
+                                                  <Badge
+                                                    variant={
+                                                      Boolean(item.ok)
+                                                        ? 'outline'
+                                                        : String(item.status ?? '').trim().toLowerCase() === 'skipped'
+                                                          ? 'secondary'
+                                                          : 'destructive'
+                                                    }
+                                                  >
+                                                    {String(item.status ?? 'unknown')}
+                                                  </Badge>
+                                                </div>
+                                                {resultMessage ? (
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">{resultMessage}</p>
+                                                ) : null}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div className="rounded border border-primary/15 bg-background/20 p-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
                                       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Setup Planner</p>
                                       <p className="text-[10px] text-muted-foreground">
                                         planned:{Number(modelSetupPlanSummary.planned_count ?? 0)}
@@ -18819,6 +21880,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       >
                                         blocked:{Number(modelSetupPreflightSummary.blocked_count ?? 0)}
                                       </Badge>
+                                      <Badge variant={modelSetupPreflightLaunchableCount > 0 ? 'outline' : 'secondary'}>
+                                        launchable:{modelSetupPreflightLaunchableCount}
+                                      </Badge>
                                       <Badge
                                         variant={Number(modelSetupPreflightSummary.remote_probe_count ?? 0) > 0 ? 'outline' : 'secondary'}
                                       >
@@ -18835,7 +21899,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           autoInstallModelSetupItems.length === 0 ||
                                           installingModelSetup ||
                                           loadingModelSetupPreflight ||
-                                          Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ||
+                                          modelSetupPreflightLaunchableCount <= 0 ||
                                           Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0
                                         }
                                       >
@@ -18854,7 +21918,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           autoInstallModelSetupItems.length === 0 ||
                                           installingModelSetup ||
                                           loadingModelSetupPreflight ||
-                                          Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ||
+                                          modelSetupPreflightLaunchableCount <= 0 ||
                                           Number(modelSetupInstallHistoryState?.active_count ?? 0) > 0
                                         }
                                       >
@@ -18956,6 +22020,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             <Badge variant={Number(modelSetupPreflightSummary.blocked_count ?? 0) > 0 ? 'destructive' : 'outline'}>
                                               blocked:{Number(modelSetupPreflightSummary.blocked_count ?? 0)}
                                             </Badge>
+                                            <Badge variant={modelSetupPreflightLaunchableCount > 0 ? 'outline' : 'secondary'}>
+                                              launchable:{modelSetupPreflightLaunchableCount}
+                                            </Badge>
                                           </div>
                                         </div>
                                         <p className="mt-1 text-[10px] text-muted-foreground">
@@ -18968,6 +22035,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {Number(modelSetupPreflightSummary.remote_probe_count ?? 0)}
                                           {' • '}cache:{Number(modelSetupPreflightSummary.remote_cache_hits ?? 0)}
                                           {' • '}size-known:{Number(modelSetupPreflightSummary.remote_known_size_count ?? 0)}
+                                          {' • '}download-ready:{Number(modelSetupPreflightSummary.download_ready_count ?? 0)}
+                                          {' • '}auth-missing:{Number(modelSetupPreflightSummary.auth_missing_count ?? 0)}
+                                          {' • '}access-blocked:{Number(modelSetupPreflightSummary.access_blocked_count ?? 0)}
                                           {Object.keys(modelSetupPreflightRemoteMetadata).length > 0
                                             ? ` • source:${String(modelSetupPreflightRemoteMetadata.status ?? 'unknown')}`
                                             : ''}
@@ -18977,6 +22047,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           const disk = asObjectRecord(entry.disk);
                                           const sourceTrust = asObjectRecord(entry.source_trust);
                                           const remoteProbe = asObjectRecord(entry.remote_probe ?? entry.remote_metadata);
+                                          const remoteAcquisition = asObjectRecord(entry.remote_acquisition);
                                           const entryBlockers = Array.isArray(entry.blockers)
                                             ? entry.blockers.filter((value): value is string => typeof value === 'string')
                                             : [];
@@ -18991,6 +22062,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           const remoteStatus = String(remoteProbe.status ?? '').trim().toLowerCase();
                                           const remoteRequiresAuth = Boolean(remoteProbe.requires_auth);
                                           const remoteAuthConfigured = Boolean(remoteProbe.auth_configured);
+                                          const acquisitionStage = String(
+                                            remoteAcquisition.acquisition_stage ?? remoteProbe.acquisition_stage ?? ''
+                                          ).trim();
+                                          const credentialState = String(
+                                            remoteAcquisition.credential_state ?? remoteProbe.credential_state ?? ''
+                                          ).trim();
+                                          const downloadReady = Boolean(
+                                            remoteAcquisition.download_ready ?? remoteProbe.download_ready
+                                          );
                                           const entryStatusVariant =
                                             entryStatus === 'ready' ? 'outline' : entryStatus === 'warning' ? 'secondary' : 'destructive';
                                           return (
@@ -19003,6 +22083,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     {Boolean(sourceTrust.trusted) ? 'trusted' : 'unverified'}
                                                   </Badge>
                                                   {remoteProbeMode ? <Badge variant="outline">{remoteProbeMode}</Badge> : null}
+                                                  {acquisitionStage ? (
+                                                    <Badge variant={downloadReady ? 'outline' : 'secondary'}>
+                                                      {acquisitionStage}
+                                                    </Badge>
+                                                  ) : null}
+                                                  {credentialState ? <Badge variant="outline">{credentialState}</Badge> : null}
                                                   {Object.keys(remoteProbe).length > 0 ? (
                                                     <Badge variant={Boolean(remoteProbe.cached) ? 'secondary' : 'outline'}>
                                                       {Boolean(remoteProbe.cached) ? 'cached' : 'live'}
@@ -19027,7 +22113,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     ? ` • live-size:${(remoteSizeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`
                                                     : ' • live-size:unknown'}
                                                   {remoteStatus ? ` • status:${remoteStatus}` : ''}
+                                                  {acquisitionStage ? ` • stage:${acquisitionStage}` : ''}
                                                   {remoteRequiresAuth ? ` • auth:${remoteAuthConfigured ? 'configured' : 'required'}` : ''}
+                                                  {downloadReady ? ' • ready:yes' : ''}
                                                 </p>
                                               ) : null}
                                               {entryBlockers.length > 0 ? (
@@ -19221,6 +22309,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           const latestActivatedTasks = Number(latestActivationSummary.activated_task_count ?? 0);
                                           const latestActivationCandidates = Number(latestActivationSummary.activation_candidate_count ?? 0);
                                           const latestReadyAfter = Number(latestActivationSummary.ready_after_count ?? 0);
+                                          const latestRunScopeLabel = formatModelSetupScopeLabel(pickModelSetupScope(latestRun));
                                           const latestItems = Array.isArray(latestRun.items)
                                             ? latestRun.items.filter((entry): entry is Record<string, unknown> => isObjectRecord(entry))
                                             : [];
@@ -19282,6 +22371,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               <p className="mt-1 text-[10px] text-muted-foreground">
                                                 items:{Number(latestRun.selected_count ?? 0)}
                                                 {' • '}steps:{Number(latestRun.step_success_count ?? 0)}/{Number(latestRun.step_success_count ?? 0) + Number(latestRun.step_error_count ?? 0) + Number(latestRun.step_skipped_count ?? 0)}
+                                                {latestRunScopeLabel ? ` • scope:${latestRunScopeLabel}` : ''}
                                                 {' • '}duration:
                                                 {Number.isFinite(Number(latestRun.duration_s ?? NaN))
                                                   ? ` ${Number(latestRun.duration_s ?? 0).toFixed(1)}s`
@@ -19417,6 +22507,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           const latestActivatedTasks = Number(latestActivationSummary.activated_task_count ?? 0);
                                           const latestActivationCandidates = Number(latestActivationSummary.activation_candidate_count ?? 0);
                                           const latestReadyAfter = Number(latestActivationSummary.ready_after_count ?? 0);
+                                          const latestRunScopeLabel = formatModelSetupScopeLabel(pickModelSetupScope(latestRun));
                                           const latestItems = Array.isArray(latestRun.items)
                                             ? latestRun.items.filter((entry): entry is Record<string, unknown> => isObjectRecord(entry))
                                             : [];
@@ -19471,6 +22562,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               </div>
                                               <p className="mt-1 text-[10px] text-muted-foreground">
                                                 items:{Number(latestRun.selected_count ?? 0)}
+                                                {latestRunScopeLabel ? ` • scope:${latestRunScopeLabel}` : ''}
                                                 {' • '}duration:
                                                 {Number.isFinite(Number(latestRun.duration_s ?? NaN))
                                                   ? ` ${Number(latestRun.duration_s ?? 0).toFixed(1)}s`
@@ -19768,6 +22860,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       const providerDraft = asObjectRecord(providerSetupDrafts[providerKey]);
                                       const saveBusy = updatingProviderName === providerKey;
                                       const verifyBusy = verifyingProviderName === providerKey;
+                                      const recoverBusy = recoveringProviderName === providerKey;
                                       const hasDraftInput = setupFields.some((field) => String(providerDraft[String(field.name ?? '')] ?? '').trim().length > 0);
                                       const lastVerification = asObjectRecord(item.last_verification);
                                       const verificationStatus = String(item.verification_status ?? lastVerification.status ?? '').trim().toLowerCase();
@@ -19782,6 +22875,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         : [];
                                       const verificationErrors = Array.isArray(lastVerification.errors)
                                         ? lastVerification.errors.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                        : [];
+                                      const providerOutcome = asObjectRecord(providerSetupOutcomeState[providerKey]);
+                                      const providerRecovery = asObjectRecord(providerOutcome.setup_recovery);
+                                      const providerNextAction = asObjectRecord(providerRecovery.next_action);
+                                      const providerOutcomeUpdatedAt = String(providerOutcome.updated_at ?? '').trim();
+                                      const providerOutcomeLaunchStatus = String(providerOutcome.launch_status ?? '').trim().toLowerCase();
+                                      const providerOutcomeLaunchMessage = String(providerOutcome.launch_message ?? '').trim();
+                                      const providerOutcomeSelectedActionIds = Array.isArray(providerOutcome.selected_action_ids)
+                                        ? providerOutcome.selected_action_ids.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                        : [];
+                                      const providerOutcomeContinuedActionIds = Array.isArray(providerOutcome.continued_action_ids)
+                                        ? providerOutcome.continued_action_ids.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+                                        : [];
+                                      const providerAutoReadyActionCount = Array.isArray(providerRecovery.auto_runnable_ready_action_ids)
+                                        ? providerRecovery.auto_runnable_ready_action_ids.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).length
+                                        : Number(providerRecovery.auto_runnable_ready_count ?? 0);
+                                      const providerRecoveryTasks = Array.isArray(providerRecovery.affected_tasks)
+                                        ? providerRecovery.affected_tasks.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
                                         : [];
                                       const hasSavedCredential = Boolean(item.present);
                                       const verificationVerified = Boolean(item.verification_verified ?? lastVerification.verified);
@@ -19819,6 +22930,81 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           ) : null}
                                           {verificationErrors.length > 0 ? (
                                             <p className="mt-1 text-[10px] text-rose-300/90">error: {verificationErrors[0]}</p>
+                                          ) : null}
+                                          {Object.keys(providerRecovery).length > 0 ? (
+                                            <div className="mt-2 rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <Badge
+                                                  variant={Number(providerRecovery.launchable_count ?? 0) > 0 ? 'outline' : 'secondary'}
+                                                >
+                                                  launchable:{Number(providerRecovery.launchable_count ?? 0)}
+                                                </Badge>
+                                                <Badge
+                                                  variant={Boolean(providerRecovery.resume_ready) ? 'outline' : 'secondary'}
+                                                >
+                                                  {Boolean(providerRecovery.resume_ready) ? 'resume-ready' : 'resume-pending'}
+                                                </Badge>
+                                                <Badge
+                                                  variant={Boolean(providerRecovery.manual_attention_required) ? 'secondary' : 'outline'}
+                                                >
+                                                  {Boolean(providerRecovery.manual_attention_required) ? 'attention' : 'clear'}
+                                                </Badge>
+                                              </div>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                recovery:{' '}
+                                                {Number(providerRecovery.ready_action_count ?? 0)} ready
+                                                {' • '}manual:{Number(providerRecovery.manual_action_count ?? 0)}
+                                                {' • '}blocked:{Number(providerRecovery.blocked_action_count ?? 0)}
+                                                {' • '}auto:{providerAutoReadyActionCount}
+                                                {providerRecoveryTasks.length > 0 ? ` • tasks:${providerRecoveryTasks.join(', ')}` : ''}
+                                              </p>
+                                              {String(providerNextAction.title ?? providerNextAction.kind ?? '').trim() ? (
+                                                <p className="mt-1 text-[10px] text-primary/80">
+                                                  next: {String(providerNextAction.title ?? providerNextAction.kind ?? '').trim()}
+                                                </p>
+                                              ) : null}
+                                              {providerOutcomeLaunchMessage ? (
+                                                <p
+                                                  className={`mt-1 text-[10px] ${
+                                                    providerOutcomeLaunchStatus === 'error'
+                                                      ? 'text-rose-300/90'
+                                                      : providerOutcomeLaunchStatus === 'blocked'
+                                                        ? 'text-amber-300/90'
+                                                        : 'text-muted-foreground'
+                                                  }`}
+                                                >
+                                                  last run: {providerOutcomeLaunchMessage}
+                                                  {providerOutcomeSelectedActionIds.length > 0
+                                                    ? ` • actions:${providerOutcomeSelectedActionIds.join(', ')}`
+                                                    : ''}
+                                                  {providerOutcomeContinuedActionIds.length > 0
+                                                    ? ` • followup:${providerOutcomeContinuedActionIds.join(', ')}`
+                                                    : ''}
+                                                </p>
+                                              ) : null}
+                                              {providerOutcomeUpdatedAt ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  updated: {formatCompactDateTime(providerOutcomeUpdatedAt)}
+                                                </p>
+                                              ) : null}
+                                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  className="h-7 border-primary/30 bg-transparent px-2 text-[10px]"
+                                                  onClick={() => void runProviderSetupRecovery(providerKey)}
+                                                  disabled={recoverBusy || providerAutoReadyActionCount <= 0}
+                                                >
+                                                  {recoverBusy ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                                  Run Ready Recovery
+                                                </Button>
+                                                {providerAutoReadyActionCount > 0 ? (
+                                                  <p className="text-[10px] text-primary/80">
+                                                    {providerAutoReadyActionCount} safe action{providerAutoReadyActionCount === 1 ? '' : 's'} ready now
+                                                  </p>
+                                                ) : null}
+                                              </div>
+                                            </div>
                                           ) : null}
                                           {String(setupProvider.usage_hint ?? '').trim() ? (
                                             <p className="mt-1 text-[10px] text-primary/80">{String(setupProvider.usage_hint ?? '').trim()}</p>

@@ -1,0 +1,3 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Calculator                               Microsoft.WindowsCalculator  11.2402               winget

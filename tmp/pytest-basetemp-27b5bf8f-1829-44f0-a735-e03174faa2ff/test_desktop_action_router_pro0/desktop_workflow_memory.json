@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-03-14T14:02:51.860868+00:00",
+  "entries": {
+    "command|vscode|vscode|preferences: open settings (json)": {
+      "key": "command|vscode|vscode|preferences: open settings (json)",
+      "action": "command",
+      "profile_id": "vscode",
+      "app_name": "vscode",
+      "window_title": "",
+      "intent": "preferences: open settings (json)",
+      "variants": {
+        "primary": {
+          "signature": "primary",
+          "strategy_id": "primary",
+          "title": "Primary Route",
+          "payload_overrides": {},
+          "samples": 1,
+          "execution_successes": 1,
+          "verified_successes": 0,
+          "failures": 1,
+          "consecutive_failures": 1,
+          "last_status": "success",
+          "last_verified": false,
+          "updated_at": "2026-03-14T14:02:51.333244+00:00"
+        },
+        "{\"focus_first\":true,\"keys\":[\"f1\"]}": {
+          "signature": "{\"focus_first\":true,\"keys\":[\"f1\"]}",
+          "strategy_id": "workflow_retry_2",
+          "title": "Command Palette Retry",
+          "payload_overrides": {
+            "keys": [
+              "f1"
+            ],
+            "focus_first": true
+          },
+          "samples": 1,
+          "execution_successes": 1,
+          "verified_successes": 1,
+          "failures": 0,
+          "consecutive_failures": 0,
+          "last_status": "success",
+          "last_verified": true,
+          "updated_at": "2026-03-14T14:02:51.859448+00:00"
+        }
+      },
+      "updated_at": "2026-03-14T14:02:51.859448+00:00"
+    }
+  }
+}

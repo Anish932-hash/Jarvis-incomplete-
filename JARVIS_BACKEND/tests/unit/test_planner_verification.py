@@ -1560,6 +1560,32 @@ def test_desktop_interact_step_routes_complete_form_page_and_flow_for_settings_c
     assert flow_steps[0].args.get("action") == "complete_form_flow"
 
 
+def test_desktop_interact_step_routes_resume_mission_by_id_without_target_context() -> None:
+    planner = Planner()
+
+    text = "resume mission dm_a1b2c3d4e5f6"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].args.get("action") == "resume_mission"
+    assert steps[0].args.get("mission_id") == "dm_a1b2c3d4e5f6"
+    assert "app_name" not in steps[0].args
+
+
+def test_desktop_interact_step_routes_resume_blocked_settings_flow_to_resume_mission() -> None:
+    planner = Planner()
+
+    text = "continue blocked settings flow"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].args.get("action") == "resume_mission"
+    assert steps[0].args.get("mission_kind") == "form"
+    assert steps[0].args.get("app_name") == "settings"
+
+
 def test_desktop_interact_step_routes_enable_and_disable_switch_for_settings_commands() -> None:
     planner = Planner()
 
@@ -1870,6 +1896,23 @@ def test_compound_desktop_request_inherits_settings_context_for_complete_form_fl
     assert steps[2].args.get("app_name") == "settings"
     assert steps[2].args.get("action") == "complete_form_flow"
     assert steps[0].step_id in steps[2].depends_on
+
+
+def test_compound_desktop_request_inherits_installer_context_for_resume_mission() -> None:
+    planner = Planner()
+
+    text = "open installer and resume blocked task"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 2
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "installer"
+    assert steps[1].action == "desktop_interact"
+    assert steps[1].args.get("app_name") == "installer"
+    assert steps[1].args.get("action") == "resume_mission"
+    assert steps[1].args.get("mission_kind") == "wizard"
+    assert steps[0].step_id in steps[1].depends_on
 
 
 def test_compound_desktop_request_builds_settings_change_and_commit_chain() -> None:

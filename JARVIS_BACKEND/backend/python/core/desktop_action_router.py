@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 from backend.python.core.desktop_app_profile_registry import DesktopAppProfileRegistry
+from backend.python.core.desktop_mission_memory import DesktopMissionMemory
 from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
 
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
+RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow"}
+RESUME_APPROVAL_KINDS = {
+    "elevation_consent",
+    "elevation_credentials",
+    "credential_input",
+    "authentication_review",
+    "permission_review",
+}
 
 WORKFLOW_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "navigate": {
@@ -2702,6 +2713,7 @@ class DesktopActionRouter:
         action_handlers: Optional[Dict[str, ActionHandler]] = None,
         app_profile_registry: Optional[DesktopAppProfileRegistry] = None,
         workflow_memory: Optional[DesktopWorkflowMemory] = None,
+        mission_memory: Optional[DesktopMissionMemory] = None,
         settle_delay_s: float = 0.35,
     ) -> None:
         self._handlers = self._default_handlers()
@@ -2709,11 +2721,14 @@ class DesktopActionRouter:
             self._handlers.update({str(key): value for key, value in action_handlers.items() if callable(value)})
         self._app_profile_registry = app_profile_registry or DesktopAppProfileRegistry()
         self._workflow_memory = workflow_memory or DesktopWorkflowMemory.default()
+        self._mission_memory = mission_memory or DesktopMissionMemory.default()
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         args = self._normalize_payload(payload)
         requested_action = str(args.get("action", "observe") or "observe")
+        if requested_action == "resume_mission":
+            return self._advise_resume_mission(args=args)
         app_profile = self._resolve_app_profile(args=args)
         args, defaults_applied = self._apply_profile_defaults(args=args, app_profile=app_profile)
         workflow_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
@@ -2998,7 +3013,14 @@ class DesktopActionRouter:
         risky_confirmation_actions = {"confirm_dialog", "press_dialog_button", "next_wizard_step", "finish_wizard", "complete_form_page", "complete_form_flow"}
         if requested_action in risky_confirmation_actions and any(
             bool(safety_signals.get(key, False))
-            for key in ("warning_surface_visible", "destructive_warning_visible", "elevation_prompt_visible", "requires_confirmation")
+            for key in (
+                "warning_surface_visible",
+                "destructive_warning_visible",
+                "elevation_prompt_visible",
+                "permission_review_visible",
+                "requires_confirmation",
+                "admin_approval_required",
+            )
         ):
             risk_level = "high"
         if requested_action in risky_confirmation_actions and bool(safety_signals.get("destructive_warning_visible", False)):
@@ -3012,6 +3034,14 @@ class DesktopActionRouter:
         if requested_action in risky_confirmation_actions and bool(safety_signals.get("elevation_prompt_visible", False)):
             warnings.append(
                 "Surface safety detected an elevation prompt, so the action may require administrator approval or trigger privileged system changes."
+            )
+        if requested_action in risky_confirmation_actions and bool(safety_signals.get("permission_review_visible", False)):
+            warnings.append(
+                "Surface safety detected a permission or consent review prompt, so JARVIS is treating the action as high risk until an explicit approval surface is reviewed."
+            )
+        if requested_action in risky_confirmation_actions and bool(safety_signals.get("secure_desktop_likely", False)):
+            warnings.append(
+                "Surface safety detected a likely secure desktop prompt, so follow-up actions may require explicit administrator review instead of normal UI automation."
             )
         if requested_action in {"next_wizard_step", "finish_wizard"} and bool(safety_signals.get("requires_confirmation", False)):
             warnings.append(
@@ -3082,11 +3112,34 @@ class DesktopActionRouter:
         args = self._normalize_payload(payload)
         advice = self.advise(args)
         if advice.get("status") != "success":
+            message = "; ".join(str(item) for item in advice.get("blockers", []) if str(item).strip()) or "desktop interaction unavailable"
             return {
                 "status": "blocked" if advice.get("blockers") else "error",
-                "message": "; ".join(str(item) for item in advice.get("blockers", []) if str(item).strip()) or "desktop interaction unavailable",
+                "action": advice.get("action", args.get("action", "")),
+                "route_mode": advice.get("route_mode", ""),
+                "confidence": advice.get("confidence", 0.0),
+                "risk_level": advice.get("risk_level", ""),
+                "app_profile": advice.get("app_profile", {}),
+                "target_window": advice.get("target_window", {}),
+                "surface_snapshot": advice.get("surface_snapshot", {}),
+                "safety_signals": advice.get("safety_signals", {}),
+                "form_target_state": advice.get("form_target_state", {}),
+                "surface_branch": advice.get("surface_branch", {}),
+                "resume_action": advice.get("resume_action", ""),
+                "resume_payload": advice.get("resume_payload", {}),
+                "resume_contract": advice.get("resume_contract", {}),
+                "blocking_surface": advice.get("blocking_surface", {}),
+                "mission_record": advice.get("mission_record", {}),
+                "resume_context": advice.get("resume_context", {}),
+                "message": message,
                 "advice": advice,
                 "results": [],
+                "verification": {
+                    "enabled": bool(args.get("verify_after_action", True)),
+                    "status": "skipped",
+                    "verified": False,
+                    "message": "execution skipped because the routed desktop advice was blocked",
+                },
             }
         attempts: List[Dict[str, Any]] = []
         strategy_variants = advice.get("strategy_variants", []) if isinstance(advice.get("strategy_variants"), list) else []
@@ -3290,6 +3343,8 @@ class DesktopActionRouter:
         return [row for _, row in rows]
 
     def _route_mode(self, *, requested_action: str, args: Dict[str, Any], capabilities: Dict[str, Any], app_profile: Dict[str, Any]) -> str:
+        if requested_action == "resume_mission":
+            return "resume_desktop_mission"
         accessibility_ready = bool(capabilities["accessibility"].get("available"))
         vision_ready = bool(capabilities["vision"].get("available"))
         target_mode = str(args.get("target_mode", "auto") or "auto").strip().lower() or "auto"
@@ -3384,10 +3439,17 @@ class DesktopActionRouter:
                     "control_type": ("control_type",),
                     "element_id": ("element_id",),
                     "include_targets": ("include_targets",),
+                    "mission_id": ("mission_id",),
+                    "mission_kind": ("mission_kind",),
+                    "resume_contract": ("resume_contract",),
+                    "blocking_surface": ("blocking_surface",),
+                    "resume_force": ("resume_force",),
                 }.items()
                 if any(alias in raw and raw.get(alias) is not None for alias in aliases)
             ]
         normalized_action = str(raw.get("action", "") or "").strip().lower()
+        resume_contract = self._normalize_resume_contract_payload(raw.get("resume_contract"))
+        blocking_surface = self._normalize_blocking_surface_payload(raw.get("blocking_surface"))
         text = str(raw.get("text", "") or "").strip()
         query = str(raw.get("query", raw.get("target", "")) or "").strip()
         hotkey_keys = raw.get("keys")
@@ -3399,7 +3461,9 @@ class DesktopActionRouter:
             key = str(raw.get("key", "") or "").strip().lower()
             keys = [key] if key else []
 
-        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe", *WORKFLOW_ACTIONS}:
+        if not normalized_action and resume_contract:
+            normalized_action = "resume_mission"
+        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe", "resume_mission", *WORKFLOW_ACTIONS}:
             if keys:
                 normalized_action = "hotkey"
             elif text and query:
@@ -3440,6 +3504,11 @@ class DesktopActionRouter:
             "control_type": str(raw.get("control_type", "") or "").strip(),
             "element_id": str(raw.get("element_id", "") or "").strip(),
             "include_targets": bool(raw.get("include_targets", False)),
+            "mission_id": str(raw.get("mission_id", "") or "").strip(),
+            "mission_kind": str(raw.get("mission_kind", "") or "").strip().lower(),
+            "resume_contract": resume_contract,
+            "blocking_surface": blocking_surface,
+            "resume_force": bool(raw.get("resume_force", False)),
             "_provided_fields": provided_fields,
         }
 
@@ -3452,6 +3521,13 @@ class DesktopActionRouter:
         attempt_index: int,
     ) -> Dict[str, Any]:
         action = str(args.get("action", "observe") or "observe").strip().lower()
+        if action == "resume_mission":
+            return self._execute_resume_mission_strategy(
+                args=args,
+                advice=advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
+            )
         if action == "complete_wizard_flow":
             return self._execute_wizard_flow_strategy(
                 args=args,
@@ -3564,6 +3640,9 @@ class DesktopActionRouter:
         max_pages = max(1, min(int(args.get("max_wizard_pages", 6) or 6), 12))
         allow_warning_pages = bool(args.get("allow_warning_pages", False))
         pre_context = self._capture_verification_context(args=args, advice=advice)
+        advice_target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        wizard_anchor_title = str(args.get("window_title", "") or advice_target_window.get("title", "") or "").strip()
+        wizard_anchor_app_name = str(args.get("app_name", "") or "").strip()
         wizard_window_hint = str(args.get("window_title", "") or "").strip()
         wizard_window_locked = False
 
@@ -3667,6 +3746,9 @@ class DesktopActionRouter:
                         "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
                         "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
                         "route_mode": str(dialog_followup.get("route_mode", "") or "").strip(),
+                        "dialog_kind": str(dialog_followup.get("dialog_kind", "") or "").strip(),
+                        "approval_kind": str(dialog_followup.get("approval_kind", "") or "").strip(),
+                        "secure_desktop_likely": bool(dialog_followup.get("secure_desktop_likely", False)),
                     }
                     page_record["executed_actions"] = [
                         str(row.get("action", "") or "").strip()
@@ -3687,10 +3769,18 @@ class DesktopActionRouter:
                     page_record["status"] = "blocked"
                     page_record["stop_reason_code"] = stop_reason_code
                     page_record["stop_reason"] = stop_reason
+                    page_record["blocking_surface"] = self._blocking_surface_state(
+                        snapshot=page_snapshot,
+                        stop_reason_code=stop_reason_code,
+                        mission_kind="wizard",
+                    )
                     page_record["dialog_followup"] = {
                         "blocked": True,
                         "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
                         "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                        "dialog_kind": str(dialog_followup.get("dialog_kind", "") or "").strip(),
+                        "approval_kind": str(dialog_followup.get("approval_kind", "") or "").strip(),
+                        "secure_desktop_likely": bool(dialog_followup.get("secure_desktop_likely", False)),
                     }
                     if stop_reason:
                         mission_warnings.append(stop_reason)
@@ -3721,6 +3811,11 @@ class DesktopActionRouter:
                 page_record["status"] = "blocked"
                 page_record["stop_reason_code"] = stop_reason_code
                 page_record["stop_reason"] = stop_reason
+                page_record["blocking_surface"] = self._blocking_surface_state(
+                    snapshot=page_snapshot,
+                    stop_reason_code=stop_reason_code,
+                    mission_kind="wizard",
+                )
                 if stop_reason:
                     mission_warnings.append(stop_reason)
                 page_history.append(page_record)
@@ -3814,6 +3909,49 @@ class DesktopActionRouter:
         )
         if status == "success" and bool(verification.get("enabled", False)) and not bool(verification.get("verified", False)):
             message = str(verification.get("message", message) or message)
+        blocking_surface = self._blocking_surface_state(
+            snapshot=last_snapshot,
+            stop_reason_code=stop_reason_code,
+            mission_kind="wizard",
+        )
+        resume_contract = self._mission_resume_contract(
+            mission_kind="wizard",
+            args=args,
+            stop_reason_code=stop_reason_code,
+            blocking_surface=blocking_surface,
+            anchor_window_title=wizard_anchor_title,
+            anchor_app_name=wizard_anchor_app_name,
+        )
+        wizard_mission_payload = {
+            "enabled": True,
+            "completed": completed,
+            "pages_completed": pages_completed,
+            "page_count": len(page_history),
+            "max_pages": max_pages,
+            "allow_warning_pages": allow_warning_pages,
+            "stop_reason_code": stop_reason_code,
+            "stop_reason": stop_reason,
+            "blocking_surface": blocking_surface,
+            "resume_contract": resume_contract,
+            "page_history": page_history,
+            "final_page": final_summary,
+            "risk_level": advice.get("risk_level", ""),
+            "status": status,
+            "message": message,
+        }
+        mission_record = {}
+        if blocking_surface and resume_contract:
+            mission_record = self._persist_paused_mission(
+                mission_kind="wizard",
+                args=args,
+                blocking_surface=blocking_surface,
+                resume_contract=resume_contract,
+                mission_payload=wizard_mission_payload,
+                warnings=mission_warnings,
+                message=message,
+            )
+            if mission_record:
+                wizard_mission_payload["mission_record"] = mission_record
 
         return {
             "attempt": attempt_index,
@@ -3827,18 +3965,821 @@ class DesktopActionRouter:
             "results": results,
             "advice": advice,
             "verification": verification,
-            "wizard_mission": {
-                "enabled": True,
-                "completed": completed,
-                "pages_completed": pages_completed,
-                "page_count": len(page_history),
-                "max_pages": max_pages,
-                "allow_warning_pages": allow_warning_pages,
-                "stop_reason_code": stop_reason_code,
-                "stop_reason": stop_reason,
-                "page_history": page_history,
-                "final_page": final_summary,
+            "wizard_mission": wizard_mission_payload,
+            "mission_record": mission_record,
+        }
+
+    def _blocking_surface_state(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        stop_reason_code: str,
+        mission_kind: str,
+    ) -> Dict[str, Any]:
+        if not isinstance(snapshot, dict) or not str(stop_reason_code or "").strip():
+            return {}
+        stop_code = str(stop_reason_code or "").strip()
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        target_group_state = snapshot.get("target_group_state", {}) if isinstance(snapshot.get("target_group_state", {}), dict) else {}
+        wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        page_state = wizard_page_state if mission_kind == "wizard" else form_page_state
+        summary = self._wizard_flow_summary(snapshot=snapshot) if mission_kind == "wizard" else self._form_flow_summary(snapshot=snapshot)
+        recommended_actions = [
+            str(item).strip()
+            for item in snapshot.get("recommended_actions", [])
+            if str(item).strip()
+        ] if isinstance(snapshot.get("recommended_actions", []), list) else []
+        credential_fields = [
+            dict(row)
+            for row in dialog_state.get("credential_fields", [])
+            if isinstance(row, dict)
+        ][:6]
+        pending_requirements = [
+            dict(row)
+            for row in page_state.get("pending_requirements", [])
+            if isinstance(row, dict)
+        ][:8]
+        manual_required_controls = [
+            dict(row)
+            for row in page_state.get("manual_required_controls", [])
+            if isinstance(row, dict)
+        ][:8]
+        resume_preconditions_map = {
+            "credential_input_required": ["provide_credentials"],
+            "elevation_credentials_required": ["provide_admin_credentials", "review_elevation_request"],
+            "elevation_consent_required": ["approve_elevation_request"],
+            "authentication_review_required": ["review_authentication_request"],
+            "permission_review_required": ["review_permission_request"],
+            "warning_confirmation_requires_review": ["review_warning_surface"],
+            "destructive_form_review_required": ["review_destructive_change"],
+            "form_dialog_review_required": ["review_dialog_surface"],
+            "wizard_dialog_review_required": ["review_dialog_surface"],
+            "manual_input_required": ["provide_required_values"],
+            "unsupported_form_requirements": ["review_unresolved_form_requirements"],
+            "unsupported_wizard_requirements": ["review_unresolved_wizard_requirements"],
+        }
+        operator_steps_map = {
+            "credential_input_required": [
+                "Complete the credential prompt manually.",
+                "Wait for the protected dialog to close or move behind the target app.",
+                "Resume the paused desktop mission with the provided continuation payload.",
+            ],
+            "elevation_credentials_required": [
+                "Review the administrator request carefully.",
+                "Enter administrator credentials on the secure prompt if you want to proceed.",
+                "Resume the paused desktop mission after the elevation prompt closes.",
+            ],
+            "elevation_consent_required": [
+                "Review the administrator prompt carefully.",
+                "Approve or dismiss the elevation request manually.",
+                "Resume the paused desktop mission after the UAC surface closes.",
+            ],
+            "authentication_review_required": [
+                "Review the authentication request carefully.",
+                "Confirm or dismiss the identity-sensitive prompt manually.",
+                "Resume the paused desktop mission once the review surface is cleared.",
+            ],
+            "permission_review_required": [
+                "Review the permission or consent request carefully.",
+                "Approve or dismiss the app access request manually.",
+                "Resume the paused desktop mission after the review dialog closes.",
+            ],
+            "manual_input_required": [
+                "Fill in the required values on the current page.",
+                "Confirm the page state is ready to continue.",
+                "Resume the paused desktop mission with the continuation payload.",
+            ],
+            "warning_confirmation_requires_review": [
+                "Review the warning surface carefully.",
+                "Confirm or cancel the risky step manually if appropriate.",
+                "Resume the paused desktop mission after the warning surface clears.",
+            ],
+            "destructive_form_review_required": [
+                "Review the destructive change carefully.",
+                "Manually confirm or cancel the destructive action.",
+                "Resume the paused desktop mission only if the change should continue.",
+            ],
+        }
+        resume_action = "complete_wizard_flow" if mission_kind == "wizard" else "complete_form_flow"
+        signature_parts = [
+            mission_kind,
+            stop_code,
+            str(summary.get("window_title", "") or "").strip().lower(),
+            str(summary.get("window_hwnd", 0) or 0),
+            str(summary.get("screen_hash", "") or "").strip().lower(),
+            str(dialog_state.get("dialog_kind", "") or "").strip().lower(),
+            str(dialog_state.get("approval_kind", "") or "").strip().lower(),
+            str(page_state.get("page_kind", "") or "").strip().lower(),
+            str(page_state.get("autonomous_blocker", "") or "").strip().lower(),
+        ]
+        surface_signature = hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
+        return {
+            "mission_kind": mission_kind,
+            "stop_reason_code": stop_code,
+            "resume_action": resume_action,
+            "resume_preconditions": resume_preconditions_map.get(stop_code, ["review_blocking_surface"]),
+            "window_title": str(summary.get("window_title", "") or "").strip(),
+            "window_hwnd": int(summary.get("window_hwnd", 0) or 0),
+            "screen_hash": str(summary.get("screen_hash", "") or "").strip(),
+            "page_kind": str(summary.get("page_kind", "") or page_state.get("page_kind", "") or "").strip(),
+            "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(dialog_state.get("approval_kind", "") or "").strip(),
+            "dialog_visible": bool(summary.get("dialog_visible", False) or dialog_state.get("visible", False)),
+            "dialog_review_required": bool(dialog_state.get("review_required", False)),
+            "secure_desktop_likely": bool(dialog_state.get("secure_desktop_likely", False)),
+            "manual_input_required": bool(dialog_state.get("manual_input_required", False)),
+            "credential_field_count": int(dialog_state.get("credential_field_count", 0) or 0),
+            "preferred_confirmation_button": str(safety_signals.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dismiss_button": str(safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+            "safe_dialog_buttons": [str(item).strip() for item in safety_signals.get("safe_dialog_buttons", []) if str(item).strip()][:6],
+            "confirmation_dialog_buttons": [str(item).strip() for item in safety_signals.get("confirmation_dialog_buttons", []) if str(item).strip()][:6],
+            "destructive_dialog_buttons": [str(item).strip() for item in safety_signals.get("destructive_dialog_buttons", []) if str(item).strip()][:6],
+            "credential_fields": credential_fields,
+            "pending_requirements": pending_requirements,
+            "manual_required_controls": manual_required_controls,
+            "blocking_controls": credential_fields or manual_required_controls or pending_requirements,
+            "autonomous_blocker": str(page_state.get("autonomous_blocker", "") or "").strip(),
+            "recommended_actions": recommended_actions[:8],
+            "operator_steps": operator_steps_map.get(
+                stop_code,
+                [
+                    "Review the blocking surface carefully.",
+                    "Resolve the surface manually if you want automation to continue.",
+                    "Resume the paused desktop mission with the continuation payload.",
+                ],
+            ),
+            "surface_signature": surface_signature,
+            "target_group_state": dict(target_group_state) if target_group_state else {},
+            "notes": [str(item).strip() for item in page_state.get("notes", []) if str(item).strip()] if isinstance(page_state.get("notes", []), list) else [],
+        }
+
+    def _mission_resume_contract(
+        self,
+        *,
+        mission_kind: str,
+        args: Dict[str, Any],
+        stop_reason_code: str,
+        blocking_surface: Dict[str, Any],
+        anchor_window_title: str,
+        anchor_app_name: str,
+        remaining_form_targets: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if not str(stop_reason_code or "").strip() or not isinstance(blocking_surface, dict) or not blocking_surface:
+            return {}
+        resume_action = "complete_wizard_flow" if mission_kind == "wizard" else "complete_form_flow"
+        clean_anchor_title = str(anchor_window_title or "").strip()
+        clean_anchor_app = str(anchor_app_name or "").strip()
+        blocking_window_title = str(blocking_surface.get("window_title", "") or "").strip()
+        use_anchor_window = bool(
+            not clean_anchor_app
+            and clean_anchor_title
+            and self._normalize_probe_text(clean_anchor_title) != self._normalize_probe_text(blocking_window_title)
+        )
+        resume_payload: Dict[str, Any] = {
+            "action": resume_action,
+            "app_name": clean_anchor_app,
+            "window_title": clean_anchor_title if use_anchor_window else "",
+            "focus_first": True,
+        }
+        if mission_kind == "wizard":
+            resume_payload["max_wizard_pages"] = max(1, min(int(args.get("max_wizard_pages", 6) or 6), 12))
+            resume_payload["allow_warning_pages"] = bool(args.get("allow_warning_pages", False))
+        else:
+            normalized_targets = [
+                dict(row)
+                for row in (remaining_form_targets or [])
+                if isinstance(row, dict)
+            ]
+            resume_payload["max_form_pages"] = max(1, min(int(args.get("max_form_pages", 5) or 5), 10))
+            resume_payload["allow_destructive_forms"] = bool(args.get("allow_destructive_forms", False))
+            resume_payload["expected_form_target_count"] = len(normalized_targets)
+            if normalized_targets:
+                resume_payload["form_target_plan"] = normalized_targets
+        sanitized_resume_payload = self._sanitize_payload_for_response(resume_payload)
+        resume_strategy = (
+            "reacquire_anchor_window"
+            if use_anchor_window
+            else ("reacquire_app_surface" if clean_anchor_app else "reacquire_current_surface")
+        )
+        signature_parts = [
+            mission_kind,
+            str(stop_reason_code or "").strip().lower(),
+            str(blocking_surface.get("surface_signature", "") or "").strip().lower(),
+            clean_anchor_app.lower(),
+            clean_anchor_title.lower(),
+            str(sanitized_resume_payload.get("window_title", "") or "").strip().lower(),
+            str(len(remaining_form_targets or [])),
+        ]
+        resume_signature = hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
+        return {
+            "mission_kind": mission_kind,
+            "resume_action": resume_action,
+            "resume_strategy": resume_strategy,
+            "resume_signature": resume_signature,
+            "resume_payload": sanitized_resume_payload,
+            "resume_preconditions": [str(item).strip() for item in blocking_surface.get("resume_preconditions", []) if str(item).strip()],
+            "operator_steps": [str(item).strip() for item in blocking_surface.get("operator_steps", []) if str(item).strip()],
+            "anchor_app_name": clean_anchor_app,
+            "anchor_window_title": clean_anchor_title,
+            "blocking_window_title": blocking_window_title,
+            "surface_match_hints": {
+                "anchor_app_name": clean_anchor_app,
+                "anchor_window_title": clean_anchor_title,
+                "blocking_window_title": blocking_window_title,
+                "blocking_window_hwnd": int(blocking_surface.get("window_hwnd", 0) or 0),
+                "screen_hash": str(blocking_surface.get("screen_hash", "") or "").strip(),
+                "surface_signature": str(blocking_surface.get("surface_signature", "") or "").strip(),
+                "approval_kind": str(blocking_surface.get("approval_kind", "") or "").strip(),
+                "dialog_kind": str(blocking_surface.get("dialog_kind", "") or "").strip(),
+                "prefer_anchor_on_resume": use_anchor_window,
+                "allow_child_window_adoption": True,
             },
+            "continuation_targets": [dict(row) for row in (remaining_form_targets or [])[:12] if isinstance(row, dict)],
+        }
+
+    @staticmethod
+    def _normalize_resume_contract_payload(value: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if isinstance(value, dict):
+            payload = value
+        elif isinstance(value, str) and str(value).strip():
+            try:
+                parsed = json.loads(str(value))
+            except Exception:  # noqa: BLE001
+                parsed = {}
+            if isinstance(parsed, dict):
+                payload = parsed
+        if not payload:
+            return {}
+        return {
+            "mission_kind": str(payload.get("mission_kind", "") or "").strip().lower(),
+            "resume_action": str(payload.get("resume_action", "") or "").strip().lower(),
+            "resume_strategy": str(payload.get("resume_strategy", "") or "").strip(),
+            "resume_signature": str(payload.get("resume_signature", "") or "").strip(),
+            "resume_payload": dict(payload.get("resume_payload", {})) if isinstance(payload.get("resume_payload", {}), dict) else {},
+            "resume_preconditions": [str(item).strip() for item in payload.get("resume_preconditions", []) if str(item).strip()] if isinstance(payload.get("resume_preconditions", []), list) else [],
+            "operator_steps": [str(item).strip() for item in payload.get("operator_steps", []) if str(item).strip()] if isinstance(payload.get("operator_steps", []), list) else [],
+            "anchor_app_name": str(payload.get("anchor_app_name", "") or "").strip(),
+            "anchor_window_title": str(payload.get("anchor_window_title", "") or "").strip(),
+            "blocking_window_title": str(payload.get("blocking_window_title", "") or "").strip(),
+            "surface_match_hints": dict(payload.get("surface_match_hints", {})) if isinstance(payload.get("surface_match_hints", {}), dict) else {},
+            "continuation_targets": [dict(row) for row in payload.get("continuation_targets", []) if isinstance(row, dict)] if isinstance(payload.get("continuation_targets", []), list) else [],
+        }
+
+    @staticmethod
+    def _normalize_blocking_surface_payload(value: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if isinstance(value, dict):
+            payload = value
+        elif isinstance(value, str) and str(value).strip():
+            try:
+                parsed = json.loads(str(value))
+            except Exception:  # noqa: BLE001
+                parsed = {}
+            if isinstance(parsed, dict):
+                payload = parsed
+        if not payload:
+            return {}
+        return {
+            "mission_kind": str(payload.get("mission_kind", "") or "").strip().lower(),
+            "stop_reason_code": str(payload.get("stop_reason_code", "") or "").strip(),
+            "resume_action": str(payload.get("resume_action", "") or "").strip().lower(),
+            "resume_preconditions": [str(item).strip() for item in payload.get("resume_preconditions", []) if str(item).strip()] if isinstance(payload.get("resume_preconditions", []), list) else [],
+            "window_title": str(payload.get("window_title", "") or "").strip(),
+            "window_hwnd": int(payload.get("window_hwnd", 0) or 0),
+            "screen_hash": str(payload.get("screen_hash", "") or "").strip(),
+            "page_kind": str(payload.get("page_kind", "") or "").strip(),
+            "dialog_kind": str(payload.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(payload.get("approval_kind", "") or "").strip(),
+            "dialog_visible": bool(payload.get("dialog_visible", False)),
+            "dialog_review_required": bool(payload.get("dialog_review_required", False)),
+            "secure_desktop_likely": bool(payload.get("secure_desktop_likely", False)),
+            "manual_input_required": bool(payload.get("manual_input_required", False)),
+            "credential_field_count": int(payload.get("credential_field_count", 0) or 0),
+            "preferred_confirmation_button": str(payload.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dismiss_button": str(payload.get("preferred_dismiss_button", "") or "").strip(),
+            "safe_dialog_buttons": [str(item).strip() for item in payload.get("safe_dialog_buttons", []) if str(item).strip()] if isinstance(payload.get("safe_dialog_buttons", []), list) else [],
+            "confirmation_dialog_buttons": [str(item).strip() for item in payload.get("confirmation_dialog_buttons", []) if str(item).strip()] if isinstance(payload.get("confirmation_dialog_buttons", []), list) else [],
+            "destructive_dialog_buttons": [str(item).strip() for item in payload.get("destructive_dialog_buttons", []) if str(item).strip()] if isinstance(payload.get("destructive_dialog_buttons", []), list) else [],
+            "credential_fields": [dict(row) for row in payload.get("credential_fields", []) if isinstance(row, dict)] if isinstance(payload.get("credential_fields", []), list) else [],
+            "pending_requirements": [dict(row) for row in payload.get("pending_requirements", []) if isinstance(row, dict)] if isinstance(payload.get("pending_requirements", []), list) else [],
+            "manual_required_controls": [dict(row) for row in payload.get("manual_required_controls", []) if isinstance(row, dict)] if isinstance(payload.get("manual_required_controls", []), list) else [],
+            "blocking_controls": [dict(row) for row in payload.get("blocking_controls", []) if isinstance(row, dict)] if isinstance(payload.get("blocking_controls", []), list) else [],
+            "autonomous_blocker": str(payload.get("autonomous_blocker", "") or "").strip(),
+            "recommended_actions": [str(item).strip() for item in payload.get("recommended_actions", []) if str(item).strip()] if isinstance(payload.get("recommended_actions", []), list) else [],
+            "operator_steps": [str(item).strip() for item in payload.get("operator_steps", []) if str(item).strip()] if isinstance(payload.get("operator_steps", []), list) else [],
+            "surface_signature": str(payload.get("surface_signature", "") or "").strip(),
+            "target_group_state": dict(payload.get("target_group_state", {})) if isinstance(payload.get("target_group_state", {}), dict) else {},
+            "notes": [str(item).strip() for item in payload.get("notes", []) if str(item).strip()] if isinstance(payload.get("notes", []), list) else [],
+        }
+
+    def _resume_payload_from_contract(
+        self,
+        *,
+        args: Dict[str, Any],
+        resume_contract: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not isinstance(resume_contract, dict) or not resume_contract:
+            return {}
+        base_payload = (
+            dict(resume_contract.get("resume_payload", {}))
+            if isinstance(resume_contract.get("resume_payload", {}), dict)
+            else {}
+        )
+        resume_action = str(base_payload.get("action", "") or resume_contract.get("resume_action", "")).strip().lower()
+        if resume_action not in RESUMEABLE_MISSION_ACTIONS:
+            return {}
+        base_payload["action"] = resume_action
+        provided_fields = {
+            str(item).strip()
+            for item in args.get("_provided_fields", [])
+            if str(item).strip()
+        } if isinstance(args.get("_provided_fields", []), list) else set()
+        override_fields = {
+            "mission_id",
+            "mission_kind",
+            "app_name",
+            "window_title",
+            "focus_first",
+            "verify_after_action",
+            "verify_text",
+            "retry_on_verification_failure",
+            "max_strategy_attempts",
+            "max_wizard_pages",
+            "allow_warning_pages",
+            "max_form_pages",
+            "allow_destructive_forms",
+            "form_target_plan",
+            "expected_form_target_count",
+        }
+        for field_name in override_fields:
+            if field_name not in provided_fields:
+                continue
+            base_payload[field_name] = args.get(field_name)
+        normalized_payload = self._normalize_payload(base_payload)
+        if str(normalized_payload.get("action", "") or "").strip().lower() not in RESUMEABLE_MISSION_ACTIONS:
+            return {}
+        normalized_payload.pop("resume_contract", None)
+        normalized_payload.pop("blocking_surface", None)
+        if str(args.get("mission_id", "") or "").strip():
+            normalized_payload["mission_id"] = str(args.get("mission_id", "") or "").strip()
+        if str(args.get("mission_kind", "") or "").strip():
+            normalized_payload["mission_kind"] = str(args.get("mission_kind", "") or "").strip().lower()
+        normalized_payload["resume_force"] = bool(args.get("resume_force", False))
+        return normalized_payload
+
+    def _mission_surface_signature(self, *, snapshot: Dict[str, Any], mission_kind: str) -> str:
+        if not isinstance(snapshot, dict) or mission_kind not in {"wizard", "form"}:
+            return ""
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        page_state = wizard_page_state if mission_kind == "wizard" else form_page_state
+        summary = self._wizard_flow_summary(snapshot=snapshot) if mission_kind == "wizard" else self._form_flow_summary(snapshot=snapshot)
+        signature_parts = [
+            mission_kind,
+            str(summary.get("window_title", "") or "").strip().lower(),
+            str(summary.get("window_hwnd", 0) or 0),
+            str(summary.get("screen_hash", "") or "").strip().lower(),
+            str(dialog_state.get("dialog_kind", "") or "").strip().lower(),
+            str(dialog_state.get("approval_kind", "") or "").strip().lower(),
+            str(page_state.get("page_kind", "") or "").strip().lower(),
+            str(page_state.get("autonomous_blocker", "") or "").strip().lower(),
+        ]
+        return hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
+
+    def _resume_mission_context(
+        self,
+        *,
+        args: Dict[str, Any],
+        resume_contract: Dict[str, Any],
+        blocking_surface: Dict[str, Any],
+        resume_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not isinstance(resume_contract, dict) or not resume_contract or not isinstance(resume_payload, dict) or not resume_payload:
+            return {
+                "status": "invalid",
+                "message": "resume_contract is required to continue a paused desktop mission.",
+                "warnings": [],
+                "blockers": ["resume_contract is required to continue a paused desktop mission."],
+            }
+        resume_action = str(resume_payload.get("action", "") or resume_contract.get("resume_action", "")).strip().lower()
+        mission_kind = str(
+            resume_contract.get("mission_kind", "") or ("wizard" if resume_action == "complete_wizard_flow" else "form" if resume_action == "complete_form_flow" else "")
+        ).strip().lower()
+        if mission_kind not in {"wizard", "form"} or resume_action not in RESUMEABLE_MISSION_ACTIONS:
+            return {
+                "status": "invalid",
+                "mission_kind": mission_kind,
+                "resume_action": resume_action,
+                "message": "resume_contract does not describe a supported desktop mission continuation.",
+                "warnings": [],
+                "blockers": ["resume_contract does not describe a supported desktop mission continuation."],
+            }
+        surface_hints = resume_contract.get("surface_match_hints", {}) if isinstance(resume_contract.get("surface_match_hints", {}), dict) else {}
+        anchor_app_name = str(
+            resume_payload.get("app_name", "") or surface_hints.get("anchor_app_name", "") or resume_contract.get("anchor_app_name", "") or args.get("app_name", "")
+        ).strip()
+        anchor_window_title = str(
+            resume_payload.get("window_title", "") or surface_hints.get("anchor_window_title", "") or resume_contract.get("anchor_window_title", "")
+        ).strip()
+        blocking_window_title = str(
+            blocking_surface.get("window_title", "") or surface_hints.get("blocking_window_title", "") or resume_contract.get("blocking_window_title", "")
+        ).strip()
+        continuation_targets = [
+            dict(row)
+            for row in (
+                resume_contract.get("continuation_targets", [])
+                if isinstance(resume_contract.get("continuation_targets", []), list)
+                else resume_payload.get("form_target_plan", [])
+            )
+            if isinstance(row, dict)
+        ]
+        query_hint = ""
+        for target_row in continuation_targets:
+            query_hint = (
+                str(target_row.get("query", "") or target_row.get("target", "") or target_row.get("label", "") or target_row.get("name", "")).strip()
+            )
+            if query_hint:
+                break
+        preferred_actions = [resume_action, "dismiss_dialog", "confirm_dialog"]
+        current_snapshot = self.surface_snapshot(
+            app_name=anchor_app_name,
+            window_title=blocking_window_title or anchor_window_title,
+            query=query_hint,
+            limit=12,
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+            preferred_actions=preferred_actions,
+        )
+        current_snapshot = current_snapshot if isinstance(current_snapshot, dict) else {}
+        safety_signals = current_snapshot.get("safety_signals", {}) if isinstance(current_snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        target_window = current_snapshot.get("target_window", {}) if isinstance(current_snapshot.get("target_window", {}), dict) else {}
+        active_window = current_snapshot.get("active_window", {}) if isinstance(current_snapshot.get("active_window", {}), dict) else {}
+        surface_flags = current_snapshot.get("surface_flags", {}) if isinstance(current_snapshot.get("surface_flags", {}), dict) else {}
+        current_window_title = str(target_window.get("title", "") or active_window.get("title", "") or "").strip()
+        current_window_hwnd = int(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0)
+        current_dialog_kind = str(dialog_state.get("dialog_kind", "") or "").strip()
+        current_approval_kind = str(dialog_state.get("approval_kind", "") or "").strip()
+        window_reacquired = bool(
+            surface_flags.get("window_targeted", False)
+            or self._window_matches(target_window, app_name=anchor_app_name, window_title=anchor_window_title or blocking_window_title)
+            or self._window_matches(active_window, app_name=anchor_app_name, window_title=anchor_window_title or blocking_window_title)
+        )
+        current_signature = self._mission_surface_signature(snapshot=current_snapshot, mission_kind=mission_kind)
+        blocking_signature = str(
+            blocking_surface.get("surface_signature", "") or surface_hints.get("surface_signature", "")
+        ).strip()
+        blocking_dialog_kind = str(
+            blocking_surface.get("dialog_kind", "") or surface_hints.get("dialog_kind", "")
+        ).strip()
+        blocking_approval_kind = str(
+            blocking_surface.get("approval_kind", "") or surface_hints.get("approval_kind", "")
+        ).strip()
+        dialog_visible = bool(dialog_state.get("visible", False) or surface_flags.get("dialog_visible", False))
+        blocking_surface_still_visible = False
+        if dialog_visible:
+            blocking_surface_still_visible = bool(
+                (blocking_signature and current_signature and blocking_signature == current_signature)
+                or (blocking_approval_kind and self._normalize_probe_text(current_approval_kind) == self._normalize_probe_text(blocking_approval_kind))
+                or (blocking_dialog_kind and self._normalize_probe_text(current_dialog_kind) == self._normalize_probe_text(blocking_dialog_kind))
+                or self._normalize_probe_text(current_approval_kind) in RESUME_APPROVAL_KINDS
+                or (
+                    self._normalize_probe_text(current_dialog_kind) in {"credential_prompt", "authentication_prompt", "elevation_prompt"}
+                    and (
+                        bool(dialog_state.get("manual_input_required", False))
+                        or bool(dialog_state.get("credential_required", False))
+                        or bool(dialog_state.get("authentication_required", False))
+                        or bool(dialog_state.get("review_required", False))
+                    )
+                )
+                or bool(dialog_state.get("secure_desktop_likely", False))
+            )
+        form_target_state = (
+            self._form_target_plan_state(plan=continuation_targets, snapshot=current_snapshot)
+            if mission_kind == "form" and continuation_targets
+            else {}
+        )
+        visible_continuation_target_count = (
+            int(form_target_state.get("visible_pending_count", 0) or 0)
+            if isinstance(form_target_state, dict)
+            else 0
+        )
+        remaining_continuation_target_count = (
+            int(form_target_state.get("remaining_count", 0) or 0)
+            if isinstance(form_target_state, dict)
+            else 0
+        )
+        warnings: List[str] = []
+        blockers: List[str] = []
+        if blocking_surface_still_visible and not bool(args.get("resume_force", False)):
+            warnings.append(
+                "The blocking review or approval surface still appears to be active, so JARVIS will wait for it to clear before resuming the paused mission."
+            )
+            blockers.append(
+                "The blocking review or approval surface still appears to be active."
+            )
+        elif not window_reacquired:
+            warnings.append(
+                "The blocking surface appears to be clear, but JARVIS could not strongly reacquire the target app window and will rely on normal target discovery during resume."
+            )
+        message = (
+            "The paused desktop mission is ready to resume."
+            if not blockers
+            else "The paused desktop mission still appears to be waiting on manual review or approval."
+        )
+        return {
+            "status": "ready" if not blockers else "blocked",
+            "mission_kind": mission_kind,
+            "resume_action": resume_action,
+            "resume_strategy": str(resume_contract.get("resume_strategy", "") or "").strip(),
+            "resume_signature": str(resume_contract.get("resume_signature", "") or "").strip(),
+            "window_reacquired": window_reacquired,
+            "blocking_surface_still_visible": blocking_surface_still_visible,
+            "surface_signature_match": bool(blocking_signature and current_signature and blocking_signature == current_signature),
+            "current_window_title": current_window_title,
+            "current_window_hwnd": current_window_hwnd,
+            "current_dialog_kind": current_dialog_kind,
+            "current_approval_kind": current_approval_kind,
+            "continuation_target_count": len(continuation_targets),
+            "visible_continuation_target_count": visible_continuation_target_count,
+            "remaining_continuation_target_count": remaining_continuation_target_count,
+            "warnings": warnings,
+            "blockers": blockers,
+            "message": message,
+            "current_snapshot": current_snapshot,
+            "form_target_state": form_target_state,
+        }
+
+    def _mission_record_for_resume(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
+        mission_id = str(args.get("mission_id", "") or "").strip()
+        mission_kind = str(args.get("mission_kind", "") or "").strip().lower()
+        app_name = str(args.get("app_name", "") or "").strip()
+        payload = self._mission_memory.resolve_resume_reference(
+            mission_id=mission_id,
+            mission_kind=mission_kind,
+            app_name=app_name,
+        )
+        mission = payload.get("mission", {}) if isinstance(payload.get("mission", {}), dict) else {}
+        return mission if mission else {}
+
+    def _persist_paused_mission(
+        self,
+        *,
+        mission_kind: str,
+        args: Dict[str, Any],
+        blocking_surface: Dict[str, Any],
+        resume_contract: Dict[str, Any],
+        mission_payload: Dict[str, Any],
+        warnings: List[str],
+        message: str,
+    ) -> Dict[str, Any]:
+        payload = self._mission_memory.save_paused_mission(
+            mission_kind=mission_kind,
+            args=args,
+            resume_contract=resume_contract,
+            blocking_surface=blocking_surface,
+            mission_payload=mission_payload,
+            message=message,
+            warnings=warnings,
+        )
+        mission = payload.get("mission", {}) if isinstance(payload.get("mission", {}), dict) else {}
+        mission_id = str(mission.get("mission_id", "") or "").strip()
+        if not mission_id:
+            return {}
+        if isinstance(blocking_surface, dict):
+            blocking_surface["mission_id"] = mission_id
+        if isinstance(resume_contract, dict):
+            resume_contract["mission_id"] = mission_id
+            resume_payload = resume_contract.get("resume_payload", {}) if isinstance(resume_contract.get("resume_payload", {}), dict) else {}
+            if resume_payload is not None:
+                resume_payload = dict(resume_payload)
+                resume_payload["mission_id"] = mission_id
+                if not str(resume_payload.get("mission_kind", "") or "").strip():
+                    resume_payload["mission_kind"] = mission_kind
+                resume_contract["resume_payload"] = resume_payload
+        return mission
+
+    def _advise_resume_mission(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
+        resume_contract = (
+            dict(args.get("resume_contract", {}))
+            if isinstance(args.get("resume_contract", {}), dict)
+            else {}
+        )
+        blocking_surface = (
+            dict(args.get("blocking_surface", {}))
+            if isinstance(args.get("blocking_surface", {}), dict)
+            else {}
+        )
+        mission_record = self._mission_record_for_resume(args=args) if not resume_contract else {}
+        if mission_record:
+            if not resume_contract:
+                resume_contract = dict(mission_record.get("resume_contract", {})) if isinstance(mission_record.get("resume_contract", {}), dict) else {}
+            if not blocking_surface:
+                blocking_surface = dict(mission_record.get("blocking_surface", {})) if isinstance(mission_record.get("blocking_surface", {}), dict) else {}
+            if not str(args.get("mission_id", "") or "").strip():
+                args["mission_id"] = str(mission_record.get("mission_id", "") or "").strip()
+            if not str(args.get("mission_kind", "") or "").strip():
+                args["mission_kind"] = str(mission_record.get("mission_kind", "") or "").strip().lower()
+        elif not resume_contract and (
+            str(args.get("mission_id", "") or "").strip()
+            or str(args.get("app_name", "") or "").strip()
+            or str(args.get("mission_kind", "") or "").strip()
+        ):
+            message = "No paused desktop mission matched the requested mission reference."
+            return {
+                "status": "blocked",
+                "action": "resume_mission",
+                "resume_action": "",
+                "resume_payload": {},
+                "resume_contract": {},
+                "blocking_surface": {},
+                "mission_record": {},
+                "resume_context": {
+                    "status": "missing",
+                    "message": message,
+                    "warnings": [],
+                    "blockers": [message],
+                },
+                "route_mode": "resume_desktop_mission",
+                "confidence": 0.0,
+                "risk_level": "medium",
+                "app_profile": {},
+                "profile_defaults_applied": {},
+                "target_window": {},
+                "active_window": {},
+                "candidate_windows": [],
+                "capabilities": self._capabilities(),
+                "execution_plan": [],
+                "blockers": [message],
+                "warnings": [],
+                "autonomy": {"supports_resume": True, "requires_manual_clearance": False, "resume_force": bool(args.get("resume_force", False))},
+                "workflow_profile": {},
+                "surface_snapshot": {},
+                "safety_signals": {},
+                "form_target_state": {},
+                "surface_branch": {},
+                "verification_plan": {},
+                "adaptive_strategy": {},
+                "strategy_variants": [],
+                "message": message,
+            }
+        resume_payload = self._resume_payload_from_contract(args=args, resume_contract=resume_contract)
+        resume_context = self._resume_mission_context(
+            args=args,
+            resume_contract=resume_contract,
+            blocking_surface=blocking_surface,
+            resume_payload=resume_payload,
+        )
+        current_snapshot = resume_context.get("current_snapshot", {}) if isinstance(resume_context.get("current_snapshot", {}), dict) else {}
+        if str(resume_context.get("status", "") or "") != "ready":
+            app_profile = current_snapshot.get("app_profile", {}) if isinstance(current_snapshot.get("app_profile", {}), dict) else {}
+            return {
+                "status": "blocked",
+                "action": "resume_mission",
+                "resume_action": str(resume_context.get("resume_action", "") or ""),
+                "resume_payload": self._sanitize_payload_for_response(resume_payload) if resume_payload else {},
+                "resume_contract": resume_contract,
+                "blocking_surface": blocking_surface,
+                "mission_record": mission_record,
+                "resume_context": resume_context,
+                "route_mode": "resume_desktop_mission",
+                "confidence": 0.0,
+                "risk_level": "high" if bool(resume_context.get("blocking_surface_still_visible", False)) else "medium",
+                "app_profile": app_profile,
+                "profile_defaults_applied": current_snapshot.get("profile_defaults_applied", {}) if isinstance(current_snapshot.get("profile_defaults_applied", {}), dict) else {},
+                "target_window": current_snapshot.get("target_window", {}) if isinstance(current_snapshot.get("target_window", {}), dict) else {},
+                "active_window": current_snapshot.get("active_window", {}) if isinstance(current_snapshot.get("active_window", {}), dict) else {},
+                "candidate_windows": current_snapshot.get("candidate_windows", []) if isinstance(current_snapshot.get("candidate_windows", []), list) else [],
+                "capabilities": current_snapshot.get("capabilities", {}) if isinstance(current_snapshot.get("capabilities", {}), dict) else self._capabilities(),
+                "execution_plan": [],
+                "blockers": [str(item).strip() for item in resume_context.get("blockers", []) if str(item).strip()],
+                "warnings": [str(item).strip() for item in resume_context.get("warnings", []) if str(item).strip()],
+                "autonomy": {
+                    "supports_resume": True,
+                    "requires_manual_clearance": bool(resume_context.get("blocking_surface_still_visible", False)),
+                    "resume_force": bool(args.get("resume_force", False)),
+                },
+                "workflow_profile": {},
+                "surface_snapshot": current_snapshot,
+                "safety_signals": current_snapshot.get("safety_signals", {}) if isinstance(current_snapshot.get("safety_signals", {}), dict) else {},
+                "form_target_state": resume_context.get("form_target_state", {}) if isinstance(resume_context.get("form_target_state", {}), dict) else {},
+                "surface_branch": {},
+                "verification_plan": {},
+                "adaptive_strategy": {},
+                "strategy_variants": [],
+                "message": str(resume_context.get("message", "") or ""),
+            }
+        target_advice = self.advise(resume_payload)
+        warnings = self._dedupe_strings(
+            [str(item).strip() for item in target_advice.get("warnings", []) if str(item).strip()]
+            + [str(item).strip() for item in resume_context.get("warnings", []) if str(item).strip()]
+        )
+        blockers = self._dedupe_strings(
+            [str(item).strip() for item in target_advice.get("blockers", []) if str(item).strip()]
+        )
+        return {
+            **target_advice,
+            "action": "resume_mission",
+            "resume_action": str(resume_context.get("resume_action", "") or ""),
+            "resume_payload": self._sanitize_payload_for_response(resume_payload),
+            "resume_contract": resume_contract,
+            "blocking_surface": blocking_surface,
+            "mission_record": mission_record,
+            "resume_context": resume_context,
+            "route_mode": "resume_desktop_mission",
+            "warnings": warnings,
+            "blockers": blockers,
+            "message": str(target_advice.get("message", "") or resume_context.get("message", "") or ""),
+        }
+
+    def _execute_resume_mission_strategy(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+    ) -> Dict[str, Any]:
+        resume_context = advice.get("resume_context", {}) if isinstance(advice.get("resume_context", {}), dict) else {}
+        resume_payload = advice.get("resume_payload", {}) if isinstance(advice.get("resume_payload", {}), dict) else {}
+        mission_record = advice.get("mission_record", {}) if isinstance(advice.get("mission_record", {}), dict) else {}
+        if str(resume_context.get("status", "") or "") != "ready" or not resume_payload:
+            return {
+                "attempt": attempt_index,
+                "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+                "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+                "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+                "payload": self._sanitize_payload_for_response(args),
+                "status": "blocked",
+                "message": str(resume_context.get("message", "") or "desktop mission resume is not ready"),
+                "final_action": "",
+                "results": [],
+                "advice": advice,
+                "verification": {
+                    "enabled": bool(args.get("verify_after_action", True)),
+                    "status": "skipped",
+                    "verified": False,
+                    "message": "resume execution skipped because the paused mission is not ready to continue",
+                },
+                "mission_record": mission_record,
+                "resume_context": resume_context,
+            }
+        nested_result = self.execute(resume_payload)
+        verification = nested_result.get("verification", {}) if isinstance(nested_result.get("verification", {}), dict) else {}
+        mission_id = str(
+            args.get("mission_id", "")
+            or mission_record.get("mission_id", "")
+            or advice.get("resume_contract", {}).get("mission_id", "")
+        ).strip() if isinstance(advice.get("resume_contract", {}), dict) else str(args.get("mission_id", "") or mission_record.get("mission_id", "")).strip()
+        updated_mission_record = {}
+        if mission_id:
+            completed = bool(
+                str(nested_result.get("status", "") or "") == "success"
+                and (
+                    bool(nested_result.get("wizard_mission", {}).get("completed", False)) if isinstance(nested_result.get("wizard_mission", {}), dict) else False
+                    or bool(nested_result.get("form_mission", {}).get("completed", False)) if isinstance(nested_result.get("form_mission", {}), dict) else False
+                )
+            )
+            mission_payload = (
+                nested_result.get("wizard_mission", {})
+                if isinstance(nested_result.get("wizard_mission", {}), dict) and nested_result.get("wizard_mission")
+                else nested_result.get("form_mission", {}) if isinstance(nested_result.get("form_mission", {}), dict) else {}
+            )
+            updated = self._mission_memory.mark_resumed(
+                mission_id=mission_id,
+                outcome_status=str(nested_result.get("status", "") or "unknown"),
+                message=str(nested_result.get("message", "") or ""),
+                completed=completed,
+                mission_payload=mission_payload if isinstance(mission_payload, dict) else {},
+            )
+            updated_mission_record = updated.get("mission", {}) if isinstance(updated.get("mission", {}), dict) else {}
+        nested_resume_context = {
+            **resume_context,
+            "status": "resumed" if str(nested_result.get("status", "") or "") in {"success", "partial"} else "resume_error",
+            "message": str(nested_result.get("message", "") or resume_context.get("message", "") or ""),
+        }
+        return {
+            "attempt": attempt_index,
+            "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+            "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+            "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+            "payload": self._sanitize_payload_for_response(args),
+            "status": str(nested_result.get("status", "success") or "success"),
+            "message": str(nested_result.get("message", "") or ""),
+            "final_action": str(nested_result.get("final_action", "") or advice.get("resume_action", "")),
+            "results": nested_result.get("results", []) if isinstance(nested_result.get("results", []), list) else [],
+            "advice": advice,
+            "verification": verification,
+            "wizard_mission": nested_result.get("wizard_mission", {}) if isinstance(nested_result.get("wizard_mission", {}), dict) else {},
+            "form_mission": nested_result.get("form_mission", {}) if isinstance(nested_result.get("form_mission", {}), dict) else {},
+            "mission_record": updated_mission_record or mission_record,
+            "resume_context": nested_resume_context,
         }
 
     def _resolve_wizard_dialog_interstitial(
@@ -3853,6 +4794,12 @@ class DesktopActionRouter:
         if not bool(flags.get("dialog_visible", False)):
             return {"handled": False, "blocked": False}
 
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        dialog_kind = self._normalize_probe_text(dialog_state.get("dialog_kind", ""))
+        approval_kind = self._normalize_probe_text(dialog_state.get("approval_kind", ""))
+        dialog_manual_input_required = bool(dialog_state.get("manual_input_required", False))
+        dialog_credential_required = bool(dialog_state.get("credential_required", False))
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
         destructive_warning_visible = bool(safety_signals.get("destructive_warning_visible", False))
         warning_surface_visible = bool(safety_signals.get("warning_surface_visible", False))
         elevation_prompt_visible = bool(safety_signals.get("elevation_prompt_visible", False))
@@ -3860,6 +4807,67 @@ class DesktopActionRouter:
         preferred_confirmation_target = safety_signals.get("preferred_confirmation_target", {}) if isinstance(safety_signals.get("preferred_confirmation_target", {}), dict) else {}
         preferred_dismiss_button = str(safety_signals.get("preferred_dismiss_button", "") or "").strip()
         preferred_dismiss_target = safety_signals.get("preferred_dismiss_target", {}) if isinstance(safety_signals.get("preferred_dismiss_target", {}), dict) else {}
+        if approval_kind == "elevation_credentials":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "elevation_credentials_required",
+                "stop_reason": "Wizard mission paused because an interstitial elevation dialog is requesting administrator credentials or secure sign-in input.",
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if approval_kind == "elevation_consent":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "elevation_consent_required",
+                "stop_reason": "Wizard mission paused because an interstitial elevation dialog is requesting administrator approval."
+                + (" The prompt also appears to be on a secure desktop surface." if secure_desktop_likely else ""),
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_manual_input_required and dialog_credential_required:
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "credential_input_required",
+                "stop_reason": "Wizard mission paused because an interstitial dialog is requesting credentials or sign-in input.",
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_kind == "authentication_review":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "authentication_review_required",
+                "stop_reason": "Wizard mission paused on an interstitial authentication confirmation so JARVIS does not approve identity-sensitive changes blindly.",
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_kind == "permission_review":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "permission_review_required",
+                "stop_reason": "Wizard mission paused on an interstitial permission review so JARVIS does not approve app access or consent changes blindly.",
+                "button_label": preferred_confirmation_button or preferred_dismiss_button,
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
 
         action = ""
         button_label = ""
@@ -3895,6 +4903,9 @@ class DesktopActionRouter:
                 "stop_reason": blocker_message,
                 "button_label": preferred_confirmation_button or preferred_dismiss_button,
                 "button_role": "confirm" if preferred_confirmation_button else ("dismiss" if preferred_dismiss_button else ""),
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         dialog_args = dict(args)
@@ -3926,6 +4937,9 @@ class DesktopActionRouter:
                 "stop_reason": blockers or str(dialog_advice.get("message", "wizard dialog route unavailable") or "wizard dialog route unavailable"),
                 "button_label": button_label,
                 "button_role": button_role,
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         dialog_execution = self._run_execution_plan(
@@ -3950,6 +4964,9 @@ class DesktopActionRouter:
                 "stop_reason": str(dialog_execution.get("message", "wizard dialog execution failed") or "wizard dialog execution failed"),
                 "button_label": button_label,
                 "button_role": button_role,
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         return {
@@ -3959,6 +4976,9 @@ class DesktopActionRouter:
             "button_label": button_label,
             "button_role": button_role,
             "route_mode": str(dialog_advice.get("route_mode", "") or "").strip(),
+            "dialog_kind": dialog_kind,
+            "approval_kind": approval_kind,
+            "secure_desktop_likely": secure_desktop_likely,
             "status": "dialog_confirmed" if button_role == "confirm" else "dialog_dismissed",
             "message": (
                 f"Resolved the interstitial dialog through '{button_label}' and continued the wizard mission."
@@ -4070,6 +5090,7 @@ class DesktopActionRouter:
         page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
         observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
         safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
         adopted_window = snapshot.get("adopted_wizard_window", {}) if isinstance(snapshot.get("adopted_wizard_window", {}), dict) else {}
@@ -4091,11 +5112,17 @@ class DesktopActionRouter:
             "manual_input_likely": bool(page_state.get("manual_input_likely", False)),
             "warning_surface_visible": bool(safety_signals.get("warning_surface_visible", False)),
             "destructive_warning_visible": bool(safety_signals.get("destructive_warning_visible", False)),
+            "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(dialog_state.get("approval_kind", "") or "").strip(),
+            "dialog_review_required": bool(dialog_state.get("review_required", False)),
+            "dialog_auto_resolve_supported": bool(dialog_state.get("auto_resolve_supported", False)),
+            "secure_desktop_likely": bool(dialog_state.get("secure_desktop_likely", False)),
+            "credential_field_count": int(dialog_state.get("credential_field_count", 0) or 0),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
         }
 
     @classmethod
-    def _wizard_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, str, str, str, int, bool, bool]:
+    def _wizard_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, str, str, str, int, bool, bool, str, str, bool, bool, bool, int]:
         summary = cls._wizard_flow_summary(snapshot=snapshot)
         return (
             str(summary.get("screen_hash", "") or "").strip(),
@@ -4109,6 +5136,12 @@ class DesktopActionRouter:
             int(summary.get("window_hwnd", 0) or 0),
             bool(summary.get("warning_surface_visible", False)),
             bool(summary.get("destructive_warning_visible", False)),
+            str(summary.get("dialog_kind", "") or "").strip().lower(),
+            str(summary.get("approval_kind", "") or "").strip().lower(),
+            bool(summary.get("dialog_review_required", False)),
+            bool(summary.get("dialog_auto_resolve_supported", False)),
+            bool(summary.get("secure_desktop_likely", False)),
+            int(summary.get("credential_field_count", 0) or 0),
         )
 
     @classmethod
@@ -4127,11 +5160,27 @@ class DesktopActionRouter:
         allow_warning_pages: bool,
     ) -> Dict[str, Any]:
         page_kind = str(page_state.get("page_kind", "") or "").strip().lower()
-        if bool(safety_signals.get("elevation_prompt_visible", False)) and page_kind not in {"ready_to_install", "completion"}:
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        approval_kind = str(dialog_state.get("approval_kind", "") or "").strip().lower()
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
+        if approval_kind == "elevation_credentials":
             return {
                 "allowed": False,
-                "code": "elevation_prompt_requires_approval",
-                "message": "Wizard mission stopped because the current setup step raised an elevation prompt that requires explicit approval.",
+                "code": "elevation_credentials_required",
+                "message": "Wizard mission stopped because the current setup step raised an administrator credential prompt that requires manual approval and input.",
+            }
+        if approval_kind == "elevation_consent" and page_kind not in {"ready_to_install", "completion"}:
+            return {
+                "allowed": False,
+                "code": "elevation_consent_required",
+                "message": "Wizard mission stopped because the current setup step raised an elevation approval prompt that requires explicit confirmation."
+                + (" The prompt also appears to be on a secure desktop surface." if secure_desktop_likely else ""),
+            }
+        if approval_kind == "permission_review":
+            return {
+                "allowed": False,
+                "code": "permission_review_required",
+                "message": "Wizard mission paused because the current setup step is asking for a permission or consent review that JARVIS should not approve blindly.",
             }
         blocker = str(page_state.get("autonomous_blocker", "") or "").strip()
         if blocker == "warning_confirmation_requires_review" and allow_warning_pages:
@@ -4140,6 +5189,12 @@ class DesktopActionRouter:
             "warning_confirmation_requires_review": "Wizard mission paused on a warning-confirmation page so JARVIS does not auto-commit a risky step without review.",
             "unsupported_wizard_requirements": "Wizard mission found page requirements that are not yet safe to auto-resolve, so this setup step needs manual review.",
             "manual_input_required": "Wizard mission paused because the current setup page appears to require manual text or dropdown input before it can continue.",
+            "credential_input_required": "Wizard mission paused because the current setup surface appears to require credentials or sign-in input before it can continue.",
+            "authentication_review_required": "Wizard mission paused because the current setup surface is asking for authentication review or identity confirmation.",
+            "permission_review_required": "Wizard mission paused because the current setup surface is asking for a permission or consent review before it can continue.",
+            "elevation_consent_required": "Wizard mission paused because the current setup surface raised an elevation approval prompt that needs explicit confirmation.",
+            "elevation_credentials_required": "Wizard mission paused because the current setup surface raised an administrator credential prompt that needs manual approval and input.",
+            "elevation_prompt_requires_approval": "Wizard mission paused because the current setup surface raised an elevation prompt that needs explicit approval.",
             "no_advance_control_available": "Wizard mission paused because the current setup page exposes no safe advance control yet.",
         }
         if blocker:
@@ -4228,6 +5283,9 @@ class DesktopActionRouter:
         max_pages = max(1, min(int(args.get("max_form_pages", 5) or 5), 10))
         allow_destructive_forms = bool(args.get("allow_destructive_forms", False))
         pre_context = self._capture_verification_context(args=args, advice=advice)
+        advice_target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        form_anchor_title = str(args.get("window_title", "") or advice_target_window.get("title", "") or "").strip()
+        form_anchor_app_name = str(args.get("app_name", "") or "").strip()
         requested_form_targets = self._normalize_form_target_plan(args.get("form_target_plan", []))
         remaining_form_targets = [dict(row) for row in requested_form_targets]
         resolved_form_targets: List[Dict[str, Any]] = []
@@ -4417,6 +5475,9 @@ class DesktopActionRouter:
                     "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
                     "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
                     "route_mode": str(dialog_followup.get("route_mode", "") or "").strip(),
+                    "dialog_kind": str(dialog_followup.get("dialog_kind", "") or "").strip(),
+                    "approval_kind": str(dialog_followup.get("approval_kind", "") or "").strip(),
+                    "secure_desktop_likely": bool(dialog_followup.get("secure_desktop_likely", False)),
                 }
                 page_record["executed_actions"] = [
                     str(row.get("action", "") or "").strip()
@@ -4439,10 +5500,18 @@ class DesktopActionRouter:
                 page_record["status"] = "blocked"
                 page_record["stop_reason_code"] = stop_reason_code
                 page_record["stop_reason"] = stop_reason
+                page_record["blocking_surface"] = self._blocking_surface_state(
+                    snapshot=page_snapshot,
+                    stop_reason_code=stop_reason_code,
+                    mission_kind="form",
+                )
                 page_record["dialog_followup"] = {
                     "blocked": True,
                     "button_label": str(dialog_followup.get("button_label", "") or "").strip(),
                     "button_role": str(dialog_followup.get("button_role", "") or "").strip(),
+                    "dialog_kind": str(dialog_followup.get("dialog_kind", "") or "").strip(),
+                    "approval_kind": str(dialog_followup.get("approval_kind", "") or "").strip(),
+                    "secure_desktop_likely": bool(dialog_followup.get("secure_desktop_likely", False)),
                 }
                 if stop_reason:
                     mission_warnings.append(stop_reason)
@@ -4959,6 +6028,11 @@ class DesktopActionRouter:
                 page_record["status"] = "blocked"
                 page_record["stop_reason_code"] = stop_reason_code
                 page_record["stop_reason"] = stop_reason
+                page_record["blocking_surface"] = self._blocking_surface_state(
+                    snapshot=page_snapshot,
+                    stop_reason_code=stop_reason_code,
+                    mission_kind="form",
+                )
                 mission_warnings.append(stop_reason)
                 page_history.append(page_record)
                 break
@@ -4974,6 +6048,11 @@ class DesktopActionRouter:
                 page_record["status"] = "blocked"
                 page_record["stop_reason_code"] = stop_reason_code
                 page_record["stop_reason"] = stop_reason
+                page_record["blocking_surface"] = self._blocking_surface_state(
+                    snapshot=page_snapshot,
+                    stop_reason_code=stop_reason_code,
+                    mission_kind="form",
+                )
                 if stop_reason:
                     mission_warnings.append(stop_reason)
                 page_history.append(page_record)
@@ -5077,6 +6156,55 @@ class DesktopActionRouter:
         )
         if status == "success" and bool(verification.get("enabled", False)) and not bool(verification.get("verified", False)):
             message = str(verification.get("message", message) or message)
+        blocking_surface = self._blocking_surface_state(
+            snapshot=last_snapshot,
+            stop_reason_code=stop_reason_code,
+            mission_kind="form",
+        )
+        resume_contract = self._mission_resume_contract(
+            mission_kind="form",
+            args=args,
+            stop_reason_code=stop_reason_code,
+            blocking_surface=blocking_surface,
+            anchor_window_title=form_anchor_title,
+            anchor_app_name=form_anchor_app_name,
+            remaining_form_targets=remaining_form_targets,
+        )
+        form_mission_payload = {
+            "enabled": True,
+            "completed": completed,
+            "pages_completed": pages_completed,
+            "page_count": len(page_history),
+            "max_pages": max_pages,
+            "allow_destructive_forms": allow_destructive_forms,
+            "stop_reason_code": stop_reason_code,
+            "stop_reason": stop_reason,
+            "blocking_surface": blocking_surface,
+            "resume_contract": resume_contract,
+            "requested_target_count": len(requested_form_targets),
+            "resolved_target_count": len(resolved_form_targets),
+            "remaining_target_count": len(remaining_form_targets),
+            "resolved_targets": resolved_form_targets[:12],
+            "remaining_targets": [dict(row) for row in remaining_form_targets[:12]],
+            "page_history": page_history,
+            "final_page": final_summary,
+            "risk_level": advice.get("risk_level", ""),
+            "status": status,
+            "message": message,
+        }
+        mission_record = {}
+        if blocking_surface and resume_contract:
+            mission_record = self._persist_paused_mission(
+                mission_kind="form",
+                args=args,
+                blocking_surface=blocking_surface,
+                resume_contract=resume_contract,
+                mission_payload=form_mission_payload,
+                warnings=mission_warnings,
+                message=message,
+            )
+            if mission_record:
+                form_mission_payload["mission_record"] = mission_record
 
         return {
             "attempt": attempt_index,
@@ -5090,23 +6218,8 @@ class DesktopActionRouter:
             "results": results,
             "advice": advice,
             "verification": verification,
-            "form_mission": {
-                "enabled": True,
-                "completed": completed,
-                "pages_completed": pages_completed,
-                "page_count": len(page_history),
-                "max_pages": max_pages,
-                "allow_destructive_forms": allow_destructive_forms,
-                "stop_reason_code": stop_reason_code,
-                "stop_reason": stop_reason,
-                "requested_target_count": len(requested_form_targets),
-                "resolved_target_count": len(resolved_form_targets),
-                "remaining_target_count": len(remaining_form_targets),
-                "resolved_targets": resolved_form_targets[:12],
-                "remaining_targets": [dict(row) for row in remaining_form_targets[:12]],
-                "page_history": page_history,
-                "final_page": final_summary,
-            },
+            "form_mission": form_mission_payload,
+            "mission_record": mission_record,
         }
 
     def _resolve_form_dialog_interstitial(
@@ -5121,7 +6234,75 @@ class DesktopActionRouter:
             return {"handled": False, "blocked": False}
 
         page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        dialog_kind = self._normalize_probe_text(dialog_state.get("dialog_kind", ""))
+        approval_kind = self._normalize_probe_text(dialog_state.get("approval_kind", ""))
+        dialog_manual_input_required = bool(dialog_state.get("manual_input_required", False))
+        dialog_credential_required = bool(dialog_state.get("credential_required", False))
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
         pending_requirement_count = int(page_state.get("pending_requirement_count", 0) or 0)
+        if approval_kind == "elevation_credentials":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "elevation_credentials_required",
+                "stop_reason": "Form mission paused because an interstitial elevation dialog is requesting administrator credentials or secure sign-in input.",
+                "button_label": str(safety_signals.get("preferred_confirmation_button", "") or safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if approval_kind == "elevation_consent":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "elevation_consent_required",
+                "stop_reason": "Form mission paused because an interstitial elevation dialog is requesting administrator approval."
+                + (" The prompt also appears to be on a secure desktop surface." if secure_desktop_likely else ""),
+                "button_label": str(safety_signals.get("preferred_confirmation_button", "") or safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_manual_input_required and dialog_credential_required:
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "credential_input_required",
+                "stop_reason": "Form mission paused because an interstitial dialog is requesting credentials or sign-in input.",
+                "button_label": str(safety_signals.get("preferred_confirmation_button", "") or safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_kind == "authentication_review":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "authentication_review_required",
+                "stop_reason": "Form mission paused on an interstitial authentication confirmation so JARVIS does not approve identity-sensitive changes blindly.",
+                "button_label": str(safety_signals.get("preferred_confirmation_button", "") or safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
+        if dialog_kind == "permission_review":
+            return {
+                "handled": False,
+                "blocked": True,
+                "stop_reason_code": "permission_review_required",
+                "stop_reason": "Form mission paused on an interstitial permission review so JARVIS does not approve app access or consent changes blindly.",
+                "button_label": str(safety_signals.get("preferred_confirmation_button", "") or safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+                "button_role": "",
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
+            }
         if pending_requirement_count > 0 or bool(page_state.get("manual_input_likely", False)):
             return {"handled": False, "blocked": False}
         if any(
@@ -5155,7 +6336,6 @@ class DesktopActionRouter:
         ):
             return {"handled": False, "blocked": False}
 
-        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
         destructive_warning_visible = bool(safety_signals.get("destructive_warning_visible", False))
         warning_surface_visible = bool(safety_signals.get("warning_surface_visible", False))
         elevation_prompt_visible = bool(safety_signals.get("elevation_prompt_visible", False))
@@ -5219,6 +6399,9 @@ class DesktopActionRouter:
                 "stop_reason": blocker_message,
                 "button_label": preferred_confirmation_button or preferred_dismiss_button,
                 "button_role": "confirm" if preferred_confirmation_button else ("dismiss" if preferred_dismiss_button else ""),
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         dialog_args = dict(args)
@@ -5250,6 +6433,9 @@ class DesktopActionRouter:
                 "stop_reason": blockers or str(dialog_advice.get("message", "form dialog route unavailable") or "form dialog route unavailable"),
                 "button_label": button_label,
                 "button_role": button_role,
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         dialog_execution = self._run_execution_plan(
@@ -5274,6 +6460,9 @@ class DesktopActionRouter:
                 "stop_reason": str(dialog_execution.get("message", "form dialog execution failed") or "form dialog execution failed"),
                 "button_label": button_label,
                 "button_role": button_role,
+                "dialog_kind": dialog_kind,
+                "approval_kind": approval_kind,
+                "secure_desktop_likely": secure_desktop_likely,
             }
 
         return {
@@ -5283,6 +6472,9 @@ class DesktopActionRouter:
             "button_label": button_label,
             "button_role": button_role,
             "route_mode": str(dialog_advice.get("route_mode", "") or "").strip(),
+            "dialog_kind": dialog_kind,
+            "approval_kind": approval_kind,
+            "secure_desktop_likely": secure_desktop_likely,
             "status": "dialog_confirmed" if button_role == "confirm" else "dialog_dismissed",
             "message": (
                 f"Resolved the interstitial dialog through '{button_label}' and continued the form mission."
@@ -5387,6 +6579,7 @@ class DesktopActionRouter:
         page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
         observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
         safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
         adopted_window = snapshot.get("adopted_form_window", {}) if isinstance(snapshot.get("adopted_form_window", {}), dict) else {}
@@ -5423,11 +6616,17 @@ class DesktopActionRouter:
             "preferred_dialog_dismiss_button": str(safety_signals.get("preferred_dismiss_button", "") or "").strip(),
             "warning_surface_visible": bool(safety_signals.get("warning_surface_visible", False)),
             "destructive_warning_visible": bool(safety_signals.get("destructive_warning_visible", False)),
+            "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(dialog_state.get("approval_kind", "") or "").strip(),
+            "dialog_review_required": bool(dialog_state.get("review_required", False)),
+            "dialog_auto_resolve_supported": bool(dialog_state.get("auto_resolve_supported", False)),
+            "secure_desktop_likely": bool(dialog_state.get("secure_desktop_likely", False)),
+            "credential_field_count": int(dialog_state.get("credential_field_count", 0) or 0),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
         }
 
     @classmethod
-    def _form_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, bool, str, str, str, str, int, int, str, str, int, bool, bool]:
+    def _form_flow_signature(cls, *, snapshot: Dict[str, Any]) -> tuple[str, str, int, str, bool, bool, str, str, str, str, int, int, str, str, int, bool, bool, str, str, bool, bool, bool, int]:
         summary = cls._form_flow_summary(snapshot=snapshot)
         return (
             str(summary.get("page_kind", "") or "").strip().lower(),
@@ -5447,6 +6646,12 @@ class DesktopActionRouter:
             int(summary.get("window_hwnd", 0) or 0),
             bool(summary.get("warning_surface_visible", False)),
             bool(summary.get("destructive_warning_visible", False)),
+            str(summary.get("dialog_kind", "") or "").strip().lower(),
+            str(summary.get("approval_kind", "") or "").strip().lower(),
+            bool(summary.get("dialog_review_required", False)),
+            bool(summary.get("dialog_auto_resolve_supported", False)),
+            bool(summary.get("secure_desktop_likely", False)),
+            int(summary.get("credential_field_count", 0) or 0),
         )
 
     @classmethod
@@ -5464,16 +6669,38 @@ class DesktopActionRouter:
         allow_destructive_forms: bool,
     ) -> Dict[str, Any]:
         blocker = str(page_state.get("autonomous_blocker", "") or "").strip()
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        approval_kind = str(dialog_state.get("approval_kind", "") or "").strip().lower()
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
         blocker_messages = {
             "manual_input_required": "The current form likely requires manual text or option input before JARVIS can continue safely.",
+            "credential_input_required": "The current dialog appears to require credentials or sign-in input before JARVIS can continue safely.",
+            "authentication_review_required": "The current dialog is asking for authentication review or identity confirmation before JARVIS can continue.",
+            "permission_review_required": "The current dialog is asking for a permission or consent review before JARVIS can continue.",
+            "elevation_consent_required": "The current form is requesting elevated approval, so JARVIS is pausing for explicit confirmation instead of continuing autonomously.",
+            "elevation_credentials_required": "The current form is requesting administrator credentials, so JARVIS is pausing for explicit review and manual input instead of continuing autonomously.",
+            "elevation_confirmation_required": "The current form is requesting elevated privileges, so JARVIS is pausing for explicit review instead of continuing autonomously.",
             "unsupported_form_requirements": "The current form exposes requirements that JARVIS cannot yet resolve safely without a more specific requested target.",
             "no_commit_target_available": "The current form does not expose a reliable Save, Apply, OK, or Done control for autonomous completion.",
         }
-        if bool(safety_signals.get("elevation_prompt_visible", False)):
+        if approval_kind == "elevation_credentials":
             return {
                 "allowed": False,
-                "code": "elevation_confirmation_required",
-                "message": "The current form is requesting elevated privileges, so JARVIS is pausing for explicit review instead of continuing autonomously.",
+                "code": "elevation_credentials_required",
+                "message": blocker_messages["elevation_credentials_required"],
+            }
+        if approval_kind == "elevation_consent":
+            return {
+                "allowed": False,
+                "code": "elevation_consent_required",
+                "message": blocker_messages["elevation_consent_required"]
+                + (" The prompt also appears to be on a secure desktop surface." if secure_desktop_likely else ""),
+            }
+        if approval_kind == "permission_review":
+            return {
+                "allowed": False,
+                "code": "permission_review_required",
+                "message": blocker_messages["permission_review_required"],
             }
         if bool(safety_signals.get("destructive_warning_visible", False)) and not allow_destructive_forms:
             return {
@@ -6114,6 +7341,12 @@ class DesktopActionRouter:
             "safety_signals": advice.get("safety_signals", base_advice.get("safety_signals", {})),
             "form_target_state": advice.get("form_target_state", base_advice.get("form_target_state", {})),
             "surface_branch": advice.get("surface_branch", base_advice.get("surface_branch", {})),
+            "resume_action": advice.get("resume_action", base_advice.get("resume_action", "")),
+            "resume_payload": advice.get("resume_payload", base_advice.get("resume_payload", {})),
+            "resume_contract": advice.get("resume_contract", base_advice.get("resume_contract", {})),
+            "blocking_surface": advice.get("blocking_surface", base_advice.get("blocking_surface", {})),
+            "mission_record": selected_attempt.get("mission_record", advice.get("mission_record", base_advice.get("mission_record", {}))),
+            "resume_context": selected_attempt.get("resume_context", advice.get("resume_context", base_advice.get("resume_context", {}))),
             "results": selected_attempt.get("results", []),
             "advice": advice,
             "verification": verification,
@@ -6255,6 +7488,40 @@ class DesktopActionRouter:
             app_name=app_name,
             profile_id=profile_id,
             intent=intent,
+        )
+
+    def mission_memory_snapshot(
+        self,
+        *,
+        limit: int = 200,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+        stop_reason_code: str = "",
+    ) -> Dict[str, Any]:
+        return self._mission_memory.snapshot(
+            limit=limit,
+            mission_id=mission_id,
+            status=status,
+            mission_kind=mission_kind,
+            app_name=app_name,
+            stop_reason_code=stop_reason_code,
+        )
+
+    def mission_memory_reset(
+        self,
+        *,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+    ) -> Dict[str, Any]:
+        return self._mission_memory.reset(
+            mission_id=mission_id,
+            status=status,
+            mission_kind=mission_kind,
+            app_name=app_name,
         )
 
     def surface_snapshot(
@@ -6462,6 +7729,7 @@ class DesktopActionRouter:
             {
                 key: bool(safety_signals.get(key, False))
                 for key in (
+                    "dialog_visible",
                     "wizard_surface_visible",
                     "wizard_next_available",
                     "wizard_back_available",
@@ -6469,7 +7737,13 @@ class DesktopActionRouter:
                     "warning_surface_visible",
                     "destructive_warning_visible",
                     "elevation_prompt_visible",
+                    "permission_review_visible",
                     "requires_confirmation",
+                    "dialog_review_required",
+                    "authentication_prompt_visible",
+                    "credential_prompt_visible",
+                    "secure_desktop_likely",
+                    "admin_approval_required",
                 )
             }
         )
@@ -6510,6 +7784,7 @@ class DesktopActionRouter:
             "target_group_state": target_group_state,
             "wizard_page_state": wizard_page_state,
             "form_page_state": form_page_state,
+            "dialog_state": safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {},
             "safety_signals": safety_signals,
             "observation": {
                 "status": str(observation.get("status", "skipped") or "skipped") if observation else "skipped",
@@ -7005,18 +8280,48 @@ class DesktopActionRouter:
         if not isinstance(safety_signals, dict):
             return []
         actions: List[str] = []
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        dialog_kind = self._normalize_probe_text(dialog_state.get("dialog_kind", ""))
+        approval_kind = self._normalize_probe_text(dialog_state.get("approval_kind", ""))
+        dialog_review_required = bool(dialog_state.get("review_required", False))
+        dialog_auto_resolve_supported = bool(dialog_state.get("auto_resolve_supported", False))
+        dialog_manual_input_required = bool(dialog_state.get("manual_input_required", False))
+        dialog_credential_required = bool(dialog_state.get("credential_required", False))
+        preferred_action = self._normalize_probe_text(dialog_state.get("preferred_action", ""))
         if bool(safety_signals.get("wizard_next_available", False)):
             actions.append("next_wizard_step")
         if bool(safety_signals.get("wizard_finish_available", False)):
             actions.append("finish_wizard")
         if bool(safety_signals.get("wizard_back_available", False)):
             actions.append("previous_wizard_step")
-        if bool(safety_signals.get("requires_confirmation", False)):
-            confirmation_actions = (
-                ["dismiss_dialog", "confirm_dialog"]
-                if bool(safety_signals.get("destructive_warning_visible", False))
-                else ["confirm_dialog", "dismiss_dialog"]
-            )
+        if dialog_manual_input_required or dialog_credential_required or approval_kind in {"credential_input", "elevation_credentials"}:
+            dialog_actions = ["focus_input_field", "set_field_value"]
+            if str(safety_signals.get("preferred_confirmation_button", "") or "").strip():
+                dialog_actions.append("confirm_dialog")
+            if str(safety_signals.get("preferred_dismiss_button", "") or "").strip():
+                dialog_actions.append("dismiss_dialog")
+            for action_name in dialog_actions:
+                if action_name not in actions:
+                    actions.append(action_name)
+        elif bool(safety_signals.get("requires_confirmation", False)) or dialog_review_required or dialog_auto_resolve_supported:
+            if dialog_review_required or approval_kind in {
+                "elevation_consent",
+                "permission_review",
+                "authentication_review",
+                "destructive_confirmation",
+                "warning_confirmation",
+            } or dialog_kind in {"elevation_prompt", "credential_prompt", "authentication_review", "permission_review"}:
+                confirmation_actions = ["dismiss_dialog", "confirm_dialog"]
+            elif preferred_action == "dismiss":
+                confirmation_actions = ["dismiss_dialog", "confirm_dialog"]
+            elif preferred_action == "confirm":
+                confirmation_actions = ["confirm_dialog", "dismiss_dialog"]
+            else:
+                confirmation_actions = (
+                    ["dismiss_dialog", "confirm_dialog"]
+                    if bool(safety_signals.get("destructive_warning_visible", False))
+                    else ["confirm_dialog", "dismiss_dialog"]
+                )
             for action_name in confirmation_actions:
                 if action_name not in actions:
                     actions.append(action_name)
@@ -7036,6 +8341,9 @@ class DesktopActionRouter:
         observation_text = self._normalize_probe_text(observation.get("text", ""))
         active_title = self._normalize_probe_text(active_window.get("title", ""))
         target_title = self._normalize_probe_text(target_window.get("title", ""))
+        active_exe = str(active_window.get("exe", "") or "")
+        target_exe = str(target_window.get("exe", "") or "")
+        window_exe_text = " ".join(value.strip().lower() for value in (active_exe, target_exe) if str(value).strip())
         combined_text = " ".join(value for value in (observation_text, active_title, target_title, profile_name, category) if value)
         live_surface_text = " ".join(value for value in (observation_text, active_title, target_title) if value)
         element_rows = [dict(row) for row in (elements or []) if isinstance(row, dict)]
@@ -7113,7 +8421,7 @@ class DesktopActionRouter:
             "uninstall",
             "make changes to your device",
         )
-        elevation_markers = (
+        strong_elevation_markers = (
             "user account control",
             "do you want to allow",
             "administrator permission",
@@ -7123,7 +8431,32 @@ class DesktopActionRouter:
             "elevation",
             "elevated",
             "uac",
+        )
+        weak_elevation_markers = (
             "make changes to your device",
+        )
+        secure_desktop_title_markers = (
+            "user account control",
+            "windows security",
+            "credential ui",
+        )
+        secure_desktop_exe_markers = (
+            "consent.exe",
+            "credentialuibroker.exe",
+            "logonui.exe",
+        )
+        permission_markers = (
+            "allow access",
+            "grant access",
+            "permission",
+            "let this app",
+            "needs access",
+            "access your camera",
+            "access your microphone",
+            "access your location",
+            "access your contacts",
+            "access your files",
+            "access to your",
         )
         confirmation_markers = (
             "ok cancel",
@@ -7179,6 +8512,45 @@ class DesktopActionRouter:
             "apply",
             "launch",
         )
+        auth_markers = (
+            "sign in",
+            "signin",
+            "sign-in",
+            "log in",
+            "login",
+            "authenticate",
+            "authentication",
+            "verify your identity",
+            "verify it is you",
+            "confirm your identity",
+            "credentials",
+            "windows security",
+            "security verification",
+            "account verification",
+            "two-factor",
+            "two factor",
+            "2fa",
+            "mfa",
+            "one-time code",
+            "one time code",
+            "verification code",
+        )
+        credential_field_markers = (
+            "user",
+            "username",
+            "user name",
+            "email",
+            "account",
+            "password",
+            "passcode",
+            "pin",
+            "otp",
+            "security code",
+            "verification code",
+            "credentials",
+        )
+        username_field_markers = ("username", "user name", "email", "account", "login")
+        password_field_markers = ("password", "passcode", "pin", "otp", "security code", "verification code")
 
         def _label_matches(candidates: tuple[str, ...]) -> bool:
             for label in normalized_button_labels:
@@ -7197,7 +8569,17 @@ class DesktopActionRouter:
         confirmation_buttons_present = _label_matches(("ok", "yes", "continue", "allow", "accept", "apply", "install", "finish", "next"))
         dismiss_buttons_present = _label_matches(("cancel", "no", "close", "back", "later", "skip"))
         destructive_warning_visible = bool(any(marker in combined_text for marker in destructive_markers))
-        elevation_prompt_visible = bool(any(marker in combined_text for marker in elevation_markers))
+        secure_desktop_likely = bool(
+            any(marker in live_surface_text for marker in secure_desktop_title_markers)
+            or any(marker in window_exe_text for marker in secure_desktop_exe_markers)
+        )
+        elevation_prompt_visible = bool(
+            any(marker in live_surface_text for marker in strong_elevation_markers)
+            or (
+                any(marker in live_surface_text for marker in weak_elevation_markers)
+                and secure_desktop_likely
+            )
+        )
         dialog_button_targets = [
             self._element_state_summary(row)
             for row in element_rows
@@ -7256,6 +8638,100 @@ class DesktopActionRouter:
             safe_dialog_targets,
             ("cancel", "back", "no", "close", "later", "skip", "not now", "abort"),
         )
+        input_rows = [
+            row
+            for row in element_rows
+            if _element_control_type(row) in {"edit", "combobox"}
+        ]
+        interactive_non_button_rows = [
+            row
+            for row in element_rows
+            if _element_control_type(row)
+            in {
+                "checkbox",
+                "radiobutton",
+                "combobox",
+                "edit",
+                "slider",
+                "spinner",
+                "togglebutton",
+                "tabitem",
+                "treeitem",
+                "listitem",
+                "menuitem",
+                "dataitem",
+                "table",
+                "toolbar",
+            }
+        ]
+
+        def _dedupe_targets(targets: List[Dict[str, Any]], *, limit: int = 6) -> List[Dict[str, Any]]:
+            rows: List[Dict[str, Any]] = []
+            seen: set[str] = set()
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                target_key = self._element_identity_key(target)
+                fallback_key = self._normalize_probe_text(target.get("name", ""))
+                identity = target_key or fallback_key
+                if not identity or identity in seen:
+                    continue
+                seen.add(identity)
+                rows.append(dict(target))
+                if len(rows) >= limit:
+                    break
+            return rows
+
+        username_field_targets = _dedupe_targets(
+            [
+                self._element_state_summary(row)
+                for row in input_rows
+                if any(marker in _element_text(row) for marker in username_field_markers)
+            ]
+        )
+        password_field_targets = _dedupe_targets(
+            [
+                self._element_state_summary(row)
+                for row in input_rows
+                if any(marker in _element_text(row) for marker in password_field_markers)
+            ]
+        )
+        credential_field_targets = _dedupe_targets(
+            [
+                *username_field_targets,
+                *password_field_targets,
+                *[
+                    self._element_state_summary(row)
+                    for row in input_rows
+                    if any(marker in _element_text(row) for marker in credential_field_markers)
+                ],
+            ]
+        )
+        auth_surface_visible = bool(any(marker in combined_text for marker in auth_markers))
+        credential_prompt_visible = bool(
+            (auth_surface_visible or any(marker in combined_text for marker in credential_field_markers))
+            and (
+                credential_field_targets
+                or any(
+                    marker in live_surface_text
+                    for marker in (
+                        "enter your credentials",
+                        "sign in required",
+                        "credentials required",
+                        "windows security",
+                        "enter password",
+                    )
+                )
+            )
+        )
+        if credential_prompt_visible and not credential_field_targets and input_rows:
+            credential_field_targets = _dedupe_targets([self._element_state_summary(row) for row in input_rows[:2]])
+        authentication_prompt_visible = bool(auth_surface_visible or credential_prompt_visible)
+        permission_review_visible = bool(
+            not authentication_prompt_visible
+            and any(marker in live_surface_text for marker in permission_markers)
+            and (dialog_button_targets or confirmation_buttons_present or dismiss_buttons_present)
+        )
 
         wizard_surface_visible = bool(
             any(marker in live_surface_text for marker in wizard_text_markers)
@@ -7276,6 +8752,98 @@ class DesktopActionRouter:
             or any(marker in combined_text for marker in confirmation_markers)
             or (confirmation_buttons_present and dismiss_buttons_present)
         )
+        dialog_visible = bool(
+            button_labels
+            or credential_field_targets
+            or authentication_prompt_visible
+            or permission_review_visible
+            or elevation_prompt_visible
+            or any(marker in live_surface_text for marker in ("dialog", "modal", "popup", "ok cancel", "yes no"))
+        )
+        authentication_review_visible = bool(authentication_prompt_visible and not credential_prompt_visible and not elevation_prompt_visible)
+        dialog_kind = ""
+        if dialog_visible:
+            if elevation_prompt_visible:
+                dialog_kind = "elevation_prompt"
+            elif credential_prompt_visible:
+                dialog_kind = "credential_prompt"
+            elif authentication_review_visible:
+                dialog_kind = "authentication_review"
+            elif permission_review_visible:
+                dialog_kind = "permission_review"
+            elif destructive_warning_visible:
+                dialog_kind = "destructive_confirmation"
+            elif warning_surface_visible:
+                dialog_kind = "warning_confirmation"
+            elif preferred_confirmation_target or preferred_dismiss_target:
+                dialog_kind = "acknowledgement"
+            else:
+                dialog_kind = "generic_dialog"
+        review_required = bool(
+            dialog_kind in {"elevation_prompt", "credential_prompt", "authentication_review", "permission_review", "destructive_confirmation", "warning_confirmation"}
+        )
+        manual_input_required = bool(
+            credential_field_targets
+            and dialog_kind in {"credential_prompt", "elevation_prompt"}
+        )
+        approval_kind = ""
+        if dialog_kind == "elevation_prompt":
+            approval_kind = "elevation_credentials" if manual_input_required else "elevation_consent"
+        elif dialog_kind == "credential_prompt":
+            approval_kind = "credential_input"
+        elif dialog_kind == "authentication_review":
+            approval_kind = "authentication_review"
+        elif dialog_kind == "permission_review":
+            approval_kind = "permission_review"
+        elif dialog_kind == "destructive_confirmation":
+            approval_kind = "destructive_confirmation"
+        elif dialog_kind == "warning_confirmation":
+            approval_kind = "warning_confirmation"
+        elif dialog_kind == "acknowledgement":
+            approval_kind = "acknowledgement"
+        preferred_action = ""
+        if manual_input_required:
+            preferred_action = "input_required"
+        elif review_required and preferred_dismiss_target:
+            preferred_action = "dismiss"
+        elif preferred_confirmation_target:
+            preferred_action = "confirm"
+        elif preferred_dismiss_target:
+            preferred_action = "dismiss"
+        elif review_required:
+            preferred_action = "review"
+        auto_resolve_supported = bool(
+            dialog_visible
+            and not review_required
+            and not manual_input_required
+            and (preferred_confirmation_target or preferred_dismiss_target)
+            and not interactive_non_button_rows
+        )
+        dialog_state = {
+            "visible": dialog_visible,
+            "dialog_kind": dialog_kind,
+            "approval_kind": approval_kind,
+            "review_required": review_required,
+            "auto_resolve_supported": auto_resolve_supported,
+            "manual_input_required": manual_input_required,
+            "credential_required": bool(credential_prompt_visible or approval_kind == "elevation_credentials"),
+            "authentication_required": authentication_prompt_visible,
+            "approval_required": review_required,
+            "admin_approval_required": bool(approval_kind in {"elevation_consent", "elevation_credentials"}),
+            "permission_review_required": bool(approval_kind == "permission_review"),
+            "privileged_operation": bool(elevation_prompt_visible or destructive_warning_visible or permission_review_visible),
+            "preferred_action": preferred_action,
+            "preferred_button": str(preferred_confirmation_target.get("name", "") or preferred_dismiss_target.get("name", "") or "").strip(),
+            "credential_fields": credential_field_targets[:6],
+            "credential_field_count": len(credential_field_targets),
+            "username_field_count": len(username_field_targets),
+            "password_field_count": len(password_field_targets),
+            "secure_desktop_likely": secure_desktop_likely,
+            "button_only": bool(dialog_visible and not interactive_non_button_rows),
+            "safe_button_count": len(safe_dialog_targets),
+            "confirmation_button_count": len(confirmation_dialog_targets),
+            "destructive_button_count": len(destructive_dialog_targets),
+        }
 
         return {
             "wizard_surface_visible": wizard_surface_visible,
@@ -7285,7 +8853,14 @@ class DesktopActionRouter:
             "warning_surface_visible": warning_surface_visible,
             "destructive_warning_visible": destructive_warning_visible,
             "elevation_prompt_visible": elevation_prompt_visible,
+            "permission_review_visible": permission_review_visible,
             "requires_confirmation": requires_confirmation,
+            "dialog_visible": dialog_visible,
+            "dialog_review_required": review_required,
+            "authentication_prompt_visible": authentication_prompt_visible,
+            "credential_prompt_visible": credential_prompt_visible,
+            "secure_desktop_likely": secure_desktop_likely,
+            "admin_approval_required": bool(dialog_state.get("admin_approval_required", False)),
             "dialog_buttons": button_labels,
             "dialog_button_targets": dialog_button_targets,
             "safe_dialog_buttons": [str(target.get("name", "") or "").strip() for target in safe_dialog_targets if str(target.get("name", "") or "").strip()],
@@ -7295,6 +8870,7 @@ class DesktopActionRouter:
             "preferred_dismiss_button": str(preferred_dismiss_target.get("name", "") or "").strip(),
             "preferred_confirmation_target": preferred_confirmation_target,
             "preferred_dismiss_target": preferred_dismiss_target,
+            "dialog_state": dialog_state,
             "accessible_dialog_elements": [
                 row for row in element_rows if _element_control_type(row) in {"button", "text", "document", "pane", "window"} and _element_text(row)
             ][:12],
@@ -7309,10 +8885,17 @@ class DesktopActionRouter:
         safety_signals: Any,
     ) -> Dict[str, Any]:
         safety_payload = dict(safety_signals) if isinstance(safety_signals, dict) else {}
+        dialog_state = safety_payload.get("dialog_state", {}) if isinstance(safety_payload.get("dialog_state", {}), dict) else {}
         if not bool(safety_payload.get("wizard_surface_visible", False)):
             return {}
         observation_text = cls._normalize_probe_text(observation.get("text", ""))
         element_rows = [dict(row) for row in elements if isinstance(row, dict)] if isinstance(elements, list) else []
+        dialog_kind = cls._normalize_probe_text(dialog_state.get("dialog_kind", ""))
+        approval_kind = cls._normalize_probe_text(dialog_state.get("approval_kind", ""))
+        dialog_review_required = bool(dialog_state.get("review_required", False))
+        dialog_auto_resolve_supported = bool(dialog_state.get("auto_resolve_supported", False))
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
+        credential_field_count = int(dialog_state.get("credential_field_count", 0) or 0)
 
         def _control_type(row: Dict[str, Any]) -> str:
             return cls._normalize_probe_text(row.get("control_type", ""))
@@ -7406,8 +8989,22 @@ class DesktopActionRouter:
                 if isinstance(row, dict)
             )
         )
+        if dialog_kind == "credential_prompt" and credential_field_count > 0:
+            manual_input_likely = True
         autonomous_blocker = ""
-        if page_kind == "warning_confirmation":
+        if approval_kind == "elevation_credentials":
+            autonomous_blocker = "elevation_credentials_required"
+        elif approval_kind == "elevation_consent" and page_kind not in {"ready_to_install", "completion"}:
+            autonomous_blocker = "elevation_consent_required"
+        elif approval_kind == "permission_review":
+            autonomous_blocker = "permission_review_required"
+        elif dialog_kind == "credential_prompt" and credential_field_count > 0:
+            autonomous_blocker = "credential_input_required"
+        elif dialog_kind == "authentication_review":
+            autonomous_blocker = "authentication_review_required"
+        elif dialog_kind == "elevation_prompt" and page_kind not in {"ready_to_install", "completion"}:
+            autonomous_blocker = "elevation_prompt_requires_approval"
+        elif page_kind == "warning_confirmation":
             autonomous_blocker = "warning_confirmation_requires_review"
         elif pending_requirements and not auto_resolve_supported:
             autonomous_blocker = "unsupported_wizard_requirements"
@@ -7436,12 +9033,23 @@ class DesktopActionRouter:
             "preferred_dismiss_button": str(safety_payload.get("preferred_dismiss_button", "") or "").strip(),
             "safe_exit_options": [str(item).strip() for item in safety_payload.get("safe_dialog_buttons", []) if str(item).strip()][:6],
             "destructive_options": [str(item).strip() for item in safety_payload.get("destructive_dialog_buttons", []) if str(item).strip()][:6],
+            "dialog_kind": dialog_kind,
+            "approval_kind": approval_kind,
+            "dialog_review_required": dialog_review_required,
+            "dialog_auto_resolve_supported": dialog_auto_resolve_supported,
+            "secure_desktop_likely": secure_desktop_likely,
+            "credential_field_count": credential_field_count,
             "notes": [
                 note
                 for note in [
                     "Wizard page exposes agreement or acceptance prerequisites." if pending_requirements else "",
                     "Preferred confirmation button is available through accessibility." if preferred_confirmation_button else "",
                     "Page likely requires installation or finish confirmation." if page_kind in {"ready_to_install", "completion"} else "",
+                    "Current setup surface appears to require credentials or sign-in input." if dialog_kind == "credential_prompt" and credential_field_count > 0 else "",
+                    "Current setup surface appears to require administrator approval." if approval_kind == "elevation_consent" else "",
+                    "Current setup surface appears to require administrator credentials." if approval_kind == "elevation_credentials" else "",
+                    "Current setup surface appears to require permission or consent review." if approval_kind == "permission_review" else "",
+                    "The current setup prompt appears to be on a secure desktop surface." if secure_desktop_likely else "",
                 ]
                 if note
             ],
@@ -7458,8 +9066,16 @@ class DesktopActionRouter:
     ) -> Dict[str, Any]:
         safety_payload = dict(safety_signals) if isinstance(safety_signals, dict) else {}
         flags = dict(surface_flags) if isinstance(surface_flags, dict) else {}
+        dialog_state = safety_payload.get("dialog_state", {}) if isinstance(safety_payload.get("dialog_state", {}), dict) else {}
         if bool(safety_payload.get("wizard_surface_visible", False)):
             return {}
+        dialog_kind = cls._normalize_probe_text(dialog_state.get("dialog_kind", ""))
+        approval_kind = cls._normalize_probe_text(dialog_state.get("approval_kind", ""))
+        dialog_review_required = bool(dialog_state.get("review_required", False))
+        dialog_auto_resolve_supported = bool(dialog_state.get("auto_resolve_supported", False))
+        dialog_manual_input_required = bool(dialog_state.get("manual_input_required", False))
+        secure_desktop_likely = bool(dialog_state.get("secure_desktop_likely", False))
+        credential_field_count = int(dialog_state.get("credential_field_count", 0) or 0)
         settings_navigation_surface = bool(
             flags.get("settings_window_ready", False)
             and (
@@ -7615,9 +9231,19 @@ class DesktopActionRouter:
         destructive_options = [str(item).strip() for item in safety_payload.get("destructive_dialog_buttons", []) if str(item).strip()]
 
         page_kind = "form_page"
-        if bool(tab_rows) or any(marker in observation_text for marker in ("properties", "options", "property sheet", "tab page")):
+        if dialog_kind == "credential_prompt":
+            page_kind = "credential_dialog"
+        elif dialog_kind == "authentication_review":
+            page_kind = "authentication_dialog"
+        elif dialog_kind == "permission_review":
+            page_kind = "permission_dialog"
+        elif dialog_kind == "elevation_prompt":
+            page_kind = "elevation_dialog"
+        elif dialog_kind == "destructive_confirmation":
+            page_kind = "destructive_confirmation"
+        elif bool(tab_rows) or any(marker in observation_text for marker in ("properties", "options", "property sheet", "tab page")):
             page_kind = "property_sheet"
-        elif bool(safety_payload.get("warning_surface_visible", False)) or bool(safety_payload.get("requires_confirmation", False)):
+        elif bool(safety_payload.get("warning_surface_visible", False)) or bool(safety_payload.get("requires_confirmation", False)) or dialog_review_required:
             page_kind = "review_confirmation"
         elif any(marker in observation_text for marker in ("settings", "preferences", "configuration", "options")):
             page_kind = "settings_form"
@@ -7660,14 +9286,36 @@ class DesktopActionRouter:
             for row in [*edit_rows, *combo_rows]
             if _row_empty(row) and any(marker in _label_text(row) for marker in required_input_markers)
         ][:8]
-        manual_input_likely = bool(manual_required_controls and not pending_requirements)
+        if dialog_manual_input_required:
+            for row in dialog_state.get("credential_fields", []):
+                if not isinstance(row, dict):
+                    continue
+                element_id = str(row.get("element_id", "") or "").strip()
+                if element_id and any(str(existing.get("element_id", "") or "").strip() == element_id for existing in manual_required_controls if isinstance(existing, dict)):
+                    continue
+                if len(manual_required_controls) >= 8:
+                    break
+                manual_required_controls.append(dict(row))
+        manual_input_likely = bool((manual_required_controls and not pending_requirements) or dialog_manual_input_required)
         ready_for_commit = not pending_requirements and bool(preferred_commit_button)
         auto_resolve_supported = bool(
             preferred_commit_button
             and all(str(row.get("requirement_type", "") or "").strip().lower() in {"checkbox", "radio"} for row in pending_requirements)
         )
         autonomous_blocker = ""
-        if pending_requirements and not auto_resolve_supported:
+        if approval_kind == "elevation_credentials":
+            autonomous_blocker = "elevation_credentials_required"
+        elif approval_kind == "elevation_consent":
+            autonomous_blocker = "elevation_consent_required"
+        elif approval_kind == "permission_review":
+            autonomous_blocker = "permission_review_required"
+        elif dialog_kind == "elevation_prompt":
+            autonomous_blocker = "elevation_confirmation_required"
+        elif dialog_kind == "credential_prompt" and credential_field_count > 0:
+            autonomous_blocker = "credential_input_required"
+        elif dialog_kind == "authentication_review":
+            autonomous_blocker = "authentication_review_required"
+        elif pending_requirements and not auto_resolve_supported:
             autonomous_blocker = "unsupported_form_requirements"
         elif manual_input_likely:
             autonomous_blocker = "manual_input_required"
@@ -7877,12 +9525,23 @@ class DesktopActionRouter:
             "preferred_dismiss_button": str(safety_payload.get("preferred_dismiss_button", "") or "").strip(),
             "safe_exit_options": [str(item).strip() for item in safe_exit_options if str(item).strip()][:6],
             "destructive_options": destructive_options[:6],
+            "dialog_kind": dialog_kind,
+            "approval_kind": approval_kind,
+            "dialog_review_required": dialog_review_required,
+            "dialog_auto_resolve_supported": dialog_auto_resolve_supported,
+            "secure_desktop_likely": secure_desktop_likely,
+            "credential_field_count": credential_field_count,
             "notes": [
                 note
                 for note in [
                     "Form page exposes acknowledgement-style prerequisites." if pending_requirements else "",
                     "Preferred commit button is available through accessibility." if preferred_commit_button else "",
                     "Form likely still needs manual text or option input before it can be committed." if manual_input_likely else "",
+                    "Current dialog appears to require credentials or sign-in input before the form can continue." if dialog_kind == "credential_prompt" and credential_field_count > 0 else "",
+                    "Current form surface appears to require administrator approval." if approval_kind == "elevation_consent" else "",
+                    "Current form surface appears to require administrator credentials." if approval_kind == "elevation_credentials" else "",
+                    "Current form surface appears to require permission or consent review." if approval_kind == "permission_review" else "",
+                    "The current form prompt appears to be on a secure desktop surface." if secure_desktop_likely else "",
                     "Form exposes multiple tabs, so JARVIS can hunt across the property sheet for requested targets." if len(available_tabs) > 1 else "",
                     "Form exposes section navigation, so JARVIS can hunt across sidebar, tree, or list surfaces for requested targets." if navigation_candidates else "",
                     "Form exposes child-page links, so JARVIS can open deeper settings surfaces before committing requested changes." if drilldown_targets else "",

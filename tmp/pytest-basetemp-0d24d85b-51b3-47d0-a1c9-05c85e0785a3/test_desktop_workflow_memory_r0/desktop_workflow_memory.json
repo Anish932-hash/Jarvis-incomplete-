@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-03-14T13:58:43.743494+00:00",
+  "entries": {
+    "terminal_command|powershell|powershell|npm test": {
+      "key": "terminal_command|powershell|powershell|npm test",
+      "action": "terminal_command",
+      "profile_id": "powershell",
+      "app_name": "powershell",
+      "window_title": "",
+      "intent": "npm test",
+      "variants": {
+        "primary": {
+          "signature": "primary",
+          "strategy_id": "primary",
+          "title": "",
+          "payload_overrides": {},
+          "samples": 1,
+          "execution_successes": 1,
+          "verified_successes": 1,
+          "failures": 0,
+          "consecutive_failures": 0,
+          "last_status": "success",
+          "last_verified": true,
+          "updated_at": "2026-03-14T13:58:43.742784+00:00"
+        }
+      },
+      "updated_at": "2026-03-14T13:58:43.742784+00:00"
+    }
+  }
+}

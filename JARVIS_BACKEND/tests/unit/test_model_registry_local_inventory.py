@@ -172,3 +172,82 @@ def test_model_registry_merges_manifest_declared_missing_and_present_assets(tmp_
     tts_models = registry.list_by_task("tts")
     names = {model.name for model in tts_models}
     assert "local-auto-tts-kokoro-82m" not in names
+
+
+def test_model_registry_scans_manifest_declared_custom_intent_directory_alias(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    intent_dir = tmp_path / "custom_intents" / "bart-large-mnli (Custom_intent_model)"
+    intent_dir.mkdir(parents=True, exist_ok=True)
+    (intent_dir / "config.json").write_text("{}", encoding="utf-8")
+
+    manifest_dir = tmp_path / "JARVIS_BACKEND"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "Models to Download.txt").write_text(
+        "\n".join(
+            [
+                "Name, the models according to your PC, and create these Folders, along with the path you have to keep, these local AI models:",
+                "1)custom_intent",
+                f'"{intent_dir}"',
+                "",
+                "And these API keys:",
+                "1)Groq",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ModelRegistry(scan_local_models=True, enforce_provider_keys=False)
+    inventory = registry.local_inventory_snapshot(task="intent", limit=100)
+    manifest = registry.requirement_manifest_snapshot()
+
+    assert inventory["status"] == "success"
+    assert manifest["directory_count"] >= 1
+    assert any(
+        str(row.get("name", "")).strip().lower() == "custom_intent" and bool(row.get("present", False))
+        for row in manifest.get("directories", [])
+        if isinstance(row, dict)
+    )
+
+    intent_models = registry.list_by_task("intent")
+    assert any(model.name.startswith("local-auto-intent-") for model in intent_models)
+
+
+def test_model_registry_supports_explicit_manifest_scope(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    scoped_root = tmp_path / "alt_scope"
+    scoped_model = scoped_root / "reasoning" / "Scoped-Qwen.gguf"
+    scoped_model.parent.mkdir(parents=True, exist_ok=True)
+    scoped_model.write_bytes(b"gguf")
+
+    scoped_manifest_dir = scoped_root / "JARVIS_BACKEND"
+    scoped_manifest_dir.mkdir(parents=True, exist_ok=True)
+    scoped_manifest = scoped_manifest_dir / "Models to Download.txt"
+    scoped_manifest.write_text(
+        "\n".join(
+            [
+                "these local AI models:",
+                f'"{scoped_model}"',
+                "",
+                "And these API keys:",
+                "1)Groq",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ModelRegistry(scan_local_models=True, enforce_provider_keys=False)
+    manifest = registry.requirement_manifest_snapshot(manifest_path=str(scoped_manifest))
+    inventory = registry.local_inventory_snapshot(manifest_path=str(scoped_manifest), limit=50)
+
+    assert manifest["status"] == "success"
+    assert Path(str(manifest["path"])).resolve() == scoped_manifest.resolve()
+    assert Path(str(manifest["workspace_root"])).resolve() == scoped_root.resolve()
+    assert inventory["status"] == "success"
+    assert Path(str(inventory["manifest"]["path"])).resolve() == scoped_manifest.resolve()
+    assert any(
+        Path(str(row.get("path", ""))).resolve() == scoped_model.resolve()
+        for row in inventory.get("items", [])
+        if isinstance(row, dict)
+    )

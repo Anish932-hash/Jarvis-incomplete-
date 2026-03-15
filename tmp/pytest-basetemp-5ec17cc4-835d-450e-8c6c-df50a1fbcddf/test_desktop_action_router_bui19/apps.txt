@@ -1,0 +1,3 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Microsoft PowerPoint                      Microsoft.Office.PowerPoint 2502.0               winget

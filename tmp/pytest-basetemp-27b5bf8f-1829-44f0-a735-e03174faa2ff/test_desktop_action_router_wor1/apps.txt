@@ -1,0 +1,4 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Google Chrome                             Google.Chrome.EXE            145.0                winget
+Microsoft Visual Studio Code             Microsoft.VisualStudioCode   1.105                winget

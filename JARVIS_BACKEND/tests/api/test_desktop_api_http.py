@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -25,6 +26,10 @@ class FakeDesktopService:
         self.missions: Dict[str, Dict[str, Any]] = {}
         self.rollbacks: Dict[str, Dict[str, Any]] = {}
         self.goal_to_mission: Dict[str, str] = {}
+        self.provider_update_calls: list[Dict[str, Any]] = []
+        self.provider_verify_calls: list[Dict[str, Any]] = []
+        self.provider_recovery_calls: list[Dict[str, Any]] = []
+        self.model_setup_scope_calls: list[Dict[str, Any]] = []
         self.oauth_maintenance: Dict[str, Any] = {
             "status": "idle",
             "last_run_at": "",
@@ -536,6 +541,99 @@ class FakeDesktopService:
                         "verified_successes": 2,
                     }
                 },
+            },
+        ]
+        self.desktop_mission_items: list[Dict[str, Any]] = [
+            {
+                "mission_id": "dm_pause_wizard_1",
+                "status": "paused",
+                "mission_kind": "wizard",
+                "resume_action": "complete_wizard_flow",
+                "resume_signature": "wizard-resume-1",
+                "surface_signature": "surface-uac-1",
+                "app_name": "installer",
+                "anchor_window_title": "Setup Wizard",
+                "blocking_window_title": "User Account Control",
+                "stop_reason_code": "elevation_consent_required",
+                "stop_reason": "Administrator approval is still required before the installer can continue.",
+                "approval_kind": "elevation_consent",
+                "dialog_kind": "elevation_prompt",
+                "risk_level": "high",
+                "page_count": 2,
+                "pages_completed": 1,
+                "requested_target_count": 0,
+                "resolved_target_count": 0,
+                "remaining_target_count": 0,
+                "pause_count": 1,
+                "resume_attempts": 0,
+                "latest_result_status": "partial",
+                "latest_result_message": "Installer paused on administrator approval.",
+                "warnings": ["Administrator approval is still required before the installer can continue."],
+                "recommended_actions": ["resume_mission"],
+                "resume_contract": {
+                    "mission_id": "dm_pause_wizard_1",
+                    "mission_kind": "wizard",
+                    "resume_action": "complete_wizard_flow",
+                    "resume_strategy": "reacquire_app_surface",
+                    "resume_signature": "wizard-resume-1",
+                    "resume_payload": {
+                        "action": "complete_wizard_flow",
+                        "app_name": "installer",
+                        "mission_id": "dm_pause_wizard_1",
+                        "mission_kind": "wizard",
+                    },
+                    "resume_preconditions": ["approve_elevation_request"],
+                },
+                "blocking_surface": {
+                    "mission_id": "dm_pause_wizard_1",
+                    "mission_kind": "wizard",
+                    "resume_action": "complete_wizard_flow",
+                    "approval_kind": "elevation_consent",
+                    "dialog_kind": "elevation_prompt",
+                    "window_title": "User Account Control",
+                    "recommended_actions": ["resume_mission"],
+                },
+                "final_page": {"screen_hash": "wizard_uac_dialog"},
+                "page_history_tail": [{"page_index": 1, "status": "blocked"}],
+                "created_at": "2026-03-14T08:00:00+00:00",
+                "updated_at": "2026-03-14T08:10:00+00:00",
+                "last_resume_at": "",
+                "completed_at": "",
+            },
+            {
+                "mission_id": "dm_completed_form_1",
+                "status": "completed",
+                "mission_kind": "form",
+                "resume_action": "complete_form_flow",
+                "resume_signature": "form-resume-1",
+                "surface_signature": "surface-settings-1",
+                "app_name": "settings",
+                "anchor_window_title": "Settings",
+                "blocking_window_title": "",
+                "stop_reason_code": "",
+                "stop_reason": "",
+                "approval_kind": "",
+                "dialog_kind": "",
+                "risk_level": "medium",
+                "page_count": 2,
+                "pages_completed": 2,
+                "requested_target_count": 2,
+                "resolved_target_count": 2,
+                "remaining_target_count": 0,
+                "pause_count": 1,
+                "resume_attempts": 1,
+                "latest_result_status": "success",
+                "latest_result_message": "Settings flow completed.",
+                "warnings": [],
+                "recommended_actions": [],
+                "resume_contract": {},
+                "blocking_surface": {},
+                "final_page": {"screen_hash": "settings_done"},
+                "page_history_tail": [{"page_index": 2, "status": "completed"}],
+                "created_at": "2026-03-14T07:50:00+00:00",
+                "updated_at": "2026-03-14T08:05:00+00:00",
+                "last_resume_at": "2026-03-14T08:04:00+00:00",
+                "completed_at": "2026-03-14T08:05:00+00:00",
             },
         ]
         self.desktop_workflow_catalog_items: list[Dict[str, Any]] = [
@@ -2709,7 +2807,134 @@ class FakeDesktopService:
             ],
         }
 
-    def model_local_inventory(self, *, task: str = "", limit: int = 200) -> Dict[str, Any]:
+    def _resolve_model_setup_scope(
+        self,
+        *,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, str]:
+        clean_manifest = str(manifest_path or "").strip().replace("\\", "/")
+        clean_workspace = str(workspace_root or "").strip().replace("\\", "/")
+        if not clean_workspace and clean_manifest:
+            manifest_parts = [part for part in clean_manifest.split("/") if part]
+            if len(manifest_parts) >= 2:
+                if manifest_parts[-2].lower() == "jarvis_backend":
+                    clean_workspace = "/".join(manifest_parts[:-2])
+                else:
+                    clean_workspace = "/".join(manifest_parts[:-1])
+        if not clean_workspace:
+            clean_workspace = "E:/J.A.R.V.I.S"
+        if not clean_manifest:
+            clean_manifest = f"{clean_workspace}/JARVIS_BACKEND/Models to Download.txt"
+        return {
+            "manifest_path": clean_manifest,
+            "workspace_root": clean_workspace,
+            "scope_key": f"{clean_workspace.lower()}::{clean_manifest.lower()}",
+        }
+
+    def _record_model_setup_scope(
+        self,
+        route: str,
+        *,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, str]:
+        scope = self._resolve_model_setup_scope(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        self.model_setup_scope_calls.append({"route": route, **scope})
+        return scope
+
+    def _build_model_setup_manual_run(
+        self,
+        *,
+        task: str = "",
+        manifest_path: str = "",
+        workspace_root: str = "",
+        status: str = "success",
+        run_id: str = "manual-run-demo",
+    ) -> Dict[str, Any]:
+        scope = self._resolve_model_setup_scope(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        return {
+            "status": status,
+            "run_id": run_id,
+            "task": task,
+            "manifest_path": scope["manifest_path"],
+            "workspace_root": scope["workspace_root"],
+            "scope_key": scope["scope_key"],
+            "selected_count": 1,
+            "selected_item_keys": ["manual-convert-qwen"],
+            "planned_count": 1,
+            "success_count": 1 if status == "success" else 0,
+            "warning_count": 0,
+            "error_count": 0,
+            "blocked_count": 0,
+            "cancelled_count": 0,
+            "step_success_count": 1 if status == "success" else 0,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "created_at": "2026-03-15T08:04:00+00:00",
+            "updated_at": "2026-03-15T08:05:00+00:00",
+            "message": "manual pipeline run ready",
+            "progress": {"completed_items": 1, "total_items": 1, "percent": 100.0},
+            "items": [],
+        }
+
+    def _build_model_setup_install_run(
+        self,
+        *,
+        task: str = "",
+        manifest_path: str = "",
+        workspace_root: str = "",
+        status: str = "success",
+        run_id: str = "install-run-demo",
+    ) -> Dict[str, Any]:
+        scope = self._resolve_model_setup_scope(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        return {
+            "status": status,
+            "run_id": run_id,
+            "task": task,
+            "manifest_path": scope["manifest_path"],
+            "workspace_root": scope["workspace_root"],
+            "scope_key": scope["scope_key"],
+            "selected_count": 1,
+            "selected_item_keys": ["reasoning-llama"],
+            "requested_item_keys": ["reasoning-llama"],
+            "success_count": 1 if status == "success" else 0,
+            "error_count": 0,
+            "skipped_count": 0,
+            "blocked_count": 0,
+            "cancelled_count": 0,
+            "verified_count": 1 if status == "success" else 0,
+            "observed_count": 1 if status == "success" else 0,
+            "verification_error_count": 0,
+            "created_at": "2026-03-15T08:04:00+00:00",
+            "updated_at": "2026-03-15T08:05:00+00:00",
+            "message": "install run ready",
+            "progress": {"completed_items": 1, "total_items": 1, "percent": 100.0},
+            "items": [],
+        }
+
+    def model_local_inventory(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_local_inventory",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
         bounded = max(1, min(int(limit), 2000))
         items = [
             {
@@ -2775,6 +3000,8 @@ class FakeDesktopService:
             "status": "success",
             "task": clean_task,
             "limit": bounded,
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
             "task_counts": task_counts,
             "launch_summary": {
                 "profile_count": 2 if not clean_task else int(launch_by_task.get(clean_task, {}).get("profile_count", 0)),
@@ -2789,6 +3016,12 @@ class FakeDesktopService:
             },
             "runtime": {"status": "success", "count": len(items)},
             "bridge_profiles": self.model_bridge_profiles(task=clean_task or "reasoning", limit=min(64, bounded)).get("profiles", []),
+            "manifest": {
+                "status": "success",
+                "path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+                "model_count": len(items),
+            },
             "provider_credentials": {
                 "status": "success",
                 "providers": {
@@ -2798,6 +3031,1544 @@ class FakeDesktopService:
                     "local": {"provider": "local", "ready": True, "present": True},
                 },
             },
+        }
+
+    def model_setup_workspace(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_workspace",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = refresh_provider_credentials
+        _ = limit
+        directories = [
+            {
+                "key": "directory:e:/j.a.r.v.i.s/all_rounder",
+                "name": "all_rounder",
+                "task": "reasoning",
+                "path": "E:/J.A.R.V.I.S/all_rounder",
+                "workspace_relative_path": "all_rounder",
+                "present": True,
+                "missing": False,
+                "aliases": ["all_rounder"],
+            },
+            {
+                "key": "directory:e:/j.a.r.v.i.s/custom_intents",
+                "name": "custom_intent",
+                "task": "intent",
+                "path": "E:/J.A.R.V.I.S/custom_intents",
+                "workspace_relative_path": "custom_intents",
+                "present": False,
+                "missing": True,
+                "aliases": ["custom_intent", "custom_intents"],
+            },
+        ]
+        return {
+            "status": "success",
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
+            "directories": directories,
+            "directory_actions": [
+                {
+                    "kind": "create_directory",
+                    "name": "custom_intent",
+                    "task": "intent",
+                    "path": "E:/J.A.R.V.I.S/custom_intents",
+                    "workspace_relative_path": "custom_intents",
+                    "aliases": ["custom_intent", "custom_intents"],
+                    "safe": True,
+                    "present": False,
+                }
+            ],
+            "required_providers": [
+                {"provider": "groq", "required_by_manifest": True, "present": True, "ready": True, "source": "env"},
+                {
+                    "provider": "elevenlabs",
+                    "required_by_manifest": True,
+                    "present": True,
+                    "ready": False,
+                    "source": "config",
+                    "missing_requirements": ["ELEVENLABS_VOICE_ID"],
+                },
+            ],
+            "recommendations": [
+                "Create 1 missing manifest directory before placing new local models.",
+            ],
+            "summary": {
+                "directory_count": 2,
+                "present_directory_count": 1,
+                "missing_directory_count": 1,
+                "required_provider_count": 2,
+                "ready_required_provider_count": 1,
+                "missing_required_provider_count": 1,
+                "model_count": 4,
+                "present_model_count": 2,
+                "missing_model_count": 2,
+                "workspace_ready": False,
+                "stack_ready": False,
+                "readiness_score": 56,
+            },
+            "manifest": {
+                "status": "success",
+                "path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+                "model_count": 4,
+                "directory_count": 2,
+                "provider_count": 2,
+                "providers": ["groq", "elevenlabs"],
+                "directories": directories,
+            },
+            "inventory": self.model_local_inventory(limit=12, manifest_path=scope["manifest_path"], workspace_root=scope["workspace_root"]),
+            "provider_credentials": self.model_local_inventory(
+                limit=12,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ).get("provider_credentials", {}),
+        }
+
+    def model_setup_workspace_scaffold(
+        self,
+        *,
+        dry_run: bool = False,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_workspace_scaffold",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = refresh_provider_credentials
+        _ = limit
+        workspace = self.model_setup_workspace(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        action_status = "planned" if dry_run else "created"
+        action_message = "directory would be created" if dry_run else "directory created"
+        actions = [
+            {
+                "kind": "create_directory",
+                "name": "custom_intent",
+                "task": "intent",
+                "path": "E:/J.A.R.V.I.S/custom_intents",
+                "workspace_relative_path": "custom_intents",
+                "aliases": ["custom_intent", "custom_intents"],
+                "safe": True,
+                "present": False,
+                "status": action_status,
+                "message": action_message,
+            }
+        ]
+        if not dry_run:
+            workspace = dict(workspace)
+            workspace["summary"] = dict(workspace.get("summary", {}))
+            workspace["summary"]["present_directory_count"] = 2
+            workspace["summary"]["missing_directory_count"] = 0
+            workspace["summary"]["workspace_ready"] = False
+            workspace["summary"]["readiness_score"] = 69
+        return {
+            "status": "success",
+            "dry_run": bool(dry_run),
+            "action_count": len(actions),
+            "created_count": 0 if dry_run else 1,
+            "existing_count": 0,
+            "blocked_count": 0,
+            "error_count": 0,
+            "actions": actions,
+            "workspace": workspace,
+            "inventory": self.model_local_inventory(
+                limit=12,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "provider_credentials": self.model_local_inventory(
+                limit=12,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ).get("provider_credentials", {}),
+            "setup_plan": {
+                "status": "success",
+                "summary": {"planned_count": 2},
+                "items": [],
+            },
+        }
+
+    def model_setup_mission(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = refresh_provider_credentials
+        _ = limit
+        workspace = self.model_setup_workspace(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        stored_mission = {
+            "mission_id": "msm_demo_scope",
+            "status": "blocked",
+            "mission_status": "manual",
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
+            "resume_ready": False,
+            "manual_attention_required": True,
+            "recovery_profile": "provider_credentials",
+            "recovery_hint": "Configure elevenlabs",
+            "auto_resume_candidate": False,
+            "resume_trigger": "manual_attention",
+            "resume_blockers": ["provider_credentials"],
+            "auto_resume_reason": "Provider credentials still need to be configured and verified.",
+            "ready_action_count": 2,
+            "manual_action_count": 1,
+            "blocked_action_count": 1,
+            "launch_count": 1,
+            "resume_count": 0,
+            "updated_at": "2026-03-15T08:01:30+00:00",
+        }
+        auto_resume_candidate = {
+            "mission_id": "msm_auto_scope",
+            "status": "resume_ready",
+            "mission_status": "ready",
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
+            "resume_ready": True,
+            "manual_attention_required": False,
+            "recovery_profile": "resume_ready",
+            "recovery_hint": "Resume the next auto-runnable local-model setup actions.",
+            "auto_resume_candidate": True,
+            "resume_trigger": "ready_now",
+            "resume_blockers": [],
+            "auto_resume_reason": "Auto-runnable setup actions are ready right now.",
+            "ready_action_count": 1,
+            "manual_action_count": 0,
+            "blocked_action_count": 0,
+            "launch_count": 0,
+            "resume_count": 1,
+            "updated_at": "2026-03-15T08:03:15+00:00",
+        }
+        mission_history = {
+            "status": "success",
+            "count": 2,
+            "total": 2,
+            "items": [stored_mission, auto_resume_candidate],
+            "status_counts": {"blocked": 1, "resume_ready": 1},
+            "recovery_profile_counts": {"provider_credentials": 1, "resume_ready": 1},
+            "resume_ready_count": 1,
+            "manual_attention_count": 1,
+            "running_count": 0,
+            "auto_resume_candidate_count": 1,
+            "latest_resume_ready": auto_resume_candidate,
+            "latest_attention_required": stored_mission,
+            "latest_running": None,
+            "latest_auto_resume_candidate": auto_resume_candidate,
+        }
+        return {
+            "status": "success",
+            "generated_at": "2026-03-15T08:00:00+00:00",
+            "mission_status": "ready",
+            "summary": {
+                "action_count": 4,
+                "ready_action_count": 2,
+                "manual_action_count": 1,
+                "blocked_action_count": 1,
+                "in_progress_count": 0,
+                "launch_recommended": True,
+                "workspace_ready": False,
+                "stack_ready": False,
+                "readiness_score": 56,
+            },
+            "recommendations": [
+                "Create missing manifest directories",
+                "Run auto-installable model setup tasks",
+            ],
+            "actions": [
+                {
+                    "id": "scaffold_workspace",
+                    "kind": "scaffold_workspace",
+                    "stage": "workspace",
+                    "title": "Create missing manifest directories",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "item_count": 1,
+                },
+                {
+                    "id": "configure_provider:elevenlabs",
+                    "kind": "configure_provider_credentials",
+                    "stage": "provider",
+                    "title": "Configure elevenlabs",
+                    "status": "manual",
+                    "auto_runnable": False,
+                    "provider": "elevenlabs",
+                    "blockers": ["ELEVENLABS_VOICE_ID"],
+                },
+                {
+                    "id": "launch_setup_install:auto",
+                    "kind": "launch_setup_install",
+                    "stage": "setup",
+                    "title": "Run auto-installable model setup tasks",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "item_count": 2,
+                    "item_keys": ["embedding-all-mpnet-base-v2", "stt-whisper-large-v3"],
+                },
+                {
+                    "id": "review_manual_pipeline_blockers",
+                    "kind": "review_manual_pipeline_blockers",
+                    "stage": "manual_review",
+                    "title": "Review blocked manual model tasks",
+                    "status": "blocked",
+                    "auto_runnable": False,
+                    "blockers": ["A verified Hugging Face access token is required before this source can be downloaded."],
+                },
+            ],
+            "workspace": workspace,
+            "setup_plan": {
+                "status": "success",
+                "summary": {"planned_count": 3, "auto_installable_count": 2, "manual_count": 1},
+            },
+            "preflight": {
+                "status": "success",
+                "summary": {"blocked_count": 0},
+            },
+            "manual_pipeline": {
+                "status": "success",
+                "summary": {"ready_count": 0, "blocked_count": 1},
+            },
+            "install_runs": {"status": "success", "active_count": 0, "items": []},
+            "manual_runs": {"status": "success", "active_count": 0, "items": []},
+            "stored_mission": stored_mission,
+            "mission_history": mission_history,
+            "resume_advice": {
+                "status": "blocked",
+                "can_resume_now": False,
+                "can_auto_resume_now": False,
+                "auto_resume_candidate": False,
+                "resume_ready": False,
+                "waiting_on_active_runs": False,
+                "manual_attention_required": True,
+                "recovery_profile": "provider_credentials",
+                "resume_trigger": "manual_attention",
+                "resume_blockers": ["provider_credentials"],
+                "auto_resume_reason": "Provider credentials still need to be configured and verified.",
+                "recovery_hint": "Configure elevenlabs",
+                "active_run_count": 0,
+                "selected_action_ids": [],
+                "selected_action_count": 0,
+                "resolved_mission": stored_mission,
+                "message": "Provider credentials still need to be configured and verified.",
+                "mission_id": "msm_demo_scope",
+            },
+        }
+
+    def model_setup_mission_launch(
+        self,
+        *,
+        dry_run: bool = False,
+        selected_action_ids: Optional[List[str]] = None,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_launch",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = selected_action_ids
+        _ = continue_on_error
+        _ = limit
+        mission = self.model_setup_mission(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        result_status = "planned" if dry_run else "success"
+        item_status = "planned" if dry_run else "success"
+        return {
+            "status": result_status,
+            "generated_at": "2026-03-15T08:02:00+00:00",
+            "dry_run": bool(dry_run),
+            "executed_count": 2,
+            "skipped_count": 0,
+            "error_count": 0,
+            "items": [
+                {
+                    "action_id": "scaffold_workspace",
+                    "kind": "scaffold_workspace",
+                    "status": item_status,
+                    "ok": True,
+                },
+                {
+                    "action_id": "launch_setup_install:auto",
+                    "kind": "launch_setup_install",
+                    "status": item_status,
+                    "ok": True,
+                },
+            ],
+            "mission": mission,
+            "updated_mission": mission,
+            "workspace": self.model_setup_workspace(
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "setup_plan": mission["setup_plan"],
+            "mission_record": mission["stored_mission"],
+            "mission_history": mission["mission_history"],
+            "resume_advice": mission["resume_advice"],
+        }
+
+    def model_setup_mission_history(
+        self,
+        *,
+        limit: int = 20,
+        mission_id: str = "",
+        status: str = "",
+        recovery_profile: str = "",
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_history",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = mission_id
+        _ = status
+        _ = recovery_profile
+        _ = current_scope
+        mission = self.model_setup_mission(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        history = dict(mission["mission_history"])
+        history["filters"] = {
+            "manifest_path": scope["manifest_path"],
+            "workspace_root": scope["workspace_root"],
+        }
+        return history
+
+    def model_setup_mission_resume(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_resume",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = mission_id
+        _ = continue_on_error
+        _ = limit
+        _ = refresh_provider_credentials
+        payload = self.model_setup_mission_launch(
+            dry_run=dry_run,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        payload["message"] = "resumed setup mission"
+        payload["resolved_mission"] = self.model_setup_mission(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )["stored_mission"]
+        payload["resume_advice"] = self.model_setup_mission_resume_advice(
+            mission_id=mission_id,
+            limit=limit,
+            refresh_provider_credentials=refresh_provider_credentials,
+            current_scope=not bool(mission_id),
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        return payload
+
+    def model_setup_mission_resume_advice(
+        self,
+        *,
+        mission_id: str = "",
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_resume_advice",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = refresh_provider_credentials
+        mission = self.model_setup_mission(
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        blocked = dict(mission["resume_advice"])
+        blocked["mission"] = mission
+        blocked["current_scope"] = bool(current_scope)
+        blocked["mission_id"] = str(mission_id or blocked.get("mission_id") or "msm_demo_scope")
+        if str(mission_id or "").strip() == "msm_auto_scope":
+            resolved = mission["mission_history"]["latest_auto_resume_candidate"]
+            return {
+                "status": "ready",
+                "can_resume_now": True,
+                "can_auto_resume_now": True,
+                "auto_resume_candidate": True,
+                "resume_ready": True,
+                "waiting_on_active_runs": False,
+                "manual_attention_required": False,
+                "recovery_profile": "resume_ready",
+                "resume_trigger": "ready_now",
+                "resume_blockers": [],
+                "auto_resume_reason": "Auto-runnable setup actions are ready right now.",
+                "recovery_hint": "Resume the next auto-runnable local-model setup actions.",
+                "active_run_count": 0,
+                "selected_action_ids": ["launch_setup_install:auto"],
+                "selected_action_count": 1,
+                "resolved_mission": resolved,
+                "mission": mission,
+                "message": "The stored model setup mission can resume immediately.",
+                "current_scope": bool(current_scope),
+                "mission_id": "msm_auto_scope",
+            }
+        return blocked
+
+    def auto_resume_model_setup_mission(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "auto_resume_model_setup_mission",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        advice = self.model_setup_mission_resume_advice(
+            mission_id=mission_id,
+            limit=limit,
+            refresh_provider_credentials=refresh_provider_credentials,
+            current_scope=current_scope,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        if not bool(advice.get("can_auto_resume_now", False)):
+            return {
+                "status": str(advice.get("status", "") or "blocked"),
+                "dry_run": bool(dry_run),
+                "auto_resume_attempted": False,
+                "auto_resume_triggered": False,
+                "initial_resume_advice": advice,
+                "resume_advice": advice,
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "continue_followup_actions_status": "skipped",
+                "continued_action_ids": [],
+                "executed_action_ids": [],
+                "continuation": {
+                    "status": "skipped",
+                    "enabled": bool(continue_followup_actions),
+                    "max_waves": max(0, min(int(max_followup_waves), 8)),
+                    "waves_executed": 0,
+                    "continued_action_ids": [],
+                    "stop_reason": "no_initial_auto_resume_actions",
+                    "final_ready_action_ids": [],
+                    "wave_summaries": [],
+                },
+                "message": str(advice.get("message", "") or "No auto-resumable setup actions are ready right now."),
+                "resolved_mission": advice.get("resolved_mission", {}) if isinstance(advice.get("resolved_mission", {}), dict) else {},
+                "mission": advice.get("mission", {}) if isinstance(advice.get("mission", {}), dict) else {},
+            }
+        payload = self.model_setup_mission_resume(
+            mission_id=mission_id,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+            limit=limit,
+            refresh_provider_credentials=refresh_provider_credentials,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        payload["auto_resume_attempted"] = True
+        payload["auto_resume_triggered"] = True
+        payload["initial_resume_advice"] = advice
+        payload["continued_action_ids"] = ["verify_provider:huggingface"] if bool(continue_followup_actions) else []
+        payload["executed_action_ids"] = [
+            *[str(item).strip() for item in payload.get("selected_action_ids", []) if str(item).strip()],
+            *payload["continued_action_ids"],
+        ]
+        payload["continue_followup_actions_requested"] = bool(continue_followup_actions)
+        payload["continue_followup_actions_status"] = "success" if bool(continue_followup_actions) else "skipped"
+        payload["continuation"] = {
+            "status": "success" if bool(continue_followup_actions) else "skipped",
+            "enabled": bool(continue_followup_actions),
+            "max_waves": max(0, min(int(max_followup_waves), 8)),
+            "waves_executed": 1 if bool(continue_followup_actions) else 0,
+            "continued_action_ids": payload["continued_action_ids"],
+            "stop_reason": "no_ready_followup_actions" if bool(continue_followup_actions) else "disabled",
+            "final_ready_action_ids": [],
+            "wave_summaries": [
+                {
+                    "wave": 1,
+                    "status": "success",
+                    "selected_action_ids": payload["continued_action_ids"],
+                    "executed_count": len(payload["continued_action_ids"]),
+                    "skipped_count": 0,
+                    "error_count": 0,
+                    "message": "continued follow-up setup actions",
+                }
+            ] if bool(continue_followup_actions) else [],
+        }
+        payload["resume_advice"] = {
+            **advice,
+            "status": "idle",
+            "can_resume_now": False,
+            "can_auto_resume_now": False,
+            "auto_resume_candidate": False,
+            "selected_action_ids": [],
+            "selected_action_count": 0,
+            "message": "No additional auto-resumable setup actions are ready right now.",
+        }
+        payload["message"] = "auto-resumed setup mission and continued follow-up actions"
+        return payload
+
+    def model_setup_mission_recovery_sweep(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        max_auto_resume_passes: int = 3,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_recovery_sweep",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        advice = self.model_setup_mission_resume_advice(
+            mission_id=mission_id,
+            limit=limit,
+            refresh_provider_credentials=refresh_provider_credentials,
+            current_scope=current_scope,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        if not bool(advice.get("can_auto_resume_now", False)):
+            return {
+                "status": str(advice.get("status", "") or "idle"),
+                "message": str(advice.get("message", "") or "No auto-resumable setup actions are ready right now."),
+                "mission_id": str(mission_id or advice.get("mission_id") or "").strip(),
+                "dry_run": bool(dry_run),
+                "current_scope": bool(current_scope),
+                "continue_on_error": bool(continue_on_error),
+                "max_auto_resume_passes": max(1, min(int(max_auto_resume_passes), 8)),
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+                "history_before": self.model_setup_mission_history(limit=12, current_scope=current_scope),
+                "history_after": self.model_setup_mission_history(limit=12, current_scope=current_scope),
+                "initial_resume_advice": advice,
+                "final_resume_advice": advice,
+                "passes": [
+                    {
+                        "pass": 1,
+                        "mission_id": str(mission_id or advice.get("mission_id") or "").strip(),
+                        "advice_status": str(advice.get("status", "") or "idle"),
+                        "can_resume_now": bool(advice.get("can_resume_now", False)),
+                        "can_auto_resume_now": False,
+                        "resume_trigger": str(advice.get("resume_trigger", "") or "").strip(),
+                        "resume_blockers": list(advice.get("resume_blockers", [])) if isinstance(advice.get("resume_blockers", []), list) else [],
+                        "selected_action_ids": [],
+                        "message": str(advice.get("message", "") or "").strip(),
+                        "status": str(advice.get("status", "") or "idle"),
+                    }
+                ],
+                "passes_executed": 0,
+                "auto_resume_attempted_count": 0,
+                "auto_resume_triggered_count": 0,
+                "continued_action_ids": [],
+                "executed_action_ids": [],
+                "executed_count": 0,
+                "skipped_count": 0,
+                "error_count": 0,
+                "stop_reason": "no_auto_resume_candidate",
+                "final_payload": {},
+            }
+        payload = self.auto_resume_model_setup_mission(
+            mission_id=mission_id,
+            dry_run=dry_run,
+            continue_on_error=continue_on_error,
+            limit=limit,
+            refresh_provider_credentials=refresh_provider_credentials,
+            current_scope=current_scope,
+            continue_followup_actions=continue_followup_actions,
+            max_followup_waves=max_followup_waves,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        return {
+            "status": "planned" if bool(dry_run) else "success",
+            "message": "Recovery sweep auto-resumed the stored setup mission.",
+            "mission_id": str(mission_id or advice.get("mission_id") or "msm_auto_scope").strip(),
+            "dry_run": bool(dry_run),
+            "current_scope": bool(current_scope),
+            "continue_on_error": bool(continue_on_error),
+            "max_auto_resume_passes": max(1, min(int(max_auto_resume_passes), 8)),
+            "continue_followup_actions_requested": bool(continue_followup_actions),
+            "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+            "history_before": self.model_setup_mission_history(
+                limit=12,
+                current_scope=current_scope,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "history_after": self.model_setup_mission_history(
+                limit=12,
+                current_scope=current_scope,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "initial_resume_advice": advice,
+            "final_resume_advice": payload.get("resume_advice", {}) if isinstance(payload.get("resume_advice", {}), dict) else {},
+            "passes": [
+                {
+                    "pass": 1,
+                    "mission_id": str(mission_id or advice.get("mission_id") or "msm_auto_scope").strip(),
+                    "advice_status": str(advice.get("status", "") or "ready"),
+                    "can_resume_now": bool(advice.get("can_resume_now", False)),
+                    "can_auto_resume_now": bool(advice.get("can_auto_resume_now", False)),
+                    "resume_trigger": str(advice.get("resume_trigger", "") or "").strip(),
+                    "resume_blockers": list(advice.get("resume_blockers", [])) if isinstance(advice.get("resume_blockers", []), list) else [],
+                    "selected_action_ids": list(advice.get("selected_action_ids", [])) if isinstance(advice.get("selected_action_ids", []), list) else [],
+                    "continued_action_ids": list(payload.get("continued_action_ids", [])) if isinstance(payload.get("continued_action_ids", []), list) else [],
+                    "auto_resume_triggered": bool(payload.get("auto_resume_triggered", False)),
+                    "continue_followup_actions_status": str(payload.get("continue_followup_actions_status", "") or "skipped"),
+                    "executed_count": int(payload.get("executed_count", 0) or 0),
+                    "skipped_count": int(payload.get("skipped_count", 0) or 0),
+                    "error_count": int(payload.get("error_count", 0) or 0),
+                    "status": str(payload.get("status", "") or "success"),
+                    "message": str(payload.get("message", "") or "").strip(),
+                }
+            ],
+            "passes_executed": 1,
+            "auto_resume_attempted_count": 1,
+            "auto_resume_triggered_count": 1 if bool(payload.get("auto_resume_triggered", False)) else 0,
+            "continued_action_ids": list(payload.get("continued_action_ids", [])) if isinstance(payload.get("continued_action_ids", []), list) else [],
+            "executed_action_ids": list(payload.get("executed_action_ids", [])) if isinstance(payload.get("executed_action_ids", []), list) else [],
+            "executed_count": int(payload.get("executed_count", 0) or 0),
+            "skipped_count": int(payload.get("skipped_count", 0) or 0),
+            "error_count": int(payload.get("error_count", 0) or 0),
+            "stop_reason": "no_auto_resume_candidate",
+            "final_payload": payload,
+        }
+
+    def model_setup_mission_recovery_watchdog(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        max_missions: int = 6,
+        max_auto_resumes: int = 2,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_mission_recovery_watchdog",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = mission_id
+        _ = dry_run
+        _ = continue_on_error
+        _ = limit
+        _ = refresh_provider_credentials
+        _ = current_scope
+        _ = max_missions
+        _ = max_auto_resumes
+        _ = continue_followup_actions
+        _ = max_followup_waves
+        payload = self.auto_resume_model_setup_mission(
+            mission_id="msm_auto_scope",
+            dry_run=False,
+            continue_on_error=True,
+            limit=200,
+            current_scope=False,
+            continue_followup_actions=True,
+            max_followup_waves=3,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        watchdog_run = {
+            "run_id": "mswd_demo",
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
+            "scope_label": "J.A.R.V.I.S::Models to Download.txt",
+            "status": "success",
+            "message": "Recovery watchdog auto-resumed 1 stored mission.",
+            "source": "watchdog",
+            "dry_run": False,
+            "current_scope": bool(current_scope),
+            "continue_on_error": bool(continue_on_error),
+            "continue_followup_actions_requested": bool(continue_followup_actions),
+            "max_missions": max(1, min(int(max_missions), 64)),
+            "max_auto_resumes": max(0, min(int(max_auto_resumes), 64)),
+            "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+            "evaluated_count": 1,
+            "auto_resume_attempted_count": 1,
+            "auto_resume_triggered_count": 1,
+            "ready_count": 0,
+            "watch_count": 0,
+            "stalled_count": 0,
+            "blocked_count": 0,
+            "idle_count": 1,
+            "complete_count": 0,
+            "error_count": 0,
+            "triggered_mission_ids": ["msm_auto_scope"],
+            "ready_mission_ids": [],
+            "watched_mission_ids": [],
+            "stalled_mission_ids": [],
+            "blocked_mission_ids": [],
+            "scope_counts": {"J.A.R.V.I.S::Models to Download.txt": 1},
+            "latest_triggered_scope": scope,
+            "latest_triggered_scope_label": "J.A.R.V.I.S::Models to Download.txt",
+            "latest_triggered_status": "success",
+            "latest_triggered_message": str(payload.get("message", "") or "auto-resumed setup mission"),
+            "latest_triggered_mission_id": "msm_auto_scope",
+            "stop_reason": "auto_resume_triggered",
+            "created_at": "2026-03-15T10:05:00+00:00",
+            "updated_at": "2026-03-15T10:05:00+00:00",
+        }
+        watchdog_history = self.model_setup_recovery_watchdog_history(
+            limit=12,
+            current_scope=current_scope,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        return {
+            "status": "success",
+            "message": "Recovery watchdog auto-resumed 1 stored mission.",
+            "mission_id": "msm_auto_scope",
+            "dry_run": False,
+            "current_scope": bool(current_scope),
+            "continue_on_error": bool(continue_on_error),
+            "max_missions": max(1, min(int(max_missions), 64)),
+            "max_auto_resumes": max(0, min(int(max_auto_resumes), 64)),
+            "continue_followup_actions_requested": bool(continue_followup_actions),
+            "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+            "history_before": self.model_setup_mission_history(
+                limit=12,
+                current_scope=current_scope,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "history_after": self.model_setup_mission_history(
+                limit=12,
+                current_scope=current_scope,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+            "results": [
+                {
+                    "mission_id": "msm_auto_scope",
+                    "scope": scope,
+                    "scope_label": "J.A.R.V.I.S::Models to Download.txt",
+                    "stored_status": "running",
+                    "classification_before": "ready",
+                    "classification_after": "idle",
+                    "advice_status": "ready",
+                    "status": "success",
+                    "can_resume_now": True,
+                    "can_auto_resume_now": True,
+                    "auto_resume_candidate": True,
+                    "auto_resume_attempted": True,
+                    "auto_resume_triggered": True,
+                    "message": "Ready to continue immediately.",
+                    "result_message": str(payload.get("message", "") or "auto-resumed setup mission"),
+                }
+            ],
+            "evaluated_count": 1,
+            "auto_resume_attempted_count": 1,
+            "auto_resume_triggered_count": 1,
+            "ready_count": 0,
+            "watch_count": 0,
+            "stalled_count": 0,
+            "blocked_count": 0,
+            "idle_count": 1,
+            "complete_count": 0,
+            "error_count": 0,
+            "ready_mission_ids": [],
+            "watched_mission_ids": [],
+            "stalled_mission_ids": [],
+            "blocked_mission_ids": [],
+            "triggered_mission_ids": ["msm_auto_scope"],
+            "scope_counts": {"J.A.R.V.I.S::Models to Download.txt": 1},
+            "latest_triggered_payload": payload,
+            "watchdog_run": watchdog_run,
+            "watchdog_history": watchdog_history,
+            "stop_reason": "auto_resume_triggered",
+        }
+
+    def model_setup_recovery_watchdog_history(
+        self,
+        *,
+        limit: int = 20,
+        status: str = "",
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_recovery_watchdog_history",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = status
+        _ = current_scope
+        item = {
+            "run_id": "mswd_demo",
+            "workspace_root": scope["workspace_root"],
+            "manifest_path": scope["manifest_path"],
+            "scope_label": "J.A.R.V.I.S::Models to Download.txt",
+            "status": "success",
+            "message": "Recovery watchdog auto-resumed 1 stored mission.",
+            "auto_resume_triggered_count": 1,
+            "watch_count": 0,
+            "stalled_count": 0,
+            "updated_at": "2026-03-15T10:05:00+00:00",
+        }
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "items": [item],
+            "triggered_run_count": 1,
+            "watch_run_count": 0,
+            "stalled_run_count": 0,
+            "error_run_count": 0,
+            "latest_run": item,
+            "latest_triggered_run": item,
+            "filters": {
+                "workspace_root": scope["workspace_root"],
+                "manifest_path": scope["manifest_path"],
+            },
+        }
+
+    def reset_model_setup_recovery_watchdog_history(
+        self,
+        *,
+        run_id: str = "",
+        status: str = "",
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "reset_model_setup_recovery_watchdog_history",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        return {
+            "status": "success",
+            "removed": 1,
+            "filters": {
+                "run_id": str(run_id or "").strip(),
+                "status": str(status or "").strip(),
+                "workspace_root": scope["workspace_root"],
+                "manifest_path": scope["manifest_path"],
+            },
+        }
+
+    def model_setup_manual_pipeline(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_manual_pipeline",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = include_present
+        return {
+            "status": "success",
+            "task": task,
+            "selected_item_keys": list(item_keys or []),
+            "manifest_path": scope["manifest_path"],
+            "workspace_root": scope["workspace_root"],
+            "summary": {"ready_count": 1, "blocked_count": 0},
+            "items": [
+                {
+                    "key": "manual-convert-qwen",
+                    "name": "Convert Qwen artifact",
+                    "task": task or "reasoning",
+                    "status": "ready",
+                }
+            ],
+            "setup_plan": {"status": "success"},
+        }
+
+    def model_setup_manual_run_launch(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        limit: int = 200,
+        step_ids: Optional[List[str]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_manual_run_launch",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        run = self._build_model_setup_manual_run(
+            task=task or "reasoning",
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+            status="planned" if dry_run else "success",
+            run_id="manual-run-scope",
+        )
+        run["selected_item_keys"] = list(item_keys or ["manual-convert-qwen"])
+        run["selected_step_ids"] = list(step_ids or [])
+        run["dry_run"] = bool(dry_run)
+        run["force"] = bool(force)
+        return {
+            "status": "planned" if dry_run else "success",
+            "task": task,
+            "selected_item_keys": list(item_keys or []),
+            "selected_step_ids": list(step_ids or []),
+            "dry_run": bool(dry_run),
+            "force": bool(force),
+            "run": run,
+            "manual_pipeline": self.model_setup_manual_pipeline(
+                task=task,
+                item_keys=item_keys,
+                manifest_path=scope["manifest_path"],
+                workspace_root=scope["workspace_root"],
+            ),
+        }
+
+    def model_setup_manual_runs(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_manual_runs",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        run = self._build_model_setup_manual_run(
+            task="reasoning",
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+            run_id="manual-run-scope",
+        )
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "active_count": 0,
+            "items": [run][: max(1, int(limit))],
+            "filters": {
+                "manifest_path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+            },
+        }
+
+    def model_setup_install(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        include_present: bool = False,
+        limit: int = 200,
+        refresh_remote: bool = False,
+        remote_timeout_s: float = 6.0,
+        verify_integrity: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_install",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = force
+        _ = include_present
+        _ = refresh_remote
+        _ = remote_timeout_s
+        _ = verify_integrity
+        run = self._build_model_setup_install_run(
+            task=task or "reasoning",
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+            status="planned" if dry_run else "success",
+            run_id="install-run-scope",
+        )
+        run["requested_item_keys"] = list(item_keys or ["reasoning-llama"])
+        run["selected_item_keys"] = list(item_keys or ["reasoning-llama"])
+        run["dry_run"] = bool(dry_run)
+        return {
+            "status": "success",
+            "task": task,
+            "dry_run": bool(dry_run),
+            "install": run,
+            "preflight": {
+                "status": "success",
+                "summary": {"launchable_count": len(item_keys or ["reasoning-llama"])},
+                "manifest_path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+            },
+            "setup_plan": {"status": "success"},
+        }
+
+    def model_setup_install_launch(
+        self,
+        *,
+        task: str = "",
+        item_keys: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force: bool = False,
+        include_present: bool = False,
+        limit: int = 200,
+        refresh_remote: bool = False,
+        remote_timeout_s: float = 6.0,
+        verify_integrity: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_install_launch",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        _ = limit
+        _ = force
+        _ = include_present
+        _ = refresh_remote
+        _ = remote_timeout_s
+        _ = verify_integrity
+        run = self._build_model_setup_install_run(
+            task=task or "reasoning",
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+            status="planned" if dry_run else "success",
+            run_id="install-run-scope",
+        )
+        run["requested_item_keys"] = list(item_keys or ["reasoning-llama"])
+        run["selected_item_keys"] = list(item_keys or ["reasoning-llama"])
+        run["dry_run"] = bool(dry_run)
+        return {
+            "status": "planned" if dry_run else "success",
+            "task": task,
+            "dry_run": bool(dry_run),
+            "selected_item_keys": list(item_keys or ["reasoning-llama"]),
+            "requested_item_keys": list(item_keys or ["reasoning-llama"]),
+            "launch_item_keys": list(item_keys or ["reasoning-llama"]),
+            "launch_scope": "full",
+            "launchable_count": len(item_keys or ["reasoning-llama"]),
+            "deferred_count": 0,
+            "run": run,
+            "setup_plan": {"status": "success"},
+            "preflight": {
+                "status": "success",
+                "summary": {"launchable_count": len(item_keys or ["reasoning-llama"])},
+                "manifest_path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+            },
+        }
+
+    def model_setup_install_history(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_install_history",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        run = self._build_model_setup_install_run(
+            task="reasoning",
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+            run_id="install-run-scope",
+        )
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "active_count": 0,
+            "items": [run][: max(1, int(limit))],
+            "history_path": f"{scope['workspace_root']}/data/model_setup_install_history.jsonl",
+            "filters": {
+                "manifest_path": scope["manifest_path"],
+                "workspace_root": scope["workspace_root"],
+            },
+        }
+
+    def model_setup_install_runs(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        scope = self._record_model_setup_scope(
+            "model_setup_install_runs",
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        history = self.model_setup_install_history(
+            limit=limit,
+            manifest_path=scope["manifest_path"],
+            workspace_root=scope["workspace_root"],
+        )
+        history["filters"] = {
+            "manifest_path": scope["manifest_path"],
+            "workspace_root": scope["workspace_root"],
+        }
+        return history
+
+    def reset_model_setup_mission(self, *, mission_id: str = "", status: str = "") -> Dict[str, Any]:
+        _ = mission_id
+        _ = status
+        return {"status": "success", "removed": 1, "filters": {"mission_id": mission_id, "status": status}}
+
+    def update_provider_credentials(
+        self,
+        *,
+        provider: str,
+        api_key: str = "",
+        requirements: Optional[Dict[str, Any]] = None,
+        persist_plaintext: bool = True,
+        persist_encrypted: Optional[bool] = None,
+        overwrite_env: bool = True,
+        clear_api_key: bool = False,
+        verify_after_update: bool = False,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        continue_setup_recovery: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        include_coworker_status: bool = False,
+        refresh_remote: bool = False,
+        timeout_s: float = 8.0,
+    ) -> Dict[str, Any]:
+        self.provider_update_calls.append(
+            {
+                "provider": provider,
+                "api_key": api_key,
+                "requirements": dict(requirements or {}),
+                "persist_plaintext": persist_plaintext,
+                "persist_encrypted": persist_encrypted,
+                "overwrite_env": overwrite_env,
+                "clear_api_key": clear_api_key,
+                "verify_after_update": verify_after_update,
+                "task": task,
+                "limit": limit,
+                "include_present": include_present,
+                "item_keys": list(item_keys or []),
+                "continue_setup_recovery": continue_setup_recovery,
+                "continue_on_error": continue_on_error,
+                "continue_followup_actions": continue_followup_actions,
+                "max_followup_waves": max_followup_waves,
+                "include_coworker_status": include_coworker_status,
+                "refresh_remote": refresh_remote,
+                "timeout_s": timeout_s,
+            }
+        )
+        return {
+            "status": "success",
+            "provider": provider,
+            "verification_requested": bool(verify_after_update),
+            "verification_status": "success" if verify_after_update else "skipped",
+            "verification": {
+                "verified": bool(verify_after_update),
+                "summary": f"verified {provider}" if verify_after_update else f"saved {provider}",
+            },
+            "affected_item_keys": list(item_keys or []),
+            "affected_tasks": [task] if str(task or "").strip() else [],
+            "setup_recovery": {
+                "launchable_count": len(item_keys or []),
+                "ready_action_count": 1 if item_keys else 0,
+                "auto_runnable_ready_action_ids": ["install:reasoning-llama"] if item_keys else [],
+                "next_action": {
+                    "kind": "launch_setup_install",
+                    "title": "Install ready setup items",
+                },
+            },
+            "continue_setup_recovery_requested": continue_setup_recovery,
+            "continue_setup_recovery_status": "success" if continue_setup_recovery else "skipped",
+            "continue_followup_actions_requested": bool(continue_setup_recovery and continue_followup_actions),
+            "continue_followup_actions_status": "success" if continue_setup_recovery and continue_followup_actions else "skipped",
+            "recovery_launch": {
+                "status": "success" if continue_setup_recovery else "skipped",
+                "executed_count": 1 if continue_setup_recovery and item_keys else 0,
+                "selected_action_ids": ["install:reasoning-llama"] if continue_setup_recovery and item_keys else [],
+                "continued_action_ids": ["launch_setup_install:auto"] if continue_setup_recovery and continue_followup_actions and item_keys else [],
+                "continue_followup_actions_requested": bool(continue_setup_recovery and continue_followup_actions),
+                "continue_followup_actions_status": "success" if continue_setup_recovery and continue_followup_actions else "skipped",
+                "continuation": {
+                    "status": "success" if continue_setup_recovery and continue_followup_actions and item_keys else "skipped",
+                    "waves_executed": 1 if continue_setup_recovery and continue_followup_actions and item_keys else 0,
+                },
+                "setup_recovery": {
+                    "launchable_count": len(item_keys or []),
+                    "auto_runnable_ready_count": 1 if continue_setup_recovery and item_keys else 0,
+                    "auto_runnable_ready_action_ids": ["install:reasoning-llama"] if continue_setup_recovery and item_keys else [],
+                    "next_action": {
+                        "kind": "launch_setup_install",
+                        "title": "Install ready setup items",
+                    },
+                },
+            },
+            "workspace": {"status": "success"},
+            "setup_plan": {"status": "success"},
+            "preflight": {"status": "success", "summary": {"launchable_count": len(item_keys or [])}},
+            "manual_pipeline": {"status": "success"},
+            "mission": {"status": "success"},
+            "updated_mission": {"status": "success"},
+            "inventory": {"status": "success", "items": []},
+            "provider_credentials": {"providers": {provider: {"ready": True, "present": True}}},
+            "coworker_stack": {"status": "success"},
+            "coworker_recovery": {"status": "success"},
+        }
+
+    def verify_provider_credentials(
+        self,
+        *,
+        provider: str,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        force_refresh: bool = True,
+        timeout_s: float = 8.0,
+        continue_setup_recovery: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        include_coworker_status: bool = False,
+        refresh_remote: bool = False,
+    ) -> Dict[str, Any]:
+        self.provider_verify_calls.append(
+            {
+                "provider": provider,
+                "task": task,
+                "limit": limit,
+                "include_present": include_present,
+                "item_keys": list(item_keys or []),
+                "force_refresh": force_refresh,
+                "timeout_s": timeout_s,
+                "continue_setup_recovery": continue_setup_recovery,
+                "continue_on_error": continue_on_error,
+                "continue_followup_actions": continue_followup_actions,
+                "max_followup_waves": max_followup_waves,
+                "include_coworker_status": include_coworker_status,
+                "refresh_remote": refresh_remote,
+            }
+        )
+        return {
+            "status": "success",
+            "provider": provider,
+            "task": task,
+            "verification": {
+                "verified": True,
+                "summary": f"verified {provider}",
+            },
+            "affected_item_keys": list(item_keys or []),
+            "affected_tasks": [task] if str(task or "").strip() else [],
+            "setup_recovery": {
+                "launchable_count": len(item_keys or []),
+                "auto_runnable_ready_action_ids": ["install:reasoning-llama"] if item_keys else [],
+                "next_action": {
+                    "kind": "launch_setup_install",
+                    "title": "Install ready setup items",
+                },
+            },
+            "continue_setup_recovery_requested": continue_setup_recovery,
+            "continue_setup_recovery_status": "success" if continue_setup_recovery else "skipped",
+            "continue_followup_actions_requested": bool(continue_setup_recovery and continue_followup_actions),
+            "continue_followup_actions_status": "success" if continue_setup_recovery and continue_followup_actions else "skipped",
+            "recovery_launch": {
+                "status": "success" if continue_setup_recovery else "skipped",
+                "executed_count": 1 if continue_setup_recovery and item_keys else 0,
+                "selected_action_ids": ["install:reasoning-llama"] if continue_setup_recovery and item_keys else [],
+                "continued_action_ids": ["launch_setup_install:auto"] if continue_setup_recovery and continue_followup_actions and item_keys else [],
+                "continue_followup_actions_requested": bool(continue_setup_recovery and continue_followup_actions),
+                "continue_followup_actions_status": "success" if continue_setup_recovery and continue_followup_actions else "skipped",
+                "continuation": {
+                    "status": "success" if continue_setup_recovery and continue_followup_actions and item_keys else "skipped",
+                    "waves_executed": 1 if continue_setup_recovery and continue_followup_actions and item_keys else 0,
+                },
+                "setup_recovery": {
+                    "launchable_count": len(item_keys or []),
+                    "auto_runnable_ready_count": 1 if continue_setup_recovery and item_keys else 0,
+                    "auto_runnable_ready_action_ids": ["install:reasoning-llama"] if continue_setup_recovery and item_keys else [],
+                    "next_action": {
+                        "kind": "launch_setup_install",
+                        "title": "Install ready setup items",
+                    },
+                },
+            },
+            "workspace": {"status": "success"},
+            "setup_plan": {"status": "success"},
+            "preflight": {"status": "success", "summary": {"launchable_count": len(item_keys or [])}},
+            "manual_pipeline": {"status": "success"},
+            "mission": {"status": "success"},
+            "updated_mission": {"status": "success"},
+            "inventory": {"status": "success", "items": []},
+            "provider_credentials": {"providers": {provider: {"ready": True, "present": True}}},
+            "coworker_stack": {"status": "success"},
+            "coworker_recovery": {"status": "success"},
+        }
+
+    def provider_setup_recovery_launch(
+        self,
+        *,
+        provider: str,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        selected_action_ids: Optional[List[str]] = None,
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        refresh_provider_credentials: bool = False,
+        refresh_remote: bool = False,
+        timeout_s: float = 8.0,
+    ) -> Dict[str, Any]:
+        self.provider_recovery_calls.append(
+            {
+                "provider": provider,
+                "task": task,
+                "limit": limit,
+                "include_present": include_present,
+                "item_keys": list(item_keys or []),
+                "selected_action_ids": list(selected_action_ids or []),
+                "dry_run": dry_run,
+                "continue_on_error": continue_on_error,
+                "continue_followup_actions": continue_followup_actions,
+                "max_followup_waves": max_followup_waves,
+                "refresh_provider_credentials": refresh_provider_credentials,
+                "refresh_remote": refresh_remote,
+                "timeout_s": timeout_s,
+            }
+        )
+        selected_ids = list(selected_action_ids or ["install:reasoning-llama"])
+        return {
+            "status": "planned" if dry_run else "success",
+            "provider": provider,
+            "task": task,
+            "dry_run": dry_run,
+            "executed_count": 0 if dry_run else len(selected_ids),
+            "skipped_count": 0,
+            "error_count": 0,
+            "selected_action_ids": selected_ids,
+            "auto_selected_action_ids": ["install:reasoning-llama"],
+            "requested_action_ids": list(selected_action_ids or []),
+            "ignored_action_ids": [],
+            "continue_followup_actions_requested": continue_followup_actions,
+            "continue_followup_actions_status": "planned" if dry_run and continue_followup_actions else "success" if continue_followup_actions else "skipped",
+            "continued_action_ids": ["launch_setup_install:auto"] if continue_followup_actions and not dry_run else [],
+            "executed_action_ids": selected_ids + (["launch_setup_install:auto"] if continue_followup_actions and not dry_run else []),
+            "continuation": {
+                "status": "planned" if dry_run and continue_followup_actions else "success" if continue_followup_actions else "skipped",
+                "enabled": continue_followup_actions,
+                "waves_executed": 1 if continue_followup_actions else 0,
+                "continued_action_ids": ["launch_setup_install:auto"] if continue_followup_actions and not dry_run else [],
+                "max_waves": max_followup_waves,
+            },
+            "affected_item_keys": list(item_keys or []),
+            "affected_tasks": [task] if str(task or "").strip() else [],
+            "setup_recovery": {
+                "launchable_count": len(item_keys or []),
+                "auto_runnable_ready_count": 1,
+                "auto_runnable_ready_action_ids": ["install:reasoning-llama"],
+                "next_action": {
+                    "kind": "launch_setup_install",
+                    "title": "Install ready setup items",
+                },
+            },
+            "workspace": {"status": "success"},
+            "setup_plan": {"status": "success"},
+            "preflight": {"status": "success", "summary": {"launchable_count": len(item_keys or [])}},
+            "manual_pipeline": {"status": "success"},
+            "mission": {"status": "success"},
+            "updated_mission": {"status": "success"},
+            "inventory": {"status": "success", "items": []},
+            "provider_credentials": {"providers": {provider: {"ready": True, "present": True}}},
+            "provider_setup": {"provider": provider, "ready": True, "present": True},
+            "coworker_stack": {"status": "success"},
+            "coworker_recovery": {"status": "success"},
+            "message": f"executed provider recovery for {provider}",
         }
 
     def _launch_history_rows(self, *, profile_id: str, template_id: str) -> list[Dict[str, Any]]:
@@ -11079,6 +12850,238 @@ class FakeDesktopService:
             },
         }
 
+    def desktop_mission_status(
+        self,
+        *,
+        limit: int = 200,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+        stop_reason_code: str = "",
+    ) -> Dict[str, Any]:
+        rows = [dict(item) for item in self.desktop_mission_items]
+        if mission_id:
+            rows = [row for row in rows if str(row.get("mission_id", "")).strip() == mission_id]
+        if status:
+            rows = [row for row in rows if str(row.get("status", "")).strip().lower() == status.lower()]
+        if mission_kind:
+            rows = [row for row in rows if str(row.get("mission_kind", "")).strip().lower() == mission_kind.lower()]
+        if app_name:
+            rows = [
+                row
+                for row in rows
+                if app_name.lower() in str(row.get("app_name", "")).lower()
+                or app_name.lower() in str(row.get("anchor_window_title", "")).lower()
+                or app_name.lower() in str(row.get("blocking_window_title", "")).lower()
+            ]
+        if stop_reason_code:
+            rows = [
+                row
+                for row in rows
+                if str(row.get("stop_reason_code", "")).strip().lower() == stop_reason_code.lower()
+            ]
+
+        def recovery_profile_for(row: Dict[str, Any]) -> Dict[str, Any]:
+            status_value = str(row.get("status", "")).strip().lower()
+            approval_kind = str(row.get("approval_kind", "")).strip().lower()
+            dialog_kind = str(row.get("dialog_kind", "")).strip().lower()
+            stop_reason_value = str(row.get("stop_reason_code", "")).strip().lower()
+            secure_desktop_likely = bool(
+                isinstance(row.get("blocking_surface", {}), dict)
+                and row["blocking_surface"].get("secure_desktop_likely", False)
+            )
+            if status_value == "completed":
+                return {
+                    "recovery_profile": "completed",
+                    "recovery_hint": "This desktop mission is already complete.",
+                    "recovery_priority": 5,
+                    "resume_ready": False,
+                    "manual_attention_required": False,
+                    "approval_blocked": False,
+                }
+            if status_value == "error":
+                return {
+                    "recovery_profile": "failed_retry",
+                    "recovery_hint": "Inspect the last failure and validate the target surface before retrying.",
+                    "recovery_priority": 35,
+                    "resume_ready": False,
+                    "manual_attention_required": True,
+                    "approval_blocked": False,
+                }
+            if approval_kind in {"elevation_consent", "elevation_credentials"} or secure_desktop_likely:
+                return {
+                    "recovery_profile": "admin_review",
+                    "recovery_hint": "Administrator approval is still likely required before JARVIS can continue.",
+                    "recovery_priority": 70,
+                    "resume_ready": False,
+                    "manual_attention_required": True,
+                    "approval_blocked": True,
+                }
+            if approval_kind == "credential_input":
+                return {
+                    "recovery_profile": "credential_review",
+                    "recovery_hint": "Credentials are likely required before this mission can resume.",
+                    "recovery_priority": 74,
+                    "resume_ready": False,
+                    "manual_attention_required": True,
+                    "approval_blocked": True,
+                }
+            if approval_kind == "permission_review":
+                return {
+                    "recovery_profile": "permission_review",
+                    "recovery_hint": "Review the permission surface, then let JARVIS resume the mission.",
+                    "recovery_priority": 78,
+                    "resume_ready": False,
+                    "manual_attention_required": True,
+                    "approval_blocked": True,
+                }
+            if any(marker in dialog_kind or marker in stop_reason_value for marker in ("review", "warning", "destructive", "confirm")):
+                return {
+                    "recovery_profile": "operator_review",
+                    "recovery_hint": "An operator review surface is likely still in the way of autonomous progress.",
+                    "recovery_priority": 72,
+                    "resume_ready": False,
+                    "manual_attention_required": True,
+                    "approval_blocked": True,
+                }
+            if status_value in {"paused", "resuming"}:
+                return {
+                    "recovery_profile": "resume_ready",
+                    "recovery_hint": "This mission looks ready for a resume attempt.",
+                    "recovery_priority": 90 if status_value == "paused" else 82,
+                    "resume_ready": True,
+                    "manual_attention_required": False,
+                    "approval_blocked": False,
+                }
+            return {
+                "recovery_profile": status_value or "unknown",
+                "recovery_hint": "Inspect the stored desktop mission before resuming it.",
+                "recovery_priority": 15,
+                "resume_ready": False,
+                "manual_attention_required": False,
+                "approval_blocked": False,
+            }
+
+        def app_bucket_for(row: Dict[str, Any]) -> str:
+            for candidate in (
+                row.get("app_name", ""),
+                row.get("anchor_window_title", ""),
+                row.get("blocking_window_title", ""),
+            ):
+                normalized = " ".join(str(candidate or "").strip().lower().split())
+                if normalized:
+                    return normalized
+            return ""
+
+        enriched_rows: list[Dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            enriched_rows.append({**row, **recovery_profile_for(row)})
+
+        selected = enriched_rows[: max(1, int(limit))]
+        status_counts: Dict[str, int] = {}
+        mission_kind_counts: Dict[str, int] = {}
+        approval_kind_counts: Dict[str, int] = {}
+        recovery_profile_counts: Dict[str, int] = {}
+        app_counts: Dict[str, int] = {}
+        stop_reason_counts: Dict[str, int] = {}
+        resume_ready_count = 0
+        manual_attention_count = 0
+        latest_paused: Dict[str, Any] | None = None
+        for row in enriched_rows:
+            if not isinstance(row, dict):
+                continue
+            current_status = str(row.get("status", "")).strip().lower()
+            if current_status:
+                status_counts[current_status] = int(status_counts.get(current_status, 0)) + 1
+            current_kind = str(row.get("mission_kind", "")).strip().lower()
+            if current_kind:
+                mission_kind_counts[current_kind] = int(mission_kind_counts.get(current_kind, 0)) + 1
+            approval_kind = str(row.get("approval_kind", "")).strip().lower()
+            if approval_kind:
+                approval_kind_counts[approval_kind] = int(approval_kind_counts.get(approval_kind, 0)) + 1
+            recovery_profile = str(row.get("recovery_profile", "")).strip().lower()
+            if recovery_profile:
+                recovery_profile_counts[recovery_profile] = int(recovery_profile_counts.get(recovery_profile, 0)) + 1
+            if bool(row.get("resume_ready", False)):
+                resume_ready_count += 1
+            if bool(row.get("manual_attention_required", False)):
+                manual_attention_count += 1
+            app_key = app_bucket_for(row)
+            if app_key:
+                app_counts[app_key] = int(app_counts.get(app_key, 0)) + 1
+            reason_key = str(row.get("stop_reason_code", "")).strip().lower()
+            if reason_key:
+                stop_reason_counts[reason_key] = int(stop_reason_counts.get(reason_key, 0)) + 1
+            if latest_paused is None and current_status in {"paused", "resuming"}:
+                latest_paused = dict(row)
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(enriched_rows),
+            "items": selected,
+            "status_counts": status_counts,
+            "mission_kind_counts": mission_kind_counts,
+            "approval_kind_counts": approval_kind_counts,
+            "recovery_profile_counts": recovery_profile_counts,
+            "app_counts": app_counts,
+            "stop_reason_counts": stop_reason_counts,
+            "resume_ready_count": resume_ready_count,
+            "manual_attention_count": manual_attention_count,
+            "latest_paused": latest_paused,
+            "filters": {
+                "mission_id": mission_id,
+                "status": status,
+                "mission_kind": mission_kind,
+                "app_name": app_name,
+                "stop_reason_code": stop_reason_code,
+            },
+        }
+
+    def reset_desktop_missions(
+        self,
+        *,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+    ) -> Dict[str, Any]:
+        removed = 0
+        if mission_id:
+            keep: list[Dict[str, Any]] = []
+            for row in self.desktop_mission_items:
+                if str(row.get("mission_id", "")).strip() == mission_id:
+                    removed += 1
+                    continue
+                keep.append(row)
+            self.desktop_mission_items = keep
+        elif status or mission_kind or app_name:
+            keep = []
+            for row in self.desktop_mission_items:
+                status_match = bool(status) and str(row.get("status", "")).strip().lower() == status.lower()
+                kind_match = bool(mission_kind) and str(row.get("mission_kind", "")).strip().lower() == mission_kind.lower()
+                app_match = bool(app_name) and app_name.lower() in str(row.get("app_name", "")).lower()
+                if status_match or kind_match or app_match:
+                    removed += 1
+                    continue
+                keep.append(row)
+            self.desktop_mission_items = keep
+        else:
+            removed = len(self.desktop_mission_items)
+            self.desktop_mission_items = []
+        return {
+            "status": "success",
+            "removed": removed,
+            "filters": {
+                "mission_id": mission_id,
+                "status": status,
+                "mission_kind": mission_kind,
+                "app_name": app_name,
+            },
+        }
+
     def desktop_action_advice(
         self,
         *,
@@ -11087,6 +13090,8 @@ class FakeDesktopService:
         window_title: str = "",
         query: str = "",
         text: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
         keys: list[str] | None = None,
         ensure_app_launch: bool | None = None,
         focus_first: bool | None = None,
@@ -11099,6 +13104,9 @@ class FakeDesktopService:
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
         allow_destructive_forms: bool | None = None,
+        resume_contract: Dict[str, Any] | None = None,
+        blocking_surface: Dict[str, Any] | None = None,
+        resume_force: bool | None = None,
     ) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -11107,6 +13115,8 @@ class FakeDesktopService:
             "window_title": window_title,
             "query": query,
             "text": text,
+            "mission_id": mission_id,
+            "mission_kind": mission_kind,
             "keys": list(keys or []),
             "ensure_app_launch": ensure_app_launch,
             "focus_first": focus_first,
@@ -11119,6 +13129,9 @@ class FakeDesktopService:
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
             "allow_destructive_forms": allow_destructive_forms,
+            "resume_contract": dict(resume_contract or {}),
+            "blocking_surface": dict(blocking_surface or {}),
+            "resume_force": resume_force,
         }
 
     def desktop_interact(
@@ -11129,6 +13142,8 @@ class FakeDesktopService:
         window_title: str = "",
         query: str = "",
         text: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
         keys: list[str] | None = None,
         ensure_app_launch: bool | None = None,
         focus_first: bool | None = None,
@@ -11141,6 +13156,9 @@ class FakeDesktopService:
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
         allow_destructive_forms: bool | None = None,
+        resume_contract: Dict[str, Any] | None = None,
+        blocking_surface: Dict[str, Any] | None = None,
+        resume_force: bool | None = None,
     ) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -11149,6 +13167,8 @@ class FakeDesktopService:
             "window_title": window_title,
             "query": query,
             "text": text,
+            "mission_id": mission_id,
+            "mission_kind": mission_kind,
             "keys": list(keys or []),
             "ensure_app_launch": ensure_app_launch,
             "focus_first": focus_first,
@@ -11161,6 +13181,9 @@ class FakeDesktopService:
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
             "allow_destructive_forms": allow_destructive_forms,
+            "resume_contract": dict(resume_contract or {}),
+            "blocking_surface": dict(blocking_surface or {}),
+            "resume_force": resume_force,
         }
 
     def desktop_workflows(
@@ -11514,6 +13537,252 @@ def test_model_connector_get_routes(api_server: tuple[str, FakeDesktopService]) 
     route_plan = diagnostics.get("route_plan", {})
     assert route_plan.get("preferred_provider") == "local"
 
+
+def test_model_setup_workspace_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+    manifest_path = "E:/scopes/demo/JARVIS_BACKEND/Models_manifest.txt"
+    workspace_root = "E:/scopes/demo"
+
+    status, workspace = request_json(
+        "GET",
+        f"{base_url}/models/setup/workspace?refresh_provider_credentials=1&limit=24&manifest_path={manifest_path}&workspace_root={workspace_root}",
+    )
+    assert status == 200
+    assert workspace["status"] == "success"
+    assert workspace["workspace_root"] == workspace_root
+    assert workspace["manifest_path"] == manifest_path
+    assert int(workspace["summary"]["missing_directory_count"]) == 1
+    assert int(workspace["summary"]["missing_required_provider_count"]) == 1
+    assert len(workspace["directory_actions"]) == 1
+    assert any(
+        call["route"] == "model_setup_workspace"
+        and call["manifest_path"] == manifest_path
+        and call["workspace_root"] == workspace_root
+        for call in service.model_setup_scope_calls
+    )
+
+    status, preview = request_json(
+        "POST",
+        f"{base_url}/models/setup/workspace/scaffold",
+        {"dry_run": True, "limit": 24, "manifest_path": manifest_path, "workspace_root": workspace_root},
+    )
+    assert status == 200
+    assert preview["status"] == "success"
+    assert preview["dry_run"] is True
+    assert int(preview["action_count"]) == 1
+    assert preview["actions"][0]["status"] == "planned"
+    assert preview["workspace"]["manifest_path"] == manifest_path
+
+    status, applied = request_json(
+        "POST",
+        f"{base_url}/models/setup/workspace/scaffold",
+        {"dry_run": False, "limit": 24, "manifest_path": manifest_path, "workspace_root": workspace_root},
+    )
+    assert status == 200
+    assert applied["status"] == "success"
+    assert applied["dry_run"] is False
+    assert int(applied["created_count"]) == 1
+    assert applied["actions"][0]["status"] == "created"
+    assert applied["workspace"]["workspace_root"] == workspace_root
+
+
+def test_model_setup_mission_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+    manifest_path = "E:/scopes/mission/JARVIS_BACKEND/Models_manifest.txt"
+    workspace_root = "E:/scopes/mission"
+
+    status, mission = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission?refresh_provider_credentials=1&limit=24&manifest_path={manifest_path}&workspace_root={workspace_root}",
+    )
+    assert status == 200
+    assert mission["status"] == "success"
+    assert mission["mission_status"] == "ready"
+    assert int(mission["summary"]["ready_action_count"]) == 2
+    assert len(mission["actions"]) >= 2
+    assert mission["stored_mission"]["mission_id"] == "msm_demo_scope"
+    assert mission["stored_mission"]["manifest_path"] == manifest_path
+    assert mission["stored_mission"]["workspace_root"] == workspace_root
+    assert mission["mission_history"]["manual_attention_count"] == 1
+    assert mission["resume_advice"]["status"] == "blocked"
+    assert mission["resume_advice"]["resume_blockers"] == ["provider_credentials"]
+    assert any(
+        call["route"] == "model_setup_mission"
+        and call["manifest_path"] == manifest_path
+        and call["workspace_root"] == workspace_root
+        for call in service.model_setup_scope_calls
+    )
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission/history?limit=12&current_scope=1&manifest_path={manifest_path}&workspace_root={workspace_root}",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert history["items"][0]["mission_id"] == "msm_demo_scope"
+    assert history["filters"]["manifest_path"] == manifest_path
+    assert history["filters"]["workspace_root"] == workspace_root
+    assert history["auto_resume_candidate_count"] == 1
+    assert history["latest_auto_resume_candidate"]["mission_id"] == "msm_auto_scope"
+
+    status, advice = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission/resume-advice?mission_id=msm_demo_scope&current_scope=0&limit=24",
+    )
+    assert status == 200
+    assert advice["status"] == "blocked"
+    assert advice["mission_id"] == "msm_demo_scope"
+
+    status, advice_ready = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission/resume-advice?mission_id=msm_auto_scope&current_scope=0&limit=24",
+    )
+    assert status == 200
+    assert advice_ready["status"] == "ready"
+    assert advice_ready["can_auto_resume_now"] is True
+    assert advice_ready["selected_action_ids"] == ["launch_setup_install:auto"]
+
+    status, preview = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/launch",
+        {"dry_run": True, "continue_on_error": True, "limit": 24, "manifest_path": manifest_path, "workspace_root": workspace_root},
+    )
+    assert status == 200
+    assert preview["status"] == "planned"
+    assert preview["dry_run"] is True
+    assert int(preview["executed_count"]) == 2
+    assert preview["items"][0]["status"] == "planned"
+
+    status, applied = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/launch",
+        {"dry_run": False, "continue_on_error": True, "limit": 24, "manifest_path": manifest_path, "workspace_root": workspace_root},
+    )
+    assert status == 200
+    assert applied["status"] == "success"
+    assert applied["dry_run"] is False
+    assert int(applied["executed_count"]) == 2
+    assert applied["items"][0]["status"] == "success"
+    assert applied["mission_record"]["mission_id"] == "msm_demo_scope"
+
+    status, resumed = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/resume",
+        {
+            "mission_id": "msm_demo_scope",
+            "continue_on_error": True,
+            "limit": 24,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert resumed["status"] == "success"
+    assert resumed["resolved_mission"]["mission_id"] == "msm_demo_scope"
+    assert resumed["message"] == "resumed setup mission"
+    assert resumed["resume_advice"]["status"] == "blocked"
+
+    status, auto_resumed = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/auto-resume",
+        {
+            "mission_id": "msm_auto_scope",
+            "continue_on_error": True,
+            "limit": 24,
+            "current_scope": False,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert auto_resumed["status"] == "success"
+    assert auto_resumed["auto_resume_attempted"] is True
+    assert auto_resumed["auto_resume_triggered"] is True
+    assert auto_resumed["resume_advice"]["mission_id"] == "msm_auto_scope"
+    assert auto_resumed["continue_followup_actions_status"] == "success"
+    assert auto_resumed["continued_action_ids"] == ["verify_provider:huggingface"]
+
+    status, recovery_sweep = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/recovery-sweep",
+        {
+            "mission_id": "msm_auto_scope",
+            "continue_on_error": True,
+            "continue_followup_actions": True,
+            "max_auto_resume_passes": 2,
+            "max_followup_waves": 3,
+            "limit": 24,
+            "current_scope": False,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert recovery_sweep["status"] == "success"
+    assert recovery_sweep["auto_resume_attempted_count"] == 1
+    assert recovery_sweep["auto_resume_triggered_count"] == 1
+    assert recovery_sweep["continue_followup_actions_requested"] is True
+    assert recovery_sweep["continued_action_ids"] == ["verify_provider:huggingface"]
+    assert recovery_sweep["passes"][0]["continue_followup_actions_status"] == "success"
+    assert recovery_sweep["final_payload"]["auto_resume_triggered"] is True
+
+    status, recovery_watchdog = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/recovery-watchdog",
+        {
+            "mission_id": "msm_auto_scope",
+            "continue_on_error": True,
+            "continue_followup_actions": True,
+            "max_missions": 4,
+            "max_auto_resumes": 2,
+            "max_followup_waves": 3,
+            "limit": 24,
+            "current_scope": False,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert recovery_watchdog["status"] == "success"
+    assert recovery_watchdog["auto_resume_attempted_count"] == 1
+    assert recovery_watchdog["auto_resume_triggered_count"] == 1
+    assert recovery_watchdog["evaluated_count"] == 1
+    assert recovery_watchdog["latest_triggered_payload"]["auto_resume_triggered"] is True
+    assert recovery_watchdog["results"][0]["classification_after"] == "idle"
+    assert recovery_watchdog["watchdog_run"]["status"] == "success"
+    assert recovery_watchdog["watchdog_history"]["triggered_run_count"] == 1
+
+    status, watchdog_history = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission/recovery-watchdog/history?current_scope=0&manifest_path={urllib.parse.quote(manifest_path)}&workspace_root={urllib.parse.quote(workspace_root)}",
+    )
+    assert status == 200
+    assert watchdog_history["status"] == "success"
+    assert watchdog_history["count"] == 1
+    assert watchdog_history["latest_run"]["run_id"] == "mswd_demo"
+
+    status, watchdog_cleared = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/recovery-watchdog/reset",
+        {
+            "run_id": "mswd_demo",
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert watchdog_cleared["status"] == "success"
+    assert watchdog_cleared["removed"] == 1
+
+    status, cleared = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/reset",
+        {"mission_id": "msm_demo_scope"},
+    )
+    assert status == 200
+    assert cleared["status"] == "success"
+    assert cleared["removed"] == 1
+
     status, route = request_json(
         "GET",
         f"{base_url}/models/connectors/route-plan?requires_offline=1&mission_profile=privacy",
@@ -11548,6 +13817,196 @@ def test_model_connector_get_routes(api_server: tuple[str, FakeDesktopService]) 
     assert int(runtime_history.get("count", 0)) >= 1
     assert isinstance(runtime_history.get("items", []), list)
     assert isinstance(runtime_history.get("diagnostics", {}), dict)
+
+
+def test_model_setup_manual_and_install_routes_forward_scope(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+    manifest_path = "E:/scopes/runs/JARVIS_BACKEND/Models_manifest.txt"
+    workspace_root = "E:/scopes/runs"
+
+    status, manual_runs = request_json(
+        "GET",
+        f"{base_url}/models/setup/manual-pipeline/runs?limit=7&manifest_path={manifest_path}&workspace_root={workspace_root}",
+    )
+    assert status == 200
+    assert manual_runs["status"] == "success"
+    assert manual_runs["filters"]["manifest_path"] == manifest_path
+    assert manual_runs["filters"]["workspace_root"] == workspace_root
+    assert manual_runs["items"][0]["scope_key"] == f"{workspace_root.lower()}::{manifest_path.lower()}"
+
+    status, manual_launch = request_json(
+        "POST",
+        f"{base_url}/models/setup/manual-pipeline/run",
+        {
+            "task": "reasoning",
+            "item_keys": ["manual-convert-qwen"],
+            "step_ids": ["convert"],
+            "dry_run": True,
+            "limit": 12,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert manual_launch["status"] == "planned"
+    assert manual_launch["run"]["manifest_path"] == manifest_path
+    assert manual_launch["run"]["workspace_root"] == workspace_root
+
+    status, install_runs = request_json(
+        "GET",
+        f"{base_url}/models/setup/install/runs?limit=7&manifest_path={manifest_path}&workspace_root={workspace_root}",
+    )
+    assert status == 200
+    assert install_runs["status"] == "success"
+    assert install_runs["filters"]["manifest_path"] == manifest_path
+    assert install_runs["filters"]["workspace_root"] == workspace_root
+    assert install_runs["items"][0]["scope_key"] == f"{workspace_root.lower()}::{manifest_path.lower()}"
+
+    status, install_launch = request_json(
+        "POST",
+        f"{base_url}/models/setup/install/launch",
+        {
+            "task": "reasoning",
+            "item_keys": ["reasoning-llama"],
+            "dry_run": False,
+            "limit": 12,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert install_launch["status"] == "success"
+    assert install_launch["run"]["manifest_path"] == manifest_path
+    assert install_launch["run"]["workspace_root"] == workspace_root
+    assert any(
+        call["route"] == "model_setup_install_launch"
+        and call["manifest_path"] == manifest_path
+        and call["workspace_root"] == workspace_root
+        for call in service.model_setup_scope_calls
+    )
+
+
+def test_provider_credential_routes_support_recovery_options(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+
+    status, saved = request_json(
+        "POST",
+        f"{base_url}/providers/credentials",
+        {
+            "provider": "huggingface",
+            "api_key": "hf_" + ("A1b2C3d4E5f6G7h8" * 2),
+            "verify_after_update": True,
+            "task": "reasoning",
+            "limit": 24,
+            "include_present": True,
+            "item_keys": ["reasoning-llama"],
+            "continue_setup_recovery": True,
+            "continue_on_error": False,
+            "continue_followup_actions": True,
+            "max_followup_waves": 4,
+            "include_coworker_status": True,
+            "refresh_remote": True,
+            "timeout_s": 12.0,
+        },
+    )
+    assert status == 200
+    assert saved["status"] == "success"
+    assert saved["verification_requested"] is True
+    assert saved["setup_recovery"]["launchable_count"] == 1
+    assert saved["continue_setup_recovery_requested"] is True
+    assert saved["continue_setup_recovery_status"] == "success"
+    assert saved["continue_followup_actions_requested"] is True
+    assert saved["continue_followup_actions_status"] == "success"
+    assert saved["recovery_launch"]["selected_action_ids"] == ["install:reasoning-llama"]
+    assert saved["recovery_launch"]["continued_action_ids"] == ["launch_setup_install:auto"]
+    assert saved["coworker_stack"]["status"] == "success"
+    assert service.provider_update_calls[-1]["verify_after_update"] is True
+    assert service.provider_update_calls[-1]["item_keys"] == ["reasoning-llama"]
+    assert service.provider_update_calls[-1]["continue_setup_recovery"] is True
+    assert service.provider_update_calls[-1]["continue_on_error"] is False
+    assert service.provider_update_calls[-1]["continue_followup_actions"] is True
+    assert service.provider_update_calls[-1]["max_followup_waves"] == 4
+    assert service.provider_update_calls[-1]["include_coworker_status"] is True
+    assert service.provider_update_calls[-1]["refresh_remote"] is True
+
+    status, verified = request_json(
+        "POST",
+        f"{base_url}/providers/credentials/verify",
+        {
+            "provider": "huggingface",
+            "task": "reasoning",
+            "limit": 24,
+            "include_present": True,
+            "item_keys": ["reasoning-llama"],
+            "force_refresh": True,
+            "continue_setup_recovery": True,
+            "continue_on_error": False,
+            "continue_followup_actions": True,
+            "max_followup_waves": 4,
+            "include_coworker_status": True,
+            "refresh_remote": True,
+            "timeout_s": 12.0,
+        },
+    )
+    assert status == 200
+    assert verified["status"] == "success"
+    assert verified["affected_item_keys"] == ["reasoning-llama"]
+    assert verified["setup_recovery"]["next_action"]["kind"] == "launch_setup_install"
+    assert verified["continue_setup_recovery_requested"] is True
+    assert verified["continue_setup_recovery_status"] == "success"
+    assert verified["continue_followup_actions_requested"] is True
+    assert verified["continue_followup_actions_status"] == "success"
+    assert verified["recovery_launch"]["selected_action_ids"] == ["install:reasoning-llama"]
+    assert verified["recovery_launch"]["continued_action_ids"] == ["launch_setup_install:auto"]
+    assert verified["coworker_recovery"]["status"] == "success"
+    assert service.provider_verify_calls[-1]["continue_setup_recovery"] is True
+    assert service.provider_verify_calls[-1]["continue_on_error"] is False
+    assert service.provider_verify_calls[-1]["continue_followup_actions"] is True
+    assert service.provider_verify_calls[-1]["max_followup_waves"] == 4
+    assert service.provider_verify_calls[-1]["include_coworker_status"] is True
+    assert service.provider_verify_calls[-1]["refresh_remote"] is True
+    assert service.provider_verify_calls[-1]["item_keys"] == ["reasoning-llama"]
+
+
+def test_provider_recovery_route_supports_launch_options(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+
+    status, recovered = request_json(
+        "POST",
+        f"{base_url}/providers/credentials/recover",
+        {
+            "provider": "huggingface",
+            "task": "reasoning",
+            "limit": 24,
+            "include_present": True,
+            "item_keys": ["reasoning-llama"],
+            "selected_action_ids": ["install:reasoning-llama"],
+            "dry_run": True,
+            "continue_on_error": False,
+            "continue_followup_actions": True,
+            "max_followup_waves": 5,
+            "refresh_provider_credentials": True,
+            "refresh_remote": True,
+            "timeout_s": 12.0,
+        },
+    )
+
+    assert status == 200
+    assert recovered["status"] == "planned"
+    assert recovered["selected_action_ids"] == ["install:reasoning-llama"]
+    assert recovered["continue_followup_actions_requested"] is True
+    assert recovered["continue_followup_actions_status"] == "planned"
+    assert recovered["setup_recovery"]["auto_runnable_ready_action_ids"] == ["install:reasoning-llama"]
+    assert recovered["coworker_stack"]["status"] == "success"
+    assert service.provider_recovery_calls[-1]["provider"] == "huggingface"
+    assert service.provider_recovery_calls[-1]["item_keys"] == ["reasoning-llama"]
+    assert service.provider_recovery_calls[-1]["selected_action_ids"] == ["install:reasoning-llama"]
+    assert service.provider_recovery_calls[-1]["dry_run"] is True
+    assert service.provider_recovery_calls[-1]["continue_on_error"] is False
+    assert service.provider_recovery_calls[-1]["continue_followup_actions"] is True
+    assert service.provider_recovery_calls[-1]["max_followup_waves"] == 5
+    assert service.provider_recovery_calls[-1]["refresh_provider_credentials"] is True
+    assert service.provider_recovery_calls[-1]["refresh_remote"] is True
 
 
 def test_model_connector_post_routes(api_server: tuple[str, FakeDesktopService]) -> None:
@@ -13949,6 +16408,49 @@ def test_desktop_workflow_memory_routes_status_and_reset(api_server: tuple[str, 
     assert remaining["items"][0]["profile_id"] == "powershell"
 
 
+def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, missions = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-missions?status=paused&mission_kind=wizard&app_name=installer",
+    )
+    assert status == 200
+    assert missions["status"] == "success"
+    assert missions["count"] == 1
+    assert missions["items"][0]["mission_id"] == "dm_pause_wizard_1"
+    assert missions["items"][0]["resume_contract"]["mission_id"] == "dm_pause_wizard_1"
+    assert missions["filters"]["mission_kind"] == "wizard"
+    assert missions["status_counts"] == {"paused": 1}
+    assert missions["mission_kind_counts"] == {"wizard": 1}
+    assert missions["approval_kind_counts"] == {"elevation_consent": 1}
+    assert missions["recovery_profile_counts"] == {"admin_review": 1}
+    assert missions["app_counts"] == {"installer": 1}
+    assert missions["stop_reason_counts"] == {"elevation_consent_required": 1}
+    assert missions["resume_ready_count"] == 0
+    assert missions["manual_attention_count"] == 1
+    assert missions["latest_paused"]["mission_id"] == "dm_pause_wizard_1"
+    assert missions["items"][0]["recovery_profile"] == "admin_review"
+    assert missions["items"][0]["resume_ready"] is False
+
+    status, cleared = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-missions/reset",
+        payload={"mission_kind": "form", "status": "completed"},
+    )
+    assert status == 200
+    assert cleared["status"] == "success"
+    assert int(cleared.get("removed", 0) or 0) == 1
+
+    status, remaining = request_json("GET", f"{base_url}/runtime/desktop-missions?limit=10")
+    assert status == 200
+    assert remaining["status"] == "success"
+    assert remaining["count"] == 1
+    assert remaining["items"][0]["mission_id"] == "dm_pause_wizard_1"
+    assert remaining["status_counts"] == {"paused": 1}
+    assert remaining["recovery_profile_counts"] == {"admin_review": 1}
+
+
 def test_desktop_workflow_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
     base_url, _ = api_server
 
@@ -14024,6 +16526,72 @@ def test_desktop_action_routes_forward_form_flow_parameters(api_server: tuple[st
     assert interact["action"] == "complete_form_flow"
     assert interact["max_form_pages"] == 7
     assert interact["allow_destructive_forms"] is True
+
+
+def test_desktop_action_routes_forward_mission_reference_parameters(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, advice = request_json(
+        "GET",
+        f"{base_url}/desktop/action-advice?action=resume_mission&mission_id=dm_pause_wizard_1&mission_kind=wizard&resume_force=1",
+    )
+    assert status == 200
+    assert advice["status"] == "success"
+    assert advice["action"] == "resume_mission"
+    assert advice["mission_id"] == "dm_pause_wizard_1"
+    assert advice["mission_kind"] == "wizard"
+    assert advice["resume_force"] is True
+
+    status, interact = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "resume_mission",
+            "mission_id": "dm_pause_wizard_1",
+            "mission_kind": "wizard",
+            "resume_force": True,
+        },
+    )
+    assert status == 200
+    assert interact["status"] == "success"
+    assert interact["action"] == "resume_mission"
+    assert interact["mission_id"] == "dm_pause_wizard_1"
+    assert interact["mission_kind"] == "wizard"
+    assert interact["resume_force"] is True
+
+
+def test_desktop_interact_route_forwards_resume_mission_payload(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "resume_mission",
+            "resume_contract": {
+                "mission_kind": "wizard",
+                "resume_action": "complete_wizard_flow",
+                "resume_signature": "resume-1234",
+                "resume_payload": {
+                    "action": "complete_wizard_flow",
+                    "app_name": "installer",
+                    "max_wizard_pages": 6,
+                },
+            },
+            "blocking_surface": {
+                "approval_kind": "elevation_consent",
+                "window_title": "User Account Control",
+            },
+            "resume_force": True,
+        },
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["action"] == "resume_mission"
+    assert payload["resume_contract"]["resume_action"] == "complete_wizard_flow"
+    assert payload["resume_contract"]["resume_payload"]["app_name"] == "installer"
+    assert payload["blocking_surface"]["approval_kind"] == "elevation_consent"
+    assert payload["resume_force"] is True
 
 
 def test_desktop_surface_snapshot_route(api_server: tuple[str, FakeDesktopService]) -> None:

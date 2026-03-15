@@ -1,0 +1,5 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Mozilla Firefox                           Mozilla.Firefox              146.0                winget
+Windows Settings                          Microsoft.WindowsSettings   1.0                  winget
+Task Manager                              Microsoft.TaskManager       11.0                 winget

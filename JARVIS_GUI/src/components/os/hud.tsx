@@ -8,6 +8,8 @@ import InfoListPanel from './InfoListPanel';
 import Clock from './Clock';
 import BoostButton from './BoostButton';
 import ActionControlPanel from './action-control-panel';
+import DesktopRecoveryBanner from './desktop-recovery-banner';
+import ModelSetupRecoveryBanner from './model-setup-recovery-banner';
 import { MessageSquare, SlidersHorizontal, Wrench } from 'lucide-react';
 import { type AppMode } from '@/app/page';
 import { cn } from '@/lib/utils';
@@ -42,7 +44,12 @@ const HUD = ({ setMode }: { setMode: (mode: AppMode) => void }) => {
             <div className="col-span-1 row-span-1 flex items-start justify-start">
                 <Clock />
             </div>
-            <div className="col-span-1 row-span-1" />
+            <div className="col-span-1 row-span-1 flex items-start justify-center pt-2">
+                <div className="flex w-full max-w-md flex-col gap-2">
+                    <DesktopRecoveryBanner className="w-full" compact />
+                    <ModelSetupRecoveryBanner className="w-full" compact />
+                </div>
+            </div>
             <div className="col-span-1 row-span-1 flex items-start justify-end">
                 <div className="flex items-center gap-4 text-primary tracking-widest text-sm">
                     <button 

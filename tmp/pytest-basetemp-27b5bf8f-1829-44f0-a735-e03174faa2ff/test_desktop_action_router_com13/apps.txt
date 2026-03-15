@@ -1,0 +1,4 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Windows Settings                          Microsoft.WindowsSettings   1.0                  winget
+Control Panel                             Microsoft.ControlPanel       1.0                  winget

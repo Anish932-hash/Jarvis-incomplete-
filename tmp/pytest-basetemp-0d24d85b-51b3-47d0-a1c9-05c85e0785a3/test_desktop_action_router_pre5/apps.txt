@@ -1,0 +1,3 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Device Manager                            Microsoft.DeviceManager      1.0                  winget

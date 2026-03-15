@@ -38,6 +38,7 @@ Thumbs.db
 NEWS.txt
 LICENSE.txt
 data/desktop_workflow_memory.json
+data/desktop_mission_memory.json
 
 # Environment variables
 .env

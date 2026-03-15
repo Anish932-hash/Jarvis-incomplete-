@@ -12,6 +12,12 @@ from backend.python.inference.model_setup_manual_runner import ModelSetupManualR
 class ModelSetupManualRunManager:
     _ACTIVE_STATUSES = {"queued", "running", "cancelling"}
 
+    @staticmethod
+    def _scope_key(*, manifest_path: str = "", workspace_root: str = "") -> str:
+        clean_manifest = str(manifest_path or "").strip().lower()
+        clean_root = str(workspace_root or "").strip().lower()
+        return f"{clean_root}::{clean_manifest}".strip(":")
+
     def __init__(
         self,
         runner: Optional[ModelSetupManualRunner] = None,
@@ -37,10 +43,18 @@ class ModelSetupManualRunManager:
         force: bool = False,
         task: str = "",
         step_ids: Optional[List[str]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         selected = select_manual_pipeline_items(pipeline_payload, item_keys=item_keys)
         if not selected and not item_keys:
             return {"status": "error", "message": "no runnable manual pipeline items selected"}
+        setup_plan = pipeline_payload.get("setup_plan", {}) if isinstance(pipeline_payload.get("setup_plan", {}), dict) else {}
+        manifest = setup_plan.get("manifest", {}) if isinstance(setup_plan.get("manifest", {}), dict) else (
+            pipeline_payload.get("manifest", {}) if isinstance(pipeline_payload.get("manifest", {}), dict) else {}
+        )
+        clean_manifest_path = str(manifest_path or manifest.get("path", "") or "").strip()
+        clean_workspace_root = str(workspace_root or manifest.get("workspace_root", "") or "").strip()
         run_id = uuid.uuid4().hex
         cancel_event = threading.Event()
         now_iso = _iso_now()
@@ -53,6 +67,12 @@ class ModelSetupManualRunManager:
             "selected_count": len(selected) if selected else len(item_keys or []),
             "selected_item_keys": [str(item).strip().lower() for item in (item_keys or []) if str(item).strip()],
             "selected_step_ids": [str(item).strip().lower() for item in (step_ids or []) if str(item).strip()],
+            "manifest_path": clean_manifest_path,
+            "workspace_root": clean_workspace_root,
+            "scope_key": self._scope_key(
+                manifest_path=clean_manifest_path,
+                workspace_root=clean_workspace_root,
+            ),
             "planned_count": 0,
             "success_count": 0,
             "warning_count": 0,
@@ -68,6 +88,9 @@ class ModelSetupManualRunManager:
             "completed_at": "",
             "duration_s": 0.0,
             "message": "queued",
+            "progress_event_count": 0,
+            "last_event_name": "queued",
+            "last_progress_at": now_iso,
             "progress": {
                 "total_items": len(selected) if selected else len(item_keys or []),
                 "completed_items": 0,
@@ -76,6 +99,7 @@ class ModelSetupManualRunManager:
                 "current_step_id": "",
                 "percent": 0.0,
                 "message": "queued",
+                "phase": "queued",
             },
             "items": [],
             "result": {},
@@ -106,13 +130,40 @@ class ModelSetupManualRunManager:
         worker.start()
         return {"status": "accepted", "run": self._sanitize(row)}
 
-    def list_runs(self, *, limit: int = 20) -> Dict[str, Any]:
+    def list_runs(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
         bounded = max(1, min(int(limit), 200))
+        clean_manifest_path = str(manifest_path or "").strip().lower()
+        clean_workspace_root = str(workspace_root or "").strip().lower()
         with self._lock:
             rows = sorted(self._runs.values(), key=lambda row: str(row.get("updated_at", "")), reverse=True)
+            if clean_manifest_path or clean_workspace_root:
+                rows = [
+                    row
+                    for row in rows
+                    if (
+                        (not clean_manifest_path or str(row.get("manifest_path", "") or "").strip().lower() == clean_manifest_path)
+                        and (not clean_workspace_root or str(row.get("workspace_root", "") or "").strip().lower() == clean_workspace_root)
+                    )
+                ]
             payload = [self._sanitize(row) for row in rows[:bounded]]
             active_count = sum(1 for row in rows if str(row.get("status", "") or "").strip().lower() in self._ACTIVE_STATUSES)
-        return {"status": "success", "items": payload, "count": len(payload), "total": len(self._runs), "active_count": active_count}
+        return {
+            "status": "success",
+            "items": payload,
+            "count": len(payload),
+            "total": len(rows),
+            "active_count": active_count,
+            "filters": {
+                "manifest_path": str(manifest_path or "").strip(),
+                "workspace_root": str(workspace_root or "").strip(),
+            },
+        }
 
     def get_run(self, run_id: str) -> Dict[str, Any]:
         clean_run_id = str(run_id or "").strip()
@@ -163,6 +214,12 @@ class ModelSetupManualRunManager:
             row["started_at"] = _iso_now()
             row["updated_at"] = row["started_at"]
             row["message"] = "starting manual pipeline"
+            row["last_event_name"] = "run_started"
+            row["last_progress_at"] = row["started_at"]
+            progress = row.get("progress") if isinstance(row.get("progress"), dict) else {}
+            progress["message"] = "starting manual pipeline"
+            progress["phase"] = "starting"
+            row["progress"] = progress
             cancel_event = row.get("_cancel_event") if isinstance(row.get("_cancel_event"), threading.Event) else threading.Event()
             self._runs[run_id] = row
             self._persist_locked()
@@ -195,6 +252,12 @@ class ModelSetupManualRunManager:
                     return
                 row["status"] = str(result.get("status", "error") or "error")
                 row["task"] = task
+                row["manifest_path"] = str(result.get("manifest_path", row.get("manifest_path", "")) or row.get("manifest_path", ""))
+                row["workspace_root"] = str(result.get("workspace_root", row.get("workspace_root", "")) or row.get("workspace_root", ""))
+                row["scope_key"] = self._scope_key(
+                    manifest_path=str(row.get("manifest_path", "") or ""),
+                    workspace_root=str(row.get("workspace_root", "") or ""),
+                )
                 row["completed_at"] = str(result.get("completed_at", "") or _iso_now())
                 row["updated_at"] = row["completed_at"]
                 row["message"] = str(result.get("message", row.get("status", "completed")) or row.get("status", "completed"))
@@ -232,22 +295,40 @@ class ModelSetupManualRunManager:
             if not isinstance(row, dict):
                 return
             progress = row.get("progress") if isinstance(row.get("progress"), dict) else {}
-            if event_name == "item_started":
+            if event_name == "run_started":
+                progress["total_items"] = max(
+                    0,
+                    int(event.get("selected_count", progress.get("total_items", row.get("selected_count", 0))) or 0),
+                )
+                progress["message"] = "starting manual pipeline"
+                progress["phase"] = "starting"
+            elif event_name == "item_started":
                 item = event.get("item") if isinstance(event.get("item"), dict) else {}
+                progress["total_items"] = max(
+                    int(progress.get("total_items", row.get("selected_count", 0)) or 0),
+                    int(event.get("total_items", progress.get("total_items", row.get("selected_count", 0))) or 0),
+                )
                 progress["current_item_key"] = str(item.get("key", "") or "")
                 progress["current_item_name"] = str(item.get("name", "") or "")
                 progress["completed_items"] = max(0, int(event.get("index", 1) or 1) - 1)
                 progress["message"] = f"running {progress['current_item_name'] or progress['current_item_key'] or 'item'}"
+                progress["phase"] = "item_running"
             elif event_name == "step_started":
                 progress["current_step_id"] = str(event.get("step_id", "") or "")
                 progress["message"] = str(event.get("title", progress.get("message", "running")) or progress.get("message", "running"))
+                progress["phase"] = "step_running"
             elif event_name == "item_completed":
                 item = event.get("item") if isinstance(event.get("item"), dict) else {}
+                progress["total_items"] = max(
+                    int(progress.get("total_items", row.get("selected_count", 0)) or 0),
+                    int(event.get("total_items", progress.get("total_items", row.get("selected_count", 0))) or 0),
+                )
                 progress["completed_items"] = max(0, int(event.get("index", 0) or 0))
                 progress["current_item_key"] = str(item.get("key", progress.get("current_item_key", "")) or "")
                 progress["current_item_name"] = str(item.get("name", progress.get("current_item_name", "")) or "")
                 progress["current_step_id"] = ""
                 progress["message"] = str(item.get("message", item.get("status", "completed")) or "completed")
+                progress["phase"] = "item_completed"
                 row["items"] = [dict(entry) for entry in row.get("items", []) if isinstance(entry, dict)]
                 row["items"].append(copy.deepcopy(item))
             elif event_name == "run_completed":
@@ -255,11 +336,16 @@ class ModelSetupManualRunManager:
                 progress["completed_items"] = max(progress.get("completed_items", 0), len(payload.get("items", [])) if isinstance(payload.get("items", []), list) else 0)
                 progress["current_step_id"] = ""
                 progress["message"] = str(payload.get("status", progress.get("message", "completed")) or progress.get("message", "completed"))
+                progress["phase"] = "completed"
             total_items = max(0, int(progress.get("total_items", row.get("selected_count", 0)) or row.get("selected_count", 0) or 0))
             completed_items = max(0, int(progress.get("completed_items", 0) or 0))
             progress["percent"] = round((float(completed_items) / float(total_items)) * 100.0, 3) if total_items > 0 else 0.0
             row["progress"] = progress
-            row["updated_at"] = _iso_now()
+            event_iso = _iso_now()
+            row["progress_event_count"] = int(row.get("progress_event_count", 0) or 0) + 1
+            row["last_event_name"] = event_name or str(row.get("last_event_name", "") or "")
+            row["last_progress_at"] = event_iso
+            row["updated_at"] = event_iso
             self._runs[run_id] = row
             self._persist_locked()
 

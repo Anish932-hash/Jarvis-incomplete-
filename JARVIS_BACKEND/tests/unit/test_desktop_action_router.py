@@ -4,13 +4,25 @@ from pathlib import Path
 import tempfile
 from typing import Any, Dict, List
 
+import pytest
+
 from backend.python.core.desktop_app_profile_registry import DesktopAppProfileRegistry
 from backend.python.core.desktop_action_router import DesktopActionRouter
+from backend.python.core.desktop_mission_memory import DesktopMissionMemory
 from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
 
 
 def _isolated_workflow_memory() -> DesktopWorkflowMemory:
     return DesktopWorkflowMemory(store_path=str(Path(tempfile.mkdtemp()) / "desktop_workflow_memory.json"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_default_desktop_mission_memory(tmp_path: Path):
+    DesktopMissionMemory._DEFAULT_INSTANCE = DesktopMissionMemory(
+        store_path=str(tmp_path / "desktop_mission_memory.json")
+    )
+    yield
+    DesktopMissionMemory._DEFAULT_INSTANCE = None
 
 
 def _build_router(action_handlers: Dict[str, Any]) -> DesktopActionRouter:
@@ -2479,6 +2491,517 @@ def test_desktop_action_router_stops_complete_wizard_flow_on_risky_interstitial_
     assert [row["action"] for row in payload["results"]] == ["accessibility_invoke_element"]
 
 
+def test_desktop_action_router_stops_complete_wizard_flow_on_credential_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) == 0:
+            rows.append({"hwnd": 7126, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 7127, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Setup Wizard":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "field-username", "name": "Username", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "field-password", "name": "Password", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "btn-sign-in", "name": "Sign in", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-ready", "name": "Ready", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-ready", "name": "Next", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "parent_id": "page-ready", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_credential_dialog",
+                "text": "Windows Security sign in dialog. Enter username and password to continue the setup.",
+                "screenshot_path": "E:/tmp/wizard_credential_dialog.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "wizard_ready_for_auth",
+                "text": "Setup Wizard ready page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/wizard_ready_for_auth.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_auth_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_auth_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 7127, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 7126, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 7126), "title": str(payload.get("window_title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["wizard_mission"]["completed"] is False
+    assert payload["wizard_mission"]["stop_reason_code"] == "credential_input_required"
+    assert payload["wizard_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["wizard_mission"]["page_history"][0]["after"]["dialog_kind"] == "credential_prompt"
+    assert payload["wizard_mission"]["page_history"][0]["after"]["approval_kind"] == "credential_input"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["window_title"] == "Windows Security"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["dialog_kind"] == "credential_prompt"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["approval_kind"] == "credential_input"
+    assert payload["wizard_mission"]["page_history"][1]["blocking_surface"]["approval_kind"] == "credential_input"
+    assert payload["wizard_mission"]["blocking_surface"]["approval_kind"] == "credential_input"
+    assert payload["wizard_mission"]["blocking_surface"]["resume_action"] == "complete_wizard_flow"
+    assert "provide_credentials" in payload["wizard_mission"]["blocking_surface"]["resume_preconditions"]
+    assert payload["wizard_mission"]["resume_contract"]["resume_action"] == "complete_wizard_flow"
+    assert payload["wizard_mission"]["resume_contract"]["resume_strategy"] == "reacquire_app_surface"
+    assert payload["wizard_mission"]["resume_contract"]["resume_payload"]["app_name"] == "installer"
+    assert payload["wizard_mission"]["resume_contract"]["resume_payload"]["window_title"] == ""
+    assert "provide_credentials" in payload["wizard_mission"]["resume_contract"]["resume_preconditions"]
+    assert payload["wizard_mission"]["final_page"]["screen_hash"] == "wizard_credential_dialog"
+    assert [row["action"] for row in payload["results"]] == ["accessibility_invoke_element"]
+
+
+def test_desktop_action_router_stops_complete_wizard_flow_on_uac_consent_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) == 0:
+            rows.append({"hwnd": 7128, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 7129, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Setup Wizard":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-yes", "name": "Yes", "control_type": "Button"},
+                    {"element_id": "btn-no", "name": "No", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-ready", "name": "Ready", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-ready", "name": "Next", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "parent_id": "page-ready", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "wizard_uac_dialog",
+                "text": "User Account Control. Do you want to allow this app to make changes to your device?",
+                "screenshot_path": "E:/tmp/wizard_uac_dialog.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "wizard_ready_for_uac",
+                "text": "Setup Wizard ready page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/wizard_ready_for_uac.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_uac_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_uac_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 7129, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 7128, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 7128), "title": str(payload.get("window_title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["wizard_mission"]["completed"] is False
+    assert payload["wizard_mission"]["stop_reason_code"] == "elevation_consent_required"
+    assert payload["wizard_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["window_title"] == "User Account Control"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["dialog_kind"] == "elevation_prompt"
+    assert payload["wizard_mission"]["page_history"][1]["before"]["approval_kind"] == "elevation_consent"
+    assert payload["wizard_mission"]["page_history"][1]["blocking_surface"]["approval_kind"] == "elevation_consent"
+    assert payload["wizard_mission"]["page_history"][1]["dialog_followup"]["dialog_kind"] == "elevation_prompt"
+    assert payload["wizard_mission"]["page_history"][1]["dialog_followup"]["approval_kind"] == "elevation_consent"
+    assert payload["wizard_mission"]["page_history"][1]["dialog_followup"]["secure_desktop_likely"] is True
+    assert payload["wizard_mission"]["blocking_surface"]["approval_kind"] == "elevation_consent"
+    assert payload["wizard_mission"]["blocking_surface"]["secure_desktop_likely"] is True
+    assert "approve_elevation_request" in payload["wizard_mission"]["blocking_surface"]["resume_preconditions"]
+    assert payload["wizard_mission"]["resume_contract"]["resume_action"] == "complete_wizard_flow"
+    assert payload["wizard_mission"]["resume_contract"]["resume_strategy"] == "reacquire_app_surface"
+    assert payload["wizard_mission"]["resume_contract"]["resume_payload"]["app_name"] == "installer"
+    assert "approve_elevation_request" in payload["wizard_mission"]["resume_contract"]["resume_preconditions"]
+    assert payload["wizard_mission"]["final_page"]["screen_hash"] == "wizard_uac_dialog"
+    assert [row["action"] for row in payload["results"]] == ["accessibility_invoke_element"]
+
+
+def test_desktop_action_router_resume_mission_stays_blocked_while_uac_surface_is_active(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) in {0, 1} and not bool(state["dialog_open"]):
+            rows.append({"hwnd": 8128, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 8129, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Setup Wizard":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-yes", "name": "Yes", "control_type": "Button"},
+                    {"element_id": "btn-no", "name": "No", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-ready", "name": "Ready", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-ready", "name": "Next", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-complete", "name": "Complete", "control_type": "Pane"},
+                    {"element_id": "btn-finish", "parent_id": "page-complete", "name": "Finish", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "resume_blocked_uac",
+                "text": "User Account Control. Do you want to allow this app to make changes to your device?",
+                "screenshot_path": "E:/tmp/resume_blocked_uac.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "resume_wizard_ready",
+                "text": "Setup Wizard ready page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/resume_wizard_ready.png",
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "screen_hash": "resume_wizard_complete",
+                "text": "Setup Wizard complete. Click Finish to exit.",
+                "screenshot_path": "E:/tmp/resume_wizard_complete.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "resume_desktop_after",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/resume_desktop_after.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        if int(state["page"]) == 1 and target in {"btn-finish", "finish"}:
+            state["page"] = 2
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 8129, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 8128, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 8128), "title": str(payload.get("title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    blocked = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+    mission_id = str(blocked.get("mission_record", {}).get("mission_id", "") or "")
+    advice = router.advise(
+        {
+            "action": "resume_mission",
+            "mission_id": mission_id,
+        }
+    )
+
+    assert blocked["wizard_mission"]["stop_reason_code"] == "elevation_consent_required"
+    assert mission_id
+    assert blocked["mission_record"]["status"] == "paused"
+    assert blocked["wizard_mission"]["resume_contract"]["mission_id"] == mission_id
+    assert blocked["wizard_mission"]["blocking_surface"]["mission_id"] == mission_id
+    assert advice["status"] == "blocked"
+    assert advice["action"] == "resume_mission"
+    assert advice["route_mode"] == "resume_desktop_mission"
+    assert advice["resume_action"] == "complete_wizard_flow"
+    assert advice["mission_record"]["mission_id"] == mission_id
+    assert advice["resume_context"]["status"] == "blocked"
+    assert advice["resume_context"]["blocking_surface_still_visible"] is True
+    assert advice["resume_context"]["current_approval_kind"] == "elevation_consent"
+    assert advice["blocking_surface"]["approval_kind"] == "elevation_consent"
+
+
+def test_desktop_action_router_execute_resume_mission_completes_wizard_after_uac_clears(tmp_path: Path) -> None:
+    registry = _build_registry(tmp_path, [])
+    state: Dict[str, Any] = {
+        "page": 0,
+        "dialog_open": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if int(state["page"]) in {0, 1} and not bool(state["dialog_open"]):
+            rows.append({"hwnd": 9228, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 9229, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Setup Wizard":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-yes", "name": "Yes", "control_type": "Button"},
+                    {"element_id": "btn-no", "name": "No", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-ready", "name": "Ready", "control_type": "Pane"},
+                    {"element_id": "btn-next", "parent_id": "page-ready", "name": "Next", "control_type": "Button"},
+                ],
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "page-complete", "name": "Complete", "control_type": "Pane"},
+                    {"element_id": "btn-finish", "parent_id": "page-complete", "name": "Finish", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "resume_execute_uac",
+                "text": "User Account Control. Do you want to allow this app to make changes to your device?",
+                "screenshot_path": "E:/tmp/resume_execute_uac.png",
+            }
+        if int(state["page"]) == 0:
+            return {
+                "status": "success",
+                "screen_hash": "resume_execute_ready",
+                "text": "Setup Wizard ready page. Click Next to continue.",
+                "screenshot_path": "E:/tmp/resume_execute_ready.png",
+            }
+        if int(state["page"]) == 1:
+            return {
+                "status": "success",
+                "screen_hash": "resume_execute_complete",
+                "text": "Setup Wizard complete. Click Finish to exit.",
+                "screenshot_path": "E:/tmp/resume_execute_complete.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "resume_execute_desktop",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/resume_execute_desktop.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if int(state["page"]) == 0 and target in {"btn-next", "next"}:
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        if int(state["page"]) == 1 and target in {"btn-finish", "finish"}:
+            state["page"] = 2
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 9229, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"}
+                    if bool(state["dialog_open"])
+                    else (
+                        {"hwnd": 9228, "title": "Setup Wizard", "exe": r"C:\Installers\setup.exe"}
+                        if int(state["page"]) in {0, 1}
+                        else {"hwnd": 9901, "title": "Desktop", "exe": r"C:\Windows\explorer.exe"}
+                    )
+                ),
+            },
+            "focus_window": lambda payload: {
+                "status": "success",
+                "window": {"hwnd": payload.get("hwnd", 9228), "title": str(payload.get("title", "") or "Setup Wizard")},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    blocked = router.execute({"action": "complete_wizard_flow", "app_name": "installer", "max_wizard_pages": 4})
+    mission_id = str(blocked.get("mission_record", {}).get("mission_id", "") or "")
+    state["dialog_open"] = False
+    state["page"] = 1
+
+    resumed = router.execute(
+        {
+            "action": "resume_mission",
+            "mission_id": mission_id,
+        }
+    )
+
+    assert blocked["wizard_mission"]["stop_reason_code"] == "elevation_consent_required"
+    assert mission_id
+    assert resumed["status"] == "success"
+    assert resumed["action"] == "resume_mission"
+    assert resumed["resume_action"] == "complete_wizard_flow"
+    assert resumed["final_action"] == "complete_wizard_flow"
+    assert resumed["mission_record"]["mission_id"] == mission_id
+    assert resumed["mission_record"]["status"] == "completed"
+    assert int(resumed["mission_record"]["resume_attempts"] or 0) >= 1
+    assert resumed["resume_context"]["status"] == "resumed"
+    assert resumed["resume_context"]["blocking_surface_still_visible"] is False
+    assert resumed["wizard_mission"]["completed"] is True
+    assert resumed["wizard_mission"]["stop_reason_code"] == ""
+    assert [row["action"] for row in resumed["results"]] == ["accessibility_invoke_element"]
+
+
 def test_desktop_action_router_stops_complete_wizard_flow_when_manual_input_is_required(tmp_path: Path) -> None:
     registry = _build_registry(tmp_path, [])
     router = DesktopActionRouter(
@@ -2571,7 +3094,7 @@ def test_desktop_action_router_surface_snapshot_detects_wizard_safety_signals(tm
     assert payload["safety_signals"]["wizard_finish_available"] is True
     assert payload["safety_signals"]["warning_surface_visible"] is True
     assert payload["safety_signals"]["destructive_warning_visible"] is True
-    assert payload["safety_signals"]["elevation_prompt_visible"] is True
+    assert payload["safety_signals"]["elevation_prompt_visible"] is False
     assert payload["safety_signals"]["requires_confirmation"] is True
     assert payload["surface_flags"]["wizard_surface_visible"] is True
     assert payload["surface_flags"]["wizard_finish_available"] is True
@@ -2580,9 +3103,14 @@ def test_desktop_action_router_surface_snapshot_detects_wizard_safety_signals(tm
     assert "Finish" in payload["safety_signals"]["destructive_dialog_buttons"]
     assert payload["safety_signals"]["preferred_dismiss_button"] == "Cancel"
     assert payload["safety_signals"]["preferred_confirmation_button"] == "Next"
+    assert payload["dialog_state"]["dialog_kind"] == "destructive_confirmation"
+    assert payload["dialog_state"]["approval_kind"] == "destructive_confirmation"
+    assert payload["dialog_state"]["review_required"] is True
     assert payload["target_group_state"]["group_role"] == "wizard_actions"
     assert "Cancel" in payload["target_group_state"]["safe_options"]
     assert payload["wizard_page_state"]["page_kind"] == "ready_to_install"
+    assert payload["wizard_page_state"]["dialog_kind"] == "destructive_confirmation"
+    assert payload["wizard_page_state"]["approval_kind"] == "destructive_confirmation"
     assert payload["wizard_page_state"]["advance_action"] == "next_wizard_step"
     assert payload["wizard_page_state"]["preferred_confirmation_button"] == "Next"
     assert payload["wizard_page_state"]["autonomous_progress_supported"] is True
@@ -2631,10 +3159,10 @@ def test_desktop_action_router_escalates_finish_wizard_risk_when_surface_is_dang
     assert payload["route_mode"] == "workflow_finish_wizard"
     assert payload["risk_level"] == "high"
     assert payload["safety_signals"]["destructive_warning_visible"] is True
-    assert payload["safety_signals"]["elevation_prompt_visible"] is True
+    assert payload["safety_signals"]["elevation_prompt_visible"] is False
     assert payload["execution_plan"][-1]["action"] == "accessibility_invoke_element"
     assert any("destructive" in warning.lower() for warning in payload["warnings"])
-    assert any("elevation" in warning.lower() for warning in payload["warnings"])
+    assert any("confirmation path" in warning.lower() for warning in payload["warnings"])
 
 
 def test_desktop_action_router_surface_snapshot_detects_generic_settings_surfaces(tmp_path: Path) -> None:
@@ -2726,6 +3254,149 @@ def test_desktop_action_router_surface_snapshot_detects_form_page_state(tmp_path
     assert payload["form_page_state"]["autonomous_progress_supported"] is True
     assert "complete_form_page" in payload["recommended_actions"]
     assert "complete_form_flow" in payload["recommended_actions"]
+
+
+def test_desktop_action_router_surface_snapshot_detects_credential_dialog_state(tmp_path: Path) -> None:
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2314, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2314, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "field-username", "name": "Username", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "field-password", "name": "Password", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "btn-sign-in", "name": "Sign in", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "credential_dialog_surface",
+                "text": "Windows Security sign in dialog. Enter username and password to continue.",
+                "screenshot_path": "E:/tmp/credential_dialog_surface.png",
+            },
+        },
+        app_profile_registry=_build_registry(tmp_path, []),
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(window_title="Windows Security", query="sign in", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["surface_flags"]["dialog_visible"] is True
+    assert payload["safety_signals"]["credential_prompt_visible"] is True
+    assert payload["dialog_state"]["dialog_kind"] == "credential_prompt"
+    assert payload["dialog_state"]["manual_input_required"] is True
+    assert payload["dialog_state"]["credential_field_count"] == 2
+    assert payload["form_page_state"]["page_kind"] == "credential_dialog"
+    assert payload["form_page_state"]["autonomous_blocker"] == "credential_input_required"
+    assert "focus_input_field" in payload["recommended_actions"]
+    assert "set_field_value" in payload["recommended_actions"]
+    assert "dismiss_dialog" in payload["recommended_actions"]
+
+
+def test_desktop_action_router_surface_snapshot_detects_uac_consent_dialog_state(tmp_path: Path) -> None:
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2315, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2315, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-yes", "name": "Yes", "control_type": "Button"},
+                    {"element_id": "btn-no", "name": "No", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "uac_consent_dialog_surface",
+                "text": "User Account Control. Do you want to allow this app to make changes to your device?",
+                "screenshot_path": "E:/tmp/uac_consent_dialog_surface.png",
+            },
+        },
+        app_profile_registry=_build_registry(tmp_path, []),
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(window_title="User Account Control", query="allow", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["surface_flags"]["dialog_visible"] is True
+    assert payload["safety_signals"]["elevation_prompt_visible"] is True
+    assert payload["safety_signals"]["admin_approval_required"] is True
+    assert payload["safety_signals"]["secure_desktop_likely"] is True
+    assert payload["dialog_state"]["dialog_kind"] == "elevation_prompt"
+    assert payload["dialog_state"]["approval_kind"] == "elevation_consent"
+    assert payload["dialog_state"]["secure_desktop_likely"] is True
+    assert payload["form_page_state"]["page_kind"] == "elevation_dialog"
+    assert payload["form_page_state"]["approval_kind"] == "elevation_consent"
+    assert payload["form_page_state"]["autonomous_blocker"] == "elevation_consent_required"
+    assert "dismiss_dialog" in payload["recommended_actions"]
+
+
+def test_desktop_action_router_surface_snapshot_detects_permission_review_dialog_state(tmp_path: Path) -> None:
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2316, "title": "Camera access", "exe": r"C:\Windows\System32\ApplicationFrameHost.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2316, "title": "Camera access", "exe": r"C:\Windows\System32\ApplicationFrameHost.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-allow", "name": "Allow", "control_type": "Button"},
+                    {"element_id": "btn-dont-allow", "name": "Don't Allow", "control_type": "Button"},
+                ],
+            },
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "permission_review_dialog_surface",
+                "text": "Let this app access your camera? Allow or Don't Allow.",
+                "screenshot_path": "E:/tmp/permission_review_dialog_surface.png",
+            },
+        },
+        app_profile_registry=_build_registry(tmp_path, []),
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(window_title="Camera access", query="allow", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["safety_signals"]["permission_review_visible"] is True
+    assert payload["dialog_state"]["dialog_kind"] == "permission_review"
+    assert payload["dialog_state"]["approval_kind"] == "permission_review"
+    assert payload["form_page_state"]["page_kind"] == "permission_dialog"
+    assert payload["form_page_state"]["autonomous_blocker"] == "permission_review_required"
+    assert "dismiss_dialog" in payload["recommended_actions"]
 
 
 def test_desktop_action_router_completes_form_page_before_committing_settings(tmp_path: Path) -> None:
@@ -3112,6 +3783,253 @@ def test_desktop_action_router_stops_complete_form_flow_on_risky_interstitial_di
     assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "Confirm changes"
     assert payload["form_mission"]["page_history"][1]["before"]["preferred_dialog_confirmation_button"] == "Continue"
     assert payload["form_mission"]["final_page"]["screen_hash"] == "settings_warning_dialog"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_stops_complete_form_flow_on_credential_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "settings_open": True,
+        "dialog_open": False,
+        "acknowledged": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["settings_open"]):
+            rows.append({"hwnd": 2328, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 2329, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Settings":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "field-username", "name": "Username", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "field-password", "name": "Password", "control_type": "Edit", "value_text": ""},
+                    {"element_id": "btn-sign-in", "name": "Sign in", "control_type": "Button"},
+                    {"element_id": "btn-cancel", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "check-review", "name": "I understand the pending changes", "control_type": "CheckBox", "checked": bool(state["acknowledged"])},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_credential_dialog",
+                "text": "Windows Security sign in dialog. Enter username and password to continue.",
+                "screenshot_path": "E:/tmp/settings_credential_dialog.png",
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_review_page",
+                "text": "Settings review changes. I understand the pending changes before applying.",
+                "screenshot_path": "E:/tmp/settings_review_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_credential_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_credential_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"check-review", "i understand the pending changes"} and bool(state["settings_open"]) and not bool(state["dialog_open"]):
+            state["acknowledged"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["settings_open"]) and bool(state["acknowledged"]) and not bool(state["dialog_open"]):
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 2329, "title": "Windows Security", "exe": r"C:\Windows\System32\CredentialUIBroker.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 2328, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2328), "title": str(payload.get("window_title", "") or "Settings")}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_form_flow", "app_name": "settings", "max_form_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["form_mission"]["completed"] is False
+    assert payload["form_mission"]["stop_reason_code"] == "credential_input_required"
+    assert payload["form_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "Windows Security"
+    assert payload["form_mission"]["page_history"][1]["before"]["dialog_kind"] == "credential_prompt"
+    assert payload["form_mission"]["page_history"][1]["blocking_surface"]["approval_kind"] == "credential_input"
+    assert payload["form_mission"]["page_history"][1]["dialog_followup"]["dialog_kind"] == "credential_prompt"
+    assert payload["form_mission"]["blocking_surface"]["approval_kind"] == "credential_input"
+    assert payload["form_mission"]["blocking_surface"]["resume_action"] == "complete_form_flow"
+    assert "provide_credentials" in payload["form_mission"]["blocking_surface"]["resume_preconditions"]
+    assert payload["form_mission"]["resume_contract"]["resume_action"] == "complete_form_flow"
+    assert payload["form_mission"]["resume_contract"]["resume_strategy"] == "reacquire_app_surface"
+    assert payload["form_mission"]["resume_contract"]["resume_payload"]["app_name"] == "settings"
+    assert payload["form_mission"]["resume_contract"]["resume_payload"]["expected_form_target_count"] == 0
+    assert payload["form_mission"]["final_page"]["screen_hash"] == "settings_credential_dialog"
+    assert [row["action"] for row in payload["results"]] == [
+        "accessibility_invoke_element",
+        "accessibility_invoke_element",
+    ]
+
+
+def test_desktop_action_router_stops_complete_form_flow_on_uac_consent_interstitial_dialog(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    state: Dict[str, Any] = {
+        "settings_open": True,
+        "dialog_open": False,
+        "acknowledged": False,
+    }
+
+    def _windows() -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if bool(state["settings_open"]):
+            rows.append({"hwnd": 2330, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"})
+        if bool(state["dialog_open"]):
+            rows.append({"hwnd": 2331, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"})
+        return rows
+
+    def _elements(payload: Dict[str, Any]) -> Dict[str, Any]:
+        title = str(payload.get("window_title", "") or "").strip()
+        if bool(state["dialog_open"]) and title != "Settings":
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "btn-yes", "name": "Yes", "control_type": "Button"},
+                    {"element_id": "btn-no", "name": "No", "control_type": "Button"},
+                ],
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "items": [
+                    {"element_id": "check-review", "name": "I understand the pending changes", "control_type": "CheckBox", "checked": bool(state["acknowledged"])},
+                    {"element_id": "btn-apply", "name": "Apply", "control_type": "Button"},
+                    {"element_id": "btn-cancel-main", "name": "Cancel", "control_type": "Button"},
+                ],
+            }
+        return {"status": "success", "items": []}
+
+    def _observe(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if bool(state["dialog_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_uac_dialog",
+                "text": "User Account Control. Do you want to allow this app to make changes to your device?",
+                "screenshot_path": "E:/tmp/settings_uac_dialog.png",
+            }
+        if bool(state["settings_open"]):
+            return {
+                "status": "success",
+                "screen_hash": "settings_review_page",
+                "text": "Settings review changes. I understand the pending changes before applying.",
+                "screenshot_path": "E:/tmp/settings_review_page.png",
+            }
+        return {
+            "status": "success",
+            "screen_hash": "desktop_after_settings_uac_dialog",
+            "text": "Desktop ready",
+            "screenshot_path": "E:/tmp/desktop_after_settings_uac_dialog.png",
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        target = str(payload.get("element_id", "") or payload.get("query", "")).strip().lower()
+        if target in {"check-review", "i understand the pending changes"} and bool(state["settings_open"]) and not bool(state["dialog_open"]):
+            state["acknowledged"] = True
+            return {"status": "success", "invoked": target}
+        if target in {"btn-apply", "apply"} and bool(state["settings_open"]) and bool(state["acknowledged"]) and not bool(state["dialog_open"]):
+            state["dialog_open"] = True
+            return {"status": "success", "invoked": target}
+        return {"status": "error", "message": f"unexpected invoke target: {target}"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": _windows()},
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": (
+                    {"hwnd": 2331, "title": "User Account Control", "exe": r"C:\Windows\System32\consent.exe"}
+                    if bool(state["dialog_open"])
+                    else {"hwnd": 2330, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}
+                ),
+            },
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2330), "title": str(payload.get("window_title", "") or "Settings")}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": _elements,
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": _invoke,
+            "computer_observe": _observe,
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.execute({"action": "complete_form_flow", "app_name": "settings", "max_form_pages": 4})
+
+    assert payload["status"] == "partial"
+    assert payload["verification"]["verified"] is False
+    assert payload["form_mission"]["completed"] is False
+    assert payload["form_mission"]["stop_reason_code"] == "elevation_consent_required"
+    assert payload["form_mission"]["page_history"][1]["status"] == "blocked"
+    assert payload["form_mission"]["page_history"][1]["before"]["window_title"] == "User Account Control"
+    assert payload["form_mission"]["page_history"][1]["before"]["dialog_kind"] == "elevation_prompt"
+    assert payload["form_mission"]["page_history"][1]["before"]["approval_kind"] == "elevation_consent"
+    assert payload["form_mission"]["page_history"][1]["blocking_surface"]["approval_kind"] == "elevation_consent"
+    assert payload["form_mission"]["page_history"][1]["dialog_followup"]["dialog_kind"] == "elevation_prompt"
+    assert payload["form_mission"]["page_history"][1]["dialog_followup"]["approval_kind"] == "elevation_consent"
+    assert payload["form_mission"]["page_history"][1]["dialog_followup"]["secure_desktop_likely"] is True
+    assert payload["form_mission"]["blocking_surface"]["approval_kind"] == "elevation_consent"
+    assert payload["form_mission"]["blocking_surface"]["secure_desktop_likely"] is True
+    assert "approve_elevation_request" in payload["form_mission"]["blocking_surface"]["resume_preconditions"]
+    assert payload["form_mission"]["resume_contract"]["resume_action"] == "complete_form_flow"
+    assert payload["form_mission"]["resume_contract"]["resume_strategy"] == "reacquire_app_surface"
+    assert payload["form_mission"]["resume_contract"]["resume_payload"]["app_name"] == "settings"
+    assert "approve_elevation_request" in payload["form_mission"]["resume_contract"]["resume_preconditions"]
+    assert payload["form_mission"]["final_page"]["screen_hash"] == "settings_uac_dialog"
     assert [row["action"] for row in payload["results"]] == [
         "accessibility_invoke_element",
         "accessibility_invoke_element",

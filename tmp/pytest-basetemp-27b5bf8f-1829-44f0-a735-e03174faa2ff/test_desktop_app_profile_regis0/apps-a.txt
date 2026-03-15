@@ -1,0 +1,9 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Google Chrome                             Google.Chrome.EXE            145.0                winget
+Cloudflare WARP                           Cloudflare.Warp              25.10.186             winget
+Warp                                      Warp.Warp                    v0.2026              winget
+Microsoft Visual Studio Code             Microsoft.VisualStudioCode   1.105                winget
+Slack                                     SlackTechnologies.Slack     4.41.105             winget
+Microsoft Word                            Microsoft.Office.Word       2502.0               winget
+Microsoft PowerPoint                      Microsoft.Office.PowerPoint 2502.0               winget

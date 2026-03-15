@@ -223,3 +223,47 @@ def test_remote_metadata_probe_huggingface_marks_auth_required_on_access_denied(
     assert payload["auth_configured"] is False
     assert payload["auth_used"] is False
     assert int(payload["http_status"]) == 401
+
+
+def test_remote_metadata_probe_plan_metadata_summarizes_acquisition_states(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    probe = ModelSetupRemoteMetadataProbe(cache_path="data/model_setup_remote_metadata.json", cache_ttl_s=3600.0)
+
+    def fake_item_metadata(*, item: dict[str, object], refresh: bool = False, timeout_s: float = 0.0) -> dict[str, object]:  # noqa: ARG001
+        item_key = str(item.get("key", "") or "").strip().lower()
+        if item_key == "public-direct":
+            return {
+                "key": "public-direct",
+                "name": "sam_vit_h_4b8939.pth",
+                "source_kind": "direct_url",
+                "status": "success",
+                "size_bytes": 2650000000,
+            }
+        return {
+            "key": "gated-hf",
+            "name": "Llama-3.1-8B-Instruct",
+            "source_kind": "huggingface",
+            "status": "auth_required",
+            "requires_auth": True,
+            "auth_configured": False,
+            "gated": True,
+        }
+
+    monkeypatch.setattr(probe, "item_metadata", fake_item_metadata)
+
+    payload = probe.plan_metadata(
+        plan_payload={
+            "items": [
+                {"key": "public-direct", "automation_ready": True},
+                {"key": "gated-hf", "automation_ready": True},
+            ]
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert int(payload["download_ready_count"]) == 1
+    assert int(payload["auth_missing_count"]) == 1
+    assert int(payload["gated_count"]) == 1
+    assert int(payload["blocked_count"]) == 1
+    assert payload["item_map"]["public-direct"]["acquisition_stage"] == "ready_public"
+    assert payload["item_map"]["gated-hf"]["credential_state"] == "missing"

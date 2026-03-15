@@ -275,3 +275,51 @@ def test_desktop_app_profile_registry_recognizes_extended_app_overrides(tmp_path
     assert outlook["workflow_capabilities"]["reply_all_email"]["primary_hotkey"] == ["ctrl", "shift", "r"]
     assert outlook["workflow_capabilities"]["forward_email"]["primary_hotkey"] == ["ctrl", "f"]
     assert outlook["workflow_capabilities"]["new_calendar_event"]["primary_hotkey"] == ["ctrl", "shift", "a"]
+
+
+def test_desktop_app_profile_registry_derives_aliases_and_categories_for_builtin_inventory(tmp_path: Path) -> None:
+    apps = tmp_path / "apps.txt"
+    apps.write_text(
+        "\n".join(
+            [
+                "Name                                      Id                                                             Version    Available  Source",
+                "-------------------------------------------------------------------------------------------------------------------------------",
+                "Windows Calculator                        MSIX\\Microsoft.WindowsCalculator_11.2508.4.0_x64__8wekyb3d8bbwe 11.2508              winget",
+                "Microsoft To Do                           MSIX\\Microsoft.Todos_0.172.6603.0_x64__8wekyb3d8bbwe           0.172                 winget",
+                "Quick Assist                              MSIX\\MicrosoftCorporationII.QuickAssist_2.0.35.0_x64__8wekyb3d8bbwe 2.0.35        winget",
+                "Microsoft Clipchamp                       MSIX\\Clipchamp.Clipchamp_4.5.10240.0_x64__yxz26nhyzhsrt       4.5                   winget",
+                "Dev Home                                  MSIX\\Microsoft.Windows.DevHome_0.1700.597.0_x64__8wekyb3d8bbwe 0.1700              winget",
+                "Windows Security                          MSIX\\Microsoft.SecHealthUI_1000.29510.1001.0_x64__cw5n1h2txyewy 1000.29510      winget",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    registry = DesktopAppProfileRegistry(source_paths=[str(apps)])
+
+    calculator = registry.match(app_name="calculator")
+    assert calculator["status"] == "success"
+    assert calculator["category"] == "utility"
+    assert "calculator" in calculator["aliases"]
+
+    todo = registry.match(app_name="to do")
+    assert todo["status"] == "success"
+    assert todo["category"] == "office"
+    assert "to do" in todo["aliases"]
+
+    quick_assist = registry.match(app_name="quick assist")
+    assert quick_assist["status"] == "success"
+    assert quick_assist["category"] == "remote_support"
+
+    clipchamp = registry.match(app_name="clipchamp")
+    assert clipchamp["status"] == "success"
+    assert clipchamp["category"] == "media"
+    assert "clipchamp" in clipchamp["aliases"]
+
+    dev_home = registry.match(app_name="dev home")
+    assert dev_home["status"] == "success"
+    assert dev_home["category"] == "ops_console"
+
+    windows_security = registry.match(app_name="windows security")
+    assert windows_security["status"] == "success"
+    assert windows_security["category"] == "security"

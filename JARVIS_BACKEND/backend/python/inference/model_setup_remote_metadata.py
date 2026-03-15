@@ -40,7 +40,9 @@ class ModelSetupRemoteMetadataProbe:
         size_known_count = 0
         success_count = 0
         for item in items:
-            payload = self.item_metadata(item=item, refresh=bool(refresh), timeout_s=timeout_s)
+            payload = _augment_remote_payload(
+                self.item_metadata(item=item, refresh=bool(refresh), timeout_s=timeout_s)
+            )
             rows.append(payload)
             item_key = str(payload.get("key", "") or "").strip().lower()
             if item_key:
@@ -51,15 +53,29 @@ class ModelSetupRemoteMetadataProbe:
                 size_known_count += 1
             if str(payload.get("status", "") or "").strip().lower() == "success":
                 success_count += 1
+        acquisition_summary = _remote_acquisition_summary(rows)
         return {
             "status": "success",
             "count": len(rows),
             "cache_hits": cache_hits,
             "size_known_count": size_known_count,
             "success_count": success_count,
+            "download_ready_count": int(acquisition_summary.get("download_ready_count", 0) or 0),
+            "auth_required_count": int(acquisition_summary.get("auth_required_count", 0) or 0),
+            "auth_configured_count": int(acquisition_summary.get("auth_configured_count", 0) or 0),
+            "auth_missing_count": int(acquisition_summary.get("auth_missing_count", 0) or 0),
+            "access_blocked_count": int(acquisition_summary.get("access_blocked_count", 0) or 0),
+            "gated_count": int(acquisition_summary.get("gated_count", 0) or 0),
+            "private_count": int(acquisition_summary.get("private_count", 0) or 0),
+            "manual_attention_count": int(acquisition_summary.get("manual_attention_count", 0) or 0),
+            "public_ready_count": int(acquisition_summary.get("public_ready_count", 0) or 0),
+            "authenticated_ready_count": int(acquisition_summary.get("authenticated_ready_count", 0) or 0),
+            "probe_error_count": int(acquisition_summary.get("probe_error_count", 0) or 0),
+            "blocked_count": int(acquisition_summary.get("blocked_count", 0) or 0),
+            "acquisition_summary": acquisition_summary,
             "items": rows,
             "item_map": item_map,
-    }
+        }
 
     def item_metadata(self, *, item: Dict[str, Any], refresh: bool = False, timeout_s: float = 6.0) -> Dict[str, Any]:
         cache_key = self._cache_key(item)
@@ -67,7 +83,8 @@ class ModelSetupRemoteMetadataProbe:
             cached_entry = self._store.get_with_meta(cache_key, default=None)
             cached = cached_entry.get("value")
             if isinstance(cached, dict):
-                return _decorate_cached_payload(cached, meta=cached_entry.get("meta"), cached=True)
+                normalized_cached = _augment_remote_payload(cached)
+                return _decorate_cached_payload(normalized_cached, meta=cached_entry.get("meta"), cached=True)
 
         source_kind = str(item.get("source_kind", "unknown") or "unknown").strip().lower()
         source_ref = str(item.get("source_ref", "") or "").strip()
@@ -132,6 +149,7 @@ class ModelSetupRemoteMetadataProbe:
                 "cached": False,
             }
         )
+        payload = _augment_remote_payload(payload)
         self._store.set(cache_key, payload, ttl_s=self._cache_ttl_s)
         return _decorate_cached_payload(payload, meta={"updated_at": payload.get("checked_at", time.time())}, cached=False)
 
@@ -286,3 +304,159 @@ def _decorate_cached_payload(payload: Dict[str, Any], *, meta: Any, cached: bool
     normalized["cached"] = bool(cached)
     normalized["cache_age_s"] = max(0.0, time.time() - updated_at) if updated_at > 0.0 else 0.0
     return normalized
+
+
+def _augment_remote_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload) if isinstance(payload, dict) else {}
+    source_kind = str(normalized.get("source_kind", "unknown") or "unknown").strip().lower()
+    status_name = str(normalized.get("status", "") or "").strip().lower()
+    requires_auth = bool(normalized.get("requires_auth", False))
+    auth_configured = bool(normalized.get("auth_configured", False))
+    gated = bool(normalized.get("gated", False))
+    private = bool(normalized.get("private", False))
+
+    access_mode = "unknown"
+    credential_state = "unknown"
+    acquisition_stage = "unavailable"
+    download_ready = False
+    acquisition_blocked = False
+    manual_attention_required = False
+
+    if source_kind == "huggingface":
+        if private:
+            access_mode = "private"
+        elif gated or requires_auth:
+            access_mode = "gated"
+        else:
+            access_mode = "public"
+
+        if status_name == "success":
+            if requires_auth:
+                credential_state = "configured" if auth_configured else "missing"
+                if auth_configured:
+                    acquisition_stage = "ready_authenticated"
+                    download_ready = True
+                else:
+                    acquisition_stage = "blocked_missing_auth"
+                    acquisition_blocked = True
+                    manual_attention_required = True
+            else:
+                credential_state = "not_required"
+                acquisition_stage = "ready_public"
+                download_ready = True
+        elif status_name == "auth_required":
+            credential_state = "access_denied" if auth_configured else "missing"
+            acquisition_stage = "blocked_access_denied" if auth_configured else "blocked_missing_auth"
+            acquisition_blocked = True
+            manual_attention_required = True
+        elif status_name in {"error", "unavailable"}:
+            credential_state = "configured" if auth_configured else ("missing" if requires_auth else "not_required")
+            acquisition_stage = "probe_error"
+            manual_attention_required = True
+        else:
+            credential_state = "configured" if auth_configured else ("missing" if requires_auth else "not_required")
+    elif source_kind == "direct_url":
+        access_mode = "public"
+        credential_state = "not_required"
+        if status_name == "success":
+            acquisition_stage = "ready_public"
+            download_ready = True
+        elif status_name in {"error", "unavailable"}:
+            acquisition_stage = "probe_error"
+            manual_attention_required = True
+    else:
+        if status_name == "success":
+            acquisition_stage = "ready_public"
+            download_ready = True
+        elif status_name in {"error", "auth_required", "unavailable"}:
+            acquisition_stage = "probe_error"
+            manual_attention_required = True
+
+    normalized["access_mode"] = access_mode
+    normalized["credential_state"] = credential_state
+    normalized["acquisition_stage"] = acquisition_stage
+    normalized["download_ready"] = download_ready
+    normalized["acquisition_blocked"] = acquisition_blocked
+    normalized["manual_attention_required"] = manual_attention_required
+    return normalized
+
+
+def _remote_acquisition_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    download_ready_count = 0
+    auth_required_count = 0
+    auth_configured_count = 0
+    auth_missing_count = 0
+    access_blocked_count = 0
+    gated_count = 0
+    private_count = 0
+    manual_attention_count = 0
+    public_ready_count = 0
+    authenticated_ready_count = 0
+    probe_error_count = 0
+    blocked_count = 0
+    ready_item_keys: List[str] = []
+    blocked_item_keys: List[str] = []
+    auth_missing_item_keys: List[str] = []
+    access_blocked_item_keys: List[str] = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item_key = str(row.get("key", "") or "").strip().lower()
+        acquisition_stage = str(row.get("acquisition_stage", "") or "").strip().lower()
+        credential_state = str(row.get("credential_state", "") or "").strip().lower()
+        access_mode = str(row.get("access_mode", "") or "").strip().lower()
+        requires_auth = bool(row.get("requires_auth", False))
+        auth_configured = bool(row.get("auth_configured", False))
+
+        if requires_auth:
+            auth_required_count += 1
+        if auth_configured:
+            auth_configured_count += 1
+        if credential_state == "missing":
+            auth_missing_count += 1
+            if item_key:
+                auth_missing_item_keys.append(item_key)
+        if credential_state == "access_denied":
+            access_blocked_count += 1
+            if item_key:
+                access_blocked_item_keys.append(item_key)
+        if access_mode == "gated":
+            gated_count += 1
+        if access_mode == "private":
+            private_count += 1
+        if bool(row.get("manual_attention_required", False)):
+            manual_attention_count += 1
+        if bool(row.get("download_ready", False)):
+            download_ready_count += 1
+            if item_key:
+                ready_item_keys.append(item_key)
+        if acquisition_stage == "ready_public":
+            public_ready_count += 1
+        if acquisition_stage == "ready_authenticated":
+            authenticated_ready_count += 1
+        if acquisition_stage == "probe_error":
+            probe_error_count += 1
+        if acquisition_stage in {"blocked_missing_auth", "blocked_access_denied"}:
+            blocked_count += 1
+            if item_key:
+                blocked_item_keys.append(item_key)
+
+    return {
+        "download_ready_count": download_ready_count,
+        "auth_required_count": auth_required_count,
+        "auth_configured_count": auth_configured_count,
+        "auth_missing_count": auth_missing_count,
+        "access_blocked_count": access_blocked_count,
+        "gated_count": gated_count,
+        "private_count": private_count,
+        "manual_attention_count": manual_attention_count,
+        "public_ready_count": public_ready_count,
+        "authenticated_ready_count": authenticated_ready_count,
+        "probe_error_count": probe_error_count,
+        "blocked_count": blocked_count,
+        "ready_item_keys": ready_item_keys,
+        "blocked_item_keys": blocked_item_keys,
+        "auth_missing_item_keys": auth_missing_item_keys,
+        "access_blocked_item_keys": access_blocked_item_keys,
+    }

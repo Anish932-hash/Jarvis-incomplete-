@@ -1296,7 +1296,13 @@ class DesktopAppProfileRegistry:
         category = str(override.get("category", self._infer_category(canonical_name, app_name, package_ids)) or "general_desktop").strip().lower()
         defaults = self.CATEGORY_DEFAULTS.get(category, self.CATEGORY_DEFAULTS["general_desktop"])
         workflow_defaults = self._merge_workflow_defaults(defaults.get("workflow_defaults", {}), override.get("workflow_defaults", {}))
-        aliases = _dedupe_strings(list(override.get("aliases", [])) + [app_name, canonical_name] + self._keyword_aliases(canonical_name, app_name) + self._package_id_aliases(package_ids))
+        aliases = _dedupe_strings(
+            list(override.get("aliases", []))
+            + [app_name, canonical_name]
+            + self._keyword_aliases(canonical_name, app_name)
+            + self._derived_aliases(canonical_name, app_name)
+            + self._package_id_aliases(package_ids)
+        )
         exe_hints = _dedupe_strings(list(override.get("exe_hints", [])) + self._package_id_exe_hints(package_ids) + self._exe_hints(canonical_name, aliases))
         return {
             "profile_id": self._slug(aliases[0] if aliases else app_name),
@@ -1342,6 +1348,7 @@ class DesktopAppProfileRegistry:
             + ([seed_name] if seed_name else [])
             + [canonical_name]
             + self._keyword_aliases(canonical_name, seed_name)
+            + self._derived_aliases(canonical_name, seed_name)
             + self._package_id_aliases(synthetic_package_ids)
         )
         exe_hints = _dedupe_strings(
@@ -1510,11 +1517,11 @@ class DesktopAppProfileRegistry:
             return "office"
         if any(keyword in haystack for keyword in ("screen recorder", "loom", "medal", "photos", "paint", "clipchamp", "sound recorder", "media player", "freetube", "youtube", "vlc", "obs", "fxsound", "spotify")):
             return "media"
-        if any(keyword in haystack for keyword in ("docker", "vmware", "wsl", "build tools", "sdk", "git", "github desktop", "postman", "insomnia", "virtualbox")):
+        if any(keyword in haystack for keyword in ("dev home", "docker", "vmware", "wsl", "build tools", "sdk", "git", "github desktop", "postman", "insomnia", "virtualbox")):
             return "ops_console"
         if any(keyword in haystack for keyword in ("chatgpt", "claude", "codex", "copilot", "jarvis", "ollama", "hackerai", "wispr", "firebase studio", "jioai", "antigravity")):
             return "ai_companion"
-        if any(keyword in haystack for keyword in ("zip", "recuva", "everything", "onedrive", "gopeed", "torrent", "rufus", "terabox", "installer", "dropbox", "drive")):
+        if any(keyword in haystack for keyword in ("zip", "recuva", "everything", "onedrive", "gopeed", "torrent", "rufus", "terabox", "installer", "dropbox", "drive", "calculator", "store", "camera", "clock", "feedback hub", "snipping tool", "myasus", "lively wallpaper", "realtek audio")):
             return "utility"
         return "general_desktop"
 
@@ -1575,6 +1582,34 @@ class DesktopAppProfileRegistry:
         if "powershell" in normalized_name:
             aliases.append("pwsh")
         return aliases
+
+    @staticmethod
+    def _derived_aliases(canonical_name: str, app_name: str) -> List[str]:
+        aliases: List[str] = []
+        candidates = [canonical_name, DesktopAppProfileRegistry._normalize_text(app_name)]
+        prefixes = ("microsoft ", "windows ", "google ", "adobe ")
+        suffixes = (" for windows", " desktop", " app", " application")
+        for candidate in candidates:
+            clean_candidate = DesktopAppProfileRegistry._normalize_text(candidate)
+            if not clean_candidate:
+                continue
+            aliases.append(clean_candidate)
+            for prefix in prefixes:
+                if clean_candidate.startswith(prefix):
+                    aliases.append(clean_candidate[len(prefix):].strip())
+            for suffix in suffixes:
+                if clean_candidate.endswith(suffix):
+                    aliases.append(clean_candidate[: -len(suffix)].strip())
+            trimmed = clean_candidate
+            for prefix in prefixes:
+                if trimmed.startswith(prefix):
+                    trimmed = trimmed[len(prefix):].strip()
+            for suffix in suffixes:
+                if trimmed.endswith(suffix):
+                    trimmed = trimmed[: -len(suffix)].strip()
+            if trimmed and trimmed != clean_candidate:
+                aliases.append(trimmed)
+        return _dedupe_strings(aliases)
 
     def _package_id_aliases(self, package_ids: List[str]) -> List[str]:
         aliases: List[str] = []

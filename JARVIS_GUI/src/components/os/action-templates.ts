@@ -15,6 +15,8 @@ export const ARG_TEMPLATES: Record<string, Record<string, unknown>> = {
   media_pause: {},
   media_next: {},
   media_previous: {},
+  desktop_action_advice: { action: 'resume_mission', mission_kind: 'wizard', app_name: 'installer' },
+  desktop_interact: { action: 'resume_mission', mission_kind: 'wizard', app_name: 'installer' },
   search_files: { base_dir: '.', pattern: '*.py', max_results: 50 },
   search_text: { base_dir: '.', keyword: 'TODO', max_results: 50 },
   scan_directory: { path: '.', max_results: 200 },

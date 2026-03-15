@@ -2,6 +2,8 @@
 
 import LoopingVoiceHUD from './looping-voice-hud';
 import ActionControlPanel from './action-control-panel';
+import DesktopRecoveryBanner from './desktop-recovery-banner';
+import ModelSetupRecoveryBanner from './model-setup-recovery-banner';
 import { type AppMode } from '@/app/page';
 import { Grid, MessageSquare, Send, Paperclip, Wrench, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -123,7 +125,6 @@ const ChatMode = ({ setMode }: { setMode: (mode: AppMode) => void }) => {
         }
       };
 
-
     return (
         <div className="relative flex h-screen w-screen flex-col items-center justify-center p-4 font-headline bg-background">
             {/* Corner decorations */}
@@ -161,21 +162,27 @@ const ChatMode = ({ setMode }: { setMode: (mode: AppMode) => void }) => {
                 />
             </div>
 
-            <div className="flex-grow w-full max-w-4xl flex items-center justify-center overflow-hidden pt-12 pb-4">
-                {messages.length === 0 && !isLoading ? (
-                    <LoopingVoiceHUD />
-                ) : (
-                <ScrollArea className="h-full w-full" ref={scrollAreaRef}>
-                    <div className="flex flex-col gap-6 p-4">
-                    {messages.map((m) => (
-                        <ChatMessage key={m.id} message={m} />
-                    ))}
-                    {isLoading && (
-                        <ChatMessage message={{id: 'thinking', role: 'model', content: ''}} />
+            <div className="flex w-full max-w-4xl flex-1 flex-col overflow-hidden pt-12 pb-4">
+                <div className="mx-auto mb-3 flex w-full max-w-3xl shrink-0 flex-col gap-2">
+                    <DesktopRecoveryBanner className="w-full" compact />
+                    <ModelSetupRecoveryBanner className="w-full" compact />
+                </div>
+                <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+                    {messages.length === 0 && !isLoading ? (
+                        <LoopingVoiceHUD />
+                    ) : (
+                    <ScrollArea className="h-full w-full" ref={scrollAreaRef}>
+                        <div className="flex flex-col gap-6 p-4">
+                        {messages.map((m) => (
+                            <ChatMessage key={m.id} message={m} />
+                        ))}
+                        {isLoading && (
+                            <ChatMessage message={{id: 'thinking', role: 'model', content: ''}} />
+                        )}
+                        </div>
+                    </ScrollArea>
                     )}
-                    </div>
-                </ScrollArea>
-                )}
+                </div>
             </div>
 
             <div className="w-full max-w-2xl pb-8">

@@ -1,0 +1,4 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Discord                                   ARP\User\X64\Discord       1.0.9225
+Google Chrome                             Google.Chrome.EXE            145.0                winget

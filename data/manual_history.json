@@ -3,6 +3,603 @@
     "runs": [
       {
         "status": "planned",
+        "run_id": "ab86b513511546b486064e7baedf3106",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:32:13.429335+00:00",
+        "completed_at": "2026-03-15T15:32:13.449349+00:00",
+        "duration_s": 0.020071,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T15:32:13.435512+00:00",
+            "completed_at": "2026-03-15T15:32:13.445631+00:00",
+            "duration_s": 0.010246,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T15:32:13.439095+00:00",
+                "completed_at": "2026-03-15T15:32:13.442036+00:00",
+                "duration_s": 0.002987,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_run_ma0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\ab86b513511546b486064e7baedf3106\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_run_ma0"
+      },
+      {
+        "status": "success",
+        "run_id": "6aef006fe5b843879f15d1592a5c96f8",
+        "dry_run": false,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 1,
+        "planned_count": 0,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:32:10.989058+00:00",
+        "completed_at": "2026-03-15T15:32:13.389744+00:00",
+        "duration_s": 2.400728,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "success",
+            "message": "manual pipeline completed",
+            "started_at": "2026-03-15T15:32:10.989135+00:00",
+            "completed_at": "2026-03-15T15:32:13.389700+00:00",
+            "duration_s": 2.400613,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "success",
+                "message": "completed",
+                "started_at": "2026-03-15T15:32:10.989174+00:00",
+                "completed_at": "2026-03-15T15:32:13.389303+00:00",
+                "duration_s": 2.400155,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": [
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\6aef006fe5b843879f15d1592a5c96f8\\tts-orpheus-3b-gguf\\promote-artifact-01.log",
+                    "duration_s": 1.556081,
+                    "output_tail": ""
+                  },
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\6aef006fe5b843879f15d1592a5c96f8\\tts-orpheus-3b-gguf\\promote-artifact-02.log",
+                    "duration_s": 0.843601,
+                    "output_tail": ""
+                  }
+                ]
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\6aef006fe5b843879f15d1592a5c96f8\\tts-orpheus-3b-gguf",
+            "artifact": {
+              "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+              "exists": true,
+              "kind": "file",
+              "size_bytes": 24
+            }
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner1"
+      },
+      {
+        "status": "planned",
+        "run_id": "27450e945b8f411383c816f3d575870a",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:32:10.941339+00:00",
+        "completed_at": "2026-03-15T15:32:10.941483+00:00",
+        "duration_s": 0.000185,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T15:32:10.941410+00:00",
+            "completed_at": "2026-03-15T15:32:10.941471+00:00",
+            "duration_s": 9.4e-05,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T15:32:10.941443+00:00",
+                "completed_at": "2026-03-15T15:32:10.941450+00:00",
+                "duration_s": 1.4e-05,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\27450e945b8f411383c816f3d575870a\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-369\\test_model_setup_manual_runner0"
+      },
+      {
+        "status": "planned",
+        "run_id": "742e8a7e936b4c68811664f41581a06c",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:30:31.440697+00:00",
+        "completed_at": "2026-03-15T15:30:31.456259+00:00",
+        "duration_s": 0.015602,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T15:30:31.444192+00:00",
+            "completed_at": "2026-03-15T15:30:31.453786+00:00",
+            "duration_s": 0.009703,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T15:30:31.447126+00:00",
+                "completed_at": "2026-03-15T15:30:31.450585+00:00",
+                "duration_s": 0.003517,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_run_ma0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\742e8a7e936b4c68811664f41581a06c\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_run_ma0"
+      },
+      {
+        "status": "success",
+        "run_id": "d5cbbc7ba2734b8ea511eecca6bf9dd9",
+        "dry_run": false,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 1,
+        "planned_count": 0,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:30:30.369499+00:00",
+        "completed_at": "2026-03-15T15:30:31.415385+00:00",
+        "duration_s": 1.045918,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "success",
+            "message": "manual pipeline completed",
+            "started_at": "2026-03-15T15:30:30.369550+00:00",
+            "completed_at": "2026-03-15T15:30:31.415329+00:00",
+            "duration_s": 1.045819,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "success",
+                "message": "completed",
+                "started_at": "2026-03-15T15:30:30.369573+00:00",
+                "completed_at": "2026-03-15T15:30:31.414817+00:00",
+                "duration_s": 1.045274,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": [
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\d5cbbc7ba2734b8ea511eecca6bf9dd9\\tts-orpheus-3b-gguf\\promote-artifact-01.log",
+                    "duration_s": 0.624082,
+                    "output_tail": ""
+                  },
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\d5cbbc7ba2734b8ea511eecca6bf9dd9\\tts-orpheus-3b-gguf\\promote-artifact-02.log",
+                    "duration_s": 0.42057,
+                    "output_tail": ""
+                  }
+                ]
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\d5cbbc7ba2734b8ea511eecca6bf9dd9\\tts-orpheus-3b-gguf",
+            "artifact": {
+              "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+              "exists": true,
+              "kind": "file",
+              "size_bytes": 24
+            }
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner1"
+      },
+      {
+        "status": "planned",
+        "run_id": "e56fee426bed46499310174c804f6e57",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T15:30:30.356122+00:00",
+        "completed_at": "2026-03-15T15:30:30.356248+00:00",
+        "duration_s": 0.000169,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T15:30:30.356188+00:00",
+            "completed_at": "2026-03-15T15:30:30.356238+00:00",
+            "duration_s": 7.9e-05,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T15:30:30.356217+00:00",
+                "completed_at": "2026-03-15T15:30:30.356223+00:00",
+                "duration_s": 1.3e-05,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\e56fee426bed46499310174c804f6e57\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-368\\test_model_setup_manual_runner0"
+      },
+      {
+        "status": "planned",
+        "run_id": "1be59d44794341b284be10be41c651ca",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T13:26:53.051704+00:00",
+        "completed_at": "2026-03-15T13:26:53.064156+00:00",
+        "duration_s": 0.012492,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T13:26:53.054977+00:00",
+            "completed_at": "2026-03-15T13:26:53.062330+00:00",
+            "duration_s": 0.007473,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T13:26:53.058058+00:00",
+                "completed_at": "2026-03-15T13:26:53.060071+00:00",
+                "duration_s": 0.002095,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_run_ma0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_run_ma0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\1be59d44794341b284be10be41c651ca\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_run_ma0"
+      },
+      {
+        "status": "success",
+        "run_id": "955420777ca543b08feef400e265e619",
+        "dry_run": false,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 1,
+        "planned_count": 0,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T13:26:52.194532+00:00",
+        "completed_at": "2026-03-15T13:26:53.032193+00:00",
+        "duration_s": 0.837704,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "success",
+            "message": "manual pipeline completed",
+            "started_at": "2026-03-15T13:26:52.194590+00:00",
+            "completed_at": "2026-03-15T13:26:53.032138+00:00",
+            "duration_s": 0.83759,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "success",
+                "message": "completed",
+                "started_at": "2026-03-15T13:26:52.194621+00:00",
+                "completed_at": "2026-03-15T13:26:53.031798+00:00",
+                "duration_s": 0.837194,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": [
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts' | Out-Null",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\955420777ca543b08feef400e265e619\\tts-orpheus-3b-gguf\\promote-artifact-01.log",
+                    "duration_s": 0.419945,
+                    "output_tail": ""
+                  },
+                  {
+                    "status": "success",
+                    "message": "completed",
+                    "returncode": 0,
+                    "command": "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'",
+                    "log_path": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\955420777ca543b08feef400e265e619\\tts-orpheus-3b-gguf\\promote-artifact-02.log",
+                    "duration_s": 0.416715,
+                    "output_tail": ""
+                  }
+                ]
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\955420777ca543b08feef400e265e619\\tts-orpheus-3b-gguf",
+            "artifact": {
+              "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1\\tts\\Orpheus-3B-TTS.f16.gguf",
+              "exists": true,
+              "kind": "file",
+              "size_bytes": 24
+            }
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner1"
+      },
+      {
+        "status": "planned",
+        "run_id": "8a9791b21557463fac09aa6a7b92efaf",
+        "dry_run": true,
+        "force": false,
+        "selected_count": 1,
+        "success_count": 0,
+        "planned_count": 1,
+        "warning_count": 0,
+        "error_count": 0,
+        "blocked_count": 0,
+        "cancelled_count": 0,
+        "step_success_count": 1,
+        "step_error_count": 0,
+        "step_skipped_count": 0,
+        "requested_item_keys": [],
+        "requested_step_ids": [],
+        "started_at": "2026-03-15T13:26:52.181442+00:00",
+        "completed_at": "2026-03-15T13:26:52.181551+00:00",
+        "duration_s": 0.000144,
+        "items": [
+          {
+            "key": "tts-orpheus-3b-gguf",
+            "name": "Orpheus-3B-TTS.f16.gguf",
+            "task": "tts",
+            "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf",
+            "status": "planned",
+            "message": "manual pipeline dry-run completed",
+            "started_at": "2026-03-15T13:26:52.181499+00:00",
+            "completed_at": "2026-03-15T13:26:52.181543+00:00",
+            "duration_s": 6.8e-05,
+            "steps": [
+              {
+                "id": "promote-artifact",
+                "title": "Promote artifact",
+                "status": "planned",
+                "message": "dry-run",
+                "started_at": "2026-03-15T13:26:52.181525+00:00",
+                "completed_at": "2026-03-15T13:26:52.181529+00:00",
+                "duration_s": 1e-05,
+                "command_count": 2,
+                "commands": [
+                  "New-Item -ItemType Directory -Force -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner0\\tts' | Out-Null",
+                  "Set-Content -Path 'C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner0\\tts\\Orpheus-3B-TTS.f16.gguf' -Value 'synthetic-manual-model'"
+                ],
+                "logs": []
+              }
+            ],
+            "step_success_count": 1,
+            "step_error_count": 0,
+            "step_skipped_count": 0,
+            "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs\\8a9791b21557463fac09aa6a7b92efaf\\tts-orpheus-3b-gguf"
+          }
+        ],
+        "history_path": "E:\\J.A.R.V.I.S\\data\\manual_history.json",
+        "log_root": "E:\\J.A.R.V.I.S\\data\\model_setup_manual_logs",
+        "pipeline_root": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-367\\test_model_setup_manual_runner0"
+      },
+      {
+        "status": "planned",
         "run_id": "6259e6114f014a10a340eee2e2ea79c6",
         "dry_run": true,
         "force": false,
@@ -601,15 +1198,15 @@
     ]
   },
   "__localstore_meta__": {
-    "version": 9,
+    "version": 18,
     "entries": {
       "runs": {
-        "version": 9,
-        "updated_at": 1773283779.9818518,
+        "version": 18,
+        "updated_at": 1773588733.453418,
         "expires_at": null
       }
     },
     "last_compacted_at": 0.0,
-    "updated_at": 1773283779.9818616
+    "updated_at": 1773588733.4534373
   }
 }

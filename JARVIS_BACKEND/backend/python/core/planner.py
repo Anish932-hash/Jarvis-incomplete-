@@ -5867,6 +5867,8 @@ class Planner:
         app_name, window_title = self._extract_explicit_desktop_target_context(text=text, arguments=args)
         if not app_name:
             app_name = self._extract_desktop_wizard_app_name(text)
+        mission_id = self._extract_desktop_mission_id(text=text, arguments=args)
+        mission_kind = self._infer_desktop_resume_mission_kind(text=text, app_name=app_name, arguments=args)
         used_inherited_target_context = False
         if (
             not app_name
@@ -5882,6 +5884,20 @@ class Planner:
             if inherited_window_title:
                 window_title = inherited_window_title
             used_inherited_target_context = bool(app_name or window_title)
+            if app_name and not mission_kind:
+                mission_kind = self._infer_desktop_resume_mission_kind(text=text, app_name=app_name, arguments=args)
+        if (
+            not app_name
+            and self._looks_like_desktop_resume_request(
+                lowered_text,
+                app_name=app_name,
+                mission_id=mission_id,
+                mission_kind=mission_kind,
+            )
+        ):
+            app_name = self._extract_desktop_resume_app_name(text)
+            if app_name and not mission_kind:
+                mission_kind = self._infer_desktop_resume_mission_kind(text=text, app_name=app_name, arguments=args)
 
         query = str(args.get("query") or args.get("target") or "").strip()
         typed_text = str(args.get("text") or "").strip()
@@ -5936,6 +5952,13 @@ class Planner:
                 action_name = "terminal_command"
             elif any(token in lowered_text for token in ("command palette", "run command", "execute command")):
                 action_name = "command"
+            elif self._looks_like_desktop_resume_request(
+                lowered_text,
+                app_name=app_name,
+                mission_id=mission_id,
+                mission_kind=mission_kind,
+            ):
+                action_name = "resume_mission"
             elif re.search(r"\b(?:focus|open)\s+address bar\b|\baddress bar\b", lowered_text) and (probable_browser_context or probable_file_manager_context):
                 action_name = "focus_address_bar"
             elif re.search(r"\b(?:open\s+)?bookmarks\b", lowered_text) and bool(app_name or window_title):
@@ -6265,10 +6288,10 @@ class Planner:
             action_name = "click_and_type"
 
         has_target_context = bool(app_name or window_title)
-        if require_target_context and not has_target_context:
+        if require_target_context and not has_target_context and action_name not in {"resume_mission"}:
             return None
 
-        if action_name not in {"launch", "click", "type", "click_and_type", "hotkey", "navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}:
+        if action_name not in {"launch", "click", "type", "click_and_type", "hotkey", "navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "resume_mission", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}:
             return None
         if action_name == "launch" and not app_name:
             return None
@@ -6292,6 +6315,10 @@ class Planner:
             step_args["app_name"] = app_name
         if window_title:
             step_args["window_title"] = window_title
+        if mission_id:
+            step_args["mission_id"] = mission_id
+        if action_name == "resume_mission" and mission_kind:
+            step_args["mission_kind"] = mission_kind
         if query:
             step_args["query"] = query
         if typed_text:
@@ -6352,6 +6379,7 @@ class Planner:
                 "finish_wizard",
                 "complete_wizard_page",
                 "complete_wizard_flow",
+                "resume_mission",
             }
             chained_action = str(chained_desktop_interact.args.get("action") or "").strip()
             has_open_prefix = bool(re.match(r"^\s*(?:open|launch|start)\b", text, flags=re.IGNORECASE))
@@ -6363,7 +6391,7 @@ class Planner:
                 and chained_action in compound_stateful_actions
             )
             if (
-                chained_action in {"navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}
+                chained_action in {"navigate", "search", "focus_search_box", "command", "quick_open", "new_chat", "jump_to_conversation", "send_message", "new_email_draft", "reply_email", "reply_all_email", "forward_email", "new_calendar_event", "open_mail_view", "open_calendar_view", "open_people_view", "open_tasks_view", "focus_folder_pane", "focus_message_list", "focus_reading_pane", "focus_navigation_tree", "focus_list_surface", "focus_data_table", "select_tree_item", "expand_tree_item", "select_list_item", "select_table_row", "focus_sidebar", "select_sidebar_item", "focus_main_content", "focus_toolbar", "invoke_toolbar_action", "focus_form_surface", "focus_input_field", "set_field_value", "set_value_control", "open_dropdown", "select_dropdown_option", "focus_checkbox", "check_checkbox", "uncheck_checkbox", "enable_switch", "disable_switch", "select_radio_option", "select_tab_page", "complete_form_page", "complete_form_flow", "focus_value_control", "increase_value", "decrease_value", "toggle_switch", "open_context_menu", "select_context_menu_item", "dismiss_dialog", "confirm_dialog", "press_dialog_button", "next_wizard_step", "previous_wizard_step", "finish_wizard", "complete_wizard_page", "complete_wizard_flow", "resume_mission", "new_document", "save_document", "open_print_dialog", "start_presentation", "play_pause_media", "pause_media", "resume_media", "next_track", "previous_track", "stop_media", "focus_address_bar", "open_bookmarks", "new_folder", "focus_folder_tree", "focus_file_list", "rename_selection", "open_properties_dialog", "open_preview_pane", "open_details_pane", "refresh_view", "go_back", "go_forward", "go_up_level", "focus_explorer", "workspace_search", "find_replace", "go_to_symbol", "rename_symbol", "new_tab", "switch_tab", "close_tab", "reopen_tab", "open_history", "open_downloads", "open_devtools", "open_tab_search", "search_tabs", "toggle_terminal", "format_document", "zoom_in", "zoom_out", "reset_zoom", "terminal_command"}
                 or has_clause_separator
             ) and not preserve_compound_open_chain:
                 return ("desktop_interact", [chained_desktop_interact])
@@ -9705,6 +9733,106 @@ class Planner:
         if not match:
             return ""
         return str(match.group(1) or "").strip().lower()
+
+    @staticmethod
+    def _extract_desktop_mission_id(text: str, *, arguments: Optional[Dict[str, Any]] = None) -> str:
+        args = arguments if isinstance(arguments, dict) else {}
+        direct = str(args.get("mission_id") or "").strip()
+        if direct:
+            return direct
+        match = re.search(r"\b(dm_[a-z0-9_-]{8,})\b", str(text or ""), flags=re.IGNORECASE)
+        if not match:
+            return ""
+        return str(match.group(1) or "").strip().lower()
+
+    @classmethod
+    def _infer_desktop_resume_mission_kind(
+        cls,
+        *,
+        text: str,
+        app_name: str = "",
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        args = arguments if isinstance(arguments, dict) else {}
+        explicit = str(args.get("mission_kind") or "").strip().lower()
+        if explicit in {"wizard", "form"}:
+            return explicit
+        normalized = " ".join(str(text or "").strip().lower().split())
+        if any(token in normalized for token in ("installer", "installation", "setup wizard", "setup", "wizard")):
+            return "wizard"
+        if app_name and any(token in app_name.lower() for token in ("installer", "setup", "wizard")):
+            return "wizard"
+        if app_name and cls._is_probable_form_app_name(app_name):
+            return "form"
+        if any(
+            token in normalized
+            for token in (
+                "settings",
+                "control panel",
+                "preferences",
+                "options",
+                "properties",
+                "form",
+                "dialog",
+                "account",
+                "sign in",
+                "login",
+            )
+        ):
+            return "form"
+        return ""
+
+    @staticmethod
+    def _extract_desktop_resume_app_name(text: str) -> str:
+        patterns = (
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(settings)\b", "settings"),
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(control panel)\b", "control panel"),
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(device manager)\b", "device manager"),
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(event viewer)\b", "event viewer"),
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(task manager)\b", "task manager"),
+            (r"\b(?:resume|continue|recover)(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(installer|installation|setup wizard|setup|wizard)\b", ""),
+        )
+        normalized = str(text or "")
+        for pattern, fallback in patterns:
+            match = re.search(pattern, normalized, flags=re.IGNORECASE)
+            if not match:
+                continue
+            if fallback:
+                return fallback
+            return str(match.group(1) or "").strip().lower()
+        return ""
+
+    @classmethod
+    def _looks_like_desktop_resume_request(
+        cls,
+        lowered: str,
+        *,
+        app_name: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
+    ) -> bool:
+        normalized = " ".join(str(lowered or "").strip().lower().split())
+        if not normalized or not any(token in normalized for token in ("resume", "continue", "recover")):
+            return False
+        if cls._is_probable_media_app_name(app_name) and not mission_id and not re.search(
+            r"\b(?:mission|task|workflow|wizard|installer|installation|setup|form|dialog|settings|options|properties|desktop)\b",
+            normalized,
+        ):
+            return False
+        if mission_id and re.search(r"\b(?:resume|continue|recover)\b", normalized):
+            return True
+        if mission_kind and re.search(r"\b(?:resume|recover)\b", normalized):
+            return True
+        patterns = (
+            r"\bresume(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(?:desktop\s+)?(?:mission|task|workflow)\b",
+            r"\bresume(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(?:installer|installation|setup(?: wizard)?|wizard)\b",
+            r"\bresume(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)?\s*(?:form|dialog|settings|options|properties)\b",
+            r"\bcontinue(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)\s+(?:desktop\s+)?(?:mission|task|workflow)\b",
+            r"\bcontinue(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)\s+(?:installer|installation|setup(?: wizard)?|wizard)\b",
+            r"\bcontinue(?:\s+the)?\s+(?:blocked|paused|stalled|interrupted|pending)\s+(?:form|dialog|settings|options|properties)\b",
+            r"\brecover(?:\s+the)?\s+(?:desktop\s+)?(?:mission|task|workflow|installer|installation|setup(?: wizard)?|wizard|form|dialog|settings|options|properties)\b",
+        )
+        return any(re.search(pattern, normalized) for pattern in patterns)
 
     @staticmethod
     def _extract_desktop_tree_item_query(text: str, *, app_name: str = "") -> str:

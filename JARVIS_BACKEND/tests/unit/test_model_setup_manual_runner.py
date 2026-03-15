@@ -178,9 +178,16 @@ def test_model_setup_manual_run_manager_tracks_background_dry_run(tmp_path: Path
         state_path="data/manual_runs.json",
         completion_callback=_activation_callback,
     )
+    pipeline = _manual_pipeline_payload(tmp_path, target_path)
+    pipeline["setup_plan"] = {
+        "manifest": {
+            "path": str(tmp_path / "JARVIS_BACKEND" / "Models to Download.txt"),
+            "workspace_root": str(tmp_path),
+        }
+    }
 
     launch = manager.start(
-        pipeline_payload=_manual_pipeline_payload(tmp_path, target_path),
+        pipeline_payload=pipeline,
         dry_run=True,
         task="tts",
     )
@@ -192,8 +199,14 @@ def test_model_setup_manual_run_manager_tracks_background_dry_run(tmp_path: Path
 
     assert run["status"] == "planned"
     assert run["task"] == "tts"
+    assert run["manifest_path"] == str(tmp_path / "JARVIS_BACKEND" / "Models to Download.txt")
+    assert run["workspace_root"] == str(tmp_path)
     assert run["result"]["status"] == "planned"
     assert run["items"][0]["status"] == "planned"
+    assert str(run["last_event_name"]).strip().lower() == "run_completed"
+    assert str(run["last_progress_at"]).strip()
+    assert int(run["progress_event_count"]) >= 1
+    assert str(run["progress"]["phase"]).strip().lower() == "completed"
     assert activation_calls == [{"source": "manual_pipeline", "task": "tts", "run_status": "planned"}]
     assert run["activation"]["status"] == "skipped"
     assert run["result"]["activation"]["message"] == "dry-run activation skipped"
@@ -218,3 +231,35 @@ def test_model_setup_manual_run_manager_cancel_requests_propagate_to_running_job
     assert run["status"] == "cancelled"
     assert str(run["cancel_requested_at"]).strip()
     assert str(run["cancel_reason"]).strip() == "cancelled_by_user"
+
+
+def test_model_setup_manual_run_manager_filters_runs_by_manifest_scope(tmp_path: Path) -> None:
+    manager = ModelSetupManualRunManager(_SlowManualRunner(), state_path=str(tmp_path / "manual_runs.json"))  # type: ignore[arg-type]
+    manager._runs = {
+        "run-a": {
+            "run_id": "run-a",
+            "status": "running",
+            "updated_at": "2026-03-15T10:00:00+00:00",
+            "manifest_path": "E:/ScopeA/JARVIS_BACKEND/Models to Download.txt",
+            "workspace_root": "E:/ScopeA",
+        },
+        "run-b": {
+            "run_id": "run-b",
+            "status": "queued",
+            "updated_at": "2026-03-15T09:00:00+00:00",
+            "manifest_path": "E:/ScopeB/JARVIS_BACKEND/Models to Download.txt",
+            "workspace_root": "E:/ScopeB",
+        },
+    }
+
+    payload = manager.list_runs(
+        manifest_path="E:/ScopeA/JARVIS_BACKEND/Models to Download.txt",
+        workspace_root="E:/ScopeA",
+        limit=10,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["count"] == 1
+    assert payload["active_count"] == 1
+    assert payload["items"][0]["run_id"] == "run-a"
+    assert payload["filters"]["workspace_root"] == "E:/ScopeA"

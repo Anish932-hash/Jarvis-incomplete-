@@ -1,0 +1,3 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+File Explorer                             Microsoft.FileExplorer      1.0                  winget

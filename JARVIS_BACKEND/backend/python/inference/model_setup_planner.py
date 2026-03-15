@@ -289,6 +289,9 @@ def build_model_setup_plan(
     provider_required_count = len(provider_rows)
     missing_count = sum(1 for row in manifest.get("models", []) if isinstance(row, dict) and bool(row.get("missing", False)))
     present_count = sum(1 for row in manifest.get("models", []) if isinstance(row, dict) and bool(row.get("present", False)))
+    directories = [dict(row) for row in manifest.get("directories", []) if isinstance(row, dict)]
+    present_directories = sum(1 for row in directories if bool(row.get("present", False)))
+    missing_directories = sum(1 for row in directories if bool(row.get("missing", False)))
 
     return {
         "status": "success",
@@ -299,14 +302,19 @@ def build_model_setup_plan(
         "manifest": {
             "status": str(manifest.get("status", "missing") or "missing"),
             "path": str(manifest.get("path", "") or ""),
+            "workspace_root": str(manifest.get("workspace_root", "") or ""),
             "model_count": int(manifest.get("model_count", 0) or 0),
+            "directory_count": int(manifest.get("directory_count", 0) or 0),
             "provider_count": int(manifest.get("provider_count", 0) or 0),
+            "directories": directories,
             "providers": [str(item).strip().lower() for item in manifest.get("providers", []) if str(item).strip()],
         },
         "summary": {
             "declared_count": int(manifest.get("model_count", 0) or 0),
             "present_count": present_count,
             "missing_count": missing_count,
+            "present_directory_count": present_directories,
+            "missing_directory_count": missing_directories,
             "planned_count": len(items),
             "auto_installable_count": auto_installable_count,
             "manual_count": manual_count,

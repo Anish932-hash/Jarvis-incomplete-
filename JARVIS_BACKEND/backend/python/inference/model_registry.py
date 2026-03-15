@@ -70,6 +70,7 @@ class ModelRegistry:
         ("stt", "stt"),
         ("tts", "tts"),
         ("embedding", "embeddings"),
+        ("intent", "custom_intent"),
         ("intent", "custom_intents"),
         ("reasoning", "reasoning"),
         ("reasoning", "all_rounder"),
@@ -346,8 +347,12 @@ class ModelRegistry:
         credential_snapshot = self._provider_credentials.refresh(overwrite_env=False)
         providers_payload = credential_snapshot.get("providers", {})
         provider_status = providers_payload if isinstance(providers_payload, dict) else {}
-        detected_inventory_rows = self._scan_local_inventory() if self._scan_local_models else []
         manifest_payload = load_model_requirement_manifest(manifest_path=self._manifest_path_hint)
+        detected_inventory_rows = (
+            self._scan_local_inventory(manifest_payload=manifest_payload)
+            if self._scan_local_models
+            else []
+        )
         merged_inventory_rows = self._merge_inventory_rows(
             detected_rows=detected_inventory_rows,
             manifest_payload=manifest_payload,
@@ -385,37 +390,61 @@ class ModelRegistry:
         with self._lock:
             return {name: dict(row) for name, row in self._provider_status.items()}
 
-    def requirement_manifest_snapshot(self) -> Dict[str, Any]:
+    @staticmethod
+    def _manifest_snapshot_payload(manifest_payload: Dict[str, Any]) -> Dict[str, Any]:
+        manifest = manifest_payload if isinstance(manifest_payload, dict) else {}
+        models = manifest.get("models", []) if isinstance(manifest.get("models", []), list) else []
+        providers = manifest.get("providers", []) if isinstance(manifest.get("providers", []), list) else []
+        return {
+            "status": str(manifest.get("status", "missing") or "missing"),
+            "path": str(manifest.get("path", "") or ""),
+            "workspace_root": str(manifest.get("workspace_root", "") or ""),
+            "model_count": int(manifest.get("model_count", 0) or 0),
+            "directory_count": int(manifest.get("directory_count", 0) or 0),
+            "provider_count": int(manifest.get("provider_count", 0) or 0),
+            "models": [dict(row) for row in models if isinstance(row, dict)],
+            "directories": [
+                dict(row)
+                for row in manifest.get("directories", [])
+                if isinstance(row, dict)
+            ],
+            "providers": [str(item).strip().lower() for item in providers if str(item).strip()],
+        }
+
+    def requirement_manifest_snapshot(self, *, manifest_path: str = "") -> Dict[str, Any]:
+        clean_manifest_path = str(manifest_path or "").strip()
+        if clean_manifest_path:
+            manifest_payload = load_model_requirement_manifest(manifest_path=clean_manifest_path)
+            return self._manifest_snapshot_payload(manifest_payload)
         self.refresh_environment(force=False)
         with self._lock:
-            models = self._requirement_manifest.get("models", [])
-            providers = self._requirement_manifest.get("providers", [])
-            return {
-                "status": str(self._requirement_manifest.get("status", "missing") or "missing"),
-                "path": str(self._requirement_manifest.get("path", "") or ""),
-                "model_count": int(self._requirement_manifest.get("model_count", 0) or 0),
-                "provider_count": int(self._requirement_manifest.get("provider_count", 0) or 0),
-                "models": [dict(row) for row in models if isinstance(row, dict)],
-                "providers": [str(item).strip().lower() for item in providers if str(item).strip()],
-            }
+            return self._manifest_snapshot_payload(self._requirement_manifest)
 
-    def local_inventory_snapshot(self, *, task: str = "", limit: int = 200) -> Dict[str, Any]:
+    def local_inventory_snapshot(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        manifest_path: str = "",
+        manifest_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         self.refresh_environment(force=False)
         clean_task = str(task or "").strip().lower()
         bounded_limit = max(1, min(int(limit), 5000))
-        with self._lock:
-            rows = [dict(row) for row in self._inventory_rows]
-            manifest_payload = {
-                "status": str(self._requirement_manifest.get("status", "missing") or "missing"),
-                "path": str(self._requirement_manifest.get("path", "") or ""),
-                "model_count": int(self._requirement_manifest.get("model_count", 0) or 0),
-                "provider_count": int(self._requirement_manifest.get("provider_count", 0) or 0),
-                "providers": [
-                    str(item).strip().lower()
-                    for item in self._requirement_manifest.get("providers", [])
-                    if str(item).strip()
-                ],
-            }
+        scoped_manifest = manifest_payload if isinstance(manifest_payload, dict) and manifest_payload else {}
+        if not scoped_manifest and str(manifest_path or "").strip():
+            scoped_manifest = load_model_requirement_manifest(manifest_path=str(manifest_path or "").strip())
+        if scoped_manifest:
+            detected_rows = self._scan_local_inventory(manifest_payload=scoped_manifest) if self._scan_local_models else []
+            rows = self._merge_inventory_rows(
+                detected_rows=detected_rows,
+                manifest_payload=scoped_manifest,
+            )
+            manifest_summary = self._manifest_snapshot_payload(scoped_manifest)
+        else:
+            with self._lock:
+                rows = [dict(row) for row in self._inventory_rows]
+                manifest_summary = self._manifest_snapshot_payload(self._requirement_manifest)
         if clean_task:
             rows = [row for row in rows if str(row.get("task", "")).strip().lower() == clean_task]
         present_count = sum(1 for row in rows if bool(row.get("present", False)))
@@ -438,7 +467,7 @@ class ModelRegistry:
             "declared_count": declared_count,
             "missing_count": missing_count,
             "undeclared_present_count": undeclared_present_count,
-            "manifest": manifest_payload,
+            "manifest": manifest_summary,
         }
 
     def capability_summary(self, *, limit_per_task: int = 4) -> Dict[str, Any]:
@@ -682,11 +711,11 @@ class ModelRegistry:
             if self._enforce_provider_keys:
                 profile.available = bool(status.get("ready", False))
 
-    def _scan_local_inventory(self) -> List[Dict[str, Any]]:
+    def _scan_local_inventory(self, *, manifest_payload: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         seen: set[str] = set()
         scanned_files = 0
-        for task, root in self._iter_scan_roots():
+        for task, root in self._iter_scan_roots(manifest_payload=manifest_payload):
             if scanned_files >= self._max_scanned_files:
                 break
             if not root.exists() or not root.is_dir():
@@ -938,7 +967,7 @@ class ModelRegistry:
             return "wakeword"
         if "yolo" in text or "vision" in text or "segment_anything" in text or "sam" in text:
             return "vision"
-        if "custom_intents" in text or "bart-large-mnli" in text or "mnli" in text:
+        if "custom_intent" in text or "custom_intents" in text or "bart-large-mnli" in text or "mnli" in text:
             return "intent"
         if "all_rounder" in text or "all-rounder" in text or "qwen3" in text:
             return "reasoning"
@@ -996,7 +1025,7 @@ class ModelRegistry:
             return "yolo"
         return task or "unknown"
 
-    def _iter_scan_roots(self) -> Iterable[tuple[str, Path]]:
+    def _iter_scan_roots(self, *, manifest_payload: Optional[Dict[str, Any]] = None) -> Iterable[tuple[str, Path]]:
         yielded: set[str] = set()
         for task, relative in self._DEFAULT_SCAN_SPECS:
             path = self._resolve_candidate_path(relative)
@@ -1012,6 +1041,26 @@ class ModelRegistry:
                 continue
             yielded.add(key)
             yield task, path
+        for task, raw_path in self._manifest_scan_roots(manifest_payload=manifest_payload):
+            path = self._resolve_candidate_path(raw_path)
+            key = str(path).lower()
+            if key in yielded:
+                continue
+            yielded.add(key)
+            yield task, path
+
+    def _manifest_scan_roots(self, *, manifest_payload: Optional[Dict[str, Any]] = None) -> List[tuple[str, str]]:
+        manifest = manifest_payload if isinstance(manifest_payload, dict) else {}
+        rows: List[tuple[str, str]] = []
+        for raw_row in manifest.get("directories", []):
+            if not isinstance(raw_row, dict):
+                continue
+            path = str(raw_row.get("path", "") or "").strip()
+            if not path:
+                continue
+            task = str(raw_row.get("task", "") or "auto").strip().lower() or "auto"
+            rows.append((task, path))
+        return rows
 
     def _resolve_candidate_path(self, raw: str) -> Path:
         clean = str(raw or "").strip()

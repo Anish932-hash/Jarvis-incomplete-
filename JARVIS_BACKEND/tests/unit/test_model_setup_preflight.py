@@ -35,6 +35,7 @@ def test_model_setup_preflight_reports_ready_for_trusted_writable_item(tmp_path:
     assert payload["status"] == "success"
     assert int(payload["summary"]["blocked_count"]) == 0
     assert int(payload["summary"]["ready_count"]) == 1
+    assert int(payload["summary"]["launchable_count"]) == 1
     row = payload["items"][0]
     assert row["status"] == "ready"
     assert row["source_trust"]["trusted"] is True
@@ -69,6 +70,7 @@ def test_model_setup_preflight_blocks_untrusted_or_low_disk_item(tmp_path: Path,
 
     assert payload["status"] == "success"
     assert int(payload["summary"]["blocked_count"]) == 1
+    assert int(payload["summary"]["launchable_count"]) == 0
     row = payload["items"][0]
     assert row["status"] == "blocked"
     assert row["source_trust"]["trusted"] is False
@@ -169,6 +171,10 @@ def test_model_setup_preflight_blocks_gated_huggingface_repo(tmp_path: Path, mon
     assert row["status"] == "blocked"
     assert any("access token" in str(message).lower() for message in row["blockers"])
     assert row["source_trust"]["trusted"] is True
+    assert row["remote_acquisition"]["credential_state"] == "missing"
+    assert int(payload["summary"]["auth_missing_count"]) == 1
+    assert int(payload["summary"]["download_ready_count"]) == 0
+    assert int(payload["summary"]["launchable_count"]) == 0
 
 
 def test_model_setup_preflight_allows_gated_huggingface_repo_when_auth_is_configured(tmp_path: Path, monkeypatch) -> None:
@@ -216,7 +222,10 @@ def test_model_setup_preflight_allows_gated_huggingface_repo_when_auth_is_config
     row = payload["items"][0]
     assert row["status"] == "ready"
     assert row["remote_probe"]["auth_configured"] is True
+    assert row["remote_acquisition"]["acquisition_stage"] == "ready_authenticated"
     assert not any("access token" in str(message).lower() for message in row["blockers"])
+    assert int(payload["summary"]["download_ready_count"]) == 1
+    assert int(payload["summary"]["launchable_count"]) == 1
 
 
 def test_model_setup_preflight_blocks_when_configured_huggingface_token_lacks_repo_access(tmp_path: Path, monkeypatch) -> None:
@@ -264,3 +273,6 @@ def test_model_setup_preflight_blocks_when_configured_huggingface_token_lacks_re
     row = payload["items"][0]
     assert row["status"] == "blocked"
     assert any("could not access this repository" in str(message).lower() for message in row["blockers"])
+    assert row["remote_acquisition"]["credential_state"] == "access_denied"
+    assert int(payload["summary"]["access_blocked_count"]) == 1
+    assert int(payload["summary"]["launchable_count"]) == 0

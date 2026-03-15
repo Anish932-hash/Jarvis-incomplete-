@@ -1,0 +1,4 @@
+Name                                      Id                           Version    Available  Source
+---------------------------------------------------------------------------------------------------
+Slack                                     SlackTechnologies.Slack     4.41.105             winget
+Microsoft PowerPoint                      Microsoft.Office.PowerPoint 2502.0               winget

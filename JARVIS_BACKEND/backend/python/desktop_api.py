@@ -7,6 +7,7 @@ import difflib
 import html
 import json
 import os
+from pathlib import Path
 import signal
 import threading
 import time
@@ -30,6 +31,7 @@ from backend.python.core.provider_verifier import ProviderCredentialVerifier
 from backend.python.core.rust_runtime import RustRuntimeBridge
 from backend.python.core.task_state import GoalStatus
 from backend.python.inference.model_registry import ModelRegistry
+from backend.python.inference.model_requirement_manifest import load_model_requirement_manifest
 from backend.python.inference.model_router import ModelRouter
 from backend.python.inference.coworker_stack_activation import CoworkerStackActivationOrchestrator
 from backend.python.inference.coworker_stack_advisor import CoworkerStackAdvisor
@@ -38,10 +40,16 @@ from backend.python.inference.model_setup_install_manager import ModelSetupInsta
 from backend.python.inference.model_setup_installer import ModelSetupInstaller
 from backend.python.inference.model_setup_manual_run_manager import ModelSetupManualRunManager
 from backend.python.inference.model_setup_manual_runner import ModelSetupManualRunner
+from backend.python.inference.model_setup_mission import build_model_setup_mission
+from backend.python.inference.model_setup_mission import execute_model_setup_mission
+from backend.python.inference.model_setup_mission_memory import ModelSetupMissionMemory
+from backend.python.inference.model_setup_watchdog_memory import ModelSetupRecoveryWatchdogMemory
 from backend.python.inference.model_setup_manual_pipeline import build_model_setup_manual_pipeline
 from backend.python.inference.model_setup_planner import build_model_setup_plan
 from backend.python.inference.model_setup_preflight import build_model_setup_preflight
 from backend.python.inference.model_setup_remote_metadata import ModelSetupRemoteMetadataProbe
+from backend.python.inference.model_setup_workspace import build_model_setup_workspace
+from backend.python.inference.model_setup_workspace import scaffold_model_setup_workspace
 from backend.python.pc_control.system_monitor import SystemMonitor
 from backend.python.tools.system_tools import SystemTools
 from backend.python.utils.logger import Logger
@@ -162,6 +170,8 @@ class DesktopBackendService:
             self.model_setup_installer,
             completion_callback=self.auto_activate_coworker_stack_for_setup,
         )
+        self.model_setup_mission_memory = ModelSetupMissionMemory()
+        self.model_setup_recovery_watchdog_memory = ModelSetupRecoveryWatchdogMemory()
         self.model_setup_manual_runner = ModelSetupManualRunner(provider_credentials=self.provider_credentials)
         self.model_setup_manual_run_manager = ModelSetupManualRunManager(
             self.model_setup_manual_runner,
@@ -7169,6 +7179,8 @@ class DesktopBackendService:
         window_title: str = "",
         query: str = "",
         text: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
         keys: Optional[List[str]] = None,
         ensure_app_launch: Optional[bool] = None,
         focus_first: Optional[bool] = None,
@@ -7181,6 +7193,9 @@ class DesktopBackendService:
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
         allow_destructive_forms: Optional[bool] = None,
+        resume_contract: Optional[Dict[str, Any]] = None,
+        blocking_surface: Optional[Dict[str, Any]] = None,
+        resume_force: Optional[bool] = None,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -7192,6 +7207,8 @@ class DesktopBackendService:
                 "window_title": window_title,
                 "query": query,
                 "text": text,
+                "mission_id": mission_id,
+                "mission_kind": mission_kind,
                 "keys": list(keys or []),
             }
             if ensure_app_launch is not None:
@@ -7216,6 +7233,12 @@ class DesktopBackendService:
                 payload["max_form_pages"] = int(max_form_pages or 5)
             if allow_destructive_forms is not None:
                 payload["allow_destructive_forms"] = bool(allow_destructive_forms)
+            if isinstance(resume_contract, dict) and resume_contract:
+                payload["resume_contract"] = dict(resume_contract)
+            if isinstance(blocking_surface, dict) and blocking_surface:
+                payload["blocking_surface"] = dict(blocking_surface)
+            if resume_force is not None:
+                payload["resume_force"] = bool(resume_force)
             return router.advise(payload)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
@@ -7228,6 +7251,8 @@ class DesktopBackendService:
         window_title: str = "",
         query: str = "",
         text: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
         keys: Optional[List[str]] = None,
         ensure_app_launch: Optional[bool] = None,
         focus_first: Optional[bool] = None,
@@ -7240,6 +7265,9 @@ class DesktopBackendService:
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
         allow_destructive_forms: Optional[bool] = None,
+        resume_contract: Optional[Dict[str, Any]] = None,
+        blocking_surface: Optional[Dict[str, Any]] = None,
+        resume_force: Optional[bool] = None,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -7251,6 +7279,8 @@ class DesktopBackendService:
                 "window_title": window_title,
                 "query": query,
                 "text": text,
+                "mission_id": mission_id,
+                "mission_kind": mission_kind,
                 "keys": list(keys or []),
             }
             if ensure_app_launch is not None:
@@ -7275,6 +7305,12 @@ class DesktopBackendService:
                 payload["max_form_pages"] = int(max_form_pages or 5)
             if allow_destructive_forms is not None:
                 payload["allow_destructive_forms"] = bool(allow_destructive_forms)
+            if isinstance(resume_contract, dict) and resume_contract:
+                payload["resume_contract"] = dict(resume_contract)
+            if isinstance(blocking_surface, dict) and blocking_surface:
+                payload["blocking_surface"] = dict(blocking_surface)
+            if resume_force is not None:
+                payload["resume_force"] = bool(resume_force)
             return router.execute(payload)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
@@ -7387,18 +7423,128 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
-    def model_local_inventory(self, *, task: str = "", limit: int = 200) -> Dict[str, Any]:
+    def desktop_mission_status(
+        self,
+        *,
+        limit: int = 200,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+        stop_reason_code: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.mission_memory_snapshot(
+                limit=limit,
+                mission_id=mission_id,
+                status=status,
+                mission_kind=mission_kind,
+                app_name=app_name,
+                stop_reason_code=stop_reason_code,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop mission payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_desktop_missions(
+        self,
+        *,
+        mission_id: str = "",
+        status: str = "",
+        mission_kind: str = "",
+        app_name: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.mission_memory_reset(
+                mission_id=mission_id,
+                status=status,
+                mission_kind=mission_kind,
+                app_name=app_name,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop mission reset payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    @staticmethod
+    def _resolve_model_setup_manifest_path(*, manifest_path: str = "", workspace_root: str = "") -> str:
+        clean_manifest = str(manifest_path or "").strip()
+        if clean_manifest:
+            return clean_manifest
+        clean_root = str(workspace_root or "").strip()
+        if not clean_root:
+            return ""
+        root = Path(clean_root)
+        candidates = [
+            root / "JARVIS_BACKEND" / "Models to Download.txt",
+            root / "Models to Download.txt",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                try:
+                    return str(candidate.resolve(strict=False))
+                except Exception:
+                    return str(candidate)
+        try:
+            return str(candidates[0].resolve(strict=False))
+        except Exception:
+            return str(candidates[0])
+
+    def _model_setup_manifest_payload(
+        self,
+        *,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        resolved_manifest_path = self._resolve_model_setup_manifest_path(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        manifest_fn = getattr(self.model_registry, "requirement_manifest_snapshot", None)
+        if callable(manifest_fn):
+            try:
+                return manifest_fn(manifest_path=resolved_manifest_path) if resolved_manifest_path else manifest_fn()
+            except TypeError:
+                return manifest_fn()
+        return load_model_requirement_manifest(manifest_path=resolved_manifest_path)
+
+    def model_local_inventory(
+        self,
+        *,
+        task: str = "",
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
         inventory_fn = getattr(self.model_registry, "local_inventory_snapshot", None)
         runtime_fn = getattr(self.model_registry, "runtime_snapshot", None)
-        manifest_fn = getattr(self.model_registry, "requirement_manifest_snapshot", None)
         if not callable(inventory_fn):
             return {"status": "unavailable", "message": "model registry inventory unavailable"}
         bounded = max(1, min(int(limit), 2000))
         clean_task = str(task or "").strip().lower()
         try:
-            inventory = inventory_fn(task=clean_task, limit=bounded)
+            resolved_manifest_path = self._resolve_model_setup_manifest_path(
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            try:
+                inventory = (
+                    inventory_fn(task=clean_task, limit=bounded, manifest_path=resolved_manifest_path)
+                    if resolved_manifest_path
+                    else inventory_fn(task=clean_task, limit=bounded)
+                )
+            except TypeError:
+                inventory = inventory_fn(task=clean_task, limit=bounded)
             runtime = runtime_fn(task=clean_task, limit=max(bounded, min(5000, bounded * 4))) if callable(runtime_fn) else {"status": "unavailable"}
-            manifest = manifest_fn() if callable(manifest_fn) else {}
+            manifest = self._model_setup_manifest_payload(
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
             task_counts: Dict[str, int] = {}
             missing_task_counts: Dict[str, int] = {}
             declared_task_counts: Dict[str, int] = {}
@@ -7455,18 +7601,32 @@ class DesktopBackendService:
         task: str = "",
         limit: int = 200,
         include_present: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         clean_task = str(task or "").strip().lower()
         bounded = max(1, min(int(limit), 2000))
         try:
-            manifest_fn = getattr(self.model_registry, "requirement_manifest_snapshot", None)
             inventory_fn = getattr(self.model_registry, "local_inventory_snapshot", None)
-            manifest = manifest_fn() if callable(manifest_fn) else {"status": "unavailable", "models": [], "providers": []}
-            inventory = (
-                inventory_fn(task=clean_task, limit=bounded)
-                if callable(inventory_fn)
-                else {"status": "unavailable", "items": []}
+            resolved_manifest_path = self._resolve_model_setup_manifest_path(
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
+            manifest = self._model_setup_manifest_payload(
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            if callable(inventory_fn):
+                try:
+                    inventory = (
+                        inventory_fn(task=clean_task, limit=bounded, manifest_path=resolved_manifest_path)
+                        if resolved_manifest_path
+                        else inventory_fn(task=clean_task, limit=bounded)
+                    )
+                except TypeError:
+                    inventory = inventory_fn(task=clean_task, limit=bounded)
+            else:
+                inventory = {"status": "unavailable", "items": []}
             provider_credentials = self._provider_credentials_with_manifest_requirements(
                 manifest_payload=manifest if isinstance(manifest, dict) else {},
                 refresh=False,
@@ -7488,6 +7648,1981 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def model_setup_workspace(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        try:
+            resolved_manifest_path = self._resolve_model_setup_manifest_path(
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            manifest = self._model_setup_manifest_payload(
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            provider_credentials = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=bool(refresh_provider_credentials),
+            )
+            payload = build_model_setup_workspace(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                provider_snapshot=provider_credentials if isinstance(provider_credentials, dict) else {},
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid model setup workspace payload"}
+            payload["inventory"] = self.model_local_inventory(
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            payload["provider_credentials"] = provider_credentials
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_workspace_scaffold(
+        self,
+        *,
+        dry_run: bool = False,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        try:
+            refresh_fn = getattr(self.model_registry, "refresh_environment", None)
+            resolved_manifest_path = self._resolve_model_setup_manifest_path(
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            manifest = self._model_setup_manifest_payload(
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            provider_credentials = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                refresh=bool(refresh_provider_credentials),
+            )
+            result = scaffold_model_setup_workspace(
+                manifest_payload=manifest if isinstance(manifest, dict) else {},
+                provider_snapshot=provider_credentials if isinstance(provider_credentials, dict) else {},
+                dry_run=bool(dry_run),
+            )
+            if not isinstance(result, dict):
+                return {"status": "error", "message": "invalid model setup workspace scaffold payload"}
+            if not bool(dry_run) and callable(refresh_fn):
+                try:
+                    refresh_fn(force=True)
+                except Exception:
+                    pass
+            workspace = self.model_setup_workspace(
+                refresh_provider_credentials=False,
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            result["workspace"] = workspace
+            result["provider_credentials"] = provider_credentials
+            result["inventory"] = self.model_local_inventory(
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            result["setup_plan"] = self.model_setup_plan(
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=workspace_root,
+            )
+            return result
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def _compose_model_setup_mission_payload(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        resolved_manifest_path = self._resolve_model_setup_manifest_path(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        workspace = self.model_setup_workspace(
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        setup_plan = self.model_setup_plan(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        preflight = self.model_setup_preflight(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        manual_pipeline = self.model_setup_manual_pipeline(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        install_runs = self.model_setup_install_runs(
+            limit=min(24, bounded),
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        manual_runs = self.model_setup_manual_runs(
+            limit=min(24, bounded),
+            manifest_path=resolved_manifest_path,
+            workspace_root=workspace_root,
+        )
+        payload = build_model_setup_mission(
+            workspace_payload=workspace if isinstance(workspace, dict) else {},
+            setup_plan_payload=setup_plan if isinstance(setup_plan, dict) else {},
+            preflight_payload=preflight if isinstance(preflight, dict) else {},
+            manual_pipeline_payload=manual_pipeline if isinstance(manual_pipeline, dict) else {},
+            install_runs_payload=install_runs if isinstance(install_runs, dict) else {},
+            manual_runs_payload=manual_runs if isinstance(manual_runs, dict) else {},
+        )
+        if not isinstance(payload, dict):
+            return {"status": "error", "message": "invalid model setup mission payload"}
+        return payload
+
+    @staticmethod
+    def _model_setup_mission_scope_filters(mission_payload: Dict[str, Any]) -> Dict[str, str]:
+        mission = mission_payload if isinstance(mission_payload, dict) else {}
+        workspace = mission.get("workspace", {}) if isinstance(mission.get("workspace", {}), dict) else {}
+        return {
+            "workspace_root": str(workspace.get("workspace_root", "") or "").strip(),
+            "manifest_path": str(workspace.get("manifest_path", "") or "").strip(),
+        }
+
+    @staticmethod
+    def _model_setup_scope_from_record(record: Dict[str, Any]) -> Dict[str, str]:
+        row = record if isinstance(record, dict) else {}
+        return {
+            "workspace_root": str(row.get("workspace_root", "") or "").strip(),
+            "manifest_path": str(row.get("manifest_path", "") or "").strip(),
+        }
+
+    @staticmethod
+    def _model_setup_scope_label(scope: Dict[str, Any]) -> str:
+        payload = scope if isinstance(scope, dict) else {}
+        manifest_path = str(payload.get("manifest_path", "") or "").strip().replace("\\", "/")
+        workspace_root = str(payload.get("workspace_root", "") or "").strip().replace("\\", "/")
+        manifest_name = manifest_path.rsplit("/", 1)[-1] if manifest_path else ""
+        workspace_name = workspace_root.rsplit("/", 1)[-1] if workspace_root else ""
+        if workspace_name and manifest_name:
+            return f"{workspace_name}::{manifest_name}"
+        return manifest_name or workspace_name or "default"
+
+    @staticmethod
+    def _classify_model_setup_watchdog_advice(advice: Dict[str, Any]) -> str:
+        payload = advice if isinstance(advice, dict) else {}
+        status = str(payload.get("status", "") or "").strip().lower()
+        stalled_run_count = max(0, int(payload.get("stalled_run_count", 0) or 0))
+        if status == "error":
+            return "error"
+        if status == "complete":
+            return "complete"
+        if stalled_run_count > 0 or status == "stalled":
+            return "stalled"
+        if bool(payload.get("can_auto_resume_now", False)) or status == "ready":
+            return "ready"
+        if status in {"watch", "waiting"} or bool(payload.get("watch_active_runs", False)):
+            return "watch"
+        if status == "blocked" or bool(payload.get("manual_attention_required", False)):
+            return "blocked"
+        return "idle"
+
+    @classmethod
+    def _model_setup_watchdog_sort_key(cls, row: Dict[str, Any]) -> tuple[int, int, str]:
+        payload = row if isinstance(row, dict) else {}
+        classification = cls._classify_model_setup_watchdog_advice(payload)
+        rank_map = {
+            "ready": 6,
+            "stalled": 5,
+            "watch": 4,
+            "blocked": 3,
+            "idle": 2,
+            "complete": 1,
+            "error": 0,
+        }
+        priority = max(0, int(payload.get("recovery_priority", 0) or 0))
+        updated_at = str(payload.get("updated_at", payload.get("created_at", "")) or "")
+        return (rank_map.get(classification, 0), priority, updated_at)
+
+    @staticmethod
+    def _model_setup_watchdog_history_scope_filters(
+        mission_payload: Optional[Dict[str, Any]] = None,
+        *,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, str]:
+        if isinstance(mission_payload, dict) and mission_payload:
+            return {
+                "workspace_root": str(
+                    (
+                        mission_payload.get("workspace", {})
+                        if isinstance(mission_payload.get("workspace", {}), dict)
+                        else {}
+                    ).get("workspace_root", "")
+                    or ""
+                ).strip(),
+                "manifest_path": str(
+                    (
+                        mission_payload.get("workspace", {})
+                        if isinstance(mission_payload.get("workspace", {}), dict)
+                        else {}
+                    ).get("manifest_path", "")
+                    or ""
+                ).strip(),
+            }
+        return {
+            "workspace_root": str(workspace_root or "").strip(),
+            "manifest_path": str(manifest_path or "").strip(),
+        }
+
+    def _record_model_setup_watchdog_run(
+        self,
+        watchdog_payload: Dict[str, Any],
+        *,
+        source: str,
+        scope_filters: Optional[Dict[str, str]] = None,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        payload = dict(watchdog_payload) if isinstance(watchdog_payload, dict) else {}
+        memory = getattr(self, "model_setup_recovery_watchdog_memory", None)
+        if memory is None or not payload:
+            return payload
+        recorded = memory.record(
+            watchdog_payload=payload,
+            source=str(source or "manual").strip().lower() or "manual",
+        )
+        if isinstance(recorded, dict) and isinstance(recorded.get("run", {}), dict):
+            payload["watchdog_run"] = recorded.get("run", {})
+        filters = scope_filters if isinstance(scope_filters, dict) else {}
+        history = memory.snapshot(limit=max(1, min(int(history_limit), 32)), **filters)
+        payload["watchdog_history"] = history if isinstance(history, dict) else {}
+        return payload
+
+    @staticmethod
+    def _model_setup_mission_active_count(mission_payload: Dict[str, Any]) -> int:
+        mission = mission_payload if isinstance(mission_payload, dict) else {}
+        install_runs = mission.get("install_runs", {}) if isinstance(mission.get("install_runs", {}), dict) else {}
+        manual_runs = mission.get("manual_runs", {}) if isinstance(mission.get("manual_runs", {}), dict) else {}
+        install_count = max(0, int(install_runs.get("active_count", 0) or 0))
+        manual_count = max(0, int(manual_runs.get("active_count", 0) or 0))
+        return install_count + manual_count
+
+    def _attach_model_setup_mission_recovery(self, payload: Dict[str, Any], *, limit: int) -> Dict[str, Any]:
+        mission = dict(payload) if isinstance(payload, dict) else {}
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is None or mission.get("status") == "error":
+            return mission
+        scope_filters = self._model_setup_mission_scope_filters(mission)
+        stored = memory.resolve_resume_reference(**scope_filters)
+        stored_mission = stored.get("mission", {}) if isinstance(stored, dict) and isinstance(stored.get("mission", {}), dict) else {}
+        should_sync = bool(stored_mission) or self._model_setup_mission_active_count(mission) > 0
+        if should_sync:
+            recorded = memory.record(
+                mission_payload=mission,
+                source="refresh",
+                dry_run=False,
+            )
+            if isinstance(recorded, dict) and isinstance(recorded.get("mission", {}), dict):
+                stored_mission = recorded.get("mission", {})
+        history = memory.snapshot(limit=min(12, max(1, int(limit))), **scope_filters)
+        mission["stored_mission"] = stored_mission
+        mission["mission_history"] = history if isinstance(history, dict) else {}
+        return mission
+
+    @staticmethod
+    def _select_model_setup_resume_action_ids(
+        stored_mission: Dict[str, Any],
+        current_mission: Dict[str, Any],
+    ) -> List[str]:
+        stored = stored_mission if isinstance(stored_mission, dict) else {}
+        mission = current_mission if isinstance(current_mission, dict) else {}
+        if max(0, int(stored.get("active_run_count", 0) or 0)) > 0:
+            return []
+        ready_auto_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in mission.get("actions", [])
+            if isinstance(action, dict)
+            and bool(action.get("auto_runnable", False))
+            and str(action.get("status", "") or "").strip().lower() == "ready"
+            and str(action.get("id", "") or "").strip()
+        ]
+        pending_ids = {
+            str(item).strip().lower()
+            for item in stored.get("pending_auto_action_ids", [])
+            if str(item).strip()
+        } if isinstance(stored.get("pending_auto_action_ids", []), list) else set()
+        if pending_ids:
+            selected = [action_id for action_id in ready_auto_ids if action_id in pending_ids]
+            if selected:
+                return selected
+        return ready_auto_ids
+
+    def _build_model_setup_resume_advice(
+        self,
+        *,
+        current_mission: Optional[Dict[str, Any]] = None,
+        resolved_mission: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        mission = dict(current_mission) if isinstance(current_mission, dict) else {}
+        resolved = dict(resolved_mission) if isinstance(resolved_mission, dict) else {}
+        selected_action_ids = self._select_model_setup_resume_action_ids(resolved, mission) if resolved and mission else []
+        recovery_profile = str(resolved.get("recovery_profile", "") or "").strip().lower()
+        resume_trigger = str(resolved.get("resume_trigger", "") or "").strip().lower()
+        resume_blockers = [
+            str(item).strip().lower()
+            for item in resolved.get("resume_blockers", [])
+            if str(item).strip()
+        ] if isinstance(resolved.get("resume_blockers", []), list) else []
+        active_run_count = max(0, int(resolved.get("active_run_count", 0) or 0))
+        auto_resume_candidate = bool(resolved.get("auto_resume_candidate", False))
+        resume_ready = bool(resolved.get("resume_ready", False))
+        manual_attention_required = bool(resolved.get("manual_attention_required", False))
+        run_summary = resolved.get("active_run_summary", {}) if isinstance(resolved.get("active_run_summary", {}), dict) else {}
+        active_run_health = str(
+            resolved.get("active_run_health", run_summary.get("top_health", "")) or ""
+        ).strip().lower()
+        stalled_run_count = max(
+            0,
+            int(
+                resolved.get(
+                    "stalled_run_count",
+                    run_summary.get("stalled_count", 0),
+                )
+                or 0
+            ),
+        )
+        waiting_run_count = max(
+            0,
+            int(
+                resolved.get(
+                    "waiting_run_count",
+                    run_summary.get("waiting_count", 0),
+                )
+                or 0
+            ),
+        )
+        watch_active_runs = bool(resolved.get("watch_active_runs", False))
+        next_poll_s = max(
+            0,
+            int(
+                resolved.get(
+                    "next_poll_s",
+                    run_summary.get("next_poll_s", 0),
+                )
+                or 0
+            ),
+        )
+
+        advice_status = "missing"
+        message = "No stored model setup mission is available for resume advice."
+        if resolved:
+            if stalled_run_count > 0 and active_run_count > 0:
+                advice_status = "stalled"
+                message = str(resolved.get("auto_resume_reason", "") or "").strip() or (
+                    str(resolved.get("recovery_hint", "") or "").strip()
+                    or "One or more active setup runs appear stalled and should be reviewed."
+                )
+            elif selected_action_ids:
+                advice_status = "ready"
+                message = (
+                    "The stored model setup mission can resume immediately."
+                    if auto_resume_candidate
+                    else "The stored model setup mission has ready actions available."
+                )
+            elif str(resolved.get("status", "") or "").strip().lower() == "completed":
+                advice_status = "complete"
+                message = "The stored model setup mission is already complete."
+            elif active_run_count > 0 and watch_active_runs:
+                advice_status = "watch"
+                message = str(resolved.get("auto_resume_reason", "") or "").strip() or (
+                    str(resolved.get("recovery_hint", "") or "").strip()
+                    or "The mission is waiting on active setup runs before it can continue."
+                )
+            elif manual_attention_required or resume_blockers:
+                advice_status = "blocked"
+                message = str(resolved.get("auto_resume_reason", "") or "").strip() or (
+                    str(resolved.get("recovery_hint", "") or "").strip() or "Manual attention is still required."
+                )
+            elif resume_ready:
+                advice_status = "ready"
+                message = str(resolved.get("auto_resume_reason", "") or "").strip() or (
+                    "Ready setup actions are available right now."
+                )
+            else:
+                advice_status = "idle"
+                message = str(resolved.get("recovery_hint", "") or "").strip() or "No resumable setup actions are available yet."
+
+        return {
+            "status": advice_status,
+            "can_resume_now": bool(selected_action_ids),
+            "can_auto_resume_now": bool(selected_action_ids) and auto_resume_candidate,
+            "auto_resume_candidate": auto_resume_candidate,
+            "resume_ready": resume_ready,
+            "waiting_on_active_runs": resume_trigger == "after_active_runs" and active_run_count > 0,
+            "manual_attention_required": manual_attention_required,
+            "recovery_profile": recovery_profile,
+            "resume_trigger": resume_trigger,
+            "resume_blockers": resume_blockers,
+            "auto_resume_reason": str(resolved.get("auto_resume_reason", "") or "").strip(),
+            "recovery_hint": str(resolved.get("recovery_hint", "") or "").strip(),
+            "active_run_count": active_run_count,
+            "active_run_health": active_run_health,
+            "stalled_run_count": stalled_run_count,
+            "waiting_run_count": waiting_run_count,
+            "watch_active_runs": watch_active_runs,
+            "next_poll_s": next_poll_s,
+            "active_run_summary": _to_jsonable(run_summary) if run_summary else {},
+            "selected_action_ids": selected_action_ids,
+            "selected_action_count": len(selected_action_ids),
+            "resolved_mission": _to_jsonable(resolved) if resolved else {},
+            "message": message,
+        }
+
+    @staticmethod
+    def _select_provider_setup_recovery_action_ids(
+        recovery_bundle: Dict[str, Any],
+        *,
+        selected_action_ids: Optional[List[str]] = None,
+    ) -> Dict[str, List[str]]:
+        bundle = recovery_bundle if isinstance(recovery_bundle, dict) else {}
+        recovery = bundle.get("setup_recovery", {}) if isinstance(bundle.get("setup_recovery", {}), dict) else {}
+        provider_setup = bundle.get("provider_setup", {}) if isinstance(bundle.get("provider_setup", {}), dict) else {}
+        clean_provider = str(provider_setup.get("provider", recovery.get("provider", "")) or "").strip().lower()
+        requested_ids: List[str] = []
+        seen_requested: set[str] = set()
+        for item in selected_action_ids or []:
+            action_id = str(item or "").strip().lower()
+            if not action_id or action_id in seen_requested:
+                continue
+            seen_requested.add(action_id)
+            requested_ids.append(action_id)
+        available_action_ids = [
+            str(item).strip().lower()
+            for item in recovery.get("setup_action_ids", [])
+            if str(item).strip()
+        ] if isinstance(recovery.get("setup_action_ids", []), list) else [
+            str(action.get("id", "") or "").strip().lower()
+            for action in bundle.get("setup_actions", [])
+            if isinstance(action, dict) and str(action.get("id", "") or "").strip()
+        ]
+        auto_ready_action_ids = [
+            str(item).strip().lower()
+            for item in recovery.get("auto_runnable_ready_action_ids", [])
+            if str(item).strip()
+        ] if isinstance(recovery.get("auto_runnable_ready_action_ids", []), list) else []
+        auto_ready_actions = [
+            dict(action)
+            for action in bundle.get("setup_actions", [])
+            if isinstance(action, dict)
+            and str(action.get("id", "") or "").strip().lower() in set(auto_ready_action_ids)
+        ]
+        preferred_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in auto_ready_actions
+            if (
+                str(action.get("kind", "") or "").strip().lower() == "verify_provider_credentials"
+                or str(action.get("stage", "") or "").strip().lower() == "provider"
+                or (
+                    clean_provider
+                    and str(action.get("provider", "") or "").strip().lower() == clean_provider
+                )
+            )
+            and str(action.get("id", "") or "").strip()
+        ]
+        selected_ids = [
+            action_id
+            for action_id in (requested_ids or preferred_action_ids or auto_ready_action_ids)
+            if action_id in auto_ready_action_ids
+        ]
+        ignored_ids = [
+            action_id
+            for action_id in requested_ids
+            if action_id not in selected_ids
+        ]
+        return {
+            "requested_action_ids": requested_ids,
+            "available_action_ids": available_action_ids,
+            "auto_selected_action_ids": auto_ready_action_ids,
+            "selected_action_ids": selected_ids,
+            "ignored_action_ids": ignored_ids,
+        }
+
+    @staticmethod
+    def _ready_auto_model_setup_action_ids(
+        mission_payload: Dict[str, Any],
+        *,
+        exclude_action_ids: Optional[Iterable[str]] = None,
+    ) -> List[str]:
+        mission = mission_payload if isinstance(mission_payload, dict) else {}
+        excluded = {
+            str(item).strip().lower()
+            for item in (exclude_action_ids or [])
+            if str(item).strip()
+        }
+        ready_ids: List[str] = []
+        seen_ids: set[str] = set()
+        for action in mission.get("actions", []):
+            if not isinstance(action, dict):
+                continue
+            action_id = str(action.get("id", "") or "").strip().lower()
+            if (
+                not action_id
+                or action_id in excluded
+                or action_id in seen_ids
+                or not bool(action.get("auto_runnable", False))
+                or str(action.get("status", "") or "").strip().lower() != "ready"
+            ):
+                continue
+            seen_ids.add(action_id)
+            ready_ids.append(action_id)
+        return ready_ids
+
+    @staticmethod
+    def _model_setup_execution_status(*, executed_count: int, error_count: int, dry_run: bool) -> str:
+        if error_count > 0 and executed_count <= 0:
+            return "error"
+        if error_count > 0:
+            return "partial"
+        if bool(dry_run):
+            return "planned"
+        if executed_count <= 0:
+            return "skipped"
+        return "success"
+
+    def _cascade_model_setup_followup_actions(
+        self,
+        *,
+        mission_payload: Dict[str, Any],
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        max_waves: int = 3,
+        exclude_action_ids: Optional[Iterable[str]] = None,
+        source: str = "followup",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        bounded_waves = max(0, min(int(max_waves), 8))
+        excluded_ids = [
+            str(item).strip().lower()
+            for item in (exclude_action_ids or [])
+            if str(item).strip()
+        ]
+        current_mission = dict(mission_payload) if isinstance(mission_payload, dict) else {}
+        if bounded_waves <= 0:
+            return {
+                "status": "skipped",
+                "enabled": False,
+                "max_waves": 0,
+                "waves_executed": 0,
+                "continued_action_ids": [],
+                "final_ready_action_ids": self._ready_auto_model_setup_action_ids(
+                    current_mission,
+                    exclude_action_ids=excluded_ids,
+                ),
+                "executed_count": 0,
+                "skipped_count": 0,
+                "error_count": 0,
+                "items": [],
+                "wave_summaries": [],
+                "stop_reason": "disabled",
+                "updated_mission": current_mission,
+                "final_payload": {},
+            }
+
+        continued_action_ids: List[str] = []
+        wave_payloads: List[Dict[str, Any]] = []
+        wave_summaries: List[Dict[str, Any]] = []
+        aggregated_items: List[Any] = []
+        total_executed = 0
+        total_skipped = 0
+        total_errors = 0
+        stop_reason = "no_ready_followup_actions"
+
+        for wave_index in range(bounded_waves):
+            next_action_ids = self._ready_auto_model_setup_action_ids(
+                current_mission,
+                exclude_action_ids=[*excluded_ids, *continued_action_ids],
+            )
+            if not next_action_ids:
+                stop_reason = (
+                    "background_work_in_progress"
+                    if self._model_setup_mission_active_count(current_mission) > 0
+                    else "no_ready_followup_actions"
+                )
+                break
+
+            wave_payload = self._execute_model_setup_mission_actions(
+                mission_payload=current_mission,
+                selected_action_ids=next_action_ids,
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=bounded,
+                source=str(source or "followup").strip().lower() or "followup",
+            )
+            wave_payload = dict(wave_payload) if isinstance(wave_payload, dict) else {}
+            wave_payloads.append(wave_payload)
+
+            selected_ids = [
+                str(item).strip().lower()
+                for item in wave_payload.get("selected_action_ids", next_action_ids)
+                if str(item).strip()
+            ] if isinstance(wave_payload.get("selected_action_ids", next_action_ids), list) else next_action_ids
+            for action_id in selected_ids:
+                if action_id not in continued_action_ids:
+                    continued_action_ids.append(action_id)
+
+            total_executed += max(0, int(wave_payload.get("executed_count", 0) or 0))
+            total_skipped += max(0, int(wave_payload.get("skipped_count", 0) or 0))
+            total_errors += max(0, int(wave_payload.get("error_count", 0) or 0))
+            if isinstance(wave_payload.get("items", []), list):
+                aggregated_items.extend(list(wave_payload.get("items", [])))
+
+            wave_summaries.append(
+                {
+                    "wave": wave_index + 1,
+                    "status": str(wave_payload.get("status", "") or "").strip().lower(),
+                    "selected_action_ids": selected_ids,
+                    "executed_count": max(0, int(wave_payload.get("executed_count", 0) or 0)),
+                    "skipped_count": max(0, int(wave_payload.get("skipped_count", 0) or 0)),
+                    "error_count": max(0, int(wave_payload.get("error_count", 0) or 0)),
+                    "message": str(wave_payload.get("message", "") or "").strip(),
+                }
+            )
+
+            updated_mission = wave_payload.get("updated_mission", {})
+            current_mission = dict(updated_mission) if isinstance(updated_mission, dict) else current_mission
+            wave_status = str(wave_payload.get("status", "") or "").strip().lower()
+            if wave_status == "error" and not bool(continue_on_error):
+                stop_reason = "followup_error"
+                break
+        else:
+            stop_reason = "max_waves_reached"
+
+        final_ready_action_ids = self._ready_auto_model_setup_action_ids(
+            current_mission,
+            exclude_action_ids=[*excluded_ids, *continued_action_ids],
+        )
+        if stop_reason == "max_waves_reached" and not final_ready_action_ids:
+            stop_reason = "exhausted_ready_followup_actions"
+
+        final_payload = wave_payloads[-1] if wave_payloads else {}
+        return {
+            "status": self._model_setup_execution_status(
+                executed_count=total_executed,
+                error_count=total_errors,
+                dry_run=bool(dry_run),
+            ),
+            "enabled": True,
+            "max_waves": bounded_waves,
+            "waves_executed": len(wave_payloads),
+            "continued_action_ids": continued_action_ids,
+            "executed_count": total_executed,
+            "skipped_count": total_skipped,
+            "error_count": total_errors,
+            "items": [_to_jsonable(item) for item in aggregated_items],
+            "wave_summaries": [_to_jsonable(item) for item in wave_summaries],
+            "stop_reason": stop_reason,
+            "final_ready_action_ids": final_ready_action_ids,
+            "updated_mission": current_mission,
+            "final_payload": _to_jsonable(final_payload) if isinstance(final_payload, dict) else {},
+        }
+
+    def _execute_model_setup_mission_actions(
+        self,
+        *,
+        mission_payload: Dict[str, Any],
+        selected_action_ids: Optional[List[str]] = None,
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        source: str = "launch",
+        resolved_mission: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        mission_scope = self._model_setup_mission_scope_filters(mission_payload)
+        resolved_manifest_path = self._resolve_model_setup_manifest_path(
+            manifest_path=str(mission_scope.get("manifest_path", "") or "").strip(),
+            workspace_root=str(mission_scope.get("workspace_root", "") or "").strip(),
+        )
+        scope_workspace_root = str(mission_scope.get("workspace_root", "") or "").strip()
+        selected_ids: List[str] = []
+        seen_ids: set[str] = set()
+        for item in selected_action_ids or []:
+            action_id = str(item or "").strip().lower()
+            if not action_id or action_id in seen_ids:
+                continue
+            seen_ids.add(action_id)
+            selected_ids.append(action_id)
+        payload = execute_model_setup_mission(
+            mission_payload=mission_payload,
+            execute_workspace_scaffold=lambda run_dry: self.model_setup_workspace_scaffold(
+                dry_run=bool(run_dry),
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=scope_workspace_root,
+            ),
+            launch_setup_install=lambda task_name, item_keys, run_dry: self.model_setup_install_launch(
+                task=str(task_name or "").strip().lower(),
+                item_keys=item_keys,
+                dry_run=bool(run_dry),
+                force=False,
+                include_present=False,
+                limit=bounded,
+                refresh_remote=not bool(run_dry),
+                remote_timeout_s=10.0 if not bool(run_dry) else 6.0,
+                verify_integrity=not bool(run_dry),
+                manifest_path=resolved_manifest_path,
+                workspace_root=scope_workspace_root,
+            ),
+            launch_manual_pipeline=lambda task_name, item_keys, run_dry: self.model_setup_manual_run_launch(
+                task=str(task_name or "").strip().lower(),
+                item_keys=item_keys,
+                dry_run=bool(run_dry),
+                force=False,
+                limit=bounded,
+                manifest_path=resolved_manifest_path,
+                workspace_root=scope_workspace_root,
+            ),
+            verify_provider_credentials=lambda provider_name, task_name, item_keys: self.verify_provider_credentials(
+                provider=str(provider_name or "").strip().lower(),
+                task=str(task_name or "").strip().lower(),
+                limit=bounded,
+                include_present=False,
+                item_keys=item_keys,
+                force_refresh=True,
+                timeout_s=12.0,
+            ),
+            selected_action_ids=selected_ids or None,
+            dry_run=bool(dry_run),
+            continue_on_error=bool(continue_on_error),
+        )
+        if not isinstance(payload, dict):
+            return {"status": "error", "message": "invalid model setup mission execution payload"}
+        updated_mission = self._compose_model_setup_mission_payload(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=scope_workspace_root,
+        )
+        mission_record: Dict[str, Any] = {}
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is not None:
+            recorded = memory.record(
+                mission_payload=updated_mission if isinstance(updated_mission, dict) else mission_payload,
+                launch_payload=payload,
+                selected_action_ids=selected_ids or payload.get("selected_action_ids", []),
+                source=str(source or "launch").strip().lower() or "launch",
+                dry_run=bool(dry_run),
+            )
+            if isinstance(recorded, dict):
+                mission_record = recorded.get("mission", {}) if isinstance(recorded.get("mission", {}), dict) else {}
+        payload["selected_action_ids"] = selected_ids
+        payload["mission"] = self._attach_model_setup_mission_recovery(mission_payload, limit=min(12, bounded))
+        payload["updated_mission"] = self._attach_model_setup_mission_recovery(updated_mission, limit=min(12, bounded))
+        payload["workspace"] = self.model_setup_workspace(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=scope_workspace_root,
+        )
+        payload["setup_plan"] = self.model_setup_plan(
+            limit=bounded,
+            manifest_path=resolved_manifest_path,
+            workspace_root=scope_workspace_root,
+        )
+        payload["mission_record"] = mission_record
+        payload["mission_history"] = (
+            memory.snapshot(limit=min(12, bounded), **mission_scope)
+            if memory is not None
+            else self.model_setup_mission_history(limit=min(12, bounded), current_scope=True)
+        )
+        if isinstance(resolved_mission, dict) and resolved_mission:
+            payload["resolved_mission"] = resolved_mission
+        payload["resume_advice"] = self._build_model_setup_resume_advice(
+            current_mission=payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {},
+            resolved_mission=resolved_mission if isinstance(resolved_mission, dict) and resolved_mission else mission_record,
+        )
+        return payload
+
+    def model_setup_mission(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        try:
+            payload = self._compose_model_setup_mission_payload(
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                limit=bounded,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            if payload.get("status") == "error":
+                return payload
+            payload = self._attach_model_setup_mission_recovery(payload, limit=min(12, bounded))
+            payload["resume_advice"] = self._build_model_setup_resume_advice(
+                current_mission=payload,
+                resolved_mission=payload.get("stored_mission", {}) if isinstance(payload.get("stored_mission", {}), dict) else {},
+            )
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_mission_resume_advice(
+        self,
+        *,
+        mission_id: str = "",
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup mission memory unavailable"}
+        try:
+            current_mission = self._compose_model_setup_mission_payload(
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                limit=bounded,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            if not isinstance(current_mission, dict) or current_mission.get("status") == "error":
+                return {"status": "error", "message": "unable to compose current model setup mission", "mission": current_mission}
+            current_mission = self._attach_model_setup_mission_recovery(current_mission, limit=min(12, bounded))
+            scope_filters: Dict[str, str] = {}
+            if (bool(current_scope) or bool(manifest_path or workspace_root)) and not str(mission_id or "").strip():
+                scope_filters = self._model_setup_mission_scope_filters(current_mission)
+            resolved = memory.resolve_resume_reference(
+                mission_id=str(mission_id or "").strip(),
+                **scope_filters,
+            )
+            resolved_mission = resolved.get("mission", {}) if isinstance(resolved, dict) and isinstance(resolved.get("mission", {}), dict) else {}
+            resolved_scope = self._model_setup_scope_from_record(resolved_mission)
+            current_scope_filters = self._model_setup_mission_scope_filters(current_mission)
+            if resolved_mission and (
+                str(resolved_scope.get("manifest_path", "") or "").strip()
+                and resolved_scope != current_scope_filters
+            ):
+                current_mission = self._compose_model_setup_mission_payload(
+                    refresh_provider_credentials=bool(refresh_provider_credentials),
+                    limit=bounded,
+                    manifest_path=str(resolved_scope.get("manifest_path", "") or "").strip(),
+                    workspace_root=str(resolved_scope.get("workspace_root", "") or "").strip(),
+                )
+                if not isinstance(current_mission, dict) or current_mission.get("status") == "error":
+                    return {
+                        "status": "error",
+                        "message": "unable to compose scoped model setup mission",
+                        "mission": current_mission,
+                        "resolved_mission": _to_jsonable(resolved_mission),
+                    }
+                current_mission = self._attach_model_setup_mission_recovery(current_mission, limit=min(12, bounded))
+            advice = self._build_model_setup_resume_advice(
+                current_mission=current_mission,
+                resolved_mission=resolved_mission,
+            )
+            advice["mission"] = _to_jsonable(current_mission)
+            advice["current_scope"] = bool(current_scope)
+            advice["mission_id"] = str(mission_id or "").strip()
+            return advice
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def auto_resume_model_setup_mission(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        advice = self.model_setup_mission_resume_advice(
+            mission_id=str(mission_id or "").strip(),
+            limit=bounded,
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            current_scope=bool(current_scope),
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        if str(advice.get("status", "") or "").strip().lower() == "error":
+            return advice
+        if not bool(advice.get("can_auto_resume_now", False)):
+            return {
+                "status": str(advice.get("status", "") or "blocked"),
+                "dry_run": bool(dry_run),
+                "auto_resume_attempted": False,
+                "auto_resume_triggered": False,
+                "initial_resume_advice": _to_jsonable(advice),
+                "resume_advice": _to_jsonable(advice),
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "continue_followup_actions_status": "skipped",
+                "continued_action_ids": [],
+                "executed_action_ids": [],
+                "continuation": {
+                    "status": "skipped",
+                    "enabled": bool(continue_followup_actions),
+                    "max_waves": max(0, min(int(max_followup_waves), 8)),
+                    "waves_executed": 0,
+                    "continued_action_ids": [],
+                    "stop_reason": "no_initial_auto_resume_actions",
+                    "final_ready_action_ids": [],
+                    "wave_summaries": [],
+                },
+                "message": str(advice.get("message", "") or "No auto-resumable setup actions are ready right now."),
+                "resolved_mission": _to_jsonable(advice.get("resolved_mission", {})) if isinstance(advice.get("resolved_mission", {}), dict) else {},
+                "mission": _to_jsonable(advice.get("mission", {})) if isinstance(advice.get("mission", {}), dict) else {},
+            }
+        payload = self.model_setup_mission_resume(
+            mission_id=str(mission_id or "").strip(),
+            dry_run=bool(dry_run),
+            continue_on_error=bool(continue_on_error),
+            limit=bounded,
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+        )
+        if isinstance(payload, dict):
+            payload["auto_resume_attempted"] = True
+            payload["auto_resume_triggered"] = str(payload.get("status", "") or "").strip().lower() not in {"error", "missing", "blocked"}
+            payload["initial_resume_advice"] = _to_jsonable(advice)
+            selected_action_ids = [
+                str(item).strip().lower()
+                for item in payload.get("selected_action_ids", advice.get("selected_action_ids", []))
+                if str(item).strip()
+            ] if isinstance(payload.get("selected_action_ids", advice.get("selected_action_ids", [])), list) else [
+                str(item).strip().lower()
+                for item in advice.get("selected_action_ids", [])
+                if str(item).strip()
+            ]
+            if bool(payload.get("auto_resume_triggered", False)) and bool(continue_followup_actions):
+                continuation_payload = self._cascade_model_setup_followup_actions(
+                    mission_payload=payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {},
+                    dry_run=bool(dry_run),
+                    continue_on_error=bool(continue_on_error),
+                    limit=bounded,
+                    max_waves=max_followup_waves,
+                    exclude_action_ids=selected_action_ids,
+                    source="auto_resume_followup",
+                )
+                final_followup_payload = (
+                    continuation_payload.get("final_payload", {})
+                    if isinstance(continuation_payload.get("final_payload", {}), dict)
+                    else {}
+                )
+                if isinstance(continuation_payload.get("items", []), list):
+                    payload["items"] = list(payload.get("items", [])) + list(continuation_payload.get("items", []))
+                payload["executed_count"] = max(0, int(payload.get("executed_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("executed_count", 0) or 0),
+                )
+                payload["skipped_count"] = max(0, int(payload.get("skipped_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("skipped_count", 0) or 0),
+                )
+                payload["error_count"] = max(0, int(payload.get("error_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("error_count", 0) or 0),
+                )
+                payload["continued_action_ids"] = [
+                    str(item).strip().lower()
+                    for item in continuation_payload.get("continued_action_ids", [])
+                    if str(item).strip()
+                ] if isinstance(continuation_payload.get("continued_action_ids", []), list) else []
+                payload["executed_action_ids"] = list(
+                    dict.fromkeys([*selected_action_ids, *payload.get("continued_action_ids", [])])
+                )
+                payload["continue_followup_actions_requested"] = bool(continue_followup_actions)
+                payload["continue_followup_actions_status"] = str(
+                    continuation_payload.get("status", "") or "skipped"
+                ).strip().lower() or "skipped"
+                payload["continuation"] = _to_jsonable(continuation_payload)
+                for followup_key in (
+                    "mission",
+                    "updated_mission",
+                    "workspace",
+                    "setup_plan",
+                    "mission_record",
+                    "mission_history",
+                    "resolved_mission",
+                ):
+                    if isinstance(final_followup_payload.get(followup_key, {}), dict):
+                        payload[followup_key] = final_followup_payload.get(followup_key, {})
+            else:
+                payload["continue_followup_actions_requested"] = bool(continue_followup_actions)
+                payload["continue_followup_actions_status"] = "skipped"
+                payload["continued_action_ids"] = []
+                payload["executed_action_ids"] = list(dict.fromkeys(selected_action_ids))
+                payload["continuation"] = {
+                    "status": "skipped",
+                    "enabled": bool(continue_followup_actions),
+                    "max_waves": max(0, min(int(max_followup_waves), 8)),
+                    "waves_executed": 0,
+                    "continued_action_ids": [],
+                    "stop_reason": (
+                        "auto_resume_not_triggered"
+                        if not bool(payload.get("auto_resume_triggered", False))
+                        else "disabled"
+                    ),
+                    "final_ready_action_ids": [],
+                    "wave_summaries": [],
+                }
+            payload["status"] = self._model_setup_execution_status(
+                executed_count=max(0, int(payload.get("executed_count", 0) or 0)),
+                error_count=max(0, int(payload.get("error_count", 0) or 0)),
+                dry_run=bool(dry_run),
+            )
+            updated_mission = payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {}
+            resolved_mission = payload.get("mission_record", {}) if isinstance(payload.get("mission_record", {}), dict) else (
+                payload.get("resolved_mission", {}) if isinstance(payload.get("resolved_mission", {}), dict) else {}
+            )
+            payload["resume_advice"] = (
+                final_followup_payload.get("resume_advice", {})
+                if isinstance(final_followup_payload.get("resume_advice", {}), dict)
+                else self._build_model_setup_resume_advice(
+                    current_mission=updated_mission,
+                    resolved_mission=resolved_mission,
+                )
+            )
+            continued_count = len(payload.get("continued_action_ids", [])) if isinstance(payload.get("continued_action_ids", []), list) else 0
+            if bool(payload.get("auto_resume_triggered", False)) and continued_count > 0:
+                base_message = str(payload.get("message", "") or "Auto-resumed setup mission.").strip()
+                payload["message"] = (
+                    f"{base_message} Continued {continued_count} follow-up action{'' if continued_count == 1 else 's'}."
+                ).strip()
+        return payload
+
+    def model_setup_mission_recovery_sweep(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        max_auto_resume_passes: int = 3,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        bounded_passes = max(1, min(int(max_auto_resume_passes), 8))
+        clean_mission_id = str(mission_id or "").strip()
+        scope_flag = (bool(current_scope) or bool(manifest_path or workspace_root)) and not bool(clean_mission_id)
+        history_limit = min(12, bounded)
+        history_before = self.model_setup_mission_history(
+            limit=history_limit,
+            mission_id=clean_mission_id,
+            current_scope=scope_flag,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        advice = self.model_setup_mission_resume_advice(
+            mission_id=clean_mission_id,
+            limit=bounded,
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            current_scope=scope_flag,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        if str(advice.get("status", "") or "").strip().lower() == "error":
+            return {
+                "status": "error",
+                "message": str(advice.get("message", "") or "Unable to build model setup recovery advice."),
+                "current_scope": scope_flag,
+                "mission_id": clean_mission_id,
+                "dry_run": bool(dry_run),
+                "max_auto_resume_passes": bounded_passes,
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+                "history_before": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+                "history_after": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+                "initial_resume_advice": _to_jsonable(advice),
+                "final_resume_advice": _to_jsonable(advice),
+                "passes": [],
+                "passes_executed": 0,
+                "auto_resume_attempted_count": 0,
+                "auto_resume_triggered_count": 0,
+                "continued_action_ids": [],
+                "executed_action_ids": [],
+                "executed_count": 0,
+                "skipped_count": 0,
+                "error_count": 1,
+                "stop_reason": "advice_error",
+            }
+
+        pass_results: List[Dict[str, Any]] = []
+        continued_action_ids: List[str] = []
+        executed_action_ids: List[str] = []
+        total_executed = 0
+        total_skipped = 0
+        total_errors = 0
+        auto_resume_attempted_count = 0
+        auto_resume_triggered_count = 0
+        final_payload: Dict[str, Any] = {}
+        current_advice = dict(advice) if isinstance(advice, dict) else {}
+        stop_reason = "no_auto_resume_candidate"
+
+        for sweep_index in range(bounded_passes):
+            resolved_mission = (
+                current_advice.get("resolved_mission", {})
+                if isinstance(current_advice.get("resolved_mission", {}), dict)
+                else {}
+            )
+            current_mission_id = (
+                str(current_advice.get("mission_id", "") or "").strip()
+                or str(resolved_mission.get("mission_id", "") or "").strip()
+                or clean_mission_id
+            )
+            selected_action_ids = [
+                str(item).strip().lower()
+                for item in current_advice.get("selected_action_ids", [])
+                if str(item).strip()
+            ] if isinstance(current_advice.get("selected_action_ids", []), list) else []
+            pass_entry: Dict[str, Any] = {
+                "pass": sweep_index + 1,
+                "mission_id": current_mission_id,
+                "advice_status": str(current_advice.get("status", "") or "").strip().lower(),
+                "can_resume_now": bool(current_advice.get("can_resume_now", False)),
+                "can_auto_resume_now": bool(current_advice.get("can_auto_resume_now", False)),
+                "resume_trigger": str(current_advice.get("resume_trigger", "") or "").strip().lower(),
+                "resume_blockers": [
+                    str(item).strip().lower()
+                    for item in current_advice.get("resume_blockers", [])
+                    if str(item).strip()
+                ] if isinstance(current_advice.get("resume_blockers", []), list) else [],
+                "selected_action_ids": selected_action_ids,
+                "message": str(current_advice.get("message", "") or "").strip(),
+            }
+            if not bool(current_advice.get("can_auto_resume_now", False)):
+                advice_status = str(current_advice.get("status", "") or "").strip().lower()
+                if advice_status == "waiting":
+                    stop_reason = "waiting_on_active_runs"
+                elif advice_status == "blocked":
+                    stop_reason = "manual_attention_required"
+                elif advice_status == "complete":
+                    stop_reason = "mission_complete"
+                elif advice_status == "missing":
+                    stop_reason = "mission_missing"
+                else:
+                    stop_reason = "no_auto_resume_candidate"
+                pass_entry["status"] = advice_status or "idle"
+                pass_results.append(pass_entry)
+                break
+
+            auto_resume_attempted_count += 1
+            launch_payload = self.auto_resume_model_setup_mission(
+                mission_id=current_mission_id,
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=bounded,
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                current_scope=False,
+                continue_followup_actions=bool(continue_followup_actions),
+                max_followup_waves=max_followup_waves,
+            )
+            final_payload = dict(launch_payload) if isinstance(launch_payload, dict) else {}
+            triggered = bool(final_payload.get("auto_resume_triggered", False))
+            if triggered:
+                auto_resume_triggered_count += 1
+            executed_now = max(0, int(final_payload.get("executed_count", 0) or 0))
+            skipped_now = max(0, int(final_payload.get("skipped_count", 0) or 0))
+            errors_now = max(0, int(final_payload.get("error_count", 0) or 0))
+            total_executed += executed_now
+            total_skipped += skipped_now
+            total_errors += errors_now
+            for action_id in final_payload.get("executed_action_ids", []):
+                clean_action_id = str(action_id).strip().lower()
+                if clean_action_id and clean_action_id not in executed_action_ids:
+                    executed_action_ids.append(clean_action_id)
+            for action_id in final_payload.get("continued_action_ids", []):
+                clean_action_id = str(action_id).strip().lower()
+                if clean_action_id and clean_action_id not in continued_action_ids:
+                    continued_action_ids.append(clean_action_id)
+            pass_entry.update(
+                {
+                    "status": str(final_payload.get("status", "") or "").strip().lower(),
+                    "auto_resume_triggered": triggered,
+                    "executed_count": executed_now,
+                    "skipped_count": skipped_now,
+                    "error_count": errors_now,
+                    "continue_followup_actions_status": str(
+                        final_payload.get("continue_followup_actions_status", "") or "skipped"
+                    ).strip().lower(),
+                    "continued_action_ids": [
+                        str(item).strip().lower()
+                        for item in final_payload.get("continued_action_ids", [])
+                        if str(item).strip()
+                    ] if isinstance(final_payload.get("continued_action_ids", []), list) else [],
+                    "message": str(final_payload.get("message", "") or pass_entry.get("message", "")).strip(),
+                }
+            )
+            pass_results.append(pass_entry)
+            if errors_now > 0 and not bool(continue_on_error):
+                stop_reason = "resume_error"
+                current_advice = (
+                    final_payload.get("resume_advice", {})
+                    if isinstance(final_payload.get("resume_advice", {}), dict)
+                    else current_advice
+                )
+                break
+            if not triggered:
+                stop_reason = "auto_resume_not_triggered"
+                current_advice = (
+                    final_payload.get("resume_advice", {})
+                    if isinstance(final_payload.get("resume_advice", {}), dict)
+                    else current_advice
+                )
+                break
+            next_advice = (
+                final_payload.get("resume_advice", {})
+                if isinstance(final_payload.get("resume_advice", {}), dict)
+                else self.model_setup_mission_resume_advice(
+                    mission_id=current_mission_id,
+                    limit=bounded,
+                    refresh_provider_credentials=False,
+                    current_scope=False,
+                )
+            )
+            current_advice = dict(next_advice) if isinstance(next_advice, dict) else current_advice
+            if not bool(current_advice.get("can_auto_resume_now", False)):
+                next_status = str(current_advice.get("status", "") or "").strip().lower()
+                if next_status == "waiting":
+                    stop_reason = "waiting_on_active_runs"
+                elif next_status == "blocked":
+                    stop_reason = "manual_attention_required"
+                elif next_status == "complete":
+                    stop_reason = "mission_complete"
+                else:
+                    stop_reason = "no_auto_resume_candidate"
+                break
+        else:
+            stop_reason = "max_auto_resume_passes_reached"
+
+        history_after = self.model_setup_mission_history(
+            limit=history_limit,
+            mission_id=clean_mission_id,
+            current_scope=scope_flag,
+        )
+        final_advice = (
+            final_payload.get("resume_advice", {})
+            if isinstance(final_payload.get("resume_advice", {}), dict)
+            else current_advice
+        )
+        if total_errors > 0 and auto_resume_triggered_count <= 0:
+            sweep_status = "error"
+        elif total_errors > 0:
+            sweep_status = "partial"
+        elif auto_resume_triggered_count > 0:
+            sweep_status = "planned" if bool(dry_run) else "success"
+        else:
+            sweep_status = str(final_advice.get("status", "") or "idle").strip().lower() or "idle"
+        if auto_resume_triggered_count > 0:
+            message = (
+                f"Recovery sweep auto-resumed {auto_resume_triggered_count} pass"
+                f"{'' if auto_resume_triggered_count == 1 else 'es'}"
+            )
+            if continued_action_ids:
+                message += (
+                    f" and continued {len(continued_action_ids)} follow-up action"
+                    f"{'' if len(continued_action_ids) == 1 else 's'}"
+                )
+            message += "."
+        else:
+            message = str(final_advice.get("message", "") or advice.get("message", "") or "").strip() or (
+                "No auto-resumable setup actions are ready right now."
+            )
+
+        return {
+            "status": sweep_status,
+            "message": message,
+            "current_scope": scope_flag,
+            "mission_id": clean_mission_id,
+            "dry_run": bool(dry_run),
+            "continue_on_error": bool(continue_on_error),
+            "max_auto_resume_passes": bounded_passes,
+            "continue_followup_actions_requested": bool(continue_followup_actions),
+            "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+            "history_before": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+            "history_after": _to_jsonable(history_after) if isinstance(history_after, dict) else {},
+            "initial_resume_advice": _to_jsonable(advice),
+            "final_resume_advice": _to_jsonable(final_advice) if isinstance(final_advice, dict) else {},
+            "passes": [_to_jsonable(item) for item in pass_results],
+            "passes_executed": auto_resume_attempted_count,
+            "auto_resume_attempted_count": auto_resume_attempted_count,
+            "auto_resume_triggered_count": auto_resume_triggered_count,
+            "continued_action_ids": continued_action_ids,
+            "executed_action_ids": executed_action_ids,
+            "executed_count": total_executed,
+            "skipped_count": total_skipped,
+            "error_count": total_errors,
+            "stop_reason": stop_reason,
+            "final_payload": _to_jsonable(final_payload) if isinstance(final_payload, dict) else {},
+        }
+
+    def model_setup_mission_recovery_watchdog(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        current_scope: bool = True,
+        max_missions: int = 6,
+        max_auto_resumes: int = 2,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        bounded_missions = max(1, min(int(max_missions), 64))
+        bounded_auto_resumes = max(0, min(int(max_auto_resumes), bounded_missions))
+        clean_mission_id = str(mission_id or "").strip()
+        scope_flag = (bool(current_scope) or bool(manifest_path or workspace_root)) and not bool(clean_mission_id)
+        history_limit = max(12, bounded_missions)
+        scope_filters = self._model_setup_watchdog_history_scope_filters(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        history_before = self.model_setup_mission_history(
+            limit=history_limit,
+            mission_id=clean_mission_id,
+            current_scope=scope_flag,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        if not isinstance(history_before, dict) or str(history_before.get("status", "") or "").strip().lower() == "error":
+            return {
+                "status": "error",
+                "message": str(
+                    history_before.get("message", "") if isinstance(history_before, dict) else ""
+                ).strip() or "Unable to build model setup recovery watchdog history.",
+                "mission_id": clean_mission_id,
+                "dry_run": bool(dry_run),
+                "current_scope": scope_flag,
+                "continue_on_error": bool(continue_on_error),
+                "max_missions": bounded_missions,
+                "max_auto_resumes": bounded_auto_resumes,
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+                "history_before": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+                "history_after": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+                "results": [],
+                "evaluated_count": 0,
+                "auto_resume_attempted_count": 0,
+                "auto_resume_triggered_count": 0,
+                "ready_count": 0,
+                "watch_count": 0,
+                "stalled_count": 0,
+                "blocked_count": 0,
+                "idle_count": 0,
+                "complete_count": 0,
+                "error_count": 1,
+                "ready_mission_ids": [],
+                "watched_mission_ids": [],
+                "stalled_mission_ids": [],
+                "blocked_mission_ids": [],
+                "triggered_mission_ids": [],
+                "scope_counts": {},
+                "stop_reason": "history_error",
+            }
+
+        history_rows = [
+            dict(item)
+            for item in history_before.get("items", [])
+            if isinstance(item, dict)
+        ] if isinstance(history_before.get("items", []), list) else []
+        history_rows.sort(key=self._model_setup_watchdog_sort_key, reverse=True)
+        candidate_rows = history_rows[:bounded_missions]
+        if not candidate_rows:
+            return {
+                "status": "idle",
+                "message": "No stored model setup missions are currently available for watchdog recovery.",
+                "mission_id": clean_mission_id,
+                "dry_run": bool(dry_run),
+                "current_scope": scope_flag,
+                "continue_on_error": bool(continue_on_error),
+                "max_missions": bounded_missions,
+                "max_auto_resumes": bounded_auto_resumes,
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+                "history_before": _to_jsonable(history_before),
+                "history_after": _to_jsonable(history_before),
+                "results": [],
+                "evaluated_count": 0,
+                "auto_resume_attempted_count": 0,
+                "auto_resume_triggered_count": 0,
+                "ready_count": 0,
+                "watch_count": 0,
+                "stalled_count": 0,
+                "blocked_count": 0,
+                "idle_count": 0,
+                "complete_count": 0,
+                "error_count": 0,
+                "ready_mission_ids": [],
+                "watched_mission_ids": [],
+                "stalled_mission_ids": [],
+                "blocked_mission_ids": [],
+                "triggered_mission_ids": [],
+                "scope_counts": {},
+                "stop_reason": "no_candidates",
+            }
+
+        results: List[Dict[str, Any]] = []
+        scope_counts: Dict[str, int] = {}
+        ready_mission_ids: List[str] = []
+        watched_mission_ids: List[str] = []
+        stalled_mission_ids: List[str] = []
+        blocked_mission_ids: List[str] = []
+        triggered_mission_ids: List[str] = []
+        latest_triggered_payload: Dict[str, Any] = {}
+        auto_resume_attempted_count = 0
+        auto_resume_triggered_count = 0
+        ready_count = 0
+        watch_count = 0
+        stalled_count = 0
+        blocked_count = 0
+        idle_count = 0
+        complete_count = 0
+        error_count = 0
+
+        for row in candidate_rows:
+            current_mission_id = str(row.get("mission_id", "") or "").strip()
+            scope = self._model_setup_scope_from_record(row)
+            scope_label = self._model_setup_scope_label(scope)
+            scope_counts[scope_label] = int(scope_counts.get(scope_label, 0)) + 1
+            advice = self.model_setup_mission_resume_advice(
+                mission_id=current_mission_id,
+                limit=bounded,
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                current_scope=False,
+                manifest_path=str(scope.get("manifest_path", "") or "").strip(),
+                workspace_root=str(scope.get("workspace_root", "") or "").strip(),
+            )
+            advice_payload = dict(advice) if isinstance(advice, dict) else {}
+            classification_before = self._classify_model_setup_watchdog_advice(advice_payload)
+            entry: Dict[str, Any] = {
+                "mission_id": current_mission_id,
+                "scope": _to_jsonable(scope),
+                "scope_label": scope_label,
+                "stored_status": str(row.get("status", "") or "").strip().lower(),
+                "recovery_profile": str(
+                    advice_payload.get("recovery_profile", row.get("recovery_profile", "")) or ""
+                ).strip().lower(),
+                "recovery_priority": max(0, int(row.get("recovery_priority", 0) or 0)),
+                "classification_before": classification_before,
+                "advice_status": str(advice_payload.get("status", "") or "").strip().lower(),
+                "can_resume_now": bool(advice_payload.get("can_resume_now", False)),
+                "can_auto_resume_now": bool(advice_payload.get("can_auto_resume_now", False)),
+                "auto_resume_candidate": bool(advice_payload.get("auto_resume_candidate", row.get("auto_resume_candidate", False))),
+                "manual_attention_required": bool(
+                    advice_payload.get("manual_attention_required", row.get("manual_attention_required", False))
+                ),
+                "watch_active_runs": bool(advice_payload.get("watch_active_runs", row.get("watch_active_runs", False))),
+                "active_run_count": max(0, int(advice_payload.get("active_run_count", row.get("active_run_count", 0)) or 0)),
+                "active_run_health": str(
+                    advice_payload.get("active_run_health", row.get("active_run_health", "")) or ""
+                ).strip().lower(),
+                "stalled_run_count": max(
+                    0,
+                    int(advice_payload.get("stalled_run_count", row.get("stalled_run_count", 0)) or 0),
+                ),
+                "waiting_run_count": max(
+                    0,
+                    int(advice_payload.get("waiting_run_count", row.get("waiting_run_count", 0)) or 0),
+                ),
+                "selected_action_ids": [
+                    str(item).strip().lower()
+                    for item in advice_payload.get("selected_action_ids", [])
+                    if str(item).strip()
+                ] if isinstance(advice_payload.get("selected_action_ids", []), list) else [],
+                "message": str(advice_payload.get("message", row.get("latest_result_message", "")) or "").strip(),
+                "auto_resume_attempted": False,
+                "auto_resume_triggered": False,
+            }
+            if str(advice_payload.get("status", "") or "").strip().lower() == "error":
+                error_count += 1
+                entry["classification_after"] = "error"
+                entry["status"] = "error"
+                results.append(entry)
+                if not bool(continue_on_error):
+                    break
+                continue
+
+            if bool(advice_payload.get("can_auto_resume_now", False)) and auto_resume_triggered_count < bounded_auto_resumes:
+                auto_resume_attempted_count += 1
+                launch_payload = self.auto_resume_model_setup_mission(
+                    mission_id=current_mission_id,
+                    dry_run=bool(dry_run),
+                    continue_on_error=bool(continue_on_error),
+                    limit=bounded,
+                    refresh_provider_credentials=bool(refresh_provider_credentials),
+                    current_scope=False,
+                    continue_followup_actions=bool(continue_followup_actions),
+                    max_followup_waves=max_followup_waves,
+                    manifest_path=str(scope.get("manifest_path", "") or "").strip(),
+                    workspace_root=str(scope.get("workspace_root", "") or "").strip(),
+                )
+                launch = dict(launch_payload) if isinstance(launch_payload, dict) else {}
+                final_advice = launch.get("resume_advice", {}) if isinstance(launch.get("resume_advice", {}), dict) else advice_payload
+                classification_after = self._classify_model_setup_watchdog_advice(final_advice)
+                if str(launch.get("status", "") or "").strip().lower() == "error":
+                    classification_after = "error"
+                triggered = bool(launch.get("auto_resume_triggered", False))
+                if triggered:
+                    auto_resume_triggered_count += 1
+                    triggered_mission_ids.append(current_mission_id)
+                    latest_triggered_payload = launch
+                entry.update(
+                    {
+                        "auto_resume_attempted": True,
+                        "auto_resume_triggered": triggered,
+                        "classification_after": classification_after,
+                        "status": str(launch.get("status", "") or "").strip().lower(),
+                        "result_message": str(launch.get("message", "") or "").strip(),
+                        "continue_followup_actions_status": str(
+                            launch.get("continue_followup_actions_status", "") or "skipped"
+                        ).strip().lower(),
+                        "continued_action_ids": [
+                            str(item).strip().lower()
+                            for item in launch.get("continued_action_ids", [])
+                            if str(item).strip()
+                        ] if isinstance(launch.get("continued_action_ids", []), list) else [],
+                        "executed_action_ids": [
+                            str(item).strip().lower()
+                            for item in launch.get("executed_action_ids", [])
+                            if str(item).strip()
+                        ] if isinstance(launch.get("executed_action_ids", []), list) else [],
+                        "resume_advice": _to_jsonable(final_advice) if isinstance(final_advice, dict) else {},
+                    }
+                )
+            else:
+                if bool(advice_payload.get("can_auto_resume_now", False)):
+                    entry["auto_resume_deferred"] = True
+                    entry["defer_reason"] = "max_auto_resumes_reached"
+                entry["classification_after"] = classification_before
+                entry["status"] = entry["advice_status"] or "idle"
+
+            classification_after = str(entry.get("classification_after", classification_before) or classification_before).strip().lower()
+            if classification_after == "ready":
+                ready_count += 1
+                ready_mission_ids.append(current_mission_id)
+            elif classification_after == "watch":
+                watch_count += 1
+                watched_mission_ids.append(current_mission_id)
+            elif classification_after == "stalled":
+                stalled_count += 1
+                stalled_mission_ids.append(current_mission_id)
+            elif classification_after == "blocked":
+                blocked_count += 1
+                blocked_mission_ids.append(current_mission_id)
+            elif classification_after == "complete":
+                complete_count += 1
+            elif classification_after == "error":
+                error_count += 1
+            else:
+                idle_count += 1
+            results.append(entry)
+
+        history_after = self.model_setup_mission_history(
+            limit=history_limit,
+            mission_id=clean_mission_id,
+            current_scope=scope_flag,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        if error_count > 0 and auto_resume_triggered_count <= 0:
+            status_name = "error"
+        elif error_count > 0:
+            status_name = "partial"
+        elif auto_resume_triggered_count > 0:
+            status_name = "planned" if bool(dry_run) else "success"
+        elif ready_count > 0:
+            status_name = "ready"
+        elif stalled_count > 0 or watch_count > 0:
+            status_name = "watch"
+        elif blocked_count > 0:
+            status_name = "blocked"
+        elif complete_count > 0 and complete_count == len(results):
+            status_name = "complete"
+        else:
+            status_name = "idle"
+
+        if auto_resume_triggered_count > 0:
+            message = (
+                f"Recovery watchdog auto-resumed {auto_resume_triggered_count} stored mission"
+                f"{'' if auto_resume_triggered_count == 1 else 's'}."
+            )
+            if watch_count > 0:
+                message += f" Watching {watch_count} additional mission{'' if watch_count == 1 else 's'}."
+            if stalled_count > 0:
+                message += f" {stalled_count} mission{'' if stalled_count == 1 else 's'} still appear stalled."
+        elif ready_count > 0:
+            message = (
+                f"Recovery watchdog found {ready_count} ready mission"
+                f"{'' if ready_count == 1 else 's'} but did not auto-resume them."
+            )
+        elif stalled_count > 0 or watch_count > 0 or blocked_count > 0:
+            message = (
+                f"Recovery watchdog refreshed {len(results)} stored mission"
+                f"{'' if len(results) == 1 else 's'}."
+            )
+            detail_parts: List[str] = []
+            if stalled_count > 0:
+                detail_parts.append(f"stalled:{stalled_count}")
+            if watch_count > 0:
+                detail_parts.append(f"watch:{watch_count}")
+            if blocked_count > 0:
+                detail_parts.append(f"blocked:{blocked_count}")
+            if detail_parts:
+                message += f" {' • '.join(detail_parts)}."
+        elif complete_count > 0 and complete_count == len(results):
+            message = "Recovery watchdog found only completed stored setup missions."
+        else:
+            message = "Recovery watchdog did not find resumable local-model setup work."
+
+        stop_reason = "watchdog_idle"
+        if ready_count > 0 and auto_resume_triggered_count >= bounded_auto_resumes:
+            stop_reason = "max_auto_resumes_reached"
+        elif auto_resume_triggered_count > 0:
+            stop_reason = "auto_resume_triggered"
+        elif stalled_count > 0:
+            stop_reason = "stalled_runs_detected"
+        elif watch_count > 0:
+            stop_reason = "watch_active_runs"
+        elif blocked_count > 0:
+            stop_reason = "manual_attention_required"
+        elif complete_count > 0 and complete_count == len(results):
+            stop_reason = "missions_complete"
+
+        response_payload = {
+            "status": status_name,
+            "message": message,
+            "mission_id": clean_mission_id,
+            "dry_run": bool(dry_run),
+            "current_scope": scope_flag,
+            "continue_on_error": bool(continue_on_error),
+            "max_missions": bounded_missions,
+            "max_auto_resumes": bounded_auto_resumes,
+            "continue_followup_actions_requested": bool(continue_followup_actions),
+            "max_followup_waves": max(0, min(int(max_followup_waves), 8)),
+            "history_before": _to_jsonable(history_before) if isinstance(history_before, dict) else {},
+            "history_after": _to_jsonable(history_after) if isinstance(history_after, dict) else {},
+            "results": [_to_jsonable(item) for item in results],
+            "evaluated_count": len(results),
+            "auto_resume_attempted_count": auto_resume_attempted_count,
+            "auto_resume_triggered_count": auto_resume_triggered_count,
+            "ready_count": ready_count,
+            "watch_count": watch_count,
+            "stalled_count": stalled_count,
+            "blocked_count": blocked_count,
+            "idle_count": idle_count,
+            "complete_count": complete_count,
+            "error_count": error_count,
+            "ready_mission_ids": ready_mission_ids,
+            "watched_mission_ids": watched_mission_ids,
+            "stalled_mission_ids": stalled_mission_ids,
+            "blocked_mission_ids": blocked_mission_ids,
+            "triggered_mission_ids": triggered_mission_ids,
+            "scope_counts": scope_counts,
+            "latest_triggered_payload": _to_jsonable(latest_triggered_payload) if isinstance(latest_triggered_payload, dict) else {},
+            "stop_reason": stop_reason,
+        }
+        return self._record_model_setup_watchdog_run(
+            response_payload,
+            source="watchdog",
+            scope_filters=scope_filters,
+            history_limit=min(8, history_limit),
+        )
+
+    def model_setup_mission_launch(
+        self,
+        *,
+        dry_run: bool = False,
+        selected_action_ids: Optional[List[str]] = None,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        selected_ids = [str(item).strip() for item in (selected_action_ids or []) if str(item).strip()]
+        try:
+            mission = self._compose_model_setup_mission_payload(
+                limit=bounded,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            if not isinstance(mission, dict) or mission.get("status") == "error":
+                return {"status": "error", "message": "unable to compose model setup mission", "mission": mission}
+            payload = self._execute_model_setup_mission_actions(
+                mission_payload=mission,
+                selected_action_ids=selected_ids or None,
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=bounded,
+                source="preview" if bool(dry_run) else "launch",
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid model setup mission launch payload", "mission": mission}
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_mission_history(
+        self,
+        *,
+        limit: int = 20,
+        mission_id: str = "",
+        status: str = "",
+        recovery_profile: str = "",
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 200))
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup mission memory unavailable"}
+        scope_filters: Dict[str, str] = {}
+        try:
+            if (bool(current_scope) or bool(manifest_path or workspace_root)) and not str(mission_id or "").strip():
+                mission = self._compose_model_setup_mission_payload(
+                    limit=max(16, bounded),
+                    manifest_path=manifest_path,
+                    workspace_root=workspace_root,
+                )
+                if isinstance(mission, dict) and mission.get("status") != "error":
+                    self._attach_model_setup_mission_recovery(mission, limit=min(12, bounded))
+                    scope_filters = self._model_setup_mission_scope_filters(mission)
+            return memory.snapshot(
+                limit=bounded,
+                mission_id=str(mission_id or "").strip(),
+                status=str(status or "").strip(),
+                recovery_profile=str(recovery_profile or "").strip(),
+                **scope_filters,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_recovery_watchdog_history(
+        self,
+        *,
+        limit: int = 20,
+        status: str = "",
+        current_scope: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 200))
+        memory = getattr(self, "model_setup_recovery_watchdog_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup recovery watchdog memory unavailable"}
+        scope_filters = self._model_setup_watchdog_history_scope_filters(
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+        )
+        try:
+            if bool(current_scope) and not any(scope_filters.values()):
+                mission = self._compose_model_setup_mission_payload(limit=max(16, bounded))
+                if isinstance(mission, dict) and mission.get("status") != "error":
+                    scope_filters = self._model_setup_watchdog_history_scope_filters(mission)
+            return memory.snapshot(
+                limit=bounded,
+                status=str(status or "").strip(),
+                **scope_filters,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_model_setup_recovery_watchdog_history(
+        self,
+        *,
+        run_id: str = "",
+        status: str = "",
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        memory = getattr(self, "model_setup_recovery_watchdog_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup recovery watchdog memory unavailable"}
+        try:
+            return memory.reset(
+                run_id=str(run_id or "").strip(),
+                status=str(status or "").strip(),
+                manifest_path=str(manifest_path or "").strip(),
+                workspace_root=str(workspace_root or "").strip(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def model_setup_mission_resume(
+        self,
+        *,
+        mission_id: str = "",
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        refresh_provider_credentials: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 2000))
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup mission memory unavailable"}
+        try:
+            current_mission = self._compose_model_setup_mission_payload(
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                limit=bounded,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
+            if not isinstance(current_mission, dict) or current_mission.get("status") == "error":
+                return {"status": "error", "message": "unable to compose current model setup mission", "mission": current_mission}
+            scope_filters = self._model_setup_mission_scope_filters(current_mission)
+            resolved = memory.resolve_resume_reference(
+                mission_id=str(mission_id or "").strip(),
+                **scope_filters,
+            )
+            if not isinstance(resolved, dict) or resolved.get("status") != "success":
+                return {
+                    "status": "missing",
+                    "message": "no stored model setup mission is ready to resume",
+                    "resolved_mission": resolved.get("mission", {}) if isinstance(resolved, dict) else {},
+                }
+            resolved_mission = resolved.get("mission", {}) if isinstance(resolved.get("mission", {}), dict) else {}
+            resolved_scope = self._model_setup_scope_from_record(resolved_mission)
+            current_scope_filters = self._model_setup_mission_scope_filters(current_mission)
+            if resolved_mission and (
+                str(resolved_scope.get("manifest_path", "") or "").strip()
+                and resolved_scope != current_scope_filters
+            ):
+                current_mission = self._compose_model_setup_mission_payload(
+                    refresh_provider_credentials=bool(refresh_provider_credentials),
+                    limit=bounded,
+                    manifest_path=str(resolved_scope.get("manifest_path", "") or "").strip(),
+                    workspace_root=str(resolved_scope.get("workspace_root", "") or "").strip(),
+                )
+                if not isinstance(current_mission, dict) or current_mission.get("status") == "error":
+                    return {
+                        "status": "error",
+                        "message": "unable to compose scoped model setup mission",
+                        "mission": current_mission,
+                        "resolved_mission": resolved_mission,
+                    }
+            selected_ids = self._select_model_setup_resume_action_ids(resolved_mission, current_mission)
+            if not selected_ids:
+                resolved_manifest_path = self._resolve_model_setup_manifest_path(
+                    manifest_path=str(resolved_scope.get("manifest_path", "") or "").strip(),
+                    workspace_root=str(resolved_scope.get("workspace_root", "") or "").strip(),
+                )
+                payload = {
+                    "status": "blocked",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "dry_run": bool(dry_run),
+                    "executed_count": 0,
+                    "skipped_count": 0,
+                    "error_count": 0,
+                    "selected_action_ids": [],
+                    "items": [],
+                    "message": "no auto-runnable model setup actions are ready to resume",
+                }
+                recorded = memory.record(
+                    mission_payload=current_mission,
+                    launch_payload=payload,
+                    selected_action_ids=[],
+                    source="resume",
+                    dry_run=bool(dry_run),
+                )
+                payload["resolved_mission"] = resolved_mission
+                payload["mission_record"] = recorded.get("mission", {}) if isinstance(recorded, dict) else {}
+                payload["mission"] = self._attach_model_setup_mission_recovery(current_mission, limit=min(12, bounded))
+                payload["updated_mission"] = payload["mission"]
+                payload["mission_history"] = memory.snapshot(
+                    limit=min(12, bounded),
+                    **resolved_scope,
+                )
+                payload["workspace"] = self.model_setup_workspace(
+                    limit=bounded,
+                    manifest_path=resolved_manifest_path,
+                    workspace_root=str(resolved_scope.get("workspace_root", "") or "").strip(),
+                )
+                payload["setup_plan"] = self.model_setup_plan(
+                    limit=bounded,
+                    manifest_path=resolved_manifest_path,
+                    workspace_root=str(resolved_scope.get("workspace_root", "") or "").strip(),
+                )
+                payload["resume_advice"] = self._build_model_setup_resume_advice(
+                    current_mission=payload["mission"] if isinstance(payload.get("mission", {}), dict) else current_mission,
+                    resolved_mission=resolved_mission,
+                )
+                return payload
+
+            payload = self._execute_model_setup_mission_actions(
+                mission_payload=current_mission,
+                selected_action_ids=selected_ids,
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=bounded,
+                source="resume",
+                resolved_mission=resolved_mission,
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid model setup mission resume payload"}
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_model_setup_mission(
+        self,
+        *,
+        mission_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        memory = getattr(self, "model_setup_mission_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "model setup mission memory unavailable"}
+        try:
+            return memory.reset(
+                mission_id=str(mission_id or "").strip(),
+                status=str(status or "").strip(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def model_setup_manual_pipeline(
         self,
         *,
@@ -7495,6 +9630,8 @@ class DesktopBackendService:
         limit: int = 200,
         include_present: bool = False,
         item_keys: Optional[List[str]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         clean_task = str(task or "").strip().lower()
         bounded = max(1, min(int(limit), 2000))
@@ -7504,6 +9641,8 @@ class DesktopBackendService:
                 task=clean_task,
                 limit=bounded,
                 include_present=bool(include_present),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if not isinstance(plan, dict) or plan.get("status") != "success":
                 return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
@@ -7529,6 +9668,8 @@ class DesktopBackendService:
         force: bool = False,
         limit: int = 200,
         step_ids: Optional[List[str]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         manager = getattr(self, "model_setup_manual_run_manager", None)
         if manager is None:
@@ -7543,6 +9684,8 @@ class DesktopBackendService:
                 limit=bounded,
                 include_present=False,
                 item_keys=selected_keys or None,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if not isinstance(pipeline, dict) or pipeline.get("status") != "success":
                 return {"status": "error", "message": "unable to build manual pipeline", "manual_pipeline": pipeline}
@@ -7553,6 +9696,8 @@ class DesktopBackendService:
                 force=bool(force),
                 task=clean_task,
                 step_ids=selected_steps or None,
+                manifest_path=str(self._resolve_model_setup_manifest_path(manifest_path=manifest_path, workspace_root=workspace_root) or ""),
+                workspace_root=str(workspace_root or ""),
             )
             if launch.get("status") == "error":
                 launch["manual_pipeline"] = pipeline
@@ -7570,13 +9715,26 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
-    def model_setup_manual_runs(self, *, limit: int = 20) -> Dict[str, Any]:
+    def model_setup_manual_runs(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
         manager = getattr(self, "model_setup_manual_run_manager", None)
         if manager is None:
             return {"status": "unavailable", "message": "manual pipeline run manager unavailable"}
         bounded = max(1, min(int(limit), 200))
         try:
-            return manager.list_runs(limit=bounded)
+            return manager.list_runs(
+                limit=bounded,
+                manifest_path=self._resolve_model_setup_manifest_path(
+                    manifest_path=manifest_path,
+                    workspace_root=workspace_root,
+                ),
+                workspace_root=str(workspace_root or "").strip(),
+            )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -7608,6 +9766,8 @@ class DesktopBackendService:
         reserve_bytes: int = 1_073_741_824,
         refresh_remote: bool = False,
         remote_timeout_s: float = 6.0,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         clean_task = str(task or "").strip().lower()
         bounded = max(1, min(int(limit), 2000))
@@ -7617,6 +9777,8 @@ class DesktopBackendService:
                 task=clean_task,
                 limit=bounded,
                 include_present=bool(include_present),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if plan.get("status") != "success":
                 return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
@@ -7628,6 +9790,8 @@ class DesktopBackendService:
                 refresh=bool(refresh_remote),
                 timeout_s=float(remote_timeout_s),
                 plan_payload=plan if isinstance(plan, dict) else None,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             payload = build_model_setup_preflight(
                 plan_payload=plan if isinstance(plan, dict) else {},
@@ -7663,6 +9827,8 @@ class DesktopBackendService:
         refresh: bool = False,
         timeout_s: float = 6.0,
         plan_payload: Optional[Dict[str, Any]] = None,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         probe = getattr(self, "model_setup_remote_probe", None)
         if probe is None:
@@ -7676,6 +9842,8 @@ class DesktopBackendService:
                 task=clean_task,
                 limit=bounded,
                 include_present=bool(include_present),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if not isinstance(plan, dict) or plan.get("status") != "success":
                 return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
@@ -7694,6 +9862,347 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    @staticmethod
+    def _provider_recovery_action_sort_key(action: Dict[str, Any]) -> tuple[int, int, float, str]:
+        status_name = str(action.get("status", "") or "").strip().lower()
+        status_rank = {
+            "ready": 0,
+            "in_progress": 1,
+            "running": 1,
+            "manual": 2,
+            "blocked": 3,
+        }.get(status_name, 4)
+        auto_rank = 0 if bool(action.get("auto_runnable", False)) else 1
+        impact_score = -float(action.get("estimated_impact_score", 0.0) or 0.0)
+        title = str(action.get("title", "") or action.get("kind", "") or "").strip().lower()
+        return (status_rank, auto_rank, impact_score, title)
+
+    def _provider_setup_recovery_bundle(
+        self,
+        *,
+        provider: str,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        refresh_provider_credentials: bool = False,
+        refresh_remote: bool = False,
+        remote_timeout_s: float = 6.0,
+    ) -> Dict[str, Any]:
+        clean_provider = str(provider or "").strip().lower()
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        selected_key_set = {item.lower() for item in selected_keys}
+
+        setup_plan = self.model_setup_plan(
+            task=clean_task,
+            limit=bounded,
+            include_present=bool(include_present),
+        )
+        workspace = self.model_setup_workspace(
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            limit=bounded,
+        )
+
+        provider_row: Dict[str, Any] = {}
+        plan_items: List[Dict[str, Any]] = []
+        if isinstance(setup_plan, dict):
+            provider_rows = setup_plan.get("providers", []) if isinstance(setup_plan.get("providers", []), list) else []
+            provider_row = next(
+                (
+                    dict(row)
+                    for row in provider_rows
+                    if isinstance(row, dict)
+                    and str(row.get("provider", "") or "").strip().lower() == clean_provider
+                ),
+                {},
+            )
+            plan_items = [dict(item) for item in setup_plan.get("items", []) if isinstance(item, dict)]
+        if not provider_row and isinstance(workspace, dict):
+            workspace_provider_rows = (
+                workspace.get("provider_credentials", {}).get("providers", {})
+                if isinstance(workspace.get("provider_credentials", {}), dict)
+                and isinstance(workspace.get("provider_credentials", {}).get("providers", {}), dict)
+                else {}
+            )
+            candidate_row = workspace_provider_rows.get(clean_provider, {}) if isinstance(workspace_provider_rows, dict) else {}
+            provider_row = dict(candidate_row) if isinstance(candidate_row, dict) else {}
+        if provider_row:
+            provider_row.setdefault("provider", clean_provider)
+
+        def _matches_provider(item: Dict[str, Any]) -> bool:
+            source_kind = str(item.get("source_kind", "") or "").strip().lower()
+            source_provider = str(item.get("source_provider", item.get("provider", "")) or "").strip().lower()
+            if source_provider and source_provider == clean_provider:
+                return True
+            if source_kind and source_kind == clean_provider:
+                return True
+            return clean_provider == "huggingface" and source_kind == "huggingface"
+
+        affected_items: List[Dict[str, Any]] = []
+        for item in plan_items:
+            if not _matches_provider(item):
+                continue
+            item_key = str(item.get("key", "") or "").strip().lower()
+            if selected_key_set and item_key and item_key not in selected_key_set:
+                continue
+            affected_items.append(dict(item))
+        if not affected_items and selected_key_set:
+            affected_items = [
+                dict(item)
+                for item in plan_items
+                if str(item.get("key", "") or "").strip().lower() in selected_key_set
+            ]
+
+        affected_item_keys = [
+            str(item.get("key", "") or "").strip()
+            for item in affected_items
+            if str(item.get("key", "") or "").strip()
+        ]
+        provider_task_scope = [
+            str(item).strip().lower()
+            for item in provider_row.get("task_scope", [])
+            if str(item).strip()
+        ] if isinstance(provider_row.get("task_scope", []), list) else []
+        affected_tasks = sorted(
+            {
+                str(item.get("task", "") or "").strip().lower()
+                for item in affected_items
+                if str(item.get("task", "") or "").strip()
+            }
+            | set(provider_task_scope)
+        )
+        effective_task = clean_task or (affected_tasks[0] if len(affected_tasks) == 1 else "")
+        scoped_item_keys = affected_item_keys or selected_keys or None
+
+        preflight = self.model_setup_preflight(
+            task=effective_task,
+            limit=bounded,
+            include_present=bool(include_present),
+            item_keys=scoped_item_keys,
+            refresh_remote=bool(refresh_remote),
+            remote_timeout_s=float(remote_timeout_s),
+        )
+        manual_pipeline = self.model_setup_manual_pipeline(
+            task=effective_task,
+            limit=bounded,
+            include_present=bool(include_present),
+            item_keys=scoped_item_keys,
+        )
+        mission = self.model_setup_mission(
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+            limit=bounded,
+        )
+
+        relevant_key_set = {str(item).strip().lower() for item in (affected_item_keys or selected_keys) if str(item).strip()}
+        relevant_task_set = {str(item).strip().lower() for item in affected_tasks if str(item).strip()}
+        setup_actions: List[Dict[str, Any]] = []
+        if isinstance(mission, dict):
+            for action in mission.get("actions", []):
+                if not isinstance(action, dict):
+                    continue
+                action_provider = str(action.get("provider", "") or "").strip().lower()
+                action_task = str(action.get("task", action.get("primary_task", "")) or "").strip().lower()
+                action_item_keys = {
+                    str(item).strip().lower()
+                    for item in action.get("item_keys", [])
+                    if str(item).strip()
+                } if isinstance(action.get("item_keys", []), list) else set()
+                if (
+                    action_provider == clean_provider
+                    or (relevant_key_set and bool(action_item_keys & relevant_key_set))
+                    or (relevant_task_set and action_task in relevant_task_set)
+                ):
+                    setup_actions.append(dict(action))
+        setup_actions.sort(key=self._provider_recovery_action_sort_key)
+        setup_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in setup_actions
+            if str(action.get("id", "") or "").strip()
+        ]
+        auto_runnable_ready_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "ready"
+            and bool(action.get("auto_runnable", False))
+            and str(action.get("id", "") or "").strip()
+        ]
+        in_progress_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() in {"in_progress", "running"}
+            and str(action.get("id", "") or "").strip()
+        ]
+        manual_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "manual"
+            and str(action.get("id", "") or "").strip()
+        ]
+        blocked_action_ids = [
+            str(action.get("id", "") or "").strip().lower()
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "blocked"
+            and str(action.get("id", "") or "").strip()
+        ]
+
+        preflight_summary = preflight.get("summary", {}) if isinstance(preflight.get("summary", {}), dict) else {}
+        manual_summary = manual_pipeline.get("summary", {}) if isinstance(manual_pipeline.get("summary", {}), dict) else {}
+        stored_mission = mission.get("stored_mission", {}) if isinstance(mission.get("stored_mission", {}), dict) else {}
+        ready_action_count = sum(
+            1
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "ready"
+        )
+        in_progress_action_count = sum(
+            1
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() in {"in_progress", "running"}
+        )
+        manual_action_count = sum(
+            1
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "manual"
+        )
+        blocked_action_count = sum(
+            1
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "blocked"
+        )
+        auto_runnable_ready_count = sum(
+            1
+            for action in setup_actions
+            if str(action.get("status", "") or "").strip().lower() == "ready"
+            and bool(action.get("auto_runnable", False))
+        )
+        next_action = setup_actions[0] if setup_actions else {}
+        provider_setup = {
+            "provider": clean_provider,
+            "required_by_manifest": bool(provider_row.get("required_by_manifest", False)),
+            "optional": bool(provider_row.get("optional", not provider_row.get("required_by_manifest", False))),
+            "ready": bool(provider_row.get("ready", False)),
+            "present": bool(provider_row.get("present", False)),
+            "source": str(provider_row.get("source", "") or "").strip(),
+            "usage_hint": str(provider_row.get("usage_hint", "") or "").strip(),
+            "required_env": [
+                str(item).strip()
+                for item in provider_row.get("required_env", [])
+                if str(item).strip()
+            ] if isinstance(provider_row.get("required_env", []), list) else [],
+            "missing_requirements": [
+                str(item).strip()
+                for item in provider_row.get("missing_requirements", [])
+                if str(item).strip()
+            ] if isinstance(provider_row.get("missing_requirements", []), list) else [],
+            "verification_status": str(provider_row.get("verification_status", "") or "").strip(),
+            "verification_verified": bool(provider_row.get("verification_verified", False)),
+            "verification_checked_at": str(provider_row.get("verification_checked_at", "") or "").strip(),
+            "verification_summary": str(provider_row.get("verification_summary", "") or "").strip(),
+            "task_scope": affected_tasks,
+            "affected_item_count": len(affected_item_keys),
+            "affected_item_keys": affected_item_keys,
+            "credential_field_count": len(provider_row.get("fields", [])) if isinstance(provider_row.get("fields", []), list) else 0,
+        }
+        recovery_profile = (
+            str(stored_mission.get("recovery_profile", "") or "").strip()
+            or ("ready" if auto_runnable_ready_count > 0 else "attention_required" if manual_action_count or blocked_action_count else "idle")
+        )
+        recovery_hint = (
+            str(stored_mission.get("recovery_hint", "") or "").strip()
+            or str(next_action.get("title", next_action.get("recommended_next_action", "")) or "").strip()
+        )
+        setup_recovery = {
+            "provider": clean_provider,
+            "affected_item_count": len(affected_item_keys),
+            "affected_item_keys": affected_item_keys,
+            "affected_tasks": affected_tasks,
+            "launchable_count": int(preflight_summary.get("launchable_count", 0) or 0),
+            "blocked_count": int(preflight_summary.get("blocked_count", 0) or 0),
+            "warning_count": int(preflight_summary.get("warning_count", 0) or 0),
+            "manual_count": int(manual_summary.get("manual_count", 0) or 0),
+            "action_count": len(setup_actions),
+            "setup_action_ids": setup_action_ids,
+            "ready_action_count": ready_action_count,
+            "in_progress_action_count": in_progress_action_count,
+            "manual_action_count": manual_action_count,
+            "blocked_action_count": blocked_action_count,
+            "auto_runnable_ready_count": auto_runnable_ready_count,
+            "auto_runnable_ready_action_ids": auto_runnable_ready_action_ids,
+            "in_progress_action_ids": in_progress_action_ids,
+            "manual_action_ids": manual_action_ids,
+            "blocked_action_ids": blocked_action_ids,
+            "resume_ready": bool(stored_mission.get("resume_ready", False)) or auto_runnable_ready_count > 0,
+            "manual_attention_required": (
+                bool(stored_mission.get("manual_attention_required", False))
+                or manual_action_count > 0
+                or blocked_action_count > 0
+            ),
+            "recovery_profile": recovery_profile,
+            "recovery_hint": recovery_hint,
+            "recommended_action_ids": [
+                str(action.get("id", "") or "").strip()
+                for action in setup_actions[:3]
+                if str(action.get("id", "") or "").strip()
+            ],
+            "recommended_action_kinds": [
+                str(action.get("kind", "") or "").strip()
+                for action in setup_actions[:3]
+                if str(action.get("kind", "") or "").strip()
+            ],
+            "next_action": _to_jsonable(next_action) if isinstance(next_action, dict) else {},
+        }
+        provider_credentials = (
+            workspace.get("provider_credentials", {})
+            if isinstance(workspace, dict) and isinstance(workspace.get("provider_credentials", {}), dict)
+            else {}
+        )
+        return {
+            "provider_setup": provider_setup,
+            "affected_item_keys": affected_item_keys,
+            "affected_tasks": affected_tasks,
+            "setup_actions": [_to_jsonable(action) for action in setup_actions[:12]],
+            "setup_recovery": setup_recovery,
+            "provider_credentials": provider_credentials,
+            "inventory": self.model_local_inventory(limit=160),
+            "workspace": workspace,
+            "setup_plan": setup_plan,
+            "preflight": preflight,
+            "manual_pipeline": manual_pipeline,
+            "mission": mission,
+        }
+
+    def _provider_coworker_context(
+        self,
+        *,
+        refresh_provider_credentials: bool = False,
+    ) -> Dict[str, Any]:
+        context = self._coworker_stack_activation_context()
+        stack_payload = self.coworker_stack_status(
+            stack_name=str(context.get("stack_name", "desktop_agent") or "desktop_agent"),
+            requires_offline=bool(context.get("requires_offline", False)),
+            privacy_mode=bool(context.get("privacy_mode", False)),
+            latency_sensitive=bool(context.get("latency_sensitive", False)),
+            mission_profile=str(context.get("mission_profile", "balanced") or "balanced"),
+            cost_sensitive=bool(context.get("cost_sensitive", False)),
+            max_cost_units=context.get("max_cost_units"),
+            refresh_provider_credentials=bool(refresh_provider_credentials),
+        )
+        recovery_payload = self.coworker_stack_recovery_plan(
+            stack_name=str(context.get("stack_name", "desktop_agent") or "desktop_agent"),
+            requires_offline=bool(context.get("requires_offline", False)),
+            privacy_mode=bool(context.get("privacy_mode", False)),
+            latency_sensitive=bool(context.get("latency_sensitive", False)),
+            mission_profile=str(context.get("mission_profile", "balanced") or "balanced"),
+            cost_sensitive=bool(context.get("cost_sensitive", False)),
+            max_cost_units=context.get("max_cost_units"),
+            refresh_provider_credentials=False,
+        )
+        return {
+            "coworker_stack": _to_jsonable(stack_payload) if isinstance(stack_payload, dict) else {},
+            "coworker_recovery": _to_jsonable(recovery_payload) if isinstance(recovery_payload, dict) else {},
+        }
+
     def update_provider_credentials(
         self,
         *,
@@ -7704,13 +10213,29 @@ class DesktopBackendService:
         persist_encrypted: Optional[bool] = None,
         overwrite_env: bool = True,
         clear_api_key: bool = False,
+        verify_after_update: bool = False,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        continue_setup_recovery: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        include_coworker_status: bool = False,
+        refresh_remote: bool = False,
+        timeout_s: float = 8.0,
     ) -> Dict[str, Any]:
         manager = getattr(self, "provider_credentials", None)
         if manager is None:
             return {"status": "unavailable", "message": "provider credential manager unavailable"}
+        clean_provider = str(provider or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        clean_task = str(task or "").strip().lower()
+        selected_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
         try:
             payload = manager.update_provider_credentials(
-                provider=provider,
+                provider=clean_provider,
                 api_key=api_key if api_key else None,
                 requirements=requirements if isinstance(requirements, dict) else None,
                 persist_plaintext=bool(persist_plaintext),
@@ -7726,21 +10251,172 @@ class DesktopBackendService:
                     refresh_fn(force=True)
                 except Exception:
                     pass
-            manifest = self.model_registry.requirement_manifest_snapshot()
-            provider_snapshot = self._provider_credentials_with_manifest_requirements(
-                manifest_payload=manifest if isinstance(manifest, dict) else {},
-                refresh=False,
+            verification_payload: Dict[str, Any] = {}
+            if bool(verify_after_update):
+                verification_payload = self.verify_provider_credentials(
+                    provider=clean_provider,
+                    task=clean_task,
+                    limit=bounded,
+                    include_present=bool(include_present),
+                    item_keys=selected_keys or None,
+                    force_refresh=True,
+                    timeout_s=float(timeout_s),
+                    continue_setup_recovery=bool(continue_setup_recovery),
+                    continue_on_error=bool(continue_on_error),
+                    continue_followup_actions=bool(continue_followup_actions),
+                    max_followup_waves=max_followup_waves,
+                    include_coworker_status=bool(include_coworker_status),
+                    refresh_remote=bool(refresh_remote),
+                )
+            recovery_bundle = (
+                verification_payload
+                if isinstance(verification_payload, dict) and verification_payload
+                else self._provider_setup_recovery_bundle(
+                    provider=clean_provider,
+                    task=clean_task,
+                    limit=bounded,
+                    include_present=bool(include_present),
+                    item_keys=selected_keys or None,
+                    refresh_provider_credentials=False,
+                    refresh_remote=bool(refresh_remote),
+                    remote_timeout_s=float(timeout_s),
+                )
             )
+            recovery_launch: Dict[str, Any] = {}
+            if bool(continue_setup_recovery) and not bool(verify_after_update):
+                recovery_launch = self.provider_setup_recovery_launch(
+                    provider=clean_provider,
+                    task=clean_task,
+                    limit=bounded,
+                    include_present=bool(include_present),
+                    item_keys=selected_keys or None,
+                    dry_run=False,
+                    continue_on_error=bool(continue_on_error),
+                    continue_followup_actions=bool(continue_followup_actions),
+                    max_followup_waves=max_followup_waves,
+                    refresh_provider_credentials=False,
+                    refresh_remote=bool(refresh_remote),
+                    timeout_s=float(timeout_s),
+                )
+            launch_payload = (
+                recovery_launch
+                if isinstance(recovery_launch, dict) and recovery_launch
+                else verification_payload.get("recovery_launch", {})
+                if isinstance(verification_payload, dict) and isinstance(verification_payload.get("recovery_launch", {}), dict)
+                else {}
+            )
+            effective_payload = (
+                launch_payload
+                if isinstance(launch_payload, dict) and launch_payload
+                else recovery_bundle
+            )
+            verification_result = (
+                _to_jsonable(verification_payload.get("verification", {}))
+                if isinstance(verification_payload, dict) and isinstance(verification_payload.get("verification", {}), dict)
+                else {}
+            )
+            verification_state = str(verification_payload.get("status", "") or "").strip().lower() if isinstance(verification_payload, dict) else ""
+            verified = bool(verification_result.get("verified", False)) if isinstance(verification_result, dict) else False
+            coworker_context = (
+                {
+                    "coworker_stack": _to_jsonable(verification_payload.get("coworker_stack", {})),
+                    "coworker_recovery": _to_jsonable(verification_payload.get("coworker_recovery", {})),
+                }
+                if isinstance(verification_payload, dict)
+                and (
+                    isinstance(verification_payload.get("coworker_stack", {}), dict)
+                    or isinstance(verification_payload.get("coworker_recovery", {}), dict)
+                )
+                else self._provider_coworker_context(refresh_provider_credentials=False)
+                if bool(include_coworker_status) or bool(continue_setup_recovery)
+                else {"coworker_stack": {}, "coworker_recovery": {}}
+            )
+            message = (
+                f"Saved {clean_provider} credentials and verified provider access."
+                if bool(verify_after_update) and verified
+                else f"Saved {clean_provider} credentials; verification still needs attention."
+                if bool(verify_after_update)
+                else f"Saved {clean_provider} credentials."
+            )
+            recovery_status = str(launch_payload.get("status", "") or "").strip().lower() if isinstance(launch_payload, dict) else ""
+            if bool(continue_setup_recovery):
+                if recovery_status in {"success", "partial", "planned"}:
+                    executed_count = int(launch_payload.get("executed_count", 0) or 0)
+                    message = (
+                        f"{message.rstrip('.')} Continued {clean_provider} setup recovery with {executed_count} safe action"
+                        f"{'' if executed_count == 1 else 's'}."
+                    )
+                elif recovery_status in {"blocked", "in_progress"}:
+                    recovery_message = str(launch_payload.get("message", "") or "").strip()
+                    if recovery_message:
+                        message = f"{message.rstrip('.')} {recovery_message}."
             return {
                 "status": "success",
-                "provider": str(provider or "").strip().lower(),
+                "provider": clean_provider,
                 "updated_fields": list(payload.get("updated_fields", [])) if isinstance(payload.get("updated_fields", []), list) else [],
                 "warnings": list(payload.get("warnings", [])) if isinstance(payload.get("warnings", []), list) else [],
                 "storage": _to_jsonable(payload.get("storage", {})) if isinstance(payload.get("storage", {}), dict) else {},
-                "provider_status": _to_jsonable(payload.get("provider_status", {})) if isinstance(payload.get("provider_status", {}), dict) else {},
-                "provider_credentials": provider_snapshot,
-                "inventory": self.model_local_inventory(limit=160),
-                "setup_plan": self.model_setup_plan(limit=160),
+                "provider_status": (
+                    _to_jsonable(effective_payload.get("provider_setup", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("provider_setup", {}), dict)
+                    else _to_jsonable(payload.get("provider_status", {})) if isinstance(payload.get("provider_status", {}), dict) else {}
+                ),
+                "provider_setup": (
+                    _to_jsonable(effective_payload.get("provider_setup", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("provider_setup", {}), dict)
+                    else {}
+                ),
+                "provider_credentials": (
+                    effective_payload.get("provider_credentials", {})
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("provider_credentials", {}), dict)
+                    else {}
+                ),
+                "inventory": effective_payload.get("inventory", {}) if isinstance(effective_payload, dict) else {},
+                "workspace": effective_payload.get("workspace", {}) if isinstance(effective_payload, dict) else {},
+                "setup_plan": effective_payload.get("setup_plan", {}) if isinstance(effective_payload, dict) else {},
+                "preflight": effective_payload.get("preflight", {}) if isinstance(effective_payload, dict) else {},
+                "manual_pipeline": effective_payload.get("manual_pipeline", {}) if isinstance(effective_payload, dict) else {},
+                "mission": effective_payload.get("mission", {}) if isinstance(effective_payload, dict) else {},
+                "updated_mission": effective_payload.get("updated_mission", {}) if isinstance(effective_payload, dict) else {},
+                "affected_item_keys": list(effective_payload.get("affected_item_keys", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("affected_item_keys", []), list) else [],
+                "affected_tasks": list(effective_payload.get("affected_tasks", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("affected_tasks", []), list) else [],
+                "setup_actions": list(effective_payload.get("setup_actions", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("setup_actions", []), list) else [],
+                "setup_recovery": effective_payload.get("setup_recovery", {}) if isinstance(effective_payload, dict) else {},
+                "verification_requested": bool(verify_after_update),
+                "verification_status": verification_state or ("success" if verified else "skipped" if not verify_after_update else "partial"),
+                "verification": verification_result,
+                "continue_setup_recovery_requested": bool(continue_setup_recovery),
+                "continue_setup_recovery_status": recovery_status or "skipped",
+                "continue_followup_actions_requested": bool(continue_followup_actions and continue_setup_recovery),
+                "continue_followup_actions_status": (
+                    str(launch_payload.get("continue_followup_actions_status", "") or "skipped")
+                    if isinstance(launch_payload, dict) and launch_payload
+                    else "skipped"
+                ),
+                "recovery_launch": _to_jsonable(launch_payload) if isinstance(launch_payload, dict) else {},
+                "resume_advice": (
+                    _to_jsonable(effective_payload.get("resume_advice", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("resume_advice", {}), dict)
+                    else self._build_model_setup_resume_advice(
+                        current_mission=effective_payload.get("updated_mission", {})
+                        if isinstance(effective_payload, dict) and isinstance(effective_payload.get("updated_mission", {}), dict)
+                        else effective_payload.get("mission", {})
+                        if isinstance(effective_payload, dict) and isinstance(effective_payload.get("mission", {}), dict)
+                        else {},
+                        resolved_mission=effective_payload.get("updated_mission", {}).get("stored_mission", {})
+                        if isinstance(effective_payload, dict)
+                        and isinstance(effective_payload.get("updated_mission", {}), dict)
+                        and isinstance(effective_payload.get("updated_mission", {}).get("stored_mission", {}), dict)
+                        else effective_payload.get("mission", {}).get("stored_mission", {})
+                        if isinstance(effective_payload, dict)
+                        and isinstance(effective_payload.get("mission", {}), dict)
+                        and isinstance(effective_payload.get("mission", {}).get("stored_mission", {}), dict)
+                        else {},
+                    )
+                ),
+                "coworker_stack": coworker_context.get("coworker_stack", {}),
+                "coworker_recovery": coworker_context.get("coworker_recovery", {}),
+                "message": message,
             }
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
@@ -7755,6 +10431,12 @@ class DesktopBackendService:
         item_keys: Optional[List[str]] = None,
         force_refresh: bool = True,
         timeout_s: float = 8.0,
+        continue_setup_recovery: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        include_coworker_status: bool = False,
+        refresh_remote: bool = False,
     ) -> Dict[str, Any]:
         verifier = getattr(self, "provider_verifier", None)
         if verifier is None:
@@ -7796,20 +10478,100 @@ class DesktopBackendService:
                 force_refresh=bool(force_refresh),
                 timeout_s=max(2.0, min(float(timeout_s), 30.0)),
             )
-            manifest = self.model_registry.requirement_manifest_snapshot()
-            provider_snapshot = self._provider_credentials_with_manifest_requirements(
-                manifest_payload=manifest if isinstance(manifest, dict) else {},
-                refresh=False,
+            recovery_bundle = self._provider_setup_recovery_bundle(
+                provider=clean_provider,
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+                item_keys=list(selected_keys) or None,
+                refresh_provider_credentials=False,
+                refresh_remote=bool(refresh_remote),
+                remote_timeout_s=float(timeout_s),
+            )
+            recovery_launch: Dict[str, Any] = {}
+            if bool(continue_setup_recovery):
+                recovery_launch = self.provider_setup_recovery_launch(
+                    provider=clean_provider,
+                    task=clean_task,
+                    limit=bounded,
+                    include_present=bool(include_present),
+                    item_keys=list(selected_keys) or None,
+                    dry_run=False,
+                    continue_on_error=bool(continue_on_error),
+                    continue_followup_actions=bool(continue_followup_actions),
+                    max_followup_waves=max_followup_waves,
+                    refresh_provider_credentials=False,
+                    refresh_remote=bool(refresh_remote),
+                    timeout_s=float(timeout_s),
+                )
+            effective_payload = recovery_launch if isinstance(recovery_launch, dict) and recovery_launch else recovery_bundle
+            coworker_context = (
+                self._provider_coworker_context(refresh_provider_credentials=False)
+                if bool(include_coworker_status) or bool(continue_setup_recovery)
+                else {"coworker_stack": {}, "coworker_recovery": {}}
             )
             return {
                 "status": str(verification.get("status", "error") or "error"),
                 "provider": clean_provider,
                 "task": clean_task,
                 "verification": _to_jsonable(verification) if isinstance(verification, dict) else {"status": "error"},
-                "provider_status": _to_jsonable(verification.get("provider_status", {})) if isinstance(verification, dict) and isinstance(verification.get("provider_status", {}), dict) else {},
-                "provider_credentials": provider_snapshot,
-                "inventory": self.model_local_inventory(limit=160),
-                "setup_plan": plan_payload if isinstance(plan_payload, dict) else self.model_setup_plan(limit=160),
+                "provider_status": (
+                    _to_jsonable(effective_payload.get("provider_setup", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("provider_setup", {}), dict)
+                    else _to_jsonable(verification.get("provider_status", {})) if isinstance(verification, dict) and isinstance(verification.get("provider_status", {}), dict) else {}
+                ),
+                "provider_setup": (
+                    _to_jsonable(effective_payload.get("provider_setup", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("provider_setup", {}), dict)
+                    else {}
+                ),
+                "provider_credentials": effective_payload.get("provider_credentials", {}) if isinstance(effective_payload, dict) else {},
+                "inventory": effective_payload.get("inventory", {}) if isinstance(effective_payload, dict) else {},
+                "workspace": effective_payload.get("workspace", {}) if isinstance(effective_payload, dict) else {},
+                "setup_plan": (
+                    effective_payload.get("setup_plan", {})
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("setup_plan", {}), dict)
+                    else plan_payload if isinstance(plan_payload, dict) else self.model_setup_plan(limit=160)
+                ),
+                "preflight": effective_payload.get("preflight", {}) if isinstance(effective_payload, dict) else {},
+                "manual_pipeline": effective_payload.get("manual_pipeline", {}) if isinstance(effective_payload, dict) else {},
+                "mission": effective_payload.get("mission", {}) if isinstance(effective_payload, dict) else {},
+                "updated_mission": effective_payload.get("updated_mission", {}) if isinstance(effective_payload, dict) else {},
+                "affected_item_keys": list(effective_payload.get("affected_item_keys", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("affected_item_keys", []), list) else [],
+                "affected_tasks": list(effective_payload.get("affected_tasks", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("affected_tasks", []), list) else [],
+                "setup_actions": list(effective_payload.get("setup_actions", [])) if isinstance(effective_payload, dict) and isinstance(effective_payload.get("setup_actions", []), list) else [],
+                "setup_recovery": effective_payload.get("setup_recovery", {}) if isinstance(effective_payload, dict) else {},
+                "continue_setup_recovery_requested": bool(continue_setup_recovery),
+                "continue_setup_recovery_status": str(recovery_launch.get("status", "") or "skipped") if isinstance(recovery_launch, dict) and recovery_launch else "skipped",
+                "continue_followup_actions_requested": bool(continue_followup_actions and continue_setup_recovery),
+                "continue_followup_actions_status": (
+                    str(recovery_launch.get("continue_followup_actions_status", "") or "skipped")
+                    if isinstance(recovery_launch, dict) and recovery_launch
+                    else "skipped"
+                ),
+                "recovery_launch": _to_jsonable(recovery_launch) if isinstance(recovery_launch, dict) else {},
+                "resume_advice": (
+                    _to_jsonable(effective_payload.get("resume_advice", {}))
+                    if isinstance(effective_payload, dict) and isinstance(effective_payload.get("resume_advice", {}), dict)
+                    else self._build_model_setup_resume_advice(
+                        current_mission=effective_payload.get("updated_mission", {})
+                        if isinstance(effective_payload, dict) and isinstance(effective_payload.get("updated_mission", {}), dict)
+                        else effective_payload.get("mission", {})
+                        if isinstance(effective_payload, dict) and isinstance(effective_payload.get("mission", {}), dict)
+                        else {},
+                        resolved_mission=effective_payload.get("updated_mission", {}).get("stored_mission", {})
+                        if isinstance(effective_payload, dict)
+                        and isinstance(effective_payload.get("updated_mission", {}), dict)
+                        and isinstance(effective_payload.get("updated_mission", {}).get("stored_mission", {}), dict)
+                        else effective_payload.get("mission", {}).get("stored_mission", {})
+                        if isinstance(effective_payload, dict)
+                        and isinstance(effective_payload.get("mission", {}), dict)
+                        and isinstance(effective_payload.get("mission", {}).get("stored_mission", {}), dict)
+                        else {},
+                    )
+                ),
+                "coworker_stack": coworker_context.get("coworker_stack", {}),
+                "coworker_recovery": coworker_context.get("coworker_recovery", {}),
             }
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc), "provider": clean_provider}
@@ -7826,6 +10588,8 @@ class DesktopBackendService:
         refresh_remote: bool = False,
         remote_timeout_s: float = 6.0,
         verify_integrity: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         installer = getattr(self, "model_setup_installer", None)
         if installer is None:
@@ -7842,6 +10606,8 @@ class DesktopBackendService:
                 task=clean_task,
                 limit=bounded,
                 include_present=bool(include_present or force),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if plan.get("status") != "success":
                 return {
@@ -7856,10 +10622,12 @@ class DesktopBackendService:
                     limit=bounded,
                     include_present=bool(include_present or force),
                     item_keys=selected_keys or None,
-                    refresh=bool(refresh_remote),
-                    timeout_s=float(remote_timeout_s),
-                    plan_payload=plan if isinstance(plan, dict) else None,
-                )
+                refresh=bool(refresh_remote),
+                timeout_s=float(remote_timeout_s),
+                plan_payload=plan if isinstance(plan, dict) else None,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
             install_payload = installer.install(
                 plan_payload=plan,
                 item_keys=selected_keys or None,
@@ -7887,13 +10655,24 @@ class DesktopBackendService:
                     activation_payload = {"status": "error", "message": str(exc), "source": "setup_install"}
                 if isinstance(activation_payload, dict):
                     install_payload["activation"] = _to_jsonable(activation_payload)
-            inventory = self.model_local_inventory(task=clean_task, limit=min(bounded, 160))
+            inventory = self.model_local_inventory(
+                task=clean_task,
+                limit=min(bounded, 160),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
             setup_plan = self.model_setup_plan(
                 task=clean_task,
                 limit=min(bounded, 160),
                 include_present=False,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
-            history = installer.history(limit=12)
+            history = self.model_setup_install_history(
+                limit=12,
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
+            )
             status_name = str(install_payload.get("status", "error") or "error")
             response: Dict[str, Any] = {
                 "status": status_name,
@@ -7923,12 +10702,310 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
-    def model_setup_install_history(self, *, limit: int = 20) -> Dict[str, Any]:
+    def provider_setup_recovery_launch(
+        self,
+        *,
+        provider: str,
+        task: str = "",
+        limit: int = 160,
+        include_present: bool = False,
+        item_keys: Optional[List[str]] = None,
+        selected_action_ids: Optional[List[str]] = None,
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        refresh_provider_credentials: bool = False,
+        refresh_remote: bool = False,
+        timeout_s: float = 8.0,
+    ) -> Dict[str, Any]:
+        clean_provider = str(provider or "").strip().lower()
+        if not clean_provider:
+            return {"status": "error", "message": "provider is required"}
+        clean_task = str(task or "").strip().lower()
+        bounded = max(1, min(int(limit), 2000))
+        selected_ids = [str(item).strip() for item in (selected_action_ids or []) if str(item).strip()]
+        selected_item_keys = [str(item).strip() for item in (item_keys or []) if str(item).strip()]
+        try:
+            recovery_before = self._provider_setup_recovery_bundle(
+                provider=clean_provider,
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+                item_keys=selected_item_keys or None,
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                refresh_remote=bool(refresh_remote),
+                remote_timeout_s=float(timeout_s),
+            )
+            current_mission = (
+                recovery_before.get("mission", {})
+                if isinstance(recovery_before, dict) and isinstance(recovery_before.get("mission", {}), dict)
+                else {}
+            )
+            if not current_mission or current_mission.get("status") == "error":
+                return {
+                    "status": "error",
+                    "message": "unable to compose provider setup recovery mission",
+                    "provider": clean_provider,
+                    "mission": current_mission,
+                }
+            selection = self._select_provider_setup_recovery_action_ids(
+                recovery_before,
+                selected_action_ids=selected_ids or None,
+            )
+            selected_recovery_ids = selection.get("selected_action_ids", [])
+            recovery_summary = (
+                recovery_before.get("setup_recovery", {})
+                if isinstance(recovery_before.get("setup_recovery", {}), dict)
+                else {}
+            )
+            if not selected_recovery_ids:
+                status_name = "skipped"
+                message = "no auto-runnable provider recovery actions are ready right now"
+                if int(recovery_summary.get("in_progress_action_count", 0) or 0) > 0:
+                    status_name = "in_progress"
+                    message = "provider recovery already has setup work in progress"
+                elif bool(recovery_summary.get("manual_attention_required", False)):
+                    status_name = "blocked"
+                    message = "provider recovery still needs manual attention before safe auto actions can continue"
+                elif selection.get("requested_action_ids"):
+                    status_name = "blocked"
+                    message = "requested provider recovery actions are not auto-runnable right now"
+                payload: Dict[str, Any] = {
+                    "status": status_name,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "provider": clean_provider,
+                    "task": clean_task,
+                    "dry_run": bool(dry_run),
+                    "executed_count": 0,
+                    "skipped_count": 0,
+                    "error_count": 0,
+                    "items": [],
+                    "message": message,
+                    "requested_action_ids": selection.get("requested_action_ids", []),
+                    "selected_action_ids": [],
+                    "available_action_ids": selection.get("available_action_ids", []),
+                    "auto_selected_action_ids": selection.get("auto_selected_action_ids", []),
+                    "ignored_action_ids": selection.get("ignored_action_ids", []),
+                    "continue_followup_actions_requested": bool(continue_followup_actions),
+                    "continue_followup_actions_status": "skipped",
+                    "continued_action_ids": [],
+                    "executed_action_ids": [],
+                    "continuation": {
+                        "status": "skipped",
+                        "enabled": bool(continue_followup_actions),
+                        "max_waves": max(0, min(int(max_followup_waves), 8)),
+                        "waves_executed": 0,
+                        "continued_action_ids": [],
+                        "stop_reason": "no_initial_recovery_actions",
+                        "final_ready_action_ids": [],
+                        "wave_summaries": [],
+                    },
+                    "provider_setup": _to_jsonable(recovery_before.get("provider_setup", {})),
+                    "provider_credentials": _to_jsonable(recovery_before.get("provider_credentials", {})),
+                    "inventory": _to_jsonable(recovery_before.get("inventory", {})),
+                    "workspace": _to_jsonable(recovery_before.get("workspace", {})),
+                    "setup_plan": _to_jsonable(recovery_before.get("setup_plan", {})),
+                    "preflight": _to_jsonable(recovery_before.get("preflight", {})),
+                    "manual_pipeline": _to_jsonable(recovery_before.get("manual_pipeline", {})),
+                    "mission": self._attach_model_setup_mission_recovery(current_mission, limit=min(12, bounded)),
+                    "updated_mission": self._attach_model_setup_mission_recovery(current_mission, limit=min(12, bounded)),
+                    "affected_item_keys": list(recovery_before.get("affected_item_keys", [])) if isinstance(recovery_before.get("affected_item_keys", []), list) else [],
+                    "affected_tasks": list(recovery_before.get("affected_tasks", [])) if isinstance(recovery_before.get("affected_tasks", []), list) else [],
+                    "setup_actions": list(recovery_before.get("setup_actions", [])) if isinstance(recovery_before.get("setup_actions", []), list) else [],
+                    "setup_recovery": _to_jsonable(recovery_summary),
+                    "recovery_before": _to_jsonable(recovery_summary),
+                    "recovery_after": _to_jsonable(recovery_summary),
+                }
+                memory = getattr(self, "model_setup_mission_memory", None)
+                if memory is not None:
+                    recorded = memory.record(
+                        mission_payload=current_mission,
+                        launch_payload=payload,
+                        selected_action_ids=[],
+                        source="provider_recovery",
+                        dry_run=bool(dry_run),
+                    )
+                    payload["mission_record"] = recorded.get("mission", {}) if isinstance(recorded, dict) else {}
+                payload["mission_history"] = self.model_setup_mission_history(limit=min(12, bounded), current_scope=True)
+                payload["resume_advice"] = self._build_model_setup_resume_advice(
+                    current_mission=payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {},
+                    resolved_mission=payload.get("mission_record", {}) if isinstance(payload.get("mission_record", {}), dict) else {},
+                )
+                coworker_context = self._provider_coworker_context(refresh_provider_credentials=False)
+                payload["coworker_stack"] = coworker_context.get("coworker_stack", {})
+                payload["coworker_recovery"] = coworker_context.get("coworker_recovery", {})
+                return payload
+
+            payload = self._execute_model_setup_mission_actions(
+                mission_payload=current_mission,
+                selected_action_ids=selected_recovery_ids,
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=bounded,
+                source="provider_recovery",
+            )
+            if not isinstance(payload, dict):
+                return {"status": "error", "message": "invalid provider recovery execution payload"}
+            continuation_payload: Dict[str, Any] = {}
+            if bool(continue_followup_actions):
+                continuation_payload = self._cascade_model_setup_followup_actions(
+                    mission_payload=payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {},
+                    dry_run=bool(dry_run),
+                    continue_on_error=bool(continue_on_error),
+                    limit=bounded,
+                    max_waves=max_followup_waves,
+                    exclude_action_ids=selected_recovery_ids,
+                    source="provider_recovery_followup",
+                )
+                final_followup_payload = (
+                    continuation_payload.get("final_payload", {})
+                    if isinstance(continuation_payload.get("final_payload", {}), dict)
+                    else {}
+                )
+                if isinstance(continuation_payload.get("items", []), list):
+                    payload["items"] = list(payload.get("items", [])) + list(continuation_payload.get("items", []))
+                payload["executed_count"] = max(0, int(payload.get("executed_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("executed_count", 0) or 0),
+                )
+                payload["skipped_count"] = max(0, int(payload.get("skipped_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("skipped_count", 0) or 0),
+                )
+                payload["error_count"] = max(0, int(payload.get("error_count", 0) or 0)) + max(
+                    0,
+                    int(continuation_payload.get("error_count", 0) or 0),
+                )
+                payload["continued_action_ids"] = [
+                    str(item).strip().lower()
+                    for item in continuation_payload.get("continued_action_ids", [])
+                    if str(item).strip()
+                ] if isinstance(continuation_payload.get("continued_action_ids", []), list) else []
+                payload["executed_action_ids"] = list(
+                    dict.fromkeys(
+                        [
+                            *selected_recovery_ids,
+                            *(
+                                [
+                                    str(item).strip().lower()
+                                    for item in continuation_payload.get("continued_action_ids", [])
+                                    if str(item).strip()
+                                ]
+                                if isinstance(continuation_payload.get("continued_action_ids", []), list)
+                                else []
+                            ),
+                        ]
+                    )
+                )
+                payload["continue_followup_actions_requested"] = bool(continue_followup_actions)
+                payload["continue_followup_actions_status"] = str(
+                    continuation_payload.get("status", "") or "skipped"
+                ).strip().lower() or "skipped"
+                payload["continuation"] = _to_jsonable(continuation_payload)
+                for followup_key in (
+                    "mission",
+                    "updated_mission",
+                    "workspace",
+                    "setup_plan",
+                    "mission_record",
+                    "mission_history",
+                    "resolved_mission",
+                ):
+                    if isinstance(final_followup_payload.get(followup_key, {}), dict):
+                        payload[followup_key] = final_followup_payload.get(followup_key, {})
+            else:
+                payload["continue_followup_actions_requested"] = False
+                payload["continue_followup_actions_status"] = "skipped"
+                payload["continued_action_ids"] = []
+                payload["executed_action_ids"] = list(dict.fromkeys(selected_recovery_ids))
+                payload["continuation"] = {
+                    "status": "skipped",
+                    "enabled": False,
+                    "max_waves": 0,
+                    "waves_executed": 0,
+                    "continued_action_ids": [],
+                    "stop_reason": "disabled",
+                    "final_ready_action_ids": [],
+                    "wave_summaries": [],
+                }
+            payload["status"] = self._model_setup_execution_status(
+                executed_count=max(0, int(payload.get("executed_count", 0) or 0)),
+                error_count=max(0, int(payload.get("error_count", 0) or 0)),
+                dry_run=bool(dry_run),
+            )
+            recovery_after = self._provider_setup_recovery_bundle(
+                provider=clean_provider,
+                task=clean_task,
+                limit=bounded,
+                include_present=bool(include_present),
+                item_keys=selected_item_keys or None,
+                refresh_provider_credentials=False,
+                refresh_remote=False,
+                remote_timeout_s=float(timeout_s),
+            )
+            payload["provider"] = clean_provider
+            payload["task"] = clean_task
+            payload["requested_action_ids"] = selection.get("requested_action_ids", [])
+            payload["selected_action_ids"] = selected_recovery_ids
+            payload["available_action_ids"] = selection.get("available_action_ids", [])
+            payload["auto_selected_action_ids"] = selection.get("auto_selected_action_ids", [])
+            payload["ignored_action_ids"] = selection.get("ignored_action_ids", [])
+            payload["provider_setup"] = _to_jsonable(recovery_after.get("provider_setup", {}))
+            payload["provider_credentials"] = _to_jsonable(recovery_after.get("provider_credentials", {}))
+            payload["inventory"] = _to_jsonable(recovery_after.get("inventory", {}))
+            payload["workspace"] = _to_jsonable(recovery_after.get("workspace", payload.get("workspace", {})))
+            payload["setup_plan"] = _to_jsonable(recovery_after.get("setup_plan", payload.get("setup_plan", {})))
+            payload["preflight"] = _to_jsonable(recovery_after.get("preflight", {}))
+            payload["manual_pipeline"] = _to_jsonable(recovery_after.get("manual_pipeline", {}))
+            payload["affected_item_keys"] = list(recovery_after.get("affected_item_keys", [])) if isinstance(recovery_after.get("affected_item_keys", []), list) else []
+            payload["affected_tasks"] = list(recovery_after.get("affected_tasks", [])) if isinstance(recovery_after.get("affected_tasks", []), list) else []
+            payload["setup_actions"] = list(recovery_after.get("setup_actions", [])) if isinstance(recovery_after.get("setup_actions", []), list) else []
+            payload["setup_recovery"] = _to_jsonable(recovery_after.get("setup_recovery", {}))
+            payload["recovery_before"] = _to_jsonable(recovery_summary)
+            payload["recovery_after"] = _to_jsonable(recovery_after.get("setup_recovery", {}))
+            payload["resume_advice"] = self._build_model_setup_resume_advice(
+                current_mission=payload.get("updated_mission", {}) if isinstance(payload.get("updated_mission", {}), dict) else {},
+                resolved_mission=payload.get("mission_record", {}) if isinstance(payload.get("mission_record", {}), dict) else {},
+            )
+            coworker_context = self._provider_coworker_context(refresh_provider_credentials=False)
+            payload["coworker_stack"] = coworker_context.get("coworker_stack", {})
+            payload["coworker_recovery"] = coworker_context.get("coworker_recovery", {})
+            payload["message"] = (
+                f"Executed {len(selected_recovery_ids)} provider recovery action"
+                f"{'' if len(selected_recovery_ids) == 1 else 's'} for {clean_provider}"
+                + (
+                    f" and continued {len(payload.get('continued_action_ids', []))} follow-up action"
+                    f"{'' if len(payload.get('continued_action_ids', [])) == 1 else 's'}."
+                    if isinstance(payload.get("continued_action_ids", []), list) and payload.get("continued_action_ids", [])
+                    else "."
+                )
+                if str(payload.get("status", "") or "").strip().lower() not in {"error", "blocked"}
+                else str(payload.get("message", "") or "")
+            )
+            return payload
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc), "provider": clean_provider}
+
+    def model_setup_install_history(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
         manager = getattr(self, "model_setup_install_manager", None)
         bounded = max(1, min(int(limit), 200))
         try:
             if manager is not None:
-                return manager.list_runs(limit=bounded)
+                return manager.list_runs(
+                    limit=bounded,
+                    manifest_path=self._resolve_model_setup_manifest_path(
+                        manifest_path=manifest_path,
+                        workspace_root=workspace_root,
+                    ),
+                    workspace_root=str(workspace_root or "").strip(),
+                )
             installer = getattr(self, "model_setup_installer", None)
             if installer is None:
                 return {"status": "unavailable", "message": "model setup installer unavailable"}
@@ -7948,6 +11025,8 @@ class DesktopBackendService:
         refresh_remote: bool = True,
         remote_timeout_s: float = 6.0,
         verify_integrity: bool = True,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         manager = getattr(self, "model_setup_install_manager", None)
         if manager is None:
@@ -7960,6 +11039,8 @@ class DesktopBackendService:
                 task=clean_task,
                 limit=bounded,
                 include_present=bool(include_present or force),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if plan.get("status") != "success":
                 return {"status": "error", "message": "unable to build setup plan", "setup_plan": plan}
@@ -7970,50 +11051,204 @@ class DesktopBackendService:
                 item_keys=selected_keys or None,
                 refresh_remote=bool(refresh_remote),
                 remote_timeout_s=float(remote_timeout_s),
+                manifest_path=manifest_path,
+                workspace_root=workspace_root,
             )
             if preflight.get("status") != "success":
                 return {"status": "error", "message": "unable to build setup preflight", "preflight": preflight, "setup_plan": plan}
             preflight_summary = preflight.get("summary", {}) if isinstance(preflight.get("summary", {}), dict) else {}
-            if int(preflight_summary.get("blocked_count", 0) or 0) > 0 and not bool(force):
+            preflight_items = [
+                dict(row)
+                for row in preflight.get("items", [])
+                if isinstance(row, dict)
+            ] if isinstance(preflight.get("items", []), list) else []
+            launchable_rows = [row for row in preflight_items if bool(row.get("launch_ready", False))]
+            deferred_rows = [row for row in preflight_items if not bool(row.get("launch_ready", False))]
+            launchable_item_keys = [
+                str(row.get("key", "") or "").strip()
+                for row in launchable_rows
+                if str(row.get("key", "") or "").strip()
+            ]
+            deferred_item_keys = [
+                str(row.get("key", "") or "").strip()
+                for row in deferred_rows
+                if str(row.get("key", "") or "").strip()
+            ]
+            launch_scope = "full"
+            if deferred_rows:
+                launch_scope = "partial" if launchable_item_keys else "blocked"
+            deferred_actions = self._model_setup_install_deferred_actions(deferred_rows)
+            if launch_scope == "blocked" and not bool(force):
                 return {
                     "status": "blocked",
-                    "message": "setup preflight reported blockers; use force to override launch",
+                    "message": "setup preflight reported blockers and no launch-ready items are available; use force to override launch",
                     "task": clean_task,
-                    "selected_item_keys": selected_keys,
+                    "selected_item_keys": selected_keys or launchable_item_keys,
+                    "requested_item_keys": selected_keys,
+                    "launch_item_keys": [],
+                    "launch_scope": launch_scope,
+                    "launchable_count": len(launchable_item_keys),
+                    "deferred_count": len(deferred_item_keys),
+                    "deferred_item_keys": deferred_item_keys,
+                    "deferred_actions": deferred_actions,
                     "setup_plan": plan,
                     "preflight": preflight,
                 }
+            launch_item_keys = (
+                selected_keys
+                if bool(force)
+                else (launchable_item_keys or selected_keys)
+            )
             launch = manager.start(
                 plan_payload=plan,
-                item_keys=selected_keys or None,
+                item_keys=launch_item_keys or None,
                 dry_run=bool(dry_run),
                 force=bool(force),
                 task=clean_task,
                 remote_metadata=preflight.get("remote_metadata", {}) if isinstance(preflight.get("remote_metadata", {}), dict) else None,
                 verify_integrity=bool(verify_integrity and not dry_run),
+                manifest_path=str(self._resolve_model_setup_manifest_path(manifest_path=manifest_path, workspace_root=workspace_root) or ""),
+                workspace_root=str(workspace_root or ""),
             )
             if launch.get("status") == "error":
                 return launch
             return {
                 "status": str(launch.get("status", "accepted") or "accepted"),
                 "task": clean_task,
-                "selected_item_keys": selected_keys,
+                "selected_item_keys": launch_item_keys or selected_keys,
+                "requested_item_keys": selected_keys,
+                "launch_item_keys": launch_item_keys,
+                "launch_scope": launch_scope,
+                "launchable_count": len(launchable_item_keys),
+                "deferred_count": len(deferred_item_keys),
+                "deferred_item_keys": deferred_item_keys,
+                "deferred_actions": deferred_actions,
                 "dry_run": bool(dry_run),
                 "force": bool(force),
                 "run": launch.get("run", {}),
                 "setup_plan": plan,
                 "preflight": preflight,
+                "message": (
+                    f"Started {len(launch_item_keys)} launch-ready setup item"
+                    f"{'' if len(launch_item_keys) == 1 else 's'} while deferring {len(deferred_item_keys)} blocked item"
+                    f"{'' if len(deferred_item_keys) == 1 else 's'}."
+                    if launch_scope == "partial" and deferred_item_keys
+                    else str(launch.get("message", "") or "")
+                ),
             }
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
-    def model_setup_install_runs(self, *, limit: int = 20) -> Dict[str, Any]:
+    @staticmethod
+    def _model_setup_install_deferred_actions(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        actions: Dict[str, Dict[str, Any]] = {}
+
+        def _dedupe(values: List[str]) -> List[str]:
+            result: List[str] = []
+            seen: set[str] = set()
+            for value in values:
+                clean = str(value or "").strip()
+                if not clean or clean in seen:
+                    continue
+                seen.add(clean)
+                result.append(clean)
+            return result
+
+        def _ensure_action(
+            *,
+            action_id: str,
+            kind: str,
+            title: str,
+            provider: str = "",
+            recommended_next_action: str = "",
+        ) -> Dict[str, Any]:
+            existing = actions.get(action_id)
+            if isinstance(existing, dict):
+                return existing
+            row = {
+                "id": action_id,
+                "kind": kind,
+                "title": title,
+                "provider": provider,
+                "item_keys": [],
+                "item_count": 0,
+                "blockers": [],
+                "warnings": [],
+                "recommended_next_action": recommended_next_action,
+            }
+            actions[action_id] = row
+            return row
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            clean_key = str(row.get("key", "") or "").strip()
+            blockers = [
+                str(item).strip()
+                for item in row.get("blockers", [])
+                if str(item).strip()
+            ] if isinstance(row.get("blockers", []), list) else []
+            warnings = [
+                str(item).strip()
+                for item in row.get("warnings", [])
+                if str(item).strip()
+            ] if isinstance(row.get("warnings", []), list) else []
+            remote_probe = row.get("remote_probe", {}) if isinstance(row.get("remote_probe", {}), dict) else {}
+            credential_state = str(remote_probe.get("credential_state", "") or "").strip().lower()
+            if credential_state == "missing":
+                action = _ensure_action(
+                    action_id="configure_provider:huggingface",
+                    kind="configure_provider_credentials",
+                    title="Configure Hugging Face access",
+                    provider="huggingface",
+                    recommended_next_action="save_and_verify_provider_credentials",
+                )
+            elif credential_state in {"configured", "access_denied"}:
+                action = _ensure_action(
+                    action_id="verify_provider:huggingface",
+                    kind="verify_provider_credentials",
+                    title="Verify Hugging Face repository access",
+                    provider="huggingface",
+                    recommended_next_action="verify_provider_credentials",
+                )
+            else:
+                action = _ensure_action(
+                    action_id="review_setup_preflight",
+                    kind="review_preflight_blockers",
+                    title="Review remaining setup blockers",
+                    recommended_next_action="review_setup_preflight",
+                )
+            if clean_key and clean_key not in action["item_keys"]:
+                action["item_keys"].append(clean_key)
+            action["blockers"] = _dedupe([*action["blockers"], *blockers])
+            action["warnings"] = _dedupe([*action["warnings"], *warnings])
+
+        ordered = list(actions.values())
+        for row in ordered:
+            row["item_count"] = len(row.get("item_keys", [])) if isinstance(row.get("item_keys", []), list) else 0
+        ordered.sort(key=lambda row: str(row.get("id", "") or "").strip().lower())
+        return ordered
+
+    def model_setup_install_runs(
+        self,
+        *,
+        limit: int = 20,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
         manager = getattr(self, "model_setup_install_manager", None)
         if manager is None:
             return {"status": "unavailable", "message": "model setup install manager unavailable"}
         bounded = max(1, min(int(limit), 200))
         try:
-            return manager.list_runs(limit=bounded)
+            return manager.list_runs(
+                limit=bounded,
+                manifest_path=self._resolve_model_setup_manifest_path(
+                    manifest_path=manifest_path,
+                    workspace_root=workspace_root,
+                ),
+                workspace_root=str(workspace_root or "").strip(),
+            )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -36307,6 +39542,20 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
         return deduped
 
     @staticmethod
+    def _parse_model_setup_scope_query(query: Dict[str, list[str]]) -> Dict[str, str]:
+        return {
+            "manifest_path": str(query.get("manifest_path", [""])[0] or "").strip(),
+            "workspace_root": str(query.get("workspace_root", [""])[0] or "").strip(),
+        }
+
+    @staticmethod
+    def _parse_model_setup_scope_body(body: Dict[str, Any]) -> Dict[str, str]:
+        return {
+            "manifest_path": str(body.get("manifest_path", "") or "").strip(),
+            "workspace_root": str(body.get("workspace_root", "") or "").strip(),
+        }
+
+    @staticmethod
     def _rust_http_status(payload: Dict[str, Any]) -> int:
         status = str(payload.get("status", "")).strip().lower()
         if status in {"success", "cancelled"}:
@@ -36977,6 +40226,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 window_title = str(query.get("window_title", [""])[0] or "").strip()
                 query_text = str(query.get("query", [""])[0] or "").strip()
                 typed_text = str(query.get("text", [""])[0] or "").strip()
+                mission_id = str(query.get("mission_id", [""])[0] or "").strip()
+                mission_kind = str(query.get("mission_kind", [""])[0] or "").strip().lower()
                 keys = [
                     str(item).strip().lower()
                     for item in str(query.get("keys", [""])[0] or "").split(",")
@@ -36988,6 +40239,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     window_title=window_title,
                     query=query_text,
                     text=typed_text,
+                    mission_id=mission_id,
+                    mission_kind=mission_kind,
                     keys=keys or None,
                     ensure_app_launch=self._parse_bool(str(query.get("ensure_app_launch", ["0"])[0]), default=False) if "ensure_app_launch" in query else None,
                     focus_first=self._parse_bool(str(query.get("focus_first", ["1"])[0]), default=True) if "focus_first" in query else None,
@@ -37024,6 +40277,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         str(query.get("allow_destructive_forms", ["0"])[0]),
                         default=False,
                     ) if "allow_destructive_forms" in query else None,
+                    resume_force=self._parse_bool(
+                        str(query.get("resume_force", ["0"])[0]),
+                        default=False,
+                    ) if "resume_force" in query else None,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -37071,20 +40328,106 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-missions":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
+                payload = self.server.service.desktop_mission_status(
+                    limit=limit,
+                    mission_id=str(query.get("mission_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    mission_kind=str(query.get("mission_kind", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    stop_reason_code=str(query.get("stop_reason_code", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
             if path == "/models/local-inventory":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
                 task = str(query.get("task", [""])[0] or "").strip().lower()
-                payload = self.server.service.model_local_inventory(task=task, limit=limit)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_local_inventory(task=task, limit=limit, **scope)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/plan":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
                 task = str(query.get("task", [""])[0] or "").strip().lower()
                 include_present = self._parse_bool(str(query.get("include_present", ["0"])[0]), default=False)
+                scope = self._parse_model_setup_scope_query(query)
                 payload = self.server.service.model_setup_plan(
                     task=task,
                     limit=limit,
                     include_present=include_present,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/workspace":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                refresh_provider_credentials = self._parse_bool(
+                    str(query.get("refresh_provider_credentials", ["0"])[0]),
+                    default=False,
+                )
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_workspace(
+                    refresh_provider_credentials=refresh_provider_credentials,
+                    limit=limit,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                refresh_provider_credentials = self._parse_bool(
+                    str(query.get("refresh_provider_credentials", ["0"])[0]),
+                    default=False,
+                )
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_mission(
+                    refresh_provider_credentials=refresh_provider_credentials,
+                    limit=limit,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/history":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                current_scope = self._parse_bool(str(query.get("current_scope", ["1"])[0]), default=True)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_mission_history(
+                    limit=limit,
+                    mission_id=str(query.get("mission_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    recovery_profile=str(query.get("recovery_profile", [""])[0] or "").strip(),
+                    current_scope=current_scope,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/resume-advice":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
+                current_scope = self._parse_bool(str(query.get("current_scope", ["1"])[0]), default=True)
+                refresh_provider_credentials = self._parse_bool(
+                    str(query.get("refresh_provider_credentials", ["0"])[0]),
+                    default=False,
+                )
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_mission_resume_advice(
+                    mission_id=str(query.get("mission_id", [""])[0] or "").strip(),
+                    limit=limit,
+                    refresh_provider_credentials=refresh_provider_credentials,
+                    current_scope=current_scope,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-watchdog/history":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                current_scope = self._parse_bool(str(query.get("current_scope", ["1"])[0]), default=True)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_recovery_watchdog_history(
+                    limit=limit,
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    current_scope=current_scope,
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -37097,17 +40440,20 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     for item in str(query.get("item_keys", [""])[0] or "").split(",")
                     if str(item).strip()
                 ]
+                scope = self._parse_model_setup_scope_query(query)
                 payload = self.server.service.model_setup_manual_pipeline(
                     task=task,
                     limit=limit,
                     include_present=include_present,
                     item_keys=item_keys or None,
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/manual-pipeline/runs":
                 limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
-                payload = self.server.service.model_setup_manual_runs(limit=limit)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_manual_runs(limit=limit, **scope)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/manual-pipeline/run":
@@ -37140,6 +40486,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     for item in str(query.get("item_keys", [""])[0] or "").split(",")
                     if str(item).strip()
                 ]
+                scope = self._parse_model_setup_scope_query(query)
                 payload = self.server.service.model_setup_preflight(
                     task=task,
                     limit=limit,
@@ -37148,6 +40495,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     reserve_bytes=reserve_bytes,
                     refresh_remote=refresh_remote,
                     remote_timeout_s=remote_timeout_s,
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -37167,6 +40515,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     for item in str(query.get("item_keys", [""])[0] or "").split(",")
                     if str(item).strip()
                 ]
+                scope = self._parse_model_setup_scope_query(query)
                 payload = self.server.service.model_setup_remote_metadata(
                     task=task,
                     limit=limit,
@@ -37174,17 +40523,20 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     item_keys=item_keys or None,
                     refresh=refresh,
                     timeout_s=timeout_s,
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/install/history":
                 limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
-                payload = self.server.service.model_setup_install_history(limit=limit)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_install_history(limit=limit, **scope)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/install/runs":
                 limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
-                payload = self.server.service.model_setup_install_runs(limit=limit)
+                scope = self._parse_model_setup_scope_query(query)
+                payload = self.server.service.model_setup_install_runs(limit=limit, **scope)
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
             if path == "/models/setup/install/run":
@@ -38397,6 +41749,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 step_ids_raw = body.get("step_ids", [])
                 step_ids = step_ids_raw if isinstance(step_ids_raw, list) else []
                 limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
                 payload = self.server.service.model_setup_manual_run_launch(
                     task=task,
                     item_keys=item_keys,
@@ -38404,6 +41757,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     force=bool(body.get("force", False)),
                     limit=limit,
                     step_ids=step_ids,
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -38424,6 +41778,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 item_keys = item_keys_raw if isinstance(item_keys_raw, list) else []
                 include_present = bool(body.get("include_present", False))
                 limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
                 remote_timeout_s = self._parse_float(
                     str(body.get("remote_timeout_s", 6.0)),
                     6.0,
@@ -38440,6 +41795,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     refresh_remote=bool(body.get("refresh_remote", False)),
                     remote_timeout_s=remote_timeout_s,
                     verify_integrity=bool(body.get("verify_integrity", True)),
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -38449,6 +41805,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 item_keys = item_keys_raw if isinstance(item_keys_raw, list) else []
                 include_present = bool(body.get("include_present", False))
                 limit = self._parse_int(str(body.get("limit", 160)), 160, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
                 remote_timeout_s = self._parse_float(
                     str(body.get("remote_timeout_s", 6.0)),
                     6.0,
@@ -38465,6 +41822,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     refresh_remote=bool(body.get("refresh_remote", True)),
                     remote_timeout_s=remote_timeout_s,
                     verify_integrity=bool(body.get("verify_integrity", True)),
+                    **scope,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -38479,6 +41837,145 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
+            if path == "/models/setup/workspace/scaffold":
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.model_setup_workspace_scaffold(
+                    dry_run=bool(body.get("dry_run", False)),
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    limit=limit,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/launch":
+                selected_action_ids_raw = body.get("selected_action_ids", [])
+                selected_action_ids = [
+                    str(item).strip()
+                    for item in selected_action_ids_raw
+                    if str(item).strip()
+                ] if isinstance(selected_action_ids_raw, list) else None
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.model_setup_mission_launch(
+                    dry_run=bool(body.get("dry_run", False)),
+                    selected_action_ids=selected_action_ids,
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    limit=limit,
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/resume":
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.model_setup_mission_resume(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    dry_run=bool(body.get("dry_run", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    limit=limit,
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/auto-resume":
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.auto_resume_model_setup_mission(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    dry_run=bool(body.get("dry_run", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    limit=limit,
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    current_scope=bool(body.get("current_scope", True)),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-sweep":
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.model_setup_mission_recovery_sweep(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    dry_run=bool(body.get("dry_run", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    limit=limit,
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    current_scope=bool(body.get("current_scope", True)),
+                    max_auto_resume_passes=self._parse_int(
+                        str(body.get("max_auto_resume_passes", "3") or "3"),
+                        3,
+                        minimum=1,
+                        maximum=8,
+                    ),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-watchdog":
+                limit = self._parse_int(str(body.get("limit", "200") or "200"), 200, minimum=1, maximum=2000)
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.model_setup_mission_recovery_watchdog(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    dry_run=bool(body.get("dry_run", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    limit=limit,
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    current_scope=bool(body.get("current_scope", True)),
+                    max_missions=self._parse_int(
+                        str(body.get("max_missions", "6") or "6"),
+                        6,
+                        minimum=1,
+                        maximum=64,
+                    ),
+                    max_auto_resumes=self._parse_int(
+                        str(body.get("max_auto_resumes", "2") or "2"),
+                        2,
+                        minimum=0,
+                        maximum=64,
+                    ),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-watchdog/reset":
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.reset_model_setup_recovery_watchdog_history(
+                    run_id=str(body.get("run_id", "") or "").strip(),
+                    status=str(body.get("status", "") or "").strip(),
+                    **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/reset":
+                payload = self.server.service.reset_model_setup_mission(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    status=str(body.get("status", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
             if path == "/providers/credentials":
                 provider = str(body.get("provider", "") or "").strip().lower()
                 if not provider:
@@ -38489,6 +41986,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 if voice_id:
                     requirements = dict(requirements)
                     requirements["ELEVENLABS_VOICE_ID"] = voice_id
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = [
+                    str(item).strip()
+                    for item in item_keys_raw
+                    if str(item).strip()
+                ] if isinstance(item_keys_raw, list) else None
+                limit = self._parse_int(str(body.get("limit", "160") or "160"), 160, minimum=1, maximum=2000)
+                timeout_s = self._parse_float(str(body.get("timeout_s", "8.0") or "8.0"), 8.0, minimum=2.0, maximum=30.0)
                 persist_encrypted = (
                     bool(body.get("persist_encrypted"))
                     if body.get("persist_encrypted") is not None
@@ -38502,6 +42008,23 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     persist_encrypted=persist_encrypted,
                     overwrite_env=bool(body.get("overwrite_env", True)),
                     clear_api_key=bool(body.get("clear_api_key", False)),
+                    verify_after_update=bool(body.get("verify_after_update", False)),
+                    task=task,
+                    limit=limit,
+                    include_present=bool(body.get("include_present", False)),
+                    item_keys=item_keys,
+                    continue_setup_recovery=bool(body.get("continue_setup_recovery", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    include_coworker_status=bool(body.get("include_coworker_status", False)),
+                    refresh_remote=bool(body.get("refresh_remote", False)),
+                    timeout_s=timeout_s,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -38527,6 +42050,59 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     item_keys=item_keys,
                     force_refresh=bool(body.get("force_refresh", True)),
                     timeout_s=timeout_s,
+                    continue_setup_recovery=bool(body.get("continue_setup_recovery", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    include_coworker_status=bool(body.get("include_coworker_status", False)),
+                    refresh_remote=bool(body.get("refresh_remote", False)),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/providers/credentials/recover":
+                provider = str(body.get("provider", "") or "").strip().lower()
+                if not provider:
+                    self._send_json(400, {"status": "error", "message": "provider is required"})
+                    return
+                task = str(body.get("task", "") or "").strip().lower()
+                item_keys_raw = body.get("item_keys", [])
+                item_keys = [
+                    str(item).strip()
+                    for item in item_keys_raw
+                    if str(item).strip()
+                ] if isinstance(item_keys_raw, list) else None
+                selected_action_ids_raw = body.get("selected_action_ids", [])
+                selected_action_ids = [
+                    str(item).strip()
+                    for item in selected_action_ids_raw
+                    if str(item).strip()
+                ] if isinstance(selected_action_ids_raw, list) else None
+                limit = self._parse_int(str(body.get("limit", "160") or "160"), 160, minimum=1, maximum=2000)
+                timeout_s = self._parse_float(str(body.get("timeout_s", "8.0") or "8.0"), 8.0, minimum=2.0, maximum=30.0)
+                payload = self.server.service.provider_setup_recovery_launch(
+                    provider=provider,
+                    task=task,
+                    limit=limit,
+                    include_present=bool(body.get("include_present", False)),
+                    item_keys=item_keys,
+                    selected_action_ids=selected_action_ids,
+                    dry_run=bool(body.get("dry_run", False)),
+                    continue_on_error=bool(body.get("continue_on_error", True)),
+                    continue_followup_actions=bool(body.get("continue_followup_actions", True)),
+                    max_followup_waves=self._parse_int(
+                        str(body.get("max_followup_waves", "3") or "3"),
+                        3,
+                        minimum=0,
+                        maximum=8,
+                    ),
+                    refresh_provider_credentials=bool(body.get("refresh_provider_credentials", False)),
+                    refresh_remote=bool(body.get("refresh_remote", False)),
+                    timeout_s=timeout_s,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -38536,6 +42112,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 window_title = str(body.get("window_title", "") or "").strip()
                 query_text = str(body.get("query", body.get("target", "")) or "").strip()
                 typed_text = str(body.get("text", "") or "").strip()
+                mission_id = str(body.get("mission_id", "") or "").strip()
+                mission_kind = str(body.get("mission_kind", "") or "").strip().lower()
                 keys_raw = body.get("keys", [])
                 keys = [
                     str(item).strip().lower()
@@ -38552,6 +42130,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     window_title=window_title,
                     query=query_text,
                     text=typed_text,
+                    mission_id=mission_id,
+                    mission_kind=mission_kind,
                     keys=keys or None,
                     ensure_app_launch=bool(body.get("ensure_app_launch")) if "ensure_app_launch" in body else None,
                     focus_first=bool(body.get("focus_first")) if "focus_first" in body else None,
@@ -38564,6 +42144,9 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     allow_warning_pages=bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
                     max_form_pages=self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,
                     allow_destructive_forms=bool(body.get("allow_destructive_forms")) if "allow_destructive_forms" in body else None,
+                    resume_contract=dict(body.get("resume_contract", {})) if isinstance(body.get("resume_contract", {}), dict) else None,
+                    blocking_surface=dict(body.get("blocking_surface", {})) if isinstance(body.get("blocking_surface", {}), dict) else None,
+                    resume_force=bool(body.get("resume_force")) if "resume_force" in body else None,
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -38725,6 +42308,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                     profile_id=str(body.get("profile_id", "") or "").strip(),
                     intent=str(body.get("intent", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/reset":
+                payload = self.server.service.reset_desktop_missions(
+                    mission_id=str(body.get("mission_id", "") or "").strip(),
+                    status=str(body.get("status", "") or "").strip(),
+                    mission_kind=str(body.get("mission_kind", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
