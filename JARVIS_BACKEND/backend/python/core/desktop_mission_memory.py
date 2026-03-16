@@ -119,6 +119,32 @@ class DesktopMissionMemory:
                 "selected_action": str(payload.get("selected_action", "") or "").strip(),
                 "selected_candidate_id": str(payload.get("selected_candidate_id", "") or "").strip(),
                 "selected_candidate_label": str(payload.get("selected_candidate_label", "") or "").strip(),
+                "transition_kind": str(payload.get("transition_kind", "") or "").strip(),
+                "nested_surface_progressed": bool(payload.get("nested_surface_progressed", False)),
+                "child_window_adopted": bool(payload.get("child_window_adopted", False)),
+                "surface_path_tail": [
+                    str(item).strip()
+                    for item in payload.get("surface_path_tail", [])
+                    if str(item).strip()
+                ][:8] if isinstance(payload.get("surface_path_tail", []), list) else [],
+                "window_title_history_tail": [
+                    str(item).strip()
+                    for item in payload.get("window_title_history_tail", [])
+                    if str(item).strip()
+                ][:8] if isinstance(payload.get("window_title_history_tail", []), list) else [],
+                "nested_progress_count": self._coerce_int(
+                    payload.get(
+                        "nested_progress_count",
+                        sum(
+                            1
+                            for item in payload.get("attempted_targets", [])
+                            if isinstance(item, dict) and bool(item.get("nested_surface_progressed", item.get("progressed", False)))
+                        ) if isinstance(payload.get("attempted_targets", []), list) else 0,
+                    ),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                ),
                 "attempted_targets_tail": [
                     dict(item)
                     for item in payload.get("attempted_targets", [])[-8:]
@@ -190,6 +216,40 @@ class DesktopMissionMemory:
             ):
                 if field_name in payload:
                     row[field_name] = self._coerce_int(payload.get(field_name, row.get(field_name, 0)), minimum=0, maximum=100_000, default=0)
+            for field_name in (
+                "transition_kind",
+                "selected_action",
+                "selected_candidate_id",
+                "selected_candidate_label",
+            ):
+                if field_name in payload:
+                    row[field_name] = str(payload.get(field_name, row.get(field_name, "")) or "").strip()
+            for field_name in (
+                "nested_surface_progressed",
+                "child_window_adopted",
+                "auto_continued",
+            ):
+                if field_name in payload:
+                    row[field_name] = bool(payload.get(field_name, row.get(field_name, False)))
+            if isinstance(payload.get("surface_path_tail", []), list):
+                row["surface_path_tail"] = [
+                    str(item).strip()
+                    for item in payload.get("surface_path_tail", [])
+                    if str(item).strip()
+                ][:8]
+            if isinstance(payload.get("window_title_history_tail", []), list):
+                row["window_title_history_tail"] = [
+                    str(item).strip()
+                    for item in payload.get("window_title_history_tail", [])
+                    if str(item).strip()
+                ][:8]
+            if "nested_progress_count" in payload:
+                row["nested_progress_count"] = self._coerce_int(
+                    payload.get("nested_progress_count", row.get("nested_progress_count", 0)),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                )
             if isinstance(payload.get("attempted_targets", []), list):
                 row["attempted_targets_tail"] = [
                     dict(item)
@@ -495,6 +555,12 @@ class DesktopMissionMemory:
             "selected_action": str(row.get("selected_action", "") or "").strip(),
             "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
             "selected_candidate_label": str(row.get("selected_candidate_label", "") or "").strip(),
+            "transition_kind": str(row.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": bool(row.get("nested_surface_progressed", False)),
+            "child_window_adopted": bool(row.get("child_window_adopted", False)),
+            "surface_path_tail": [str(item).strip() for item in row.get("surface_path_tail", []) if str(item).strip()] if isinstance(row.get("surface_path_tail", []), list) else [],
+            "window_title_history_tail": [str(item).strip() for item in row.get("window_title_history_tail", []) if str(item).strip()] if isinstance(row.get("window_title_history_tail", []), list) else [],
+            "nested_progress_count": self._coerce_int(row.get("nested_progress_count", 0), minimum=0, maximum=100_000, default=0),
             "attempted_targets_tail": [dict(item) for item in row.get("attempted_targets_tail", []) if isinstance(item, dict)] if isinstance(row.get("attempted_targets_tail", []), list) else [],
             "surface_signature_history": [str(item).strip() for item in row.get("surface_signature_history", []) if str(item).strip()] if isinstance(row.get("surface_signature_history", []), list) else [],
             "pause_count": self._coerce_int(row.get("pause_count", 0), minimum=0, maximum=100_000, default=0),

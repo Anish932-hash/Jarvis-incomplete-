@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 from backend.python.core.desktop_app_profile_registry import DesktopAppProfileRegistry
 from backend.python.core.desktop_mission_memory import DesktopMissionMemory
 from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
+from backend.python.perception.surface_intelligence import SurfaceIntelligenceAnalyzer
 
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
@@ -2724,6 +2725,7 @@ class DesktopActionRouter:
         self._app_profile_registry = app_profile_registry or DesktopAppProfileRegistry()
         self._workflow_memory = workflow_memory or DesktopWorkflowMemory.default()
         self._mission_memory = mission_memory or DesktopMissionMemory.default()
+        self._surface_intelligence = SurfaceIntelligenceAnalyzer()
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -7879,7 +7881,38 @@ class DesktopActionRouter:
             recommended_actions = ["complete_form_page", *[action for action in recommended_actions if action != "complete_form_page"]]
         if bool(flags.get("sidebar_visible")) and not bool(flags.get("wizard_surface_visible")) and "focus_main_content" not in recommended_actions:
             recommended_actions = ["focus_main_content", *recommended_actions]
-        recommended_actions = self._dedupe_strings(recommended_actions)[:8]
+        surface_summary = self._surface_summary_from_snapshot(
+            app_profile=app_profile,
+            elements=element_rows,
+            query=str(query or "").strip(),
+            query_targets=query_targets,
+            query_related_candidates=query_related_candidates,
+            selection_candidates=selection_candidates,
+            target_control_state=target_control_state,
+            target_group_state=target_group_state,
+            wizard_page_state=wizard_page_state,
+            form_page_state=form_page_state,
+            safety_signals=safety_signals,
+            surface_flags=flags,
+            recommended_actions=recommended_actions,
+        )
+        surface_intelligence = self._surface_intelligence.analyze(
+            window=primary_candidate or active_window,
+            surface_summary=surface_summary,
+            visual_context=None,
+            query=str(query or "").strip(),
+        )
+        recommended_actions = self._dedupe_strings(
+            [
+                *self._surface_intelligence_recommendations(
+                    surface_intelligence=surface_intelligence,
+                    app_profile=app_profile,
+                    workflow_surfaces=workflow_surfaces,
+                    surface_flags=flags,
+                ),
+                *recommended_actions,
+            ]
+        )[:10]
         return {
             "status": "success",
             "app_profile": app_profile if app_profile.get("status") == "success" else {},
@@ -7911,6 +7944,8 @@ class DesktopActionRouter:
                 "screenshot_path": str(observation.get("screenshot_path", "") or ""),
             },
             "workflow_surfaces": workflow_surfaces,
+            "surface_summary": surface_summary,
+            "surface_intelligence": surface_intelligence,
             "surface_flags": flags,
             "recommended_actions": recommended_actions,
             "filters": {
@@ -7923,6 +7958,421 @@ class DesktopActionRouter:
                 "include_workflow_probes": bool(include_workflow_probes),
             },
         }
+
+    def _surface_summary_from_snapshot(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        elements: List[Dict[str, Any]],
+        query: str,
+        query_targets: List[Dict[str, Any]],
+        query_related_candidates: List[Dict[str, Any]],
+        selection_candidates: List[Dict[str, Any]],
+        target_control_state: Dict[str, Any],
+        target_group_state: Dict[str, Any],
+        wizard_page_state: Dict[str, Any],
+        form_page_state: Dict[str, Any],
+        safety_signals: Dict[str, Any],
+        surface_flags: Dict[str, Any],
+        recommended_actions: List[str],
+    ) -> Dict[str, Any]:
+        from backend.python.tools.accessibility_tools import AccessibilityTools
+
+        summary = AccessibilityTools.summarize_rows(
+            rows=[dict(row) for row in elements if isinstance(row, dict)],
+            window_title="",
+            query=str(query or "").strip(),
+            include_inventory=True,
+        )
+        summary = dict(summary) if isinstance(summary, dict) else {}
+        base_flags = summary.get("surface_flags", {}) if isinstance(summary.get("surface_flags", {}), dict) else {}
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        profile_markers = self._normalize_probe_text(
+            " ".join(
+                str(app_profile.get(key, "") or "").strip()
+                for key in (
+                    "name",
+                    "display_name",
+                    "app_name",
+                    "package_family",
+                    "package_id",
+                    "bundle_id",
+                    "exe",
+                    "path",
+                )
+                if str(app_profile.get(key, "") or "").strip()
+            )
+        )
+        element_markers = self._normalize_probe_text(
+            " ".join(
+                str(
+                    row.get("root_window_title", "")
+                    or row.get("window_title", "")
+                    or row.get("name", "")
+                    or row.get("automation_id", "")
+                    or ""
+                ).strip()
+                for row in elements
+                if isinstance(row, dict)
+            )
+        )
+        likely_settings_surface = bool(
+            base_flags.get("settings_surface_visible", False)
+            or surface_flags.get("settings_window_ready", False)
+            or "settings" in profile_markers
+            or "microsoft windowssettings" in profile_markers
+            or "immersivecontrolpanel" in profile_markers
+            or "settings" in element_markers
+        )
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        dialog_button_labels = [
+            self._normalize_probe_text(item)
+            for item in dialog_state.get("dialog_buttons", [])
+            if str(item).strip()
+        ]
+        approval_or_review_dialog = bool(
+            dialog_state.get("review_required", False)
+            or dialog_state.get("approval_required", False)
+            or dialog_state.get("admin_approval_required", False)
+            or dialog_state.get("permission_review_required", False)
+            or dialog_state.get("credential_required", False)
+            or dialog_state.get("authentication_required", False)
+            or dialog_state.get("manual_input_required", False)
+            or dialog_state.get("secure_desktop_likely", False)
+        )
+        settings_commit_only_dialog = bool(
+            likely_settings_surface
+            and dialog_button_labels
+            and set(dialog_button_labels).issubset({"apply", "save", "done", "submit"})
+            and not approval_or_review_dialog
+        )
+        dialog_visible = bool(
+            base_flags.get("dialog_visible", False)
+            or surface_flags.get("dialog_visible", False)
+            or safety_signals.get("dialog_visible", False)
+        )
+        strong_dialog_evidence = bool(
+            surface_flags.get("context_menu_visible", False)
+            or surface_flags.get("properties_dialog_visible", False)
+            or surface_flags.get("print_dialog_visible", False)
+            or bool(wizard_page_state)
+            or approval_or_review_dialog
+            or bool(dialog_state.get("destructive_buttons"))
+            or len(dialog_button_labels) >= 2
+            or (
+                bool(safety_signals.get("dialog_visible", False))
+                and not settings_commit_only_dialog
+                and (
+                    bool(dialog_button_labels)
+                    or bool(dialog_state.get("confirmation_buttons"))
+                    or str(dialog_state.get("preferred_confirmation_button", "") or "").strip()
+                )
+            )
+            or str(dialog_state.get("preferred_dismiss_button", "") or "").strip()
+        )
+        if (
+            dialog_visible
+            and likely_settings_surface
+            and not strong_dialog_evidence
+        ):
+            dialog_visible = False
+        merged_flags = {
+            **base_flags,
+            "dialog_visible": dialog_visible,
+            "navigation_tree_visible": bool(
+                base_flags.get("navigation_tree_visible", False)
+                or surface_flags.get("tree_visible", False)
+                or surface_flags.get("folder_tree_visible", False)
+                or surface_flags.get("navigation_tree_visible", False)
+            ),
+            "list_surface_visible": bool(
+                base_flags.get("list_surface_visible", False)
+                or surface_flags.get("list_visible", False)
+                or surface_flags.get("file_list_visible", False)
+                or surface_flags.get("message_list_visible", False)
+            ),
+            "data_table_visible": bool(base_flags.get("data_table_visible", False) or surface_flags.get("table_visible", False)),
+            "tab_strip_visible": bool(
+                base_flags.get("tab_strip_visible", False)
+                or surface_flags.get("tab_strip_visible", False)
+                or surface_flags.get("tab_page_visible", False)
+            ),
+            "toolbar_visible": bool(base_flags.get("toolbar_visible", False) or surface_flags.get("toolbar_visible", False)),
+            "menu_visible": bool(base_flags.get("menu_visible", False) or surface_flags.get("context_menu_visible", False)),
+            "form_surface_visible": bool(
+                base_flags.get("form_surface_visible", False)
+                or surface_flags.get("form_visible", False)
+                or bool(form_page_state)
+            ),
+            "text_entry_surface_visible": bool(
+                base_flags.get("text_entry_surface_visible", False)
+                or surface_flags.get("input_field_visible", False)
+                or surface_flags.get("rename_active", False)
+            ),
+            "selection_surface_visible": bool(
+                base_flags.get("selection_surface_visible", False)
+                or bool(query_targets)
+                or bool(query_related_candidates)
+                or bool(selection_candidates)
+                or surface_flags.get("checkbox_visible", False)
+                or surface_flags.get("radio_option_visible", False)
+                or surface_flags.get("tab_page_visible", False)
+            ),
+            "value_control_visible": bool(
+                base_flags.get("value_control_visible", False)
+                or surface_flags.get("value_control_visible", False)
+                or surface_flags.get("slider_visible", False)
+                or surface_flags.get("spinner_visible", False)
+            ),
+            "scrollable_surface_visible": bool(
+                base_flags.get("scrollable_surface_visible", False)
+                or surface_flags.get("scrollbar_visible", False)
+            ),
+            "settings_surface_visible": bool(
+                base_flags.get("settings_surface_visible", False)
+                or surface_flags.get("settings_window_ready", False)
+                or likely_settings_surface
+            ),
+            "search_surface_visible": bool(base_flags.get("search_surface_visible", False) or surface_flags.get("search_visible", False)),
+        }
+
+        combined_query_candidates: List[Dict[str, Any]] = []
+        seen_candidates: set[str] = set()
+        for row in [
+            *[dict(item) for item in query_targets if isinstance(item, dict)],
+            *[dict(item) for item in summary.get("query_candidates", []) if isinstance(item, dict)],
+        ]:
+            identity = self._element_identity_key(row) or "|".join(
+                [
+                    str(row.get("name", "") or "").strip().lower(),
+                    str(row.get("control_type", "") or "").strip().lower(),
+                    str(row.get("automation_id", "") or "").strip().lower(),
+                ]
+            )
+            if not identity or identity in seen_candidates:
+                continue
+            seen_candidates.add(identity)
+            combined_query_candidates.append(row)
+            if len(combined_query_candidates) >= 8:
+                break
+
+        inventory_rows = [
+            dict(row)
+            for row in summary.get("control_inventory", [])
+            if isinstance(row, dict)
+        ]
+        seen_inventory = {
+            self._element_identity_key(row)
+            or "|".join(
+                [
+                    str(row.get("name", "") or "").strip().lower(),
+                    str(row.get("control_type", "") or "").strip().lower(),
+                    str(row.get("automation_id", "") or "").strip().lower(),
+                ]
+            )
+            for row in inventory_rows
+        }
+        for row in [
+            *[dict(item) for item in query_related_candidates if isinstance(item, dict)],
+            *[dict(item) for item in selection_candidates if isinstance(item, dict)],
+            *([dict(target_control_state)] if isinstance(target_control_state, dict) and target_control_state else []),
+        ]:
+            identity = self._element_identity_key(row) or "|".join(
+                [
+                    str(row.get("name", "") or "").strip().lower(),
+                    str(row.get("control_type", "") or "").strip().lower(),
+                    str(row.get("automation_id", "") or "").strip().lower(),
+                ]
+            )
+            if not identity or identity in seen_inventory:
+                continue
+            seen_inventory.add(identity)
+            inventory_rows.append(
+                {
+                    "element_id": row.get("element_id", ""),
+                    "name": row.get("name", ""),
+                    "control_type": row.get("control_type", ""),
+                    "automation_id": row.get("automation_id", ""),
+                    "state_text": row.get("state_text", ""),
+                    "root_window_title": row.get("root_window_title", row.get("window_title", "")),
+                }
+            )
+            if len(inventory_rows) >= 40:
+                break
+
+        role_candidates = [
+            str(item).strip()
+            for item in summary.get("surface_role_candidates", [])
+            if str(item).strip()
+        ]
+        priority_roles: List[str] = []
+        if merged_flags.get("dialog_visible", False):
+            priority_roles.append("dialog")
+        if bool(wizard_page_state):
+            priority_roles.append("wizard")
+        if merged_flags.get("settings_surface_visible", False):
+            priority_roles.append("settings")
+        if category == "file_manager":
+            priority_roles.append("file_manager")
+        if category == "browser":
+            priority_roles.append("browser")
+        if category in {"code_editor", "ide"} and (
+            merged_flags.get("text_entry_surface_visible", False)
+            or merged_flags.get("form_surface_visible", False)
+        ):
+            priority_roles.append("editor")
+        if category == "terminal":
+            priority_roles.append("terminal")
+        if merged_flags.get("data_table_visible", False):
+            priority_roles.append("data_console")
+        if merged_flags.get("navigation_tree_visible", False) and merged_flags.get("list_surface_visible", False):
+            priority_roles.append("navigator")
+        if merged_flags.get("form_surface_visible", False) and "dialog" not in priority_roles:
+            priority_roles.append("form")
+        role_candidates = self._dedupe_strings([*priority_roles, *role_candidates]) or ["content"]
+
+        destructive_candidates = [
+            str(item).strip()
+            for item in summary.get("destructive_candidates", [])
+            if str(item).strip()
+        ]
+        confirmation_candidates = [
+            str(item).strip()
+            for item in summary.get("confirmation_candidates", [])
+            if str(item).strip()
+        ]
+        destructive_candidates.extend(
+            str(item).strip()
+            for item in dialog_state.get("destructive_buttons", [])
+            if str(item).strip()
+        )
+        confirmation_candidates.extend(
+            str(item).strip()
+            for item in dialog_state.get("confirmation_buttons", [])
+            if str(item).strip()
+        )
+        preferred_button = str(dialog_state.get("preferred_confirmation_button", "") or "").strip()
+        if preferred_button:
+            confirmation_candidates.append(preferred_button)
+        recommended = self._dedupe_strings(
+            [
+                *[str(item).strip() for item in recommended_actions if str(item).strip()],
+                *[str(item).strip() for item in summary.get("recommended_actions", []) if str(item).strip()],
+            ]
+        )
+        summary_parts: List[str] = []
+        if role_candidates:
+            summary_parts.append(f"grounded as {role_candidates[0]}")
+        if merged_flags.get("navigation_tree_visible", False):
+            summary_parts.append("tree navigation available")
+        if merged_flags.get("list_surface_visible", False):
+            summary_parts.append("list targeting available")
+        if merged_flags.get("data_table_visible", False):
+            summary_parts.append("table navigation available")
+        if merged_flags.get("form_surface_visible", False):
+            summary_parts.append("form controls visible")
+        if merged_flags.get("dialog_visible", False):
+            summary_parts.append("dialog resolution likely")
+        if combined_query_candidates:
+            summary_parts.append(f"{len(combined_query_candidates)} query candidates visible")
+        if not summary_parts:
+            summary_parts.append("surface summary derived from current desktop state")
+
+        return {
+            "status": "success",
+            "window_title_filter": "",
+            "query": str(query or "").strip(),
+            "element_count": int(summary.get("element_count", len(elements)) or len(elements)),
+            "control_counts": summary.get("control_counts", {}) if isinstance(summary.get("control_counts", {}), dict) else {},
+            "state_counts": summary.get("state_counts", {}) if isinstance(summary.get("state_counts", {}), dict) else {},
+            "surface_flags": merged_flags,
+            "surface_role_candidates": role_candidates,
+            "actionable_candidate_count": int(summary.get("actionable_candidate_count", len(inventory_rows)) or len(inventory_rows)),
+            "input_control_count": int(summary.get("input_control_count", 0) or 0),
+            "selection_control_count": int(summary.get("selection_control_count", 0) or 0),
+            "value_control_count": int(summary.get("value_control_count", 0) or 0),
+            "top_labels": summary.get("top_labels", []) if isinstance(summary.get("top_labels", []), list) else [],
+            "query_candidates": combined_query_candidates,
+            "recommended_actions": recommended,
+            "destructive_candidates": self._dedupe_strings(destructive_candidates)[:10],
+            "confirmation_candidates": self._dedupe_strings(confirmation_candidates)[:10],
+            "control_inventory": inventory_rows[:40],
+            "summary": "; ".join(part for part in summary_parts if part).strip(),
+            "target_group_state": dict(target_group_state) if isinstance(target_group_state, dict) else {},
+        }
+
+    def _surface_intelligence_recommendations(
+        self,
+        *,
+        surface_intelligence: Dict[str, Any],
+        app_profile: Dict[str, Any],
+        workflow_surfaces: List[Dict[str, Any]],
+        surface_flags: Dict[str, Any],
+    ) -> List[str]:
+        if not isinstance(surface_intelligence, dict) or not surface_intelligence:
+            return []
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        interaction_mode = self._normalize_probe_text(surface_intelligence.get("interaction_mode", ""))
+        surface_role = self._normalize_probe_text(surface_intelligence.get("surface_role", ""))
+        affordances = [
+            self._normalize_probe_text(item)
+            for item in surface_intelligence.get("affordances", [])
+            if str(item).strip()
+        ]
+        query_resolution = (
+            surface_intelligence.get("query_resolution", {})
+            if isinstance(surface_intelligence.get("query_resolution", {}), dict)
+            else {}
+        )
+        best_candidate_type = self._normalize_probe_text(query_resolution.get("best_candidate_type", ""))
+        workflow_matched = any(
+            isinstance(row, dict) and bool(row.get("matched", False))
+            for row in workflow_surfaces
+        )
+
+        actions: List[str] = []
+        if interaction_mode == "dialog_resolution" or surface_role == "dialog":
+            actions.extend(["confirm_dialog", "dismiss_dialog"])
+        if interaction_mode == "settings_navigation":
+            actions.extend(["focus_sidebar", "focus_main_content"])
+        if interaction_mode == "tree_list_navigation":
+            actions.extend(["focus_navigation_tree", "focus_list_surface"])
+        if interaction_mode == "table_navigation":
+            actions.extend(["focus_data_table", "select_table_row"])
+        if interaction_mode == "form_fill":
+            actions.extend(["focus_form_surface", "focus_input_field"])
+        if interaction_mode == "document_editing" and not surface_flags.get("main_content_visible", False):
+            actions.append("focus_main_content")
+
+        candidate_type_map = {
+            "treeitem": "select_tree_item",
+            "listitem": "select_list_item",
+            "dataitem": "select_table_row",
+            "row": "select_table_row",
+            "checkbox": "focus_checkbox",
+            "radiobutton": "select_radio_option",
+            "tabitem": "select_tab_page",
+            "combobox": "open_dropdown",
+            "edit": "focus_input_field",
+            "document": "focus_input_field",
+            "button": "click",
+            "hyperlink": "click",
+        }
+        mapped_candidate_action = candidate_type_map.get(best_candidate_type, "")
+        if mapped_candidate_action:
+            actions.append(mapped_candidate_action)
+
+        generic_or_unsupported_surface = (
+            category in {"", "utility", "general_desktop", "file_manager"}
+            or surface_role in {"settings", "navigator", "form", "content"}
+        )
+        if generic_or_unsupported_surface and not workflow_matched:
+            if "query_target_available" in affordances or "selection_targeting" in affordances:
+                actions.append(EXPLORATION_ADVANCE_ACTION)
+            if "scroll_search" in affordances or interaction_mode in {"settings_navigation", "tree_list_navigation", "form_fill", "table_navigation"}:
+                actions.append(EXPLORATION_FLOW_ACTION)
+
+        return self._dedupe_strings(actions)
 
     def surface_exploration_plan(
         self,
@@ -7971,12 +8421,18 @@ class DesktopActionRouter:
         target_window = snapshot_payload.get("target_window", {}) if isinstance(snapshot_payload.get("target_window", {}), dict) else {}
         surface_flags = snapshot_payload.get("surface_flags", {}) if isinstance(snapshot_payload.get("surface_flags", {}), dict) else {}
         safety_signals = snapshot_payload.get("safety_signals", {}) if isinstance(snapshot_payload.get("safety_signals", {}), dict) else {}
+        surface_intelligence = (
+            snapshot_payload.get("surface_intelligence", {})
+            if isinstance(snapshot_payload.get("surface_intelligence", {}), dict)
+            else {}
+        )
         clean_query = str(query or snapshot_payload.get("filters", {}).get("query", "") or "").strip()
         surface_mode = self._surface_exploration_surface_mode(
             app_profile=app_profile,
             surface_flags=surface_flags,
             safety_signals=safety_signals,
             snapshot=snapshot_payload,
+            surface_intelligence=surface_intelligence,
         )
         top_hypotheses = self._surface_exploration_hypotheses(
             snapshot=snapshot_payload,
@@ -7985,6 +8441,7 @@ class DesktopActionRouter:
             query=clean_query,
             surface_mode=surface_mode,
             limit=bounded,
+            surface_intelligence=surface_intelligence,
         )
         branch_actions = self._surface_exploration_branch_actions(
             snapshot=snapshot_payload,
@@ -8008,11 +8465,30 @@ class DesktopActionRouter:
             )
             if bool(safety_signals.get(signal_name, False))
         ]
+        risk_flags = [
+            self._normalize_probe_text(item)
+            for item in surface_intelligence.get("risk_flags", [])
+            if str(item).strip()
+        ]
+        if "destructive_controls_visible" in risk_flags and "destructive_controls_visible" not in manual_attention_signals:
+            manual_attention_signals.append("destructive_controls_visible")
+        if "approval_or_credential_surface" in risk_flags and "approval_or_credential_surface" not in manual_attention_signals:
+            manual_attention_signals.append("approval_or_credential_surface")
         manual_attention_required = bool(manual_attention_signals)
         automation_ready = bool(top_hypotheses or branch_actions) and not manual_attention_required
         profile_name = str(app_profile.get("name", "") or target_window.get("title", "") or app_name or "").strip()
         category = str(app_profile.get("category", "") or "").strip().lower()
         summary_parts: List[str] = []
+        grounded_role = str(surface_intelligence.get("surface_role", "") or "").strip()
+        interaction_mode = str(surface_intelligence.get("interaction_mode", "") or "").strip()
+        grounding_confidence = float(surface_intelligence.get("grounding_confidence", 0.0) or 0.0)
+        if grounded_role or interaction_mode:
+            summary_parts.append(
+                "Grounded as "
+                + (grounded_role or "surface")
+                + (f" with {interaction_mode}" if interaction_mode else "")
+                + f" ({grounding_confidence:.2f})."
+            )
         if top_hypotheses:
             primary_label = str(top_hypotheses[0].get("label", "") or "target").strip()
             primary_action = str(top_hypotheses[0].get("suggested_action", "") or "action").strip()
@@ -8021,6 +8497,13 @@ class DesktopActionRouter:
             summary_parts.append(f"{len(branch_actions)} follow-up branch action{'s' if len(branch_actions) != 1 else ''} available.")
         if manual_attention_required:
             summary_parts.append("Manual review is still recommended before autonomous continuation.")
+        recovery_hints = [
+            str(item).strip()
+            for item in surface_intelligence.get("recovery_hints", [])
+            if str(item).strip()
+        ]
+        if recovery_hints:
+            summary_parts.append(recovery_hints[0][0:180])
         if not summary_parts:
             summary_parts.append("Surface recon found only low-confidence generic candidates.")
         return {
@@ -8028,6 +8511,7 @@ class DesktopActionRouter:
             "profile_name": profile_name,
             "category": category,
             "surface_mode": surface_mode,
+            "surface_intelligence": surface_intelligence,
             "automation_ready": automation_ready,
             "manual_attention_required": manual_attention_required,
             "attention_signals": manual_attention_signals,
@@ -8083,6 +8567,155 @@ class DesktopActionRouter:
         ]
         return hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
 
+    def _surface_exploration_state_summary(self, *, exploration_plan: Dict[str, Any]) -> Dict[str, Any]:
+        plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
+        snapshot = plan.get("surface_snapshot", {}) if isinstance(plan.get("surface_snapshot", {}), dict) else {}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        breadcrumb_path = [
+            str(item).strip()
+            for item in form_page_state.get("breadcrumb_path", [])
+            if str(item).strip()
+        ] if isinstance(form_page_state.get("breadcrumb_path", []), list) else []
+        if not breadcrumb_path:
+            breadcrumb_path = [
+                str(item).strip()
+                for item in wizard_page_state.get("breadcrumb_path", [])
+                if str(item).strip()
+            ] if isinstance(wizard_page_state.get("breadcrumb_path", []), list) else []
+        selected_navigation_target = str(
+            form_page_state.get("selected_navigation_target", "")
+            or wizard_page_state.get("selected_navigation_target", "")
+            or ""
+        ).strip()
+        selected_tab = str(
+            form_page_state.get("selected_tab", "")
+            or wizard_page_state.get("selected_tab", "")
+            or ""
+        ).strip()
+        surface_path = self._dedupe_strings(
+            [
+                *breadcrumb_path,
+                selected_navigation_target,
+                selected_tab,
+            ]
+        )[:8]
+        return {
+            "surface_mode": str(plan.get("surface_mode", "") or "").strip(),
+            "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+            "window_title": str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "window_hwnd": int(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+            "dialog_visible": bool(dialog_state.get("visible", False) or safety_signals.get("dialog_visible", False)),
+            "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(dialog_state.get("approval_kind", "") or "").strip(),
+            "selected_navigation_target": selected_navigation_target,
+            "selected_tab": selected_tab,
+            "surface_path": surface_path,
+        }
+
+    def _surface_exploration_transition_summary(
+        self,
+        *,
+        before_plan: Dict[str, Any],
+        after_plan: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        before_state = self._surface_exploration_state_summary(exploration_plan=before_plan)
+        after_state = self._surface_exploration_state_summary(exploration_plan=after_plan)
+        before_window_title = str(before_state.get("window_title", "") or "").strip()
+        after_window_title = str(after_state.get("window_title", "") or "").strip()
+        before_window_hwnd = int(before_state.get("window_hwnd", 0) or 0)
+        after_window_hwnd = int(after_state.get("window_hwnd", 0) or 0)
+        window_title_changed = bool(
+            self._normalize_probe_text(before_window_title) != self._normalize_probe_text(after_window_title)
+        )
+        window_hwnd_changed = bool(
+            before_window_hwnd
+            and after_window_hwnd
+            and before_window_hwnd != after_window_hwnd
+        )
+        window_changed = bool(
+            after_window_title
+            and (window_hwnd_changed or window_title_changed)
+        )
+        before_path = [
+            str(item).strip()
+            for item in before_state.get("surface_path", [])
+            if str(item).strip()
+        ] if isinstance(before_state.get("surface_path", []), list) else []
+        after_path = [
+            str(item).strip()
+            for item in after_state.get("surface_path", [])
+            if str(item).strip()
+        ] if isinstance(after_state.get("surface_path", []), list) else []
+        path_changed = before_path != after_path
+        drilldown_progressed = bool(
+            path_changed
+            and after_path
+            and (
+                not before_path
+                or (
+                    len(after_path) >= len(before_path)
+                    and after_path[: len(before_path)] == before_path
+                )
+            )
+        )
+        pane_shift = bool(
+            self._normalize_probe_text(before_state.get("selected_navigation_target", ""))
+            != self._normalize_probe_text(after_state.get("selected_navigation_target", ""))
+            or self._normalize_probe_text(before_state.get("selected_tab", ""))
+            != self._normalize_probe_text(after_state.get("selected_tab", ""))
+        )
+        dialog_shift = bool(
+            bool(before_state.get("dialog_visible", False)) != bool(after_state.get("dialog_visible", False))
+            or self._normalize_probe_text(before_state.get("dialog_kind", ""))
+            != self._normalize_probe_text(after_state.get("dialog_kind", ""))
+            or self._normalize_probe_text(before_state.get("approval_kind", ""))
+            != self._normalize_probe_text(after_state.get("approval_kind", ""))
+        )
+        surface_mode_changed = bool(
+            self._normalize_probe_text(before_state.get("surface_mode", ""))
+            != self._normalize_probe_text(after_state.get("surface_mode", ""))
+        )
+        screen_hash_changed = bool(
+            str(before_state.get("screen_hash", "") or "").strip()
+            and str(after_state.get("screen_hash", "") or "").strip()
+            and str(before_state.get("screen_hash", "") or "").strip()
+            != str(after_state.get("screen_hash", "") or "").strip()
+        )
+        transition_kind = "steady_state"
+        if window_changed:
+            transition_kind = "child_window"
+        elif dialog_shift:
+            transition_kind = "dialog_shift"
+        elif drilldown_progressed:
+            transition_kind = "drilldown"
+        elif pane_shift:
+            transition_kind = "pane_shift"
+        elif path_changed or surface_mode_changed or screen_hash_changed:
+            transition_kind = "surface_shift"
+        return {
+            "transition_kind": transition_kind,
+            "nested_surface_progressed": bool(transition_kind != "steady_state"),
+            "child_window_adopted": bool(window_changed),
+            "window_title_before": before_window_title,
+            "window_title_after": after_window_title,
+            "window_hwnd_before": before_window_hwnd,
+            "window_hwnd_after": after_window_hwnd,
+            "surface_path_before": before_path,
+            "surface_path_after": after_path,
+            "path_changed": path_changed,
+            "screen_hash_changed": screen_hash_changed,
+            "surface_mode_changed": surface_mode_changed,
+            "dialog_shift": dialog_shift,
+            "pane_shift": pane_shift,
+            "drilldown_progressed": drilldown_progressed,
+        }
+
     def _surface_exploration_selection_key(
         self,
         *,
@@ -8128,9 +8761,26 @@ class DesktopActionRouter:
             "selection_key": selection_key,
             "status": str(row.get("status", "") or "").strip().lower(),
             "progressed": bool(row.get("progressed", False)),
+            "transition_kind": str(row.get("transition_kind", "") or "").strip().lower(),
+            "nested_surface_progressed": bool(
+                row.get("nested_surface_progressed", row.get("progressed", False))
+            ),
+            "child_window_adopted": bool(row.get("child_window_adopted", False)),
             "step_index": max(0, int(row.get("step_index", 0) or 0)),
             "surface_signature_before": str(row.get("surface_signature_before", "") or "").strip(),
             "surface_signature_after": str(row.get("surface_signature_after", "") or "").strip(),
+            "window_title_before": str(row.get("window_title_before", "") or "").strip(),
+            "window_title_after": str(row.get("window_title_after", "") or "").strip(),
+            "surface_path_before": [
+                str(item).strip()
+                for item in row.get("surface_path_before", [])
+                if str(item).strip()
+            ][:8] if isinstance(row.get("surface_path_before", []), list) else [],
+            "surface_path_after": [
+                str(item).strip()
+                for item in row.get("surface_path_after", [])
+                if str(item).strip()
+            ][:8] if isinstance(row.get("surface_path_after", []), list) else [],
         }
 
     def _surface_exploration_attempt_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -8517,6 +9167,39 @@ class DesktopActionRouter:
                 if isinstance(row, dict)
             ]
         )
+        latest_attempt = dict(attempted_rows[-1]) if attempted_rows else {}
+        transition_kind = str(latest_attempt.get("transition_kind", "") or "").strip().lower()
+        nested_surface_progressed = bool(
+            latest_attempt.get("nested_surface_progressed", latest_attempt.get("progressed", False))
+        )
+        child_window_adopted = bool(latest_attempt.get("child_window_adopted", False))
+        surface_path_tail = [
+            str(item).strip()
+            for item in latest_attempt.get("surface_path_after", [])
+            if str(item).strip()
+        ] if isinstance(latest_attempt.get("surface_path_after", []), list) else []
+        if not surface_path_tail:
+            transition_state = self._surface_exploration_state_summary(exploration_plan=plan)
+            surface_path_tail = [
+                str(item).strip()
+                for item in transition_state.get("surface_path", [])
+                if str(item).strip()
+            ] if isinstance(transition_state.get("surface_path", []), list) else []
+        window_title_history_tail = self._dedupe_strings(
+            [
+                *[
+                    str(row.get("window_title_after", "") or row.get("window_title_before", "") or "").strip()
+                    for row in attempted_rows
+                    if isinstance(row, dict)
+                ],
+                str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            ]
+        )[:8]
+        nested_progress_count = sum(
+            1
+            for row in attempted_rows
+            if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
+        )
         return {
             "mission_kind": "exploration",
             "stop_reason_code": str(stop_reason_code or "").strip(),
@@ -8564,6 +9247,12 @@ class DesktopActionRouter:
             "alternative_target_count": max(0, int(alternative_target_count or 0)),
             "alternative_hypothesis_count": max(0, int(alternative_hypothesis_count or 0)),
             "alternative_branch_action_count": max(0, int(alternative_branch_action_count or 0)),
+            "transition_kind": transition_kind,
+            "nested_surface_progressed": nested_surface_progressed,
+            "child_window_adopted": child_window_adopted,
+            "surface_path_tail": surface_path_tail,
+            "window_title_history_tail": window_title_history_tail,
+            "nested_progress_count": nested_progress_count,
             "attempted_targets_tail": [dict(row) for row in attempted_rows[-6:]],
             "notes": notes[:12],
         }
@@ -8663,10 +9352,23 @@ class DesktopActionRouter:
                 "approval_kind": str(blocking_surface.get("approval_kind", "") or "").strip(),
                 "dialog_kind": str(blocking_surface.get("dialog_kind", "") or "").strip(),
                 "surface_mode": str(blocking_surface.get("surface_mode", "") or "").strip(),
+                "transition_kind": str(blocking_surface.get("transition_kind", "") or "").strip(),
+                "nested_surface_progressed": bool(blocking_surface.get("nested_surface_progressed", False)),
+                "child_window_adopted": bool(blocking_surface.get("child_window_adopted", False)),
+                "surface_path_tail": [
+                    str(item).strip()
+                    for item in blocking_surface.get("surface_path_tail", [])
+                    if str(item).strip()
+                ] if isinstance(blocking_surface.get("surface_path_tail", []), list) else [],
                 "prefer_anchor_on_resume": use_anchor_window,
                 "allow_child_window_adoption": True,
             },
             "continuation_targets": continuation_targets,
+            "window_title_history_tail": [
+                str(item).strip()
+                for item in blocking_surface.get("window_title_history_tail", [])
+                if str(item).strip()
+            ] if isinstance(blocking_surface.get("window_title_history_tail", []), list) else [],
         }
 
     def _advise_surface_exploration_advance(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -8941,6 +9643,10 @@ class DesktopActionRouter:
         followup_manual = bool(followup_plan.get("manual_attention_required", False))
         initial_signature = self._surface_exploration_signature(exploration_plan=initial_plan)
         followup_signature = self._surface_exploration_signature(exploration_plan=followup_plan)
+        transition_summary = self._surface_exploration_transition_summary(
+            before_plan=initial_plan,
+            after_plan=followup_plan,
+        )
         attempted_target_entry = {
             "kind": str(selection.get("kind", "") or "").strip(),
             "candidate_id": str(selection.get("candidate_id", "") or "").strip(),
@@ -8948,9 +9654,24 @@ class DesktopActionRouter:
             "selected_action": selected_action,
             "status": nested_status,
             "progressed": False,
+            "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": bool(transition_summary.get("nested_surface_progressed", False)),
+            "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
             "step_index": step_index,
             "surface_signature_before": initial_signature,
             "surface_signature_after": followup_signature,
+            "window_title_before": str(transition_summary.get("window_title_before", "") or "").strip(),
+            "window_title_after": str(transition_summary.get("window_title_after", "") or "").strip(),
+            "surface_path_before": [
+                str(item).strip()
+                for item in transition_summary.get("surface_path_before", [])
+                if str(item).strip()
+            ] if isinstance(transition_summary.get("surface_path_before", []), list) else [],
+            "surface_path_after": [
+                str(item).strip()
+                for item in transition_summary.get("surface_path_after", [])
+                if str(item).strip()
+            ] if isinstance(transition_summary.get("surface_path_after", []), list) else [],
         }
         attempted_targets = self._merge_surface_exploration_attempt_history(
             attempted_targets=attempted_targets_before,
@@ -8981,8 +9702,17 @@ class DesktopActionRouter:
             and str(top_followup.get("suggested_action", "") or "").strip().lower() == selected_action
         )
         mission_record: Dict[str, Any] = {}
-        progress_made = bool(not same_signature and not same_top_target and nested_status in {"success", "partial"})
+        transition_progressed = bool(transition_summary.get("nested_surface_progressed", False))
+        progress_made = bool(
+            nested_status in {"success", "partial"}
+            and (
+                not same_signature
+                or not same_top_target
+                or transition_progressed
+            )
+        )
         attempted_target_entry["progressed"] = progress_made
+        attempted_target_entry["nested_surface_progressed"] = transition_progressed
         updated_advice = {
             **advice,
             "exploration_plan": followup_plan if isinstance(followup_plan, dict) else initial_plan,
@@ -9007,7 +9737,7 @@ class DesktopActionRouter:
                 or "The current surface still needs manual review before JARVIS should continue exploring it."
             ).strip()
             mission_status = "blocked"
-        elif same_signature or same_top_target:
+        elif (same_signature or same_top_target) and not transition_progressed:
             if alternative_ready:
                 stop_reason_code = "exploration_followup_available"
                 stop_reason = (
@@ -9041,6 +9771,27 @@ class DesktopActionRouter:
                 or "Surface recon completed without finding another high-confidence follow-up step."
             ).strip()
 
+        surface_path_tail = [
+            str(item).strip()
+            for item in transition_summary.get("surface_path_after", [])
+            if str(item).strip()
+        ] if isinstance(transition_summary.get("surface_path_after", []), list) else []
+        window_title_history_tail = self._dedupe_strings(
+            [
+                *[
+                    str(row.get("window_title_after", "") or row.get("window_title_before", "") or "").strip()
+                    for row in attempted_targets
+                    if isinstance(row, dict)
+                ],
+                str(transition_summary.get("window_title_after", "") or "").strip(),
+            ]
+        )[:8]
+        nested_progress_count = sum(
+            1
+            for row in attempted_targets
+            if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
+        )
+
         blocking_surface: Dict[str, Any] = {}
         resume_contract: Dict[str, Any] = {}
         exploration_mission: Dict[str, Any] = {
@@ -9062,6 +9813,12 @@ class DesktopActionRouter:
             "alternative_hypothesis_count": alternative_hypothesis_count,
             "alternative_branch_action_count": alternative_branch_action_count,
             "alternative_ready": alternative_ready,
+            "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": transition_progressed,
+            "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
+            "surface_path_tail": surface_path_tail,
+            "window_title_history_tail": window_title_history_tail,
+            "nested_progress_count": nested_progress_count,
             "attempted_targets_tail": [dict(row) for row in attempted_targets[-6:]],
             "surface_signature_history": surface_signature_history,
             "next_actions": self._dedupe_strings(
@@ -9089,6 +9846,17 @@ class DesktopActionRouter:
             "before_signature": initial_signature,
             "after_signature": followup_signature,
             "progressed": progress_made,
+            "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": transition_progressed,
+            "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
+            "surface_path_before": [
+                str(item).strip()
+                for item in transition_summary.get("surface_path_before", [])
+                if str(item).strip()
+            ] if isinstance(transition_summary.get("surface_path_before", []), list) else [],
+            "surface_path_after": surface_path_tail,
+            "window_title_before": str(transition_summary.get("window_title_before", "") or "").strip(),
+            "window_title_after": str(transition_summary.get("window_title_after", "") or "").strip(),
             "attempted_target_count": len(attempted_targets),
             "alternative_target_count": alternative_target_count,
         }
@@ -9132,28 +9900,27 @@ class DesktopActionRouter:
                 "alternative_target_count": alternative_target_count,
                 "alternative_hypothesis_count": alternative_hypothesis_count,
                 "alternative_branch_action_count": alternative_branch_action_count,
+                "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+                "nested_surface_progressed": transition_progressed,
+                "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
+                "surface_path_tail": surface_path_tail,
+                "window_title_history_tail": window_title_history_tail,
+                "nested_progress_count": nested_progress_count,
                 "attempted_targets": [dict(row) for row in attempted_targets],
                 "surface_signature_history": surface_signature_history,
                 "selected_action": selected_action,
                 "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
                 "selected_candidate_label": str(selection.get("label", "") or "").strip(),
                 "final_page": {
-                    "window_title": str(
-                        followup_snapshot.get("target_window", {}).get("title", "")
-                        if isinstance(followup_snapshot.get("target_window", {}), dict)
-                        else ""
-                    ).strip()
-                    or str(
-                        followup_snapshot.get("active_window", {}).get("title", "")
-                        if isinstance(followup_snapshot.get("active_window", {}), dict)
-                        else ""
-                    ).strip(),
+                    "window_title": str(transition_summary.get("window_title_after", "") or "").strip(),
                     "screen_hash": str(
                         followup_snapshot.get("observation", {}).get("screen_hash", "")
                         if isinstance(followup_snapshot.get("observation", {}), dict)
                         else ""
                     ).strip(),
                     "surface_mode": str(exploration_mission.get("surface_mode", "") or "").strip(),
+                    "surface_path": surface_path_tail,
+                    "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
                 },
                 "page_history": [page_record],
             }
@@ -9188,6 +9955,12 @@ class DesktopActionRouter:
             "exploration_runtime": {
                 "step_index": step_index,
                 "progressed": progress_made,
+                "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+                "nested_surface_progressed": transition_progressed,
+                "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
+                "surface_path_tail": surface_path_tail,
+                "window_title_history_tail": window_title_history_tail,
+                "nested_progress_count": nested_progress_count,
                 "stop_reason_code": stop_reason_code,
                 "stop_reason": stop_reason,
                 "blocking_surface": blocking_surface,
@@ -9433,6 +10206,20 @@ class DesktopActionRouter:
                 "alternative_target_count": int(latest_runtime.get("alternative_target_count", 0) or 0),
                 "alternative_hypothesis_count": int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
                 "alternative_branch_action_count": int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+                "transition_kind": str(latest_runtime.get("transition_kind", "") or "").strip(),
+                "nested_surface_progressed": bool(latest_runtime.get("nested_surface_progressed", False)),
+                "child_window_adopted": bool(latest_runtime.get("child_window_adopted", False)),
+                "surface_path_tail": [
+                    str(item).strip()
+                    for item in latest_runtime.get("surface_path_tail", [])
+                    if str(item).strip()
+                ] if isinstance(latest_runtime.get("surface_path_tail", []), list) else [],
+                "window_title_history_tail": [
+                    str(item).strip()
+                    for item in latest_runtime.get("window_title_history_tail", [])
+                    if str(item).strip()
+                ] if isinstance(latest_runtime.get("window_title_history_tail", []), list) else [],
+                "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
                 "attempted_targets_tail": [
                     dict(row)
                     for row in current_args.get("attempted_targets", [])[-6:]
@@ -9532,6 +10319,20 @@ class DesktopActionRouter:
             "alternative_target_count": int(latest_runtime.get("alternative_target_count", 0) or 0),
             "alternative_hypothesis_count": int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
             "alternative_branch_action_count": int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+            "transition_kind": str(latest_runtime.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": bool(latest_runtime.get("nested_surface_progressed", False)),
+            "child_window_adopted": bool(latest_runtime.get("child_window_adopted", False)),
+            "surface_path_tail": [
+                str(item).strip()
+                for item in latest_runtime.get("surface_path_tail", [])
+                if str(item).strip()
+            ] if isinstance(latest_runtime.get("surface_path_tail", []), list) else [],
+            "window_title_history_tail": [
+                str(item).strip()
+                for item in latest_runtime.get("window_title_history_tail", [])
+                if str(item).strip()
+            ] if isinstance(latest_runtime.get("window_title_history_tail", []), list) else [],
+            "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
             "attempted_targets": [
                 dict(row)
                 for row in current_args.get("attempted_targets", [])
@@ -9612,6 +10413,20 @@ class DesktopActionRouter:
             "alternative_target_count": int(pause_payload.get("alternative_target_count", 0) or 0),
             "alternative_hypothesis_count": int(pause_payload.get("alternative_hypothesis_count", 0) or 0),
             "alternative_branch_action_count": int(pause_payload.get("alternative_branch_action_count", 0) or 0),
+            "transition_kind": str(pause_payload.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": bool(pause_payload.get("nested_surface_progressed", False)),
+            "child_window_adopted": bool(pause_payload.get("child_window_adopted", False)),
+            "surface_path_tail": [
+                str(item).strip()
+                for item in pause_payload.get("surface_path_tail", [])
+                if str(item).strip()
+            ] if isinstance(pause_payload.get("surface_path_tail", []), list) else [],
+            "window_title_history_tail": [
+                str(item).strip()
+                for item in pause_payload.get("window_title_history_tail", [])
+                if str(item).strip()
+            ] if isinstance(pause_payload.get("window_title_history_tail", []), list) else [],
+            "nested_progress_count": int(pause_payload.get("nested_progress_count", 0) or 0),
             "attempted_targets_tail": [
                 dict(row)
                 for row in pause_payload.get("attempted_targets", [])[-6:]
@@ -9677,6 +10492,7 @@ class DesktopActionRouter:
         query: str,
         surface_mode: str,
         limit: int,
+        surface_intelligence: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         query_targets = [dict(row) for row in snapshot.get("query_targets", []) if isinstance(row, dict)]
         related_candidates = [dict(row) for row in snapshot.get("query_related_candidates", []) if isinstance(row, dict)]
@@ -9726,6 +10542,7 @@ class DesktopActionRouter:
                 window_title=window_title,
                 query=query,
                 surface_mode=surface_mode,
+                surface_intelligence=surface_intelligence or {},
             )
             if isinstance(hypothesis, dict) and hypothesis:
                 hypotheses.append(hypothesis)
@@ -9748,6 +10565,7 @@ class DesktopActionRouter:
         window_title: str,
         query: str,
         surface_mode: str,
+        surface_intelligence: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         normalized_candidate = self._element_state_summary(
             dict(candidate),
@@ -9836,6 +10654,32 @@ class DesktopActionRouter:
             score += 0.03
         if suggested_action == "press_dialog_button" and bool(safety_signals.get("destructive_warning_visible", False)):
             score -= 0.18
+        intelligence_payload = surface_intelligence if isinstance(surface_intelligence, dict) else {}
+        interaction_mode = self._normalize_probe_text(intelligence_payload.get("interaction_mode", ""))
+        surface_role = self._normalize_probe_text(intelligence_payload.get("surface_role", ""))
+        query_resolution = (
+            intelligence_payload.get("query_resolution", {})
+            if isinstance(intelligence_payload.get("query_resolution", {}), dict)
+            else {}
+        )
+        best_candidate_id = str(query_resolution.get("best_candidate_id", "") or "").strip()
+        if best_candidate_id and best_candidate_id == str(normalized_candidate.get("element_id", "") or "").strip():
+            score += 0.08
+        if interaction_mode == "tree_list_navigation" and suggested_action in {"select_tree_item", "expand_tree_item", "select_list_item", "select_table_row"}:
+            score += 0.04
+        if interaction_mode == "form_fill" and suggested_action in {"focus_input_field", "focus_checkbox", "select_radio_option", "open_dropdown"}:
+            score += 0.04
+        if interaction_mode == "settings_navigation" and suggested_action in {"select_sidebar_item", "select_list_item", "focus_input_field", "focus_checkbox"}:
+            score += 0.03
+        if surface_role == "dialog" and suggested_action == "press_dialog_button":
+            score += 0.06
+        risk_flags = [
+            self._normalize_probe_text(item)
+            for item in intelligence_payload.get("risk_flags", [])
+            if str(item).strip()
+        ]
+        if "destructive_dialog_path" in risk_flags and suggested_action in {"press_dialog_button", "click"}:
+            score -= 0.08
         already_active = bool(
             self._coerce_surface_bool(normalized_candidate.get("selected")) is True
             or self._coerce_surface_bool(normalized_candidate.get("checked")) is True
@@ -9859,6 +10703,8 @@ class DesktopActionRouter:
             safety_signals.get("destructive_warning_visible", False)
             or safety_signals.get("admin_approval_required", False)
             or safety_signals.get("secure_desktop_likely", False)
+            or "approval_or_credential_surface" in risk_flags
+            or "destructive_dialog_path" in risk_flags
         )
         return {
             "candidate_id": self._element_identity_key(normalized_candidate) or f"{source_name}:{label}:{control_type}",
@@ -10134,13 +10980,37 @@ class DesktopActionRouter:
         surface_flags: Dict[str, Any],
         safety_signals: Dict[str, Any],
         snapshot: Dict[str, Any],
+        surface_intelligence: Optional[Dict[str, Any]] = None,
     ) -> str:
+        intelligence_payload = surface_intelligence if isinstance(surface_intelligence, dict) else {}
+        interaction_mode = self._normalize_probe_text(intelligence_payload.get("interaction_mode", ""))
+        surface_role = self._normalize_probe_text(intelligence_payload.get("surface_role", ""))
         if bool(surface_flags.get("dialog_visible", False) or safety_signals.get("dialog_visible", False)):
             return "dialog"
         if bool(snapshot.get("wizard_page_state", {})):
             return "wizard"
         if bool(snapshot.get("form_page_state", {})):
             return "form"
+        if interaction_mode == "dialog_resolution" or surface_role == "dialog":
+            return "dialog"
+        if interaction_mode == "table_navigation":
+            return "table_navigation"
+        if interaction_mode == "form_fill":
+            return "form"
+        if interaction_mode == "settings_navigation":
+            if bool(surface_flags.get("tree_visible", False) or surface_flags.get("folder_tree_visible", False) or surface_flags.get("navigation_tree_visible", False)):
+                return "tree_navigation"
+            if bool(surface_flags.get("sidebar_visible", False)):
+                return "sidebar_navigation"
+            if bool(surface_flags.get("list_visible", False) or surface_flags.get("file_list_visible", False) or surface_flags.get("message_list_visible", False)):
+                return "list_navigation"
+        if interaction_mode == "tree_list_navigation":
+            if bool(surface_flags.get("tree_visible", False) or surface_flags.get("folder_tree_visible", False) or surface_flags.get("navigation_tree_visible", False)):
+                return "tree_navigation"
+            if bool(surface_flags.get("table_visible", False)):
+                return "table_navigation"
+            if bool(surface_flags.get("list_visible", False) or surface_flags.get("file_list_visible", False) or surface_flags.get("message_list_visible", False)):
+                return "list_navigation"
         if bool(surface_flags.get("tree_visible", False) or surface_flags.get("folder_tree_visible", False) or surface_flags.get("navigation_tree_visible", False)):
             return "tree_navigation"
         if bool(surface_flags.get("sidebar_visible", False)):

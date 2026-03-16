@@ -89,3 +89,78 @@ def test_accessibility_tools_find_element_matches_automation_and_state_fields(mo
     assert radio_result["items"][0]["automation_id"] == "dark_mode_radio"
     assert value_result["status"] == "success"
     assert value_result["items"][0]["automation_id"] == "brightness_slider"
+
+
+def test_accessibility_tools_surface_summary_infers_navigation_and_form_signals(monkeypatch) -> None:
+    def _fake_list_elements(cls, **_kwargs):  # type: ignore[no-untyped-def]
+        return {
+            "status": "success",
+            "items": [
+                {"name": "Settings", "control_type": "Window", "window_title": "Settings", "root_window_title": "Settings"},
+                {"name": "Bluetooth & devices", "control_type": "TreeItem", "window_title": "Settings", "root_window_title": "Settings"},
+                {"name": "Device name", "control_type": "Edit", "window_title": "Settings", "root_window_title": "Settings"},
+                {"name": "Bluetooth", "control_type": "CheckBox", "checked": True, "window_title": "Settings", "root_window_title": "Settings"},
+                {"name": "Apply", "control_type": "Button", "window_title": "Settings", "root_window_title": "Settings"},
+            ],
+        }
+
+    def _fake_find_element(cls, **_kwargs):  # type: ignore[no-untyped-def]
+        return {
+            "status": "success",
+            "items": [
+                {
+                    "element_id": "uia_bluetooth",
+                    "name": "Bluetooth",
+                    "control_type": "CheckBox",
+                    "match_score": 0.92,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(AccessibilityTools, "list_elements", classmethod(_fake_list_elements))
+    monkeypatch.setattr(AccessibilityTools, "find_element", classmethod(_fake_find_element))
+
+    summary = AccessibilityTools.surface_summary(window_title="Settings", query="Bluetooth")
+
+    assert summary["status"] == "success"
+    assert summary["surface_flags"]["navigation_tree_visible"] is True
+    assert summary["surface_flags"]["form_surface_visible"] is True
+    assert summary["surface_role_candidates"][0] in {"navigator", "settings", "form"}
+    assert "select_query_target" in summary["recommended_actions"]
+    assert summary["query_candidates"][0]["element_id"] == "uia_bluetooth"
+
+
+def test_accessibility_tools_summarize_rows_reuses_live_rows_for_query_ranking() -> None:
+    summary = AccessibilityTools.summarize_rows(
+        rows=[
+            {
+                "element_id": "uia_sidebar_bluetooth",
+                "name": "Bluetooth",
+                "control_type": "ListItem",
+                "automation_id": "settings_bluetooth",
+                "root_window_title": "Settings",
+                "window_title": "Settings",
+            },
+            {
+                "element_id": "uia_device_name",
+                "name": "Device name",
+                "control_type": "Edit",
+                "root_window_title": "Settings",
+                "window_title": "Settings",
+            },
+            {
+                "element_id": "uia_apply",
+                "name": "Apply",
+                "control_type": "Button",
+                "root_window_title": "Settings",
+                "window_title": "Settings",
+            },
+        ],
+        window_title="Settings",
+        query="Bluetooth",
+    )
+
+    assert summary["status"] == "success"
+    assert summary["query_candidates"][0]["element_id"] == "uia_sidebar_bluetooth"
+    assert summary["surface_flags"]["list_surface_visible"] is True
+    assert "select_query_target" in summary["recommended_actions"]

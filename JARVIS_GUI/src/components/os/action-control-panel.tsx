@@ -15749,6 +15749,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             : null;
                                         return explorationMission ? (
                                           <div className="mt-2 rounded border border-primary/15 bg-background/40 p-2 text-[11px] text-muted-foreground">
+                                            {(() => {
+                                              const transitionKind = String(explorationMission.transition_kind ?? '').trim();
+                                              const surfacePathTail = Array.isArray(explorationMission.surface_path_tail)
+                                                ? explorationMission.surface_path_tail
+                                                    .map((item) => String(item ?? '').trim())
+                                                    .filter(Boolean)
+                                                : [];
+                                              const windowTitleHistoryTail = Array.isArray(explorationMission.window_title_history_tail)
+                                                ? explorationMission.window_title_history_tail
+                                                    .map((item) => String(item ?? '').trim())
+                                                    .filter(Boolean)
+                                                : [];
+                                              return (
+                                                <>
                                             <p>
                                               flow: {Boolean(explorationMission.completed) ? 'completed' : 'paused'}
                                               {' • '}steps: {Number(explorationMission.steps_completed ?? explorationMission.step_count ?? 0)}
@@ -15762,6 +15776,17 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}alternatives: {Number(explorationMission.alternative_target_count ?? 0)}
                                                 {Boolean(explorationMission.alternative_ready) ? ' • next-safe: ready' : ''}
                                               </p>
+                                            ) : null}
+                                            {transitionKind ? (
+                                              <p>
+                                                transition: {humanizeRuntimeLabel(transitionKind)}
+                                                {Boolean(explorationMission.nested_surface_progressed) ? ' • nested-progress: yes' : ''}
+                                                {Boolean(explorationMission.child_window_adopted) ? ' • child-window: adopted' : ''}
+                                              </p>
+                                            ) : null}
+                                            {surfacePathTail.length > 0 ? <p>path: {surfacePathTail.join(' -> ')}</p> : null}
+                                            {windowTitleHistoryTail.length > 1 ? (
+                                              <p>window trail: {windowTitleHistoryTail.slice(-3).join(' -> ')}</p>
                                             ) : null}
                                             {Array.isArray(explorationMission.attempted_targets_tail) &&
                                             explorationMission.attempted_targets_tail.length > 0 ? (
@@ -15785,6 +15810,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {String(explorationMission.stop_reason ?? '').trim() ? (
                                               <p className="text-amber-300/90">{String(explorationMission.stop_reason ?? '').trim()}</p>
                                             ) : null}
+                                                </>
+                                              );
+                                            })()}
                                           </div>
                                         ) : null;
                                       })()}

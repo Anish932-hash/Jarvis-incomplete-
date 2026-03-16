@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
 import time
 from threading import RLock
@@ -71,7 +72,12 @@ class AccessibilityTools:
             except Exception:
                 descendants = []
             for child in descendants:
-                serialized_child = cls._serialize_element(child, parent_id=serialized.get("element_id", ""))
+                serialized_child = cls._serialize_element(
+                    child,
+                    parent_id=serialized.get("element_id", ""),
+                    window_title_hint=str(serialized.get("window_title", "") or serialized.get("name", "")).strip(),
+                    root_handle=cls._to_int(serialized.get("handle")) or cls._to_int(serialized.get("root_handle")),
+                )
                 if not cls._matches(
                     serialized_child,
                     title_filter=title_filter,
@@ -127,43 +133,12 @@ class AccessibilityTools:
         items = listed.get("items", [])
         if not isinstance(items, list):
             items = []
-        lowered = phrase.lower()
-        ranked: List[tuple[float, Dict[str, Any]]] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name", "")).strip()
-            item_type = str(item.get("control_type", "")).strip().lower()
-            haystack = cls._search_text(item)
-            name_haystack = " ".join(name.lower().split())
-            automation_haystack = " ".join(str(item.get("automation_id", "") or "").strip().lower().split())
-            state_haystack = " ".join(str(item.get("state_text", "") or "").strip().lower().split())
-            value_haystack = " ".join(str(item.get("value_text", "") or "").strip().lower().split())
-            if not haystack:
-                continue
-
-            if name_haystack == lowered or haystack == lowered:
-                score = 1.0
-            elif lowered in name_haystack:
-                score = 0.88 + min(0.1, len(lowered) / max(1.0, len(name_haystack)))
-            elif lowered in haystack:
-                score = 0.76 + min(0.18, len(lowered) / max(1.0, len(haystack)))
-            else:
-                query_tokens = {token for token in lowered.split() if token}
-                name_tokens = {token for token in haystack.split() if token}
-                overlap = len(query_tokens.intersection(name_tokens))
-                if overlap <= 0:
-                    continue
-                score = overlap / max(1.0, len(query_tokens))
-            if lowered and any(lowered in field for field in (automation_haystack, state_haystack, value_haystack) if field):
-                score += 0.04
-            if control_type and item_type == control_type.lower():
-                score += 0.05
-            ranked.append((score, dict(item, match_score=round(score, 6))))
-
-        ranked.sort(key=lambda row: row[0], reverse=True)
-        bounded = max(1, min(int(max_results), 100))
-        matches = [item for _, item in ranked[:bounded]]
+        matches = cls._rank_query_candidates(
+            rows=items,
+            query=phrase,
+            control_type=control_type,
+            max_results=max_results,
+        )
         return {"status": "success", "query": phrase, "count": len(matches), "items": matches}
 
     @classmethod
@@ -232,6 +207,290 @@ class AccessibilityTools:
             return {"status": "error", "message": str(exc)}
 
     @classmethod
+    def surface_summary(
+        cls,
+        *,
+        window_title: str = "",
+        query: str = "",
+        max_elements: int = 220,
+        include_inventory: bool = True,
+    ) -> Dict[str, Any]:
+        bounded = max(20, min(int(max_elements), 1000))
+        listed = cls.list_elements(
+            window_title=window_title,
+            query="",
+            include_descendants=True,
+            max_elements=bounded,
+        )
+        if listed.get("status") != "success":
+            return listed
+
+        items = [item for item in listed.get("items", []) if isinstance(item, dict)]
+        return cls.summarize_rows(
+            rows=items,
+            window_title=window_title,
+            query=query,
+            include_inventory=include_inventory,
+        )
+
+    @classmethod
+    def summarize_rows(
+        cls,
+        *,
+        rows: List[Dict[str, Any]],
+        window_title: str = "",
+        query: str = "",
+        include_inventory: bool = True,
+    ) -> Dict[str, Any]:
+        items = [dict(item) for item in rows if isinstance(item, dict)]
+        control_counts: Counter[str] = Counter()
+        state_counts: Counter[str] = Counter()
+        label_counts: Counter[str] = Counter()
+        actionable_candidates = 0
+        input_controls = 0
+        selection_controls = 0
+        value_controls = 0
+        inventory: List[Dict[str, Any]] = []
+
+        for item in items:
+            control_type = str(item.get("control_type", "") or "unknown").strip().lower()
+            control_counts[control_type or "unknown"] += 1
+            if item.get("selected") is True:
+                state_counts["selected"] += 1
+            if item.get("checked") is True:
+                state_counts["checked"] += 1
+            if item.get("expanded") is True:
+                state_counts["expanded"] += 1
+            toggle_state = str(item.get("toggle_state", "") or "").strip().lower()
+            if toggle_state:
+                state_counts[f"toggle:{toggle_state}"] += 1
+
+            if control_type in {"edit", "document", "text", "combobox", "combo box", "spinner"}:
+                input_controls += 1
+            if control_type in {"treeitem", "listitem", "tabitem", "dataitem", "row", "checkbox", "radiobutton"}:
+                selection_controls += 1
+            if item.get("range_value") is not None or control_type in {"slider", "spinner", "progressbar"}:
+                value_controls += 1
+            if control_type in {
+                "button",
+                "menuitem",
+                "hyperlink",
+                "checkbox",
+                "radiobutton",
+                "treeitem",
+                "listitem",
+                "tabitem",
+                "dataitem",
+                "slider",
+                "combobox",
+            }:
+                actionable_candidates += 1
+
+            label = str(item.get("name", "") or item.get("automation_id", "") or "").strip()
+            if label:
+                label_counts[label.lower()] += 1
+
+            if include_inventory and len(inventory) < 40:
+                inventory.append(
+                    {
+                        "element_id": item.get("element_id"),
+                        "name": item.get("name", ""),
+                        "control_type": item.get("control_type", ""),
+                        "automation_id": item.get("automation_id", ""),
+                        "state_text": item.get("state_text", ""),
+                        "root_window_title": item.get("root_window_title", item.get("window_title", "")),
+                    }
+                )
+
+        query_candidates: List[Dict[str, Any]] = []
+        if str(query or "").strip():
+            query_candidates = cls._rank_query_candidates(
+                rows=items,
+                query=str(query or "").strip(),
+                max_results=6,
+            )
+            if (
+                window_title
+                and (
+                    not query_candidates
+                    or any(not str(item.get("element_id", "") or "").strip() for item in query_candidates)
+                )
+            ):
+                found = cls.find_element(
+                    query=str(query or "").strip(),
+                    window_title=window_title,
+                    max_results=6,
+                )
+                if found.get("status") == "success":
+                    found_rows = [row for row in found.get("items", []) if isinstance(row, dict)]
+                    found_by_fallback: Dict[str, Dict[str, Any]] = {}
+
+                    def _is_blank(value: Any) -> bool:
+                        if value is None:
+                            return True
+                        if isinstance(value, str):
+                            return not value.strip()
+                        if isinstance(value, (list, dict, tuple, set)):
+                            return len(value) == 0
+                        return False
+
+                    for row in found_rows:
+                        fallback_identity = "|".join(
+                            [
+                                str(row.get("name", "") or "").strip().lower(),
+                                str(row.get("control_type", "") or "").strip().lower(),
+                                str(row.get("automation_id", "") or "").strip().lower(),
+                            ]
+                        )
+                        if fallback_identity and fallback_identity not in found_by_fallback:
+                            found_by_fallback[fallback_identity] = dict(row)
+                    enriched_query_candidates: List[Dict[str, Any]] = []
+                    for row in query_candidates:
+                        candidate = dict(row)
+                        if not str(candidate.get("element_id", "") or "").strip():
+                            fallback_identity = "|".join(
+                                [
+                                    str(candidate.get("name", "") or "").strip().lower(),
+                                    str(candidate.get("control_type", "") or "").strip().lower(),
+                                    str(candidate.get("automation_id", "") or "").strip().lower(),
+                                ]
+                            )
+                            matched_row = found_by_fallback.get(fallback_identity)
+                            if matched_row:
+                                for key, value in matched_row.items():
+                                    if _is_blank(candidate.get(key)) and not _is_blank(value):
+                                        candidate[key] = value
+                        enriched_query_candidates.append(candidate)
+                    merged_candidates: List[Dict[str, Any]] = []
+                    seen_candidates: set[str] = set()
+                    for item in [*enriched_query_candidates, *found_rows]:
+                        identity = (
+                            str(item.get("element_id", "") or "").strip()
+                            or "|".join(
+                                [
+                                    str(item.get("name", "") or "").strip().lower(),
+                                    str(item.get("control_type", "") or "").strip().lower(),
+                                    str(item.get("automation_id", "") or "").strip().lower(),
+                                ]
+                            )
+                        )
+                        if not identity or identity in seen_candidates:
+                            continue
+                        seen_candidates.add(identity)
+                        merged_candidates.append(item)
+                        if len(merged_candidates) >= 6:
+                            break
+                    query_candidates = merged_candidates
+
+        flags = cls._surface_flags_from_rows(items, control_counts=control_counts)
+        role_candidates = cls._surface_role_candidates(flags=flags, control_counts=control_counts)
+        recommended_actions = cls._surface_recommendations(flags=flags, query_candidates=query_candidates)
+
+        destructive_candidates = [
+            row.get("name", "")
+            for row in inventory
+            if any(
+                token in str(row.get("name", "")).strip().lower()
+                for token in ("delete", "remove", "uninstall", "reset", "disable", "erase", "format")
+            )
+        ]
+        confirmation_candidates = [
+            row.get("name", "")
+            for row in inventory
+            if any(
+                token in str(row.get("name", "")).strip().lower()
+                for token in ("ok", "apply", "save", "continue", "next", "install", "confirm", "allow")
+            )
+        ]
+
+        summary_parts: List[str] = []
+        if role_candidates:
+            summary_parts.append(f"looks like {role_candidates[0]}")
+        if flags.get("navigation_tree_visible"):
+            summary_parts.append("tree navigation available")
+        if flags.get("list_surface_visible"):
+            summary_parts.append("list selection available")
+        if flags.get("form_surface_visible"):
+            summary_parts.append("form controls visible")
+        if flags.get("dialog_visible"):
+            summary_parts.append("dialog-like surface")
+        if query_candidates:
+            summary_parts.append(f"{len(query_candidates)} query candidates found")
+
+        return {
+            "status": "success",
+            "window_title_filter": window_title,
+            "query": query,
+            "element_count": len(items),
+            "control_counts": dict(sorted(control_counts.items())),
+            "state_counts": dict(sorted(state_counts.items())),
+            "surface_flags": flags,
+            "surface_role_candidates": role_candidates,
+            "actionable_candidate_count": actionable_candidates,
+            "input_control_count": input_controls,
+            "selection_control_count": selection_controls,
+            "value_control_count": value_controls,
+            "top_labels": [{"label": name, "count": count} for name, count in label_counts.most_common(12)],
+            "query_candidates": query_candidates,
+            "recommended_actions": recommended_actions,
+            "destructive_candidates": [name for name in destructive_candidates if name],
+            "confirmation_candidates": [name for name in confirmation_candidates if name],
+            "control_inventory": inventory if include_inventory else [],
+            "summary": "; ".join(summary_parts) if summary_parts else "surface summary unavailable",
+        }
+
+    @classmethod
+    def _rank_query_candidates(
+        cls,
+        *,
+        rows: List[Dict[str, Any]],
+        query: str,
+        control_type: str = "",
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        lowered = str(query or "").strip().lower()
+        if not lowered:
+            return []
+
+        ranked: List[tuple[float, Dict[str, Any]]] = []
+        type_filter = str(control_type or "").strip().lower()
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            item_type = str(item.get("control_type", "")).strip().lower()
+            haystack = cls._search_text(item)
+            name_haystack = " ".join(name.lower().split())
+            automation_haystack = " ".join(str(item.get("automation_id", "") or "").strip().lower().split())
+            state_haystack = " ".join(str(item.get("state_text", "") or "").strip().lower().split())
+            value_haystack = " ".join(str(item.get("value_text", "") or "").strip().lower().split())
+            if not haystack:
+                continue
+
+            if name_haystack == lowered or haystack == lowered:
+                score = 1.0
+            elif lowered in name_haystack:
+                score = 0.88 + min(0.1, len(lowered) / max(1.0, len(name_haystack)))
+            elif lowered in haystack:
+                score = 0.76 + min(0.18, len(lowered) / max(1.0, len(haystack)))
+            else:
+                query_tokens = {token for token in lowered.split() if token}
+                name_tokens = {token for token in haystack.split() if token}
+                overlap = len(query_tokens.intersection(name_tokens))
+                if overlap <= 0:
+                    continue
+                score = overlap / max(1.0, len(query_tokens))
+            if lowered and any(lowered in field for field in (automation_haystack, state_haystack, value_haystack) if field):
+                score += 0.04
+            if type_filter and item_type == type_filter:
+                score += 0.05
+            ranked.append((score, dict(item, match_score=round(score, 6))))
+
+        ranked.sort(key=lambda row: row[0], reverse=True)
+        bounded = max(1, min(int(max_results), 100))
+        return [item for _, item in ranked[:bounded]]
+
+    @classmethod
     def _resolve_target(
         cls,
         *,
@@ -268,11 +527,11 @@ class AccessibilityTools:
         query_filter: str,
         type_filter: str,
     ) -> bool:
-        name = str(row.get("name", "")).strip().lower()
         window_title = str(row.get("window_title", "")).strip().lower()
+        root_window_title = str(row.get("root_window_title", "")).strip().lower()
         control_type = str(row.get("control_type", "")).strip().lower()
         query_haystack = AccessibilityTools._search_text(row)
-        if title_filter and title_filter not in window_title:
+        if title_filter and title_filter not in window_title and title_filter not in root_window_title:
             return False
         if query_filter and query_filter not in query_haystack:
             return False
@@ -281,7 +540,13 @@ class AccessibilityTools:
         return True
 
     @staticmethod
-    def _serialize_element(element: Any, *, parent_id: str) -> Dict[str, Any]:
+    def _serialize_element(
+        element: Any,
+        *,
+        parent_id: str,
+        window_title_hint: str = "",
+        root_handle: Optional[int] = None,
+    ) -> Dict[str, Any]:
         name = ""
         handle = None
         control_type = ""
@@ -290,6 +555,7 @@ class AccessibilityTools:
         enabled = None
         visible = None
         window_title = ""
+        root_window_title = str(window_title_hint or "").strip()
         left = top = width = height = center_x = center_y = None
         selected = None
         checked = None
@@ -413,7 +679,10 @@ class AccessibilityTools:
             state_tokens.extend(["value", str(range_value)])
         state_text = " ".join(token for token in state_tokens if token)
         if not window_title:
-            window_title = name
+            window_title = root_window_title or name
+        if not root_window_title:
+            root_window_title = window_title or name
+        root_handle_value = root_handle if root_handle is not None else handle
 
         raw_key = f"{handle}|{name}|{control_type}|{auto_id}|{class_name}|{left}|{top}|{width}|{height}"
         digest = hashlib.sha1(raw_key.encode("utf-8", errors="ignore")).hexdigest()[:16]
@@ -424,10 +693,12 @@ class AccessibilityTools:
             "parent_id": parent_id,
             "name": name,
             "window_title": window_title,
+            "root_window_title": root_window_title,
             "control_type": control_type,
             "class_name": class_name,
             "automation_id": auto_id,
             "handle": handle,
+            "root_handle": root_handle_value,
             "enabled": enabled,
             "visible": visible,
             "selected": selected,
@@ -576,6 +847,7 @@ class AccessibilityTools:
             "automation_id",
             "class_name",
             "window_title",
+            "root_window_title",
             "control_type",
             "state_text",
             "value_text",
@@ -586,6 +858,103 @@ class AccessibilityTools:
         if row.get("range_value") is not None:
             parts.append(str(row.get("range_value")))
         return " ".join(" ".join(parts).strip().lower().split())
+
+    @staticmethod
+    def _surface_flags_from_rows(
+        rows: List[Dict[str, Any]],
+        *,
+        control_counts: Counter[str],
+    ) -> Dict[str, bool]:
+        control_types = {key for key, count in control_counts.items() if count > 0}
+        names = " ".join(str(row.get("name", "")).strip().lower() for row in rows if isinstance(row, dict))
+        button_like_count = int(control_counts.get("button", 0)) + int(control_counts.get("menuitem", 0))
+        dialog_token_hits = sum(
+            1
+            for token in ("ok", "cancel", "apply", "save", "continue", "next", "warning", "error")
+            if token in names
+        )
+        return {
+            "dialog_visible": bool({"window", "dialog"} & control_types)
+            and dialog_token_hits >= 2
+            and button_like_count >= 2,
+            "navigation_tree_visible": bool({"tree", "treeitem"} & control_types),
+            "list_surface_visible": bool({"list", "listitem"} & control_types),
+            "data_table_visible": bool({"table", "datagrid", "dataitem", "row", "header"} & control_types),
+            "tab_strip_visible": bool({"tab", "tabitem"} & control_types),
+            "toolbar_visible": bool({"toolbar", "tool bar"} & control_types),
+            "menu_visible": bool({"menu", "menuitem"} & control_types),
+            "form_surface_visible": bool({"edit", "document", "checkbox", "radiobutton", "combobox", "slider", "spinner"} & control_types),
+            "text_entry_surface_visible": bool({"edit", "document"} & control_types),
+            "selection_surface_visible": bool({"treeitem", "listitem", "tabitem", "dataitem", "checkbox", "radiobutton"} & control_types),
+            "value_control_visible": bool({"slider", "spinner", "progressbar"} & control_types),
+            "scrollable_surface_visible": bool({"scrollbar"} & control_types),
+            "settings_surface_visible": bool(
+                {"checkbox", "radiobutton", "slider", "combobox"} & control_types
+            ) and bool({"tree", "list", "tab"} & control_types),
+            "search_surface_visible": any(token in names for token in ("search", "find", "filter", "command")),
+        }
+
+    @staticmethod
+    def _surface_role_candidates(
+        *,
+        flags: Dict[str, bool],
+        control_counts: Counter[str],
+    ) -> List[str]:
+        candidates: List[str] = []
+        if flags.get("dialog_visible"):
+            candidates.append("dialog")
+        if flags.get("settings_surface_visible"):
+            candidates.append("settings")
+        if flags.get("data_table_visible"):
+            candidates.append("data_console")
+        if flags.get("navigation_tree_visible") and flags.get("list_surface_visible"):
+            candidates.append("navigator")
+        if flags.get("form_surface_visible") and "dialog" not in candidates:
+            candidates.append("form")
+        if flags.get("text_entry_surface_visible") and control_counts.get("document", 0) >= 1:
+            candidates.append("editor")
+        if flags.get("toolbar_visible") and flags.get("list_surface_visible"):
+            candidates.append("workspace")
+        if not candidates:
+            candidates.append("content")
+        return candidates
+
+    @staticmethod
+    def _surface_recommendations(
+        *,
+        flags: Dict[str, bool],
+        query_candidates: List[Dict[str, Any]],
+    ) -> List[str]:
+        actions: List[str] = []
+        if query_candidates:
+            actions.append("select_query_target")
+        if flags.get("dialog_visible"):
+            actions.extend(["confirm_dialog", "dismiss_dialog"])
+        if flags.get("navigation_tree_visible"):
+            actions.extend(["focus_navigation_tree", "select_tree_item"])
+        if flags.get("list_surface_visible"):
+            actions.extend(["focus_list_surface", "select_list_item"])
+        if flags.get("data_table_visible"):
+            actions.extend(["focus_data_table", "select_table_row"])
+        if flags.get("tab_strip_visible"):
+            actions.append("select_tab_page")
+        if flags.get("toolbar_visible"):
+            actions.append("focus_toolbar")
+        if flags.get("menu_visible"):
+            actions.append("select_context_menu_item")
+        if flags.get("form_surface_visible"):
+            actions.extend(["focus_form_surface", "set_field_value"])
+        if flags.get("value_control_visible"):
+            actions.append("set_value_control")
+        if flags.get("text_entry_surface_visible"):
+            actions.append("focus_input_field")
+        if flags.get("search_surface_visible"):
+            actions.append("focus_search_box")
+        deduped: List[str] = []
+        for action in actions:
+            if action not in deduped:
+                deduped.append(action)
+        return deduped
 
     @staticmethod
     def _pywinauto_desktop():

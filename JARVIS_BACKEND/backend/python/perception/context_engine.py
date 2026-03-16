@@ -34,6 +34,7 @@ from backend.python.pc_control.system_monitor import SystemMonitor
 from backend.python.pc_control.window_manager import WindowManager
 from backend.python.utils.logger import Logger
 
+from .surface_intelligence import SurfaceIntelligenceAnalyzer
 from .vision_engine import VisionEngine, VisualContext
 
 
@@ -76,6 +77,9 @@ class ActivitySnapshot:
     memory_usage: float
     screen_changed: bool
     confidence: float
+    surface_role: str = ""
+    surface_confidence: float = 0.0
+    surface_affordances: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -158,6 +162,11 @@ class ContextEngine:
         self._mouse_movement_count = 0
         self._last_activity_time = time.time()
         self._current_focus_mode = FocusMode.NORMAL
+        self._latest_surface_analysis: Optional[Dict[str, Any]] = None
+        self._last_surface_signature = ""
+        self._last_surface_analysis_at = 0.0
+        self._surface_analysis_cooldown_s = 6.0
+        self.surface_intelligence = SurfaceIntelligenceAnalyzer()
         
         # Callbacks for proactive opportunities
         self._opportunity_callbacks: List[Callable] = []
@@ -218,7 +227,9 @@ class ContextEngine:
             else:
                 active_window = self.window_manager.active_window()
             window_title = active_window.get("title", "") if active_window else ""
-            app_name = self._extract_app_name(window_title)
+            app_name = str(active_window.get("app_name", "") or "").strip() if isinstance(active_window, dict) else ""
+            if not app_name:
+                app_name = self._extract_app_name(window_title)
             
             # Get system metrics
             metrics = self.system_monitor.all_metrics()
@@ -264,6 +275,11 @@ class ContextEngine:
             # Calculate activity metrics
             typing_speed = self._calculate_typing_speed()
             mouse_activity = self._calculate_mouse_activity()
+            surface_analysis = self._refresh_surface_analysis(
+                active_window=active_window if isinstance(active_window, dict) else {},
+                visual_context=visual_context,
+                force=screen_changed,
+            )
             
             timestamp = time.time()
             
@@ -280,11 +296,130 @@ class ContextEngine:
                 memory_usage=memory_usage,
                 screen_changed=screen_changed,
                 confidence=0.8,
+                surface_role=str(surface_analysis.get("surface_role", "") or ""),
+                surface_confidence=float(surface_analysis.get("grounding_confidence", 0.0) or 0.0),
+                surface_affordances=[
+                    str(item).strip()
+                    for item in surface_analysis.get("affordances", [])
+                    if str(item).strip()
+                ],
             )
         
         except Exception as exc:
             self.log.error(f"Failed to capture context snapshot: {exc}")
             return None
+
+    def _refresh_surface_analysis(
+        self,
+        *,
+        active_window: Dict[str, Any],
+        visual_context: Optional[VisualContext],
+        force: bool = False,
+        query: str = "",
+    ) -> Dict[str, Any]:
+        now = time.time()
+        signature = str(active_window.get("window_signature", "") or "").strip()
+        should_refresh = force or not self._latest_surface_analysis
+        if signature and signature != self._last_surface_signature:
+            should_refresh = True
+        if not should_refresh and (now - self._last_surface_analysis_at) >= self._surface_analysis_cooldown_s:
+            should_refresh = True
+        if not should_refresh and isinstance(self._latest_surface_analysis, dict):
+            return dict(self._latest_surface_analysis)
+
+        analysis = self._analyze_surface(
+            active_window=active_window,
+            visual_context=visual_context,
+            query=query,
+        )
+        if isinstance(analysis, dict) and analysis:
+            self._latest_surface_analysis = dict(analysis)
+            self._last_surface_signature = signature or str(analysis.get("window_signature", "") or "")
+            self._last_surface_analysis_at = now
+            return dict(analysis)
+        return dict(self._latest_surface_analysis or {})
+
+    def _analyze_surface(
+        self,
+        *,
+        active_window: Dict[str, Any],
+        visual_context: Optional[VisualContext],
+        query: str = "",
+        max_elements: int = 180,
+    ) -> Dict[str, Any]:
+        summary: Dict[str, Any]
+        try:
+            from backend.python.tools.accessibility_tools import AccessibilityTools
+
+            summary = AccessibilityTools.surface_summary(
+                window_title=str(active_window.get("title", "") or ""),
+                query=query,
+                max_elements=max_elements,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Surface accessibility analysis failed: {exc}")
+            summary = {"status": "error", "message": str(exc), "surface_flags": {}, "recommended_actions": []}
+
+        try:
+            return self.surface_intelligence.analyze(
+                window=active_window,
+                surface_summary=summary,
+                visual_context=visual_context,
+                query=query,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Surface intelligence analysis failed: {exc}")
+            return {
+                "window_signature": str(active_window.get("window_signature", "") or ""),
+                "surface_role": "unknown",
+                "interaction_mode": "content_review",
+                "grounding_confidence": 0.0,
+                "affordances": [],
+                "recovery_hints": [],
+                "risk_flags": [],
+                "query_resolution": None,
+                "source_signals": {"window": active_window, "accessibility": summary},
+            }
+
+    def get_surface_summary(
+        self,
+        *,
+        query: str = "",
+        include_visual: bool = False,
+        max_elements: int = 180,
+    ) -> Dict[str, Any]:
+        """Get a fused surface analysis for the active window."""
+        get_active = getattr(self.window_manager, "get_active_window", None)
+        if callable(get_active):
+            active_window = get_active()
+        else:
+            active_window = self.window_manager.active_window()
+        active_window = active_window if isinstance(active_window, dict) else {}
+
+        visual_context: Optional[VisualContext] = None
+        if include_visual:
+            try:
+                screenshot = self._last_screenshot or self.vision.capture_screen()
+                visual_context = self.vision.analyze_screen_context(
+                    screenshot,
+                    detect_objects=False,
+                    segment_ui=True,
+                    generate_summary=False,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.log.warning(f"Visual surface analysis failed: {exc}")
+                visual_context = None
+
+        analysis = self._analyze_surface(
+            active_window=active_window,
+            visual_context=visual_context,
+            query=query,
+            max_elements=max_elements,
+        )
+        self._latest_surface_analysis = dict(analysis)
+        self._last_surface_signature = str(active_window.get("window_signature", "") or "")
+        self._last_surface_analysis_at = time.time()
+        return analysis
 
     def _extract_app_name(self, window_title: str) -> str:
         """Extract application name from window title."""
@@ -404,6 +539,8 @@ class ContextEngine:
             "activity": snapshot.activity_type.value,
             "focus_mode": snapshot.focus_mode.value,
             "app": snapshot.active_application,
+            "surface_role": snapshot.surface_role,
+            "surface_confidence": round(float(snapshot.surface_confidence), 6),
         })
         
         # Check for proactive opportunities
@@ -633,6 +770,11 @@ class ContextEngine:
             activity_counts[activity] = activity_counts.get(activity, 0) + 1
             focus_name = snapshot.focus_mode.value
             focus_counts[focus_name] = focus_counts.get(focus_name, 0) + 1
+        surface_counts = Counter(
+            str(snapshot.surface_role or "").strip().lower()
+            for snapshot in recent
+            if str(snapshot.surface_role or "").strip()
+        )
 
         # Calculate averages
         avg_typing_speed = sum(s.typing_speed for s in recent) / len(recent)
@@ -650,6 +792,8 @@ class ContextEngine:
             "avg_mouse_activity": round(avg_mouse, 1),
             "avg_cpu_usage": round(avg_cpu, 1),
             "screen_changes": sum(1 for s in recent if s.screen_changed),
+            "surface_distribution": dict(surface_counts),
+            "primary_surface_role": surface_counts.most_common(1)[0][0] if surface_counts else "",
             "trend": trend,
         }
 

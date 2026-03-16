@@ -14,6 +14,11 @@ from .context_engine import (
     ProactiveOpportunity,
     WorkflowPattern,
 )
+from .surface_intelligence import (
+    SurfaceIntelligence,
+    SurfaceIntelligenceAnalyzer,
+    SurfaceQueryResolution,
+)
 from .vision_engine import (
     DetectedObject,
     UIElement,
@@ -32,4 +37,7 @@ __all__ = [
     "FocusMode",
     "WorkflowPattern",
     "ProactiveOpportunity",
+    "SurfaceIntelligence",
+    "SurfaceIntelligenceAnalyzer",
+    "SurfaceQueryResolution",
 ]

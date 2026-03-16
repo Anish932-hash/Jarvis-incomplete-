@@ -242,6 +242,12 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "selected_action": "select_list_item",
             "selected_candidate_id": "list_bluetooth",
             "selected_candidate_label": "Bluetooth",
+            "transition_kind": "child_window",
+            "nested_surface_progressed": True,
+            "child_window_adopted": True,
+            "surface_path_tail": ["Devices", "Bluetooth"],
+            "window_title_history_tail": ["Settings", "Bluetooth & devices"],
+            "nested_progress_count": 1,
             "attempted_targets": [
                 {
                     "candidate_id": "list_bluetooth",
@@ -263,6 +269,12 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["selected_candidate_label"] == "Bluetooth"
     assert ready_mission["attempted_target_count"] == 1
     assert ready_mission["alternative_target_count"] == 1
+    assert ready_mission["transition_kind"] == "child_window"
+    assert ready_mission["nested_surface_progressed"] is True
+    assert ready_mission["child_window_adopted"] is True
+    assert ready_mission["surface_path_tail"] == ["Devices", "Bluetooth"]
+    assert ready_mission["window_title_history_tail"] == ["Settings", "Bluetooth & devices"]
+    assert ready_mission["nested_progress_count"] == 1
     assert ready_mission["attempted_targets_tail"][0]["candidate_id"] == "list_bluetooth"
     assert ready_mission["surface_signature_history"] == ["surface-exploration-ready-1", "surface-exploration-ready-2"]
 

@@ -372,6 +372,60 @@ def test_desktop_action_router_surface_exploration_ranks_dialog_buttons() -> Non
     assert payload["branch_actions"][0]["action"] == "confirm_dialog"
 
 
+def test_desktop_action_router_surface_exploration_uses_surface_intelligence_for_mode_and_message() -> None:
+    router = _build_router({})
+    snapshot = {
+        "status": "success",
+        "app_profile": {"status": "success", "category": "utility", "name": "Ops Console"},
+        "target_window": {"title": "Ops Console"},
+        "query_targets": [
+            {
+                "element_id": "row_chrome",
+                "name": "chrome.exe",
+                "control_type": "Row",
+                "match_score": 0.84,
+                "visible": True,
+                "enabled": True,
+            }
+        ],
+        "query_related_candidates": [],
+        "selection_candidates": [],
+        "surface_flags": {"window_targeted": True},
+        "safety_signals": {},
+        "recommended_actions": [],
+        "surface_intelligence": {
+            "surface_role": "content",
+            "interaction_mode": "table_navigation",
+            "grounding_confidence": 0.77,
+            "affordances": ["query_target_available", "selection_targeting"],
+            "recovery_hints": ["stay on the visible data table and prefer exact row selection"],
+            "risk_flags": [],
+            "query_resolution": {
+                "query": "chrome",
+                "candidate_count": 1,
+                "best_candidate_name": "chrome.exe",
+                "best_candidate_type": "Row",
+                "best_candidate_id": "row_chrome",
+                "confidence": 0.84,
+            },
+        },
+        "filters": {"app_name": "ops console", "query": "chrome"},
+    }
+    router.surface_snapshot = lambda **_kwargs: snapshot  # type: ignore[method-assign]
+
+    payload = router.surface_exploration_plan(
+        app_name="ops console",
+        query="chrome",
+        include_workflow_probes=False,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["surface_mode"] == "table_navigation"
+    assert payload["surface_intelligence"]["interaction_mode"] == "table_navigation"
+    assert payload["top_hypotheses"][0]["suggested_action"] == "select_table_row"
+    assert "Grounded as content with table_navigation" in payload["message"]
+
+
 def test_desktop_action_router_advise_surface_exploration_advance_selects_top_target(tmp_path: Path) -> None:
     registry = _build_registry(
         tmp_path,
@@ -923,6 +977,157 @@ def test_desktop_action_router_surface_exploration_flow_auto_continues_to_comple
     assert payload["exploration_mission"]["auto_continued"] is True
     assert payload["exploration_mission"]["attempted_target_count"] == 2
     assert payload["exploration_mission"]["alternative_target_count"] == 0
+
+
+def test_desktop_action_router_surface_exploration_tracks_child_window_progress(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 3301, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 3301, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 3301), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", ""))) or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_child_surface",
+                "text": "Settings bluetooth details child surface",
+                "screenshot_path": "E:/tmp/settings_child_surface.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plans = [
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "row_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.92,
+                    "reason": "Bluetooth is the strongest visible target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "row_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 3301, "title": "Settings"},
+                "active_window": {"hwnd": 3301, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 3301, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_child_before"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Bluetooth via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "form_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "row_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.9,
+                    "reason": "Bluetooth remains the active focus on the child settings surface.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Bluetooth & devices",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "row_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 3302, "title": "Bluetooth & devices"},
+                "active_window": {"hwnd": 3302, "title": "Bluetooth & devices"},
+                "candidate_windows": [{"hwnd": 3302, "title": "Bluetooth & devices"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "form_page_state": {
+                    "page_kind": "form_navigation",
+                    "selected_navigation_target": "Bluetooth",
+                    "breadcrumb_path": ["Devices", "Bluetooth"],
+                },
+                "surface_flags": {"form_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_child_after"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Bluetooth & devices", "query": "Bluetooth"},
+            "message": "Bluetooth moved into a nested child surface with more device controls.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _exploration_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _exploration_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert "Bluetooth" in invoked_targets
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_followup_available"
+    assert payload["exploration_mission"]["transition_kind"] == "child_window"
+    assert payload["exploration_mission"]["nested_surface_progressed"] is True
+    assert payload["exploration_mission"]["child_window_adopted"] is True
+    assert payload["exploration_mission"]["surface_path_tail"] == ["Devices", "Bluetooth"]
+    assert payload["exploration_mission"]["window_title_history_tail"][-1] == "Bluetooth & devices"
+    assert payload["mission_record"]["transition_kind"] == "child_window"
+    assert payload["mission_record"]["child_window_adopted"] is True
+    assert payload["mission_record"]["page_history_tail"][0]["surface_path_after"] == ["Devices", "Bluetooth"]
+    assert payload["mission_record"]["page_history_tail"][0]["window_title_after"] == "Bluetooth & devices"
 
 
 def test_desktop_action_router_surface_exploration_flow_pauses_at_step_limit(tmp_path: Path) -> None:
@@ -7005,6 +7210,53 @@ def test_desktop_action_router_surface_snapshot_detects_generic_collection_surfa
     assert payload["surface_flags"]["tree_visible"] is True
     assert payload["surface_flags"]["list_visible"] is True
     assert payload["surface_flags"]["table_visible"] is True
+
+
+def test_desktop_action_router_surface_snapshot_embeds_surface_intelligence_for_settings(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                         Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2408, "title": "Bluetooth & devices - Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2408, "title": "Bluetooth & devices - Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {"element_id": "uia_sidebar_bluetooth", "name": "Bluetooth", "control_type": "ListItem", "root_window_title": "Settings"},
+                    {"element_id": "uia_device_name", "name": "Device name", "control_type": "Edit", "root_window_title": "Settings"},
+                    {"element_id": "uia_apply", "name": "Apply", "control_type": "Button", "root_window_title": "Settings"},
+                ],
+            },
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_surface",
+                "text": "Bluetooth & devices Settings list input apply",
+                "screenshot_path": "E:/tmp/settings_surface.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(app_name="settings", query="Bluetooth", limit=10)
+
+    assert payload["status"] == "success"
+    assert payload["surface_intelligence"]["surface_role"] == "settings"
+    assert payload["surface_intelligence"]["interaction_mode"] == "settings_navigation"
+    assert payload["surface_intelligence"]["query_resolution"]["best_candidate_name"] == "Bluetooth"
+    assert payload["surface_summary"]["surface_flags"]["settings_surface_visible"] is True
+    assert "complete_surface_exploration_flow" in payload["recommended_actions"]
 
 
 def test_desktop_action_router_executes_terminal_command_in_terminal_without_hotkey(tmp_path: Path) -> None:

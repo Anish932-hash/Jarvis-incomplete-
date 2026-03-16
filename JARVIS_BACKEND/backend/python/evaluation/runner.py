@@ -53,11 +53,17 @@ class EvaluationRunner:
                     "passed": passed,
                     "score": float(metrics["score"]),
                     "unexpected_actions": list(metrics["unexpected_actions"]),
+                    "category": str(scenario.category or "general"),
+                    "capabilities": list(scenario.capabilities),
+                    "risk_level": str(scenario.risk_level or "standard"),
                 }
             )
             report.append(
                 {
                     "scenario": scenario.name,
+                    "category": scenario.category,
+                    "capabilities": list(scenario.capabilities),
+                    "risk_level": scenario.risk_level,
                     "passed": passed,
                     "expected": scenario.expected_actions,
                     "actual": actual_actions,
@@ -67,6 +73,7 @@ class EvaluationRunner:
                     "order_score": metrics["order_score"],
                     "required_coverage": metrics["required_coverage"],
                     "missing_required": metrics["missing_required"],
+                    "missing_expected": metrics["missing_expected"],
                     "unexpected_actions": metrics["unexpected_actions"],
                     "weight": weight,
                 }
@@ -96,6 +103,7 @@ class EvaluationRunner:
         required_coverage = (required_hits / float(len(required_actions))) if required_actions else 1.0
         missing_required = [action for action in required_actions if action not in actual_actions]
         unexpected_actions = [action for action in actual_actions if action not in expected_actions]
+        missing_expected = [action for action in expected_actions if action not in actual_actions]
 
         strict_match = actual_actions[: len(expected_actions)] == expected_actions
         score = (0.45 * precision) + (0.45 * recall) + (0.10 * required_coverage)
@@ -115,6 +123,7 @@ class EvaluationRunner:
             "order_score": round(max(0.0, min(order_score, 1.0)), 6),
             "required_coverage": round(max(0.0, min(required_coverage, 1.0)), 6),
             "missing_required": missing_required,
+            "missing_expected": missing_expected,
             "unexpected_actions": unexpected_actions,
         }
 
@@ -147,6 +156,9 @@ class EvaluationRunner:
         pass_weight = 0.0
         score_weight = 0.0
         unexpected_counts: Dict[str, int] = {}
+        category_rows: Dict[str, Dict[str, float]] = {}
+        capability_rows: Dict[str, Dict[str, float]] = {}
+        risk_rows: Dict[str, Dict[str, float]] = {}
         for row in rows:
             weight = max(0.1, float(row.get("weight", 1.0) or 1.0))
             total_weight += weight
@@ -157,13 +169,58 @@ class EvaluationRunner:
                 clean = str(action or "").strip()
                 if clean:
                     unexpected_counts[clean] = int(unexpected_counts.get(clean, 0)) + 1
+            category = str(row.get("category", "general") or "general")
+            category_bucket = category_rows.setdefault(category, {"weight": 0.0, "pass_weight": 0.0, "score_weight": 0.0})
+            category_bucket["weight"] += weight
+            category_bucket["score_weight"] += weight * float(row.get("score", 0.0) or 0.0)
+            if bool(row.get("passed", False)):
+                category_bucket["pass_weight"] += weight
+
+            risk_level = str(row.get("risk_level", "standard") or "standard")
+            risk_bucket = risk_rows.setdefault(risk_level, {"weight": 0.0, "pass_weight": 0.0, "score_weight": 0.0})
+            risk_bucket["weight"] += weight
+            risk_bucket["score_weight"] += weight * float(row.get("score", 0.0) or 0.0)
+            if bool(row.get("passed", False)):
+                risk_bucket["pass_weight"] += weight
+
+            for capability in row.get("capabilities", []):
+                clean_capability = str(capability or "").strip()
+                if not clean_capability:
+                    continue
+                capability_bucket = capability_rows.setdefault(
+                    clean_capability,
+                    {"weight": 0.0, "pass_weight": 0.0, "score_weight": 0.0},
+                )
+                capability_bucket["weight"] += weight
+                capability_bucket["score_weight"] += weight * float(row.get("score", 0.0) or 0.0)
+                if bool(row.get("passed", False)):
+                    capability_bucket["pass_weight"] += weight
         top_unexpected = sorted(
             unexpected_counts.items(),
             key=lambda item: (-int(item[1]), item[0]),
         )[:8]
+
+        def _bucket_view(source: Dict[str, Dict[str, float]]) -> List[Dict[str, object]]:
+            ordered = sorted(source.items(), key=lambda item: (-item[1]["weight"], item[0]))
+            payload: List[Dict[str, object]] = []
+            for name, bucket in ordered:
+                weight = max(1e-9, float(bucket.get("weight", 0.0) or 0.0))
+                payload.append(
+                    {
+                        "name": name,
+                        "weighted_pass_rate": round(float(bucket.get("pass_weight", 0.0) or 0.0) / weight, 6),
+                        "weighted_score": round(float(bucket.get("score_weight", 0.0) or 0.0) / weight, 6),
+                        "weight": round(weight, 6),
+                    }
+                )
+            return payload
+
         return {
             "count": len(rows),
             "weighted_pass_rate": round(pass_weight / max(1e-9, total_weight), 6),
             "weighted_score": round(score_weight / max(1e-9, total_weight), 6),
             "top_unexpected_actions": [{"action": name, "count": count} for name, count in top_unexpected],
+            "category_breakdown": _bucket_view(category_rows),
+            "capability_coverage": _bucket_view(capability_rows),
+            "risk_breakdown": _bucket_view(risk_rows),
         }

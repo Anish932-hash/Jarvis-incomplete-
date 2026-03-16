@@ -27,7 +27,15 @@ def test_evaluation_runner_produces_weighted_summary(monkeypatch) -> None:
 
     monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
     scenarios = [
-        Scenario("strict_case", "strict", ["open_app", "tts_speak"], weight=2.0, strict_order=True),
+        Scenario(
+            "strict_case",
+            "strict",
+            ["open_app", "tts_speak"],
+            weight=2.0,
+            strict_order=True,
+            category="desktop_basics",
+            capabilities=["launch", "speech"],
+        ),
         Scenario(
             "flex_case",
             "flex",
@@ -35,6 +43,9 @@ def test_evaluation_runner_produces_weighted_summary(monkeypatch) -> None:
             weight=1.0,
             strict_order=False,
             required_actions=["external_email_send"],
+            category="communication",
+            capabilities=["connectors", "mail"],
+            risk_level="guarded",
         ),
     ]
 
@@ -46,6 +57,9 @@ def test_evaluation_runner_produces_weighted_summary(monkeypatch) -> None:
     assert all(bool(item["passed"]) for item in items)
     assert float(summary["weighted_pass_rate"]) == 1.0
     assert float(summary["weighted_score"]) > 0.85
+    assert any(row["name"] == "desktop_basics" for row in summary["category_breakdown"])
+    assert any(row["name"] == "launch" for row in summary["capability_coverage"])
+    assert any(row["name"] == "guarded" for row in summary["risk_breakdown"])
 
 
 def test_evaluation_runner_lcs_metrics_capture_unexpected_actions() -> None:
@@ -59,3 +73,4 @@ def test_evaluation_runner_lcs_metrics_capture_unexpected_actions() -> None:
     assert float(metrics["precision"]) < 1.0
     assert "time_now" in list(metrics["unexpected_actions"])
     assert float(metrics["recall"]) >= 1.0
+    assert "write_file" not in list(metrics["missing_expected"])
