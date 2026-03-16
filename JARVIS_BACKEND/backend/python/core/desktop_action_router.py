@@ -12,7 +12,9 @@ from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
 
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
-RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow"}
+EXPLORATION_ADVANCE_ACTION = "advance_surface_exploration"
+EXPLORATION_FLOW_ACTION = "complete_surface_exploration_flow"
+RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow", EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION}
 RESUME_APPROVAL_KINDS = {
     "elevation_consent",
     "elevation_credentials",
@@ -2729,6 +2731,10 @@ class DesktopActionRouter:
         requested_action = str(args.get("action", "observe") or "observe")
         if requested_action == "resume_mission":
             return self._advise_resume_mission(args=args)
+        if requested_action == EXPLORATION_ADVANCE_ACTION:
+            return self._advise_surface_exploration_advance(args=args)
+        if requested_action == EXPLORATION_FLOW_ACTION:
+            return self._advise_surface_exploration_flow(args=args)
         app_profile = self._resolve_app_profile(args=args)
         args, defaults_applied = self._apply_profile_defaults(args=args, app_profile=app_profile)
         workflow_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
@@ -3062,6 +3068,27 @@ class DesktopActionRouter:
         )
         if isinstance(adaptive_strategy, dict) and isinstance(adaptive_strategy.get("variants", []), list) and adaptive_strategy.get("variants"):
             strategy_variants = [row for row in adaptive_strategy.get("variants", []) if isinstance(row, dict)]
+        exploration_plan: Dict[str, Any] = {}
+        if requested_action == "observe" or bool(blockers):
+            exploration_snapshot = surface_snapshot if isinstance(surface_snapshot, dict) and surface_snapshot else self.surface_snapshot(
+                app_name=app_name,
+                window_title=window_title,
+                query=str(args.get("query", "") or "").strip(),
+                limit=max(12, int(args.get("max_strategy_attempts", 2) or 2) * 8),
+                include_observation=True,
+                include_elements=True,
+                include_workflow_probes=True,
+            )
+            if isinstance(exploration_snapshot, dict) and exploration_snapshot.get("status") == "success":
+                surface_snapshot = exploration_snapshot
+                safety_signals = surface_snapshot.get("safety_signals", {}) if isinstance(surface_snapshot.get("safety_signals", {}), dict) else {}
+                exploration_plan = self._surface_exploration_from_snapshot(
+                    snapshot=exploration_snapshot,
+                    app_name=app_name,
+                    window_title=window_title,
+                    query=str(args.get("query", "") or "").strip(),
+                    limit=6,
+                )
         return {
             "status": status,
             "action": requested_action,
@@ -3106,6 +3133,7 @@ class DesktopActionRouter:
             ),
             "adaptive_strategy": adaptive_strategy,
             "strategy_variants": strategy_variants,
+            "exploration_plan": exploration_plan,
         }
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -3131,6 +3159,8 @@ class DesktopActionRouter:
                 "blocking_surface": advice.get("blocking_surface", {}),
                 "mission_record": advice.get("mission_record", {}),
                 "resume_context": advice.get("resume_context", {}),
+                "exploration_plan": advice.get("exploration_plan", {}),
+                "exploration_selection": advice.get("exploration_selection", {}),
                 "message": message,
                 "advice": advice,
                 "results": [],
@@ -3216,9 +3246,13 @@ class DesktopActionRouter:
         selected_attempt = final_attempt if isinstance(final_attempt, dict) else {}
         verification = selected_attempt.get("verification", {}) if isinstance(selected_attempt.get("verification", {}), dict) else {}
         unverified = bool(verification.get("enabled", False)) and not bool(verification.get("verified", False))
-        status = "partial" if attempts and any(str(item.get("status", "") or "").strip().lower() == "success" for item in attempts) else "error"
-        if unverified and status == "error":
-            status = "partial"
+        selected_status = str(selected_attempt.get("status", "") or "").strip().lower()
+        if selected_status in {"partial", "blocked"}:
+            status = selected_status
+        else:
+            status = "partial" if attempts and any(str(item.get("status", "") or "").strip().lower() == "success" for item in attempts) else "error"
+            if unverified and status == "error":
+                status = "partial"
         message = str(selected_attempt.get("message", "") or "").strip()
         if not message:
             if unverified:
@@ -3432,8 +3466,16 @@ class DesktopActionRouter:
                     "verify_text": ("verify_text",),
                     "retry_on_verification_failure": ("retry_on_verification_failure",),
                     "max_strategy_attempts": ("max_strategy_attempts",),
+                    "max_exploration_steps": ("max_exploration_steps",),
                     "max_wizard_pages": ("max_wizard_pages",),
                     "allow_warning_pages": ("allow_warning_pages",),
+                    "max_form_pages": ("max_form_pages",),
+                    "allow_destructive_forms": ("allow_destructive_forms",),
+                    "exploration_limit": ("exploration_limit",),
+                    "candidate_id": ("candidate_id",),
+                    "branch_action": ("branch_action",),
+                    "attempted_targets": ("attempted_targets",),
+                    "surface_signature_history": ("surface_signature_history",),
                     "form_target_plan": ("form_target_plan",),
                     "expected_form_target_count": ("expected_form_target_count",),
                     "control_type": ("control_type",),
@@ -3463,7 +3505,7 @@ class DesktopActionRouter:
 
         if not normalized_action and resume_contract:
             normalized_action = "resume_mission"
-        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe", "resume_mission", *WORKFLOW_ACTIONS}:
+        if normalized_action not in {"launch", "focus", "click", "type", "click_and_type", "hotkey", "observe", "resume_mission", EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION, *WORKFLOW_ACTIONS}:
             if keys:
                 normalized_action = "hotkey"
             elif text and query:
@@ -3495,12 +3537,25 @@ class DesktopActionRouter:
             "verify_text": str(raw.get("verify_text", "") or "").strip(),
             "retry_on_verification_failure": bool(raw.get("retry_on_verification_failure", True)),
             "max_strategy_attempts": max(1, min(int(raw.get("max_strategy_attempts", 2) or 2), 4)),
+            "max_exploration_steps": max(1, min(int(raw.get("max_exploration_steps", 3) or 3), 8)),
             "max_wizard_pages": max(1, min(int(raw.get("max_wizard_pages", 6) or 6), 12)),
             "allow_warning_pages": bool(raw.get("allow_warning_pages", False)),
             "max_form_pages": max(1, min(int(raw.get("max_form_pages", 5) or 5), 10)),
             "allow_destructive_forms": bool(raw.get("allow_destructive_forms", False)),
             "form_target_plan": [dict(row) for row in raw.get("form_target_plan", []) if isinstance(row, dict)] if isinstance(raw.get("form_target_plan", []), list) else [],
             "expected_form_target_count": max(0, int(raw.get("expected_form_target_count", 0) or 0)),
+            "candidate_id": str(raw.get("candidate_id", "") or "").strip(),
+            "branch_action": str(raw.get("branch_action", "") or "").strip(),
+            "attempted_targets": [dict(row) for row in raw.get("attempted_targets", []) if isinstance(row, dict)]
+            if isinstance(raw.get("attempted_targets", []), list)
+            else [],
+            "surface_signature_history": [
+                str(item).strip()
+                for item in raw.get("surface_signature_history", [])
+                if str(item).strip()
+            ][:24]
+            if isinstance(raw.get("surface_signature_history", []), list)
+            else [],
             "control_type": str(raw.get("control_type", "") or "").strip(),
             "element_id": str(raw.get("element_id", "") or "").strip(),
             "include_targets": bool(raw.get("include_targets", False)),
@@ -3509,6 +3564,7 @@ class DesktopActionRouter:
             "resume_contract": resume_contract,
             "blocking_surface": blocking_surface,
             "resume_force": bool(raw.get("resume_force", False)),
+            "exploration_limit": max(1, min(int(raw.get("exploration_limit", 6) or 6), 12)),
             "_provided_fields": provided_fields,
         }
 
@@ -3523,6 +3579,20 @@ class DesktopActionRouter:
         action = str(args.get("action", "observe") or "observe").strip().lower()
         if action == "resume_mission":
             return self._execute_resume_mission_strategy(
+                args=args,
+                advice=advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
+            )
+        if action == EXPLORATION_ADVANCE_ACTION:
+            return self._execute_surface_exploration_strategy(
+                args=args,
+                advice=advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
+            )
+        if action == EXPLORATION_FLOW_ACTION:
+            return self._execute_surface_exploration_flow_strategy(
                 args=args,
                 advice=advice,
                 strategy=strategy,
@@ -4307,12 +4377,16 @@ class DesktopActionRouter:
             "verify_text",
             "retry_on_verification_failure",
             "max_strategy_attempts",
+            "max_exploration_steps",
             "max_wizard_pages",
             "allow_warning_pages",
             "max_form_pages",
             "allow_destructive_forms",
             "form_target_plan",
             "expected_form_target_count",
+            "exploration_limit",
+            "attempted_targets",
+            "surface_signature_history",
         }
         for field_name in override_fields:
             if field_name not in provided_fields:
@@ -4331,8 +4405,34 @@ class DesktopActionRouter:
         return normalized_payload
 
     def _mission_surface_signature(self, *, snapshot: Dict[str, Any], mission_kind: str) -> str:
-        if not isinstance(snapshot, dict) or mission_kind not in {"wizard", "form"}:
+        if not isinstance(snapshot, dict) or mission_kind not in {"wizard", "form", "exploration"}:
             return ""
+        if mission_kind == "exploration":
+            target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+            active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+            observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+            safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+            dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+            surface_flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+            surface_mode = self._surface_exploration_surface_mode(
+                app_profile=snapshot.get("app_profile", {}) if isinstance(snapshot.get("app_profile", {}), dict) else {},
+                surface_flags=surface_flags,
+                safety_signals=safety_signals,
+                snapshot=snapshot,
+            )
+            query_targets = snapshot.get("query_targets", []) if isinstance(snapshot.get("query_targets", []), list) else []
+            top_target = query_targets[0] if query_targets and isinstance(query_targets[0], dict) else {}
+            signature_parts = [
+                mission_kind,
+                str(target_window.get("title", "") or active_window.get("title", "") or "").strip().lower(),
+                str(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+                str(observation.get("screen_hash", "") or "").strip().lower(),
+                str(surface_mode or "").strip().lower(),
+                str(dialog_state.get("dialog_kind", "") or "").strip().lower(),
+                str(dialog_state.get("approval_kind", "") or "").strip().lower(),
+                str(top_target.get("element_id", "") or top_target.get("automation_id", "") or top_target.get("name", "") or "").strip().lower(),
+            ]
+            return hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
         safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
         dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
         wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
@@ -4368,9 +4468,18 @@ class DesktopActionRouter:
             }
         resume_action = str(resume_payload.get("action", "") or resume_contract.get("resume_action", "")).strip().lower()
         mission_kind = str(
-            resume_contract.get("mission_kind", "") or ("wizard" if resume_action == "complete_wizard_flow" else "form" if resume_action == "complete_form_flow" else "")
+            resume_contract.get("mission_kind", "")
+            or (
+                "wizard"
+                if resume_action == "complete_wizard_flow"
+                else "form"
+                if resume_action == "complete_form_flow"
+                else "exploration"
+                if resume_action in {EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION}
+                else ""
+            )
         ).strip().lower()
-        if mission_kind not in {"wizard", "form"} or resume_action not in RESUMEABLE_MISSION_ACTIONS:
+        if mission_kind not in {"wizard", "form", "exploration"} or resume_action not in RESUMEABLE_MISSION_ACTIONS:
             return {
                 "status": "invalid",
                 "mission_kind": mission_kind,
@@ -4744,12 +4853,17 @@ class DesktopActionRouter:
                 and (
                     bool(nested_result.get("wizard_mission", {}).get("completed", False)) if isinstance(nested_result.get("wizard_mission", {}), dict) else False
                     or bool(nested_result.get("form_mission", {}).get("completed", False)) if isinstance(nested_result.get("form_mission", {}), dict) else False
+                    or bool(nested_result.get("exploration_mission", {}).get("completed", False)) if isinstance(nested_result.get("exploration_mission", {}), dict) else False
                 )
             )
             mission_payload = (
                 nested_result.get("wizard_mission", {})
                 if isinstance(nested_result.get("wizard_mission", {}), dict) and nested_result.get("wizard_mission")
-                else nested_result.get("form_mission", {}) if isinstance(nested_result.get("form_mission", {}), dict) else {}
+                else nested_result.get("form_mission", {})
+                if isinstance(nested_result.get("form_mission", {}), dict) and nested_result.get("form_mission")
+                else nested_result.get("exploration_mission", {})
+                if isinstance(nested_result.get("exploration_mission", {}), dict)
+                else {}
             )
             updated = self._mission_memory.mark_resumed(
                 mission_id=mission_id,
@@ -4778,6 +4892,7 @@ class DesktopActionRouter:
             "verification": verification,
             "wizard_mission": nested_result.get("wizard_mission", {}) if isinstance(nested_result.get("wizard_mission", {}), dict) else {},
             "form_mission": nested_result.get("form_mission", {}) if isinstance(nested_result.get("form_mission", {}), dict) else {},
+            "exploration_mission": nested_result.get("exploration_mission", {}) if isinstance(nested_result.get("exploration_mission", {}), dict) else {},
             "mission_record": updated_mission_record or mission_record,
             "resume_context": nested_resume_context,
         }
@@ -7341,6 +7456,8 @@ class DesktopActionRouter:
             "safety_signals": advice.get("safety_signals", base_advice.get("safety_signals", {})),
             "form_target_state": advice.get("form_target_state", base_advice.get("form_target_state", {})),
             "surface_branch": advice.get("surface_branch", base_advice.get("surface_branch", {})),
+            "exploration_plan": advice.get("exploration_plan", base_advice.get("exploration_plan", {})),
+            "exploration_selection": advice.get("exploration_selection", base_advice.get("exploration_selection", {})),
             "resume_action": advice.get("resume_action", base_advice.get("resume_action", "")),
             "resume_payload": advice.get("resume_payload", base_advice.get("resume_payload", {})),
             "resume_contract": advice.get("resume_contract", base_advice.get("resume_contract", {})),
@@ -7352,6 +7469,7 @@ class DesktopActionRouter:
             "verification": verification,
             "wizard_mission": selected_attempt.get("wizard_mission", {}),
             "form_mission": selected_attempt.get("form_mission", {}),
+            "exploration_mission": selected_attempt.get("exploration_mission", {}),
             "attempts": attempts,
             "attempt_count": len(attempts),
             "executed_strategy": {
@@ -7805,6 +7923,2234 @@ class DesktopActionRouter:
                 "include_workflow_probes": bool(include_workflow_probes),
             },
         }
+
+    def surface_exploration_plan(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 8,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+    ) -> Dict[str, Any]:
+        snapshot = self.surface_snapshot(
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+            limit=max(12, limit * 2),
+            include_observation=include_observation,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+        )
+        if not isinstance(snapshot, dict):
+            return {"status": "error", "message": "invalid desktop surface exploration snapshot"}
+        if str(snapshot.get("status", "") or "").strip().lower() != "success":
+            return snapshot
+        return self._surface_exploration_from_snapshot(
+            snapshot=snapshot,
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+            limit=limit,
+        )
+
+    def _surface_exploration_from_snapshot(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        snapshot_payload = dict(snapshot) if isinstance(snapshot, dict) else {}
+        bounded = max(1, min(int(limit or 8), 12))
+        app_profile = snapshot_payload.get("app_profile", {}) if isinstance(snapshot_payload.get("app_profile", {}), dict) else {}
+        target_window = snapshot_payload.get("target_window", {}) if isinstance(snapshot_payload.get("target_window", {}), dict) else {}
+        surface_flags = snapshot_payload.get("surface_flags", {}) if isinstance(snapshot_payload.get("surface_flags", {}), dict) else {}
+        safety_signals = snapshot_payload.get("safety_signals", {}) if isinstance(snapshot_payload.get("safety_signals", {}), dict) else {}
+        clean_query = str(query or snapshot_payload.get("filters", {}).get("query", "") or "").strip()
+        surface_mode = self._surface_exploration_surface_mode(
+            app_profile=app_profile,
+            surface_flags=surface_flags,
+            safety_signals=safety_signals,
+            snapshot=snapshot_payload,
+        )
+        top_hypotheses = self._surface_exploration_hypotheses(
+            snapshot=snapshot_payload,
+            app_name=app_name,
+            window_title=window_title,
+            query=clean_query,
+            surface_mode=surface_mode,
+            limit=bounded,
+        )
+        branch_actions = self._surface_exploration_branch_actions(
+            snapshot=snapshot_payload,
+            app_name=app_name,
+            window_title=window_title,
+            query=clean_query,
+            limit=bounded,
+        )
+        top_path = top_hypotheses[0].get("recommended_path", []) if top_hypotheses else []
+        manual_attention_signals = [
+            signal_name
+            for signal_name in (
+                "admin_approval_required",
+                "secure_desktop_likely",
+                "dialog_review_required",
+                "permission_review_visible",
+                "elevation_prompt_visible",
+                "credential_prompt_visible",
+                "authentication_prompt_visible",
+                "destructive_warning_visible",
+            )
+            if bool(safety_signals.get(signal_name, False))
+        ]
+        manual_attention_required = bool(manual_attention_signals)
+        automation_ready = bool(top_hypotheses or branch_actions) and not manual_attention_required
+        profile_name = str(app_profile.get("name", "") or target_window.get("title", "") or app_name or "").strip()
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        summary_parts: List[str] = []
+        if top_hypotheses:
+            primary_label = str(top_hypotheses[0].get("label", "") or "target").strip()
+            primary_action = str(top_hypotheses[0].get("suggested_action", "") or "action").strip()
+            summary_parts.append(f"Top target: {primary_label} via {primary_action}.")
+        if branch_actions:
+            summary_parts.append(f"{len(branch_actions)} follow-up branch action{'s' if len(branch_actions) != 1 else ''} available.")
+        if manual_attention_required:
+            summary_parts.append("Manual review is still recommended before autonomous continuation.")
+        if not summary_parts:
+            summary_parts.append("Surface recon found only low-confidence generic candidates.")
+        return {
+            "status": "success",
+            "profile_name": profile_name,
+            "category": category,
+            "surface_mode": surface_mode,
+            "automation_ready": automation_ready,
+            "manual_attention_required": manual_attention_required,
+            "attention_signals": manual_attention_signals,
+            "hypothesis_count": len(top_hypotheses),
+            "branch_action_count": len(branch_actions),
+            "top_hypotheses": top_hypotheses,
+            "branch_actions": branch_actions,
+            "top_path": top_path,
+            "surface_snapshot": snapshot_payload,
+            "filters": {
+                "app_name": str(app_name or snapshot_payload.get("filters", {}).get("app_name", "") or "").strip(),
+                "window_title": str(window_title or snapshot_payload.get("filters", {}).get("window_title", "") or "").strip(),
+                "query": clean_query,
+                "limit": bounded,
+            },
+            "message": " ".join(part for part in summary_parts if part).strip(),
+        }
+
+    def _surface_exploration_signature(self, *, exploration_plan: Dict[str, Any]) -> str:
+        if not isinstance(exploration_plan, dict) or not exploration_plan:
+            return ""
+        snapshot = (
+            exploration_plan.get("surface_snapshot", {})
+            if isinstance(exploration_plan.get("surface_snapshot", {}), dict)
+            else {}
+        )
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        top_hypothesis = (
+            exploration_plan.get("top_hypotheses", [])[0]
+            if isinstance(exploration_plan.get("top_hypotheses", []), list) and exploration_plan.get("top_hypotheses", [])
+            else {}
+        )
+        top_hypothesis = top_hypothesis if isinstance(top_hypothesis, dict) else {}
+        top_branch = (
+            exploration_plan.get("branch_actions", [])[0]
+            if isinstance(exploration_plan.get("branch_actions", []), list) and exploration_plan.get("branch_actions", [])
+            else {}
+        )
+        top_branch = top_branch if isinstance(top_branch, dict) else {}
+        signature_parts = [
+            str(exploration_plan.get("surface_mode", "") or "").strip().lower(),
+            str(target_window.get("title", "") or active_window.get("title", "") or "").strip().lower(),
+            str(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+            str(observation.get("screen_hash", "") or "").strip().lower(),
+            str(top_hypothesis.get("candidate_id", "") or "").strip().lower(),
+            str(top_hypothesis.get("suggested_action", "") or "").strip().lower(),
+            str(top_branch.get("action", "") or "").strip().lower(),
+            str(exploration_plan.get("filters", {}).get("query", "") or "").strip().lower()
+            if isinstance(exploration_plan.get("filters", {}), dict)
+            else "",
+        ]
+        return hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16]
+
+    def _surface_exploration_selection_key(
+        self,
+        *,
+        kind: str = "",
+        candidate_id: str = "",
+        selected_action: str = "",
+        label: str = "",
+    ) -> str:
+        normalized_kind = self._normalize_probe_text(kind)
+        normalized_candidate_id = str(candidate_id or "").strip().lower()
+        normalized_action = self._normalize_probe_text(selected_action)
+        normalized_label = self._normalize_probe_text(label)
+        return "|".join(
+            (
+                normalized_kind or "target",
+                normalized_candidate_id,
+                normalized_action,
+                normalized_label,
+            )
+        ).strip("|")
+
+    def _normalize_surface_exploration_attempt_entry(self, value: Any) -> Dict[str, Any]:
+        row = dict(value) if isinstance(value, dict) else {}
+        if not row:
+            return {}
+        kind = str(row.get("kind", "") or "").strip().lower()
+        candidate_id = str(row.get("candidate_id", "") or "").strip()
+        selected_action = str(row.get("selected_action", "") or "").strip().lower()
+        label = str(row.get("label", "") or row.get("selected_candidate_label", "") or "").strip()
+        selection_key = self._surface_exploration_selection_key(
+            kind=kind,
+            candidate_id=candidate_id,
+            selected_action=selected_action,
+            label=label,
+        )
+        if not selection_key:
+            return {}
+        return {
+            "kind": kind,
+            "candidate_id": candidate_id,
+            "selected_action": selected_action,
+            "label": label,
+            "selection_key": selection_key,
+            "status": str(row.get("status", "") or "").strip().lower(),
+            "progressed": bool(row.get("progressed", False)),
+            "step_index": max(0, int(row.get("step_index", 0) or 0)),
+            "surface_signature_before": str(row.get("surface_signature_before", "") or "").strip(),
+            "surface_signature_after": str(row.get("surface_signature_after", "") or "").strip(),
+        }
+
+    def _surface_exploration_attempt_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(args, dict):
+            return []
+        rows = args.get("attempted_targets", [])
+        if not isinstance(rows, list):
+            return []
+        normalized_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            normalized = self._normalize_surface_exploration_attempt_entry(row)
+            if normalized:
+                normalized_rows.append(normalized)
+        return normalized_rows[:24]
+
+    def _surface_exploration_signature_history(self, *, args: Dict[str, Any]) -> List[str]:
+        if not isinstance(args, dict):
+            return []
+        rows = args.get("surface_signature_history", [])
+        if not isinstance(rows, list):
+            return []
+        return [str(item).strip() for item in rows if str(item).strip()][:24]
+
+    def _merge_surface_exploration_attempt_history(
+        self,
+        *,
+        attempted_targets: List[Dict[str, Any]],
+        new_entry: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in attempted_targets if isinstance(row, dict)]
+        normalized = self._normalize_surface_exploration_attempt_entry(new_entry)
+        if not normalized:
+            return rows[:24]
+        selection_key = str(normalized.get("selection_key", "") or "").strip()
+        filtered = [
+            dict(row)
+            for row in rows
+            if str(row.get("selection_key", "") or "").strip() != selection_key
+        ]
+        filtered.append(normalized)
+        return filtered[-24:]
+
+    @staticmethod
+    def _merge_surface_signature_history(
+        *,
+        existing: List[str],
+        additions: List[str],
+    ) -> List[str]:
+        merged: List[str] = []
+        for value in [*existing, *additions]:
+            clean = str(value or "").strip()
+            if clean and clean not in merged:
+                merged.append(clean)
+        return merged[-24:]
+
+    def _surface_exploration_selection_rows(
+        self,
+        *,
+        exploration_plan: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
+        rows: List[Dict[str, Any]] = []
+        for row in plan.get("top_hypotheses", []) if isinstance(plan.get("top_hypotheses", []), list) else []:
+            if not isinstance(row, dict):
+                continue
+            action_payload = dict(row.get("action_payload", {})) if isinstance(row.get("action_payload", {}), dict) else {}
+            action_name = str(action_payload.get("action", "") or row.get("suggested_action", "")).strip().lower()
+            if not action_payload or not action_name:
+                continue
+            score = float(row.get("confidence", row.get("score", 0.0)) or 0.0)
+            if bool(row.get("already_active", False)):
+                score -= 0.08
+            label = str(row.get("label", "") or "").strip()
+            candidate_id = str(row.get("candidate_id", "") or "").strip()
+            rows.append(
+                {
+                    "kind": "hypothesis",
+                    "candidate_id": candidate_id,
+                    "label": label,
+                    "selected_action": action_name,
+                    "selection_key": self._surface_exploration_selection_key(
+                        kind="hypothesis",
+                        candidate_id=candidate_id,
+                        selected_action=action_name,
+                        label=label,
+                    ),
+                    "confidence": round(max(0.0, score), 4),
+                    "reason": str(row.get("reason", "") or "").strip(),
+                    "action_payload": action_payload,
+                    "raw": row,
+                }
+            )
+        for row in plan.get("branch_actions", []) if isinstance(plan.get("branch_actions", []), list) else []:
+            if not isinstance(row, dict):
+                continue
+            action_payload = dict(row.get("action_payload", {})) if isinstance(row.get("action_payload", {}), dict) else {}
+            action_name = str(action_payload.get("action", "") or row.get("action", "")).strip().lower()
+            if not action_payload or not action_name:
+                continue
+            score = float(row.get("confidence", 0.0) or 0.0) + (0.05 if bool(row.get("matched", False)) else 0.0)
+            label = str(row.get("title", "") or row.get("action", "") or "").strip()
+            rows.append(
+                {
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": label,
+                    "selected_action": action_name,
+                    "selection_key": self._surface_exploration_selection_key(
+                        kind="branch_action",
+                        candidate_id="",
+                        selected_action=action_name,
+                        label=label,
+                    ),
+                    "confidence": round(max(0.0, score), 4),
+                    "reason": str(row.get("reason", "") or "").strip(),
+                    "action_payload": action_payload,
+                    "raw": row,
+                }
+            )
+        return rows
+
+    def _surface_exploration_remaining_options(
+        self,
+        *,
+        exploration_plan: Dict[str, Any],
+        attempted_targets: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        selection_rows = self._surface_exploration_selection_rows(exploration_plan=exploration_plan)
+        attempted_keys = {
+            str(row.get("selection_key", "") or "").strip()
+            for row in attempted_targets
+            if str(row.get("selection_key", "") or "").strip()
+        }
+        remaining_rows = [
+            dict(row)
+            for row in selection_rows
+            if str(row.get("selection_key", "") or "").strip() not in attempted_keys
+        ]
+        remaining_rows.sort(
+            key=lambda row: (
+                -float(row.get("confidence", 0.0) or 0.0),
+                0 if row.get("kind") == "hypothesis" else 1,
+                str(row.get("label", "") or "").lower(),
+            )
+        )
+        return {
+            "remaining_rows": remaining_rows[:12],
+            "remaining_target_count": len(remaining_rows),
+            "remaining_hypothesis_count": sum(1 for row in remaining_rows if row.get("kind") == "hypothesis"),
+            "remaining_branch_action_count": sum(1 for row in remaining_rows if row.get("kind") == "branch_action"),
+        }
+
+    def _select_surface_exploration_target(
+        self,
+        *,
+        exploration_plan: Dict[str, Any],
+        args: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
+        attention_signals = [
+            str(item).strip()
+            for item in plan.get("attention_signals", [])
+            if str(item).strip()
+        ] if isinstance(plan.get("attention_signals", []), list) else []
+        if bool(plan.get("manual_attention_required", False)):
+            message = (
+                str(plan.get("message", "") or "").strip()
+                or "The current surface still needs manual review before JARVIS should continue exploring it."
+            )
+            blocker = "Manual review is still required before autonomous surface exploration can continue."
+            return {
+                "status": "blocked",
+                "stop_reason_code": "exploration_manual_review_required",
+                "message": message,
+                "warnings": [message] if message else [],
+                "blockers": [blocker],
+                "attention_signals": attention_signals,
+            }
+
+        explicit_candidate_id = str(args.get("candidate_id", "") or "").strip()
+        explicit_branch_action = self._normalize_probe_text(args.get("branch_action", ""))
+        attempted_targets = self._surface_exploration_attempt_history(args=args)
+        attempted_keys = {
+            str(row.get("selection_key", "") or "").strip()
+            for row in attempted_targets
+            if str(row.get("selection_key", "") or "").strip()
+        }
+        selection_rows = self._surface_exploration_selection_rows(exploration_plan=plan)
+
+        matched_selection: Dict[str, Any] = {}
+        if explicit_candidate_id:
+            matched_selection = next(
+                (
+                    row
+                    for row in selection_rows
+                    if row.get("kind") == "hypothesis"
+                    and str(row.get("candidate_id", "") or "").strip() == explicit_candidate_id
+                ),
+                {},
+            )
+        elif explicit_branch_action:
+            matched_selection = next(
+                (
+                    row
+                    for row in selection_rows
+                    if row.get("kind") == "branch_action"
+                    and (
+                        self._normalize_probe_text(row.get("selected_action", "")) == explicit_branch_action
+                        or self._normalize_probe_text(row.get("label", "")) == explicit_branch_action
+                    )
+                ),
+                {},
+            )
+        if matched_selection:
+            selection_rows = [matched_selection]
+        else:
+            if attempted_keys:
+                untried_rows = [
+                    dict(row)
+                    for row in selection_rows
+                    if str(row.get("selection_key", "") or "").strip() not in attempted_keys
+                ]
+                if untried_rows:
+                    selection_rows = untried_rows
+            selection_rows.sort(
+                key=lambda row: (
+                    -float(row.get("confidence", 0.0) or 0.0),
+                    0 if row.get("kind") == "hypothesis" else 1,
+                    str(row.get("label", "") or "").lower(),
+                )
+            )
+
+        if not selection_rows:
+            message = (
+                str(plan.get("message", "") or "").strip()
+                or "Surface recon did not find a safe next action to advance automatically."
+            )
+            return {
+                "status": "blocked",
+                "stop_reason_code": "exploration_no_safe_path",
+                "message": message,
+                "warnings": [message] if message else [],
+                "blockers": ["No safe exploration target is ready for autonomous continuation on the current surface."],
+                "attention_signals": attention_signals,
+            }
+
+        selected = dict(selection_rows[0])
+        selected_payload = dict(selected.get("action_payload", {}))
+        if not selected_payload:
+            return {
+                "status": "blocked",
+                "stop_reason_code": "exploration_no_safe_path",
+                "message": "Surface recon selected a target, but no executable payload could be built for it.",
+                "warnings": [],
+                "blockers": ["JARVIS could not build an executable payload for the selected surface target."],
+                "attention_signals": attention_signals,
+            }
+
+        for field_name in (
+            "ensure_app_launch",
+            "focus_first",
+            "press_enter",
+            "target_mode",
+            "verify_mode",
+            "verify_after_action",
+            "verify_text",
+            "retry_on_verification_failure",
+            "max_strategy_attempts",
+        ):
+            if field_name not in args:
+                continue
+            field_value = args.get(field_name)
+            if field_name == "verify_text" and not str(field_value or "").strip():
+                continue
+            selected_payload[field_name] = field_value
+        if not str(selected_payload.get("app_name", "") or "").strip() and str(args.get("app_name", "") or "").strip():
+            selected_payload["app_name"] = str(args.get("app_name", "") or "").strip()
+        if not str(selected_payload.get("window_title", "") or "").strip() and str(args.get("window_title", "") or "").strip():
+            selected_payload["window_title"] = str(args.get("window_title", "") or "").strip()
+        selected_payload["_provided_fields"] = self._dedupe_strings(
+            [str(key).strip() for key in selected_payload.keys() if str(key).strip()]
+        )
+        selected["action_payload"] = selected_payload
+        selected["status"] = "success"
+        selected["stop_reason_code"] = ""
+        selected["selection_key"] = self._surface_exploration_selection_key(
+            kind=str(selected.get("kind", "") or "").strip(),
+            candidate_id=str(selected.get("candidate_id", "") or "").strip(),
+            selected_action=str(selected.get("selected_action", "") or "").strip(),
+            label=str(selected.get("label", "") or "").strip(),
+        )
+        selected["attempted_target_count"] = len(attempted_keys)
+        selected["message"] = str(selected.get("reason", "") or "").strip() or (
+            f"Surface recon selected {selected.get('label', 'target')} via {selected.get('selected_action', 'action')}."
+        )
+        selected["warnings"] = []
+        selected["blockers"] = []
+        return selected
+
+    def _surface_exploration_blocking_surface(
+        self,
+        *,
+        exploration_plan: Dict[str, Any],
+        stop_reason_code: str,
+        selected: Dict[str, Any],
+        attempted_targets: Optional[List[Dict[str, Any]]] = None,
+        alternative_target_count: int = 0,
+        alternative_hypothesis_count: int = 0,
+        alternative_branch_action_count: int = 0,
+    ) -> Dict[str, Any]:
+        plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
+        attempted_rows = [dict(row) for row in attempted_targets if isinstance(row, dict)] if isinstance(attempted_targets, list) else []
+        snapshot = plan.get("surface_snapshot", {}) if isinstance(plan.get("surface_snapshot", {}), dict) else {}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        recommended_actions = self._dedupe_strings(
+            [
+                str(selected.get("selected_action", "") or "").strip(),
+                *[
+                    str(row.get("action", "") or "").strip()
+                    for row in plan.get("branch_actions", [])
+                    if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                ],
+                "resume_mission",
+            ]
+        )
+        operator_steps_map = {
+            "exploration_followup_available": [
+                "Review the refreshed recon summary if you want to sanity-check the next move.",
+                "Resume the paused exploration mission to let JARVIS take the next bounded surface step.",
+            ],
+            "exploration_step_limit_reached": [
+                "Review the refreshed recon summary if you want to sanity-check the next bounded move.",
+                "Resume the paused exploration flow mission to let JARVIS continue exploring this app in another bounded wave.",
+            ],
+            "exploration_no_safe_path": [
+                "Inspect the current window and decide what surface JARVIS should target next.",
+                "Use a more explicit query or manual steering before resuming automated exploration.",
+            ],
+            "exploration_no_progress": [
+                "The same surface target is still leading the recon loop, so inspect the app state manually.",
+                "Adjust the query or visible surface before resuming exploration.",
+            ],
+            "exploration_route_unavailable": [
+                "The selected recon target could not be routed safely through the current automation capabilities.",
+                "Inspect the app surface or adjust the control query before resuming exploration.",
+            ],
+            "exploration_manual_review_required": [
+                "Review the current surface carefully before allowing more autonomous exploration.",
+                "Clear the blocking review or approval surface manually if you want JARVIS to continue.",
+            ],
+        }
+        notes = self._dedupe_strings(
+            [
+                *[
+                    str(item).strip()
+                    for item in plan.get("attention_signals", [])
+                    if str(item).strip()
+                ],
+                str(plan.get("message", "") or "").strip(),
+                str(selected.get("message", "") or "").strip(),
+                (
+                    f"{max(0, int(alternative_target_count or 0))} untried recon branch"
+                    f"{'' if max(0, int(alternative_target_count or 0)) == 1 else 'es'} remain available."
+                    if int(alternative_target_count or 0) > 0
+                    else ""
+                ),
+            ]
+        )
+        pending_requirements = [
+            dict(row)
+            for row in form_page_state.get("pending_requirements", [])
+            if isinstance(row, dict)
+        ] if isinstance(form_page_state.get("pending_requirements", []), list) else []
+        pending_requirements.extend(
+            [
+                dict(row)
+                for row in wizard_page_state.get("pending_requirements", [])
+                if isinstance(row, dict)
+            ]
+        )
+        return {
+            "mission_kind": "exploration",
+            "stop_reason_code": str(stop_reason_code or "").strip(),
+            "resume_action": EXPLORATION_ADVANCE_ACTION,
+            "resume_preconditions": (
+                ["review_current_surface"]
+                if stop_reason_code in {"exploration_manual_review_required", "exploration_no_safe_path", "exploration_no_progress", "exploration_route_unavailable"}
+                else ["reacquire_current_surface"]
+            ),
+            "window_title": str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "window_hwnd": int(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
+            "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+            "page_kind": str(plan.get("surface_mode", "") or "").strip(),
+            "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
+            "approval_kind": str(dialog_state.get("approval_kind", "") or "").strip(),
+            "dialog_visible": bool(dialog_state.get("visible", False) or safety_signals.get("dialog_visible", False)),
+            "dialog_review_required": bool(dialog_state.get("review_required", False)),
+            "secure_desktop_likely": bool(dialog_state.get("secure_desktop_likely", False)),
+            "manual_input_required": bool(dialog_state.get("manual_input_required", False)),
+            "credential_field_count": int(dialog_state.get("credential_field_count", 0) or 0),
+            "preferred_confirmation_button": str(safety_signals.get("preferred_confirmation_button", "") or "").strip(),
+            "preferred_dismiss_button": str(safety_signals.get("preferred_dismiss_button", "") or "").strip(),
+            "safe_dialog_buttons": [str(item).strip() for item in safety_signals.get("safe_dialog_buttons", []) if str(item).strip()][:6] if isinstance(safety_signals.get("safe_dialog_buttons", []), list) else [],
+            "confirmation_dialog_buttons": [str(item).strip() for item in safety_signals.get("confirmation_dialog_buttons", []) if str(item).strip()][:6] if isinstance(safety_signals.get("confirmation_dialog_buttons", []), list) else [],
+            "destructive_dialog_buttons": [str(item).strip() for item in safety_signals.get("destructive_dialog_buttons", []) if str(item).strip()][:6] if isinstance(safety_signals.get("destructive_dialog_buttons", []), list) else [],
+            "credential_fields": [dict(row) for row in dialog_state.get("credential_fields", []) if isinstance(row, dict)] if isinstance(dialog_state.get("credential_fields", []), list) else [],
+            "pending_requirements": pending_requirements[:12],
+            "manual_required_controls": [dict(row) for row in form_page_state.get("manual_required_controls", []) if isinstance(row, dict)][:12] if isinstance(form_page_state.get("manual_required_controls", []), list) else [],
+            "blocking_controls": pending_requirements[:12],
+            "autonomous_blocker": str(dialog_state.get("approval_kind", "") or stop_reason_code).strip(),
+            "recommended_actions": recommended_actions[:8],
+            "operator_steps": operator_steps_map.get(
+                stop_reason_code,
+                [
+                    "Inspect the current unsupported-app surface carefully.",
+                    "Resume the paused exploration mission only after the surface looks ready for another bounded action.",
+                ],
+            ),
+            "surface_signature": self._surface_exploration_signature(exploration_plan=plan),
+            "target_group_state": dict(snapshot.get("target_group_state", {})) if isinstance(snapshot.get("target_group_state", {}), dict) else {},
+            "surface_mode": str(plan.get("surface_mode", "") or "").strip(),
+            "hypothesis_count": int(plan.get("hypothesis_count", 0) or 0),
+            "branch_action_count": int(plan.get("branch_action_count", 0) or 0),
+            "attempted_target_count": len(attempted_rows),
+            "alternative_target_count": max(0, int(alternative_target_count or 0)),
+            "alternative_hypothesis_count": max(0, int(alternative_hypothesis_count or 0)),
+            "alternative_branch_action_count": max(0, int(alternative_branch_action_count or 0)),
+            "attempted_targets_tail": [dict(row) for row in attempted_rows[-6:]],
+            "notes": notes[:12],
+        }
+
+    def _surface_exploration_resume_contract(
+        self,
+        *,
+        args: Dict[str, Any],
+        exploration_plan: Dict[str, Any],
+        blocking_surface: Dict[str, Any],
+        resume_action: str = EXPLORATION_ADVANCE_ACTION,
+    ) -> Dict[str, Any]:
+        if not isinstance(exploration_plan, dict) or not exploration_plan or not isinstance(blocking_surface, dict) or not blocking_surface:
+            return {}
+        snapshot = exploration_plan.get("surface_snapshot", {}) if isinstance(exploration_plan.get("surface_snapshot", {}), dict) else {}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        clean_anchor_app = str(args.get("app_name", "") or "").strip()
+        clean_anchor_title = str(
+            args.get("window_title", "")
+            or target_window.get("title", "")
+            or active_window.get("title", "")
+            or ""
+        ).strip()
+        blocking_window_title = str(blocking_surface.get("window_title", "") or "").strip()
+        use_anchor_window = bool(
+            not clean_anchor_app
+            and clean_anchor_title
+            and self._normalize_probe_text(clean_anchor_title) != self._normalize_probe_text(blocking_window_title)
+        )
+        query = str(
+            args.get("query", "")
+            or exploration_plan.get("filters", {}).get("query", "")
+            or ""
+        ).strip() if isinstance(exploration_plan.get("filters", {}), dict) else str(args.get("query", "") or "").strip()
+        attempted_targets = self._surface_exploration_attempt_history(args=args)
+        surface_signature_history = self._surface_exploration_signature_history(args=args)
+        resume_payload: Dict[str, Any] = {
+            "action": resume_action,
+            "app_name": clean_anchor_app,
+            "window_title": clean_anchor_title if use_anchor_window else "",
+            "query": query,
+            "focus_first": True,
+            "verify_after_action": bool(args.get("verify_after_action", True)),
+            "retry_on_verification_failure": bool(args.get("retry_on_verification_failure", True)),
+            "max_strategy_attempts": max(1, min(int(args.get("max_strategy_attempts", 2) or 2), 4)),
+            "exploration_limit": max(1, min(int(args.get("exploration_limit", 6) or 6), 12)),
+            "attempted_targets": [dict(row) for row in attempted_targets],
+            "surface_signature_history": list(surface_signature_history),
+        }
+        if resume_action == EXPLORATION_FLOW_ACTION:
+            resume_payload["max_exploration_steps"] = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
+        remaining_options = self._surface_exploration_remaining_options(
+            exploration_plan=exploration_plan,
+            attempted_targets=attempted_targets,
+        )
+        continuation_targets = [
+            {
+                "query": str(row.get("label", "") or "").strip(),
+                "candidate_id": str(row.get("candidate_id", "") or "").strip(),
+                "action": str(row.get("selected_action", row.get("suggested_action", "")) or "").strip(),
+            }
+            for row in remaining_options.get("remaining_rows", [])
+            if isinstance(row, dict) and str(row.get("label", "") or "").strip()
+        ][:4]
+        signature_parts = [
+            "exploration",
+            str(blocking_surface.get("stop_reason_code", "") or "").strip().lower(),
+            str(blocking_surface.get("surface_signature", "") or "").strip().lower(),
+            clean_anchor_app.lower(),
+            clean_anchor_title.lower(),
+            blocking_window_title.lower(),
+            query.lower(),
+        ]
+        return {
+            "mission_kind": "exploration",
+            "resume_action": resume_action,
+            "resume_strategy": (
+                "reacquire_anchor_window"
+                if use_anchor_window
+                else ("reacquire_app_surface" if clean_anchor_app else "reacquire_current_surface")
+            ),
+            "resume_signature": hashlib.sha1("|".join(signature_parts).encode("utf-8")).hexdigest()[:16],
+            "resume_payload": self._sanitize_payload_for_response(resume_payload),
+            "resume_preconditions": [str(item).strip() for item in blocking_surface.get("resume_preconditions", []) if str(item).strip()] if isinstance(blocking_surface.get("resume_preconditions", []), list) else [],
+            "operator_steps": [str(item).strip() for item in blocking_surface.get("operator_steps", []) if str(item).strip()] if isinstance(blocking_surface.get("operator_steps", []), list) else [],
+            "anchor_app_name": clean_anchor_app,
+            "anchor_window_title": clean_anchor_title,
+            "blocking_window_title": blocking_window_title,
+            "surface_match_hints": {
+                "anchor_app_name": clean_anchor_app,
+                "anchor_window_title": clean_anchor_title,
+                "blocking_window_title": blocking_window_title,
+                "blocking_window_hwnd": int(blocking_surface.get("window_hwnd", 0) or 0),
+                "screen_hash": str(blocking_surface.get("screen_hash", "") or "").strip(),
+                "surface_signature": str(blocking_surface.get("surface_signature", "") or "").strip(),
+                "approval_kind": str(blocking_surface.get("approval_kind", "") or "").strip(),
+                "dialog_kind": str(blocking_surface.get("dialog_kind", "") or "").strip(),
+                "surface_mode": str(blocking_surface.get("surface_mode", "") or "").strip(),
+                "prefer_anchor_on_resume": use_anchor_window,
+                "allow_child_window_adoption": True,
+            },
+            "continuation_targets": continuation_targets,
+        }
+
+    def _advise_surface_exploration_advance(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
+        exploration_limit = max(1, min(int(args.get("exploration_limit", 6) or 6), 12))
+        app_name = str(args.get("app_name", "") or "").strip()
+        window_title = str(args.get("window_title", "") or "").strip()
+        query = str(args.get("query", "") or "").strip()
+        exploration_plan = self.surface_exploration_plan(
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+            limit=exploration_limit,
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+        )
+        snapshot = exploration_plan.get("surface_snapshot", {}) if isinstance(exploration_plan.get("surface_snapshot", {}), dict) else {}
+        app_profile = snapshot.get("app_profile", {}) if isinstance(snapshot.get("app_profile", {}), dict) else {}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        candidate_windows = snapshot.get("candidate_windows", []) if isinstance(snapshot.get("candidate_windows", []), list) else []
+        capabilities = snapshot.get("capabilities", {}) if isinstance(snapshot.get("capabilities", {}), dict) else self._capabilities()
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        blocked_response = {
+            "status": "blocked",
+            "action": EXPLORATION_ADVANCE_ACTION,
+            "route_mode": "surface_exploration_advance",
+            "confidence": 0.0,
+            "risk_level": "high" if bool(exploration_plan.get("manual_attention_required", False)) else "medium",
+            "app_profile": app_profile if app_profile.get("status") == "success" else app_profile,
+            "workflow_profile": {},
+            "profile_defaults_applied": {},
+            "target_window": target_window,
+            "active_window": active_window,
+            "candidate_windows": candidate_windows[:6],
+            "capabilities": capabilities,
+            "execution_plan": [],
+            "blockers": [],
+            "warnings": [],
+            "autonomy": {
+                "supports_resume": True,
+                "supports_cross_app_fallback": bool(capabilities.get("vision", {}).get("available")) and bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities, dict) else False,
+                "exploration_ready": bool(exploration_plan.get("automation_ready", False)),
+                "requires_manual_clearance": bool(exploration_plan.get("manual_attention_required", False)),
+            },
+            "surface_snapshot": snapshot,
+            "safety_signals": safety_signals,
+            "form_target_state": {},
+            "surface_branch": {},
+            "verification_plan": {},
+            "adaptive_strategy": {},
+            "strategy_variants": [{"strategy_id": "primary", "title": "Primary Recon Step", "reason": "Use the strongest supported recon target.", "payload_overrides": {}}],
+            "exploration_plan": exploration_plan if isinstance(exploration_plan, dict) else {},
+            "exploration_selection": {},
+            "message": str(exploration_plan.get("message", "") or "Surface recon could not build a safe next step.").strip(),
+        }
+        if not isinstance(exploration_plan, dict) or str(exploration_plan.get("status", "") or "").strip().lower() != "success":
+            blocked_response["status"] = "error" if str(exploration_plan.get("status", "") or "").strip().lower() == "error" else "blocked"
+            blocked_response["message"] = str(exploration_plan.get("message", "") or blocked_response["message"]).strip()
+            blocked_response["blockers"] = [blocked_response["message"]] if blocked_response["message"] else []
+            return blocked_response
+
+        attempted_targets = self._surface_exploration_attempt_history(args=args)
+        remaining_options = self._surface_exploration_remaining_options(
+            exploration_plan=exploration_plan,
+            attempted_targets=attempted_targets,
+        )
+        exploration_plan["attempted_target_count"] = len(attempted_targets)
+        exploration_plan["remaining_target_count"] = int(remaining_options.get("remaining_target_count", 0) or 0)
+        exploration_plan["remaining_hypothesis_count"] = int(remaining_options.get("remaining_hypothesis_count", 0) or 0)
+        exploration_plan["remaining_branch_action_count"] = int(remaining_options.get("remaining_branch_action_count", 0) or 0)
+        exploration_plan["attempted_targets_tail"] = [dict(row) for row in attempted_targets[-6:]]
+
+        selected = self._select_surface_exploration_target(exploration_plan=exploration_plan, args=args)
+        if str(selected.get("status", "") or "") != "success":
+            blocked_response["warnings"] = [str(item).strip() for item in selected.get("warnings", []) if str(item).strip()]
+            blocked_response["blockers"] = [str(item).strip() for item in selected.get("blockers", []) if str(item).strip()]
+            blocked_response["exploration_selection"] = {
+                "status": str(selected.get("status", "") or "").strip(),
+                "stop_reason_code": str(selected.get("stop_reason_code", "") or "").strip(),
+                "attention_signals": [str(item).strip() for item in selected.get("attention_signals", []) if str(item).strip()] if isinstance(selected.get("attention_signals", []), list) else [],
+            }
+            blocked_response["message"] = str(selected.get("message", "") or blocked_response["message"]).strip()
+            return blocked_response
+
+        selected_payload = dict(selected.get("action_payload", {})) if isinstance(selected.get("action_payload", {}), dict) else {}
+        nested_advice = self.advise(selected_payload)
+        nested_status = str(nested_advice.get("status", "") or "").strip().lower()
+        blockers = self._dedupe_strings(
+            [str(item).strip() for item in selected.get("blockers", []) if str(item).strip()]
+            + [str(item).strip() for item in nested_advice.get("blockers", []) if str(item).strip()]
+        )
+        warnings = self._dedupe_strings(
+            [str(item).strip() for item in selected.get("warnings", []) if str(item).strip()]
+            + [str(item).strip() for item in nested_advice.get("warnings", []) if str(item).strip()]
+        )
+        if nested_status != "success" and not blockers:
+            message = str(nested_advice.get("message", "") or "The selected surface target could not be routed safely.").strip()
+            blockers.append(message or "The selected surface target could not be routed safely.")
+        route_message = (
+            str(selected.get("message", "") or "").strip()
+            or str(exploration_plan.get("message", "") or "").strip()
+            or "Surface recon selected the next bounded automation step."
+        )
+        return {
+            "status": "success" if nested_status == "success" and not blockers else "blocked",
+            "action": EXPLORATION_ADVANCE_ACTION,
+            "route_mode": "surface_exploration_advance",
+            "confidence": round(
+                max(
+                    float(selected.get("confidence", 0.0) or 0.0),
+                    float(nested_advice.get("confidence", 0.0) or 0.0),
+                ),
+                4,
+            ),
+            "risk_level": (
+                "high"
+                if bool(exploration_plan.get("manual_attention_required", False))
+                else str(nested_advice.get("risk_level", "") or "medium").strip().lower()
+            ),
+            "app_profile": nested_advice.get("app_profile", app_profile if app_profile.get("status") == "success" else app_profile),
+            "workflow_profile": nested_advice.get("workflow_profile", {}),
+            "profile_defaults_applied": nested_advice.get("profile_defaults_applied", {}),
+            "target_window": nested_advice.get("target_window", target_window),
+            "active_window": nested_advice.get("active_window", active_window),
+            "candidate_windows": nested_advice.get("candidate_windows", candidate_windows[:6]),
+            "capabilities": nested_advice.get("capabilities", capabilities),
+            "execution_plan": nested_advice.get("execution_plan", []),
+            "blockers": blockers,
+            "warnings": warnings,
+            "autonomy": {
+                **(nested_advice.get("autonomy", {}) if isinstance(nested_advice.get("autonomy", {}), dict) else {}),
+                "supports_resume": True,
+                "exploration_ready": bool(exploration_plan.get("automation_ready", False)),
+                "requires_manual_clearance": bool(exploration_plan.get("manual_attention_required", False)),
+            },
+            "surface_snapshot": nested_advice.get("surface_snapshot", snapshot),
+            "safety_signals": nested_advice.get("safety_signals", safety_signals),
+            "form_target_state": nested_advice.get("form_target_state", {}),
+            "surface_branch": nested_advice.get("surface_branch", {}),
+            "verification_plan": nested_advice.get("verification_plan", {}),
+            "adaptive_strategy": nested_advice.get("adaptive_strategy", {}),
+            "strategy_variants": nested_advice.get("strategy_variants", [{"strategy_id": "primary", "title": "Primary Recon Step", "reason": route_message, "payload_overrides": {}}]),
+            "exploration_plan": exploration_plan,
+            "exploration_selection": {
+                "kind": str(selected.get("kind", "") or "").strip(),
+                "candidate_id": str(selected.get("candidate_id", "") or "").strip(),
+                "label": str(selected.get("label", "") or "").strip(),
+                "selected_action": str(selected.get("selected_action", "") or "").strip(),
+                "confidence": float(selected.get("confidence", 0.0) or 0.0),
+                "selection_key": str(selected.get("selection_key", "") or "").strip(),
+                "attempted_target_count": int(selected.get("attempted_target_count", 0) or 0),
+                "reason": str(selected.get("reason", "") or "").strip(),
+                "action_payload": self._sanitize_payload_for_response(selected_payload),
+            },
+            "message": route_message,
+        }
+
+    def _advise_surface_exploration_flow(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
+        max_exploration_steps = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
+        nested_advice = self._advise_surface_exploration_advance(args=args)
+        payload = dict(nested_advice) if isinstance(nested_advice, dict) else {}
+        autonomy = payload.get("autonomy", {}) if isinstance(payload.get("autonomy", {}), dict) else {}
+        payload["action"] = EXPLORATION_FLOW_ACTION
+        payload["route_mode"] = "surface_exploration_flow"
+        payload["autonomy"] = {
+            **autonomy,
+            "supports_resume": True,
+            "exploration_flow": True,
+            "max_exploration_steps": max_exploration_steps,
+        }
+        existing_message = str(payload.get("message", "") or "").strip()
+        if payload.get("status") == "success":
+            payload["message"] = existing_message or (
+                f"JARVIS can continue up to {max_exploration_steps} bounded recon step"
+                f"{'' if max_exploration_steps == 1 else 's'} while the surface keeps progressing safely."
+            )
+        elif not existing_message:
+            payload["message"] = (
+                f"JARVIS could not start a bounded recon flow of up to {max_exploration_steps} step"
+                f"{'' if max_exploration_steps == 1 else 's'} on the current surface."
+            )
+        return payload
+
+    def _execute_surface_exploration_attempt(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+        persist_pause: bool = True,
+        resume_action: str = EXPLORATION_ADVANCE_ACTION,
+        step_index: int = 1,
+    ) -> Dict[str, Any]:
+        selection = advice.get("exploration_selection", {}) if isinstance(advice.get("exploration_selection", {}), dict) else {}
+        selected_payload = selection.get("action_payload", {}) if isinstance(selection.get("action_payload", {}), dict) else {}
+        if not selected_payload:
+            message = "Surface recon did not have an executable next step."
+            return {
+                "attempt": attempt_index,
+                "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+                "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+                "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+                "payload": self._sanitize_payload_for_response(args),
+                "status": "blocked",
+                "message": message,
+                "final_action": "",
+                "results": [],
+                "advice": advice,
+                "verification": {
+                    "enabled": bool(args.get("verify_after_action", True)),
+                    "status": "skipped",
+                    "verified": False,
+                    "message": message,
+                    "checks": [],
+                },
+                "exploration_mission": {
+                    "enabled": True,
+                    "completed": False,
+                    "step_index": step_index,
+                    "stop_reason_code": "exploration_no_safe_path",
+                    "stop_reason": message,
+                },
+                "exploration_runtime": {
+                    "step_index": step_index,
+                    "progressed": False,
+                    "stop_reason_code": "exploration_no_safe_path",
+                    "stop_reason": message,
+                    "blocking_surface": {},
+                    "resume_contract": {},
+                    "page_record": {
+                        "step_index": step_index,
+                        "selected_action": "",
+                        "selected_candidate_id": "",
+                        "selected_candidate_label": "",
+                        "status": "blocked",
+                        "message": message,
+                        "progressed": False,
+                    },
+                },
+            }
+
+        initial_plan = advice.get("exploration_plan", {}) if isinstance(advice.get("exploration_plan", {}), dict) else {}
+        attempted_targets_before = self._surface_exploration_attempt_history(args=args)
+        surface_signature_history_before = self._surface_exploration_signature_history(args=args)
+        nested_result = self.execute(selected_payload)
+        nested_status = str(nested_result.get("status", "") or "error").strip().lower() or "error"
+        nested_results = nested_result.get("results", []) if isinstance(nested_result.get("results", []), list) else []
+        nested_verification = nested_result.get("verification", {}) if isinstance(nested_result.get("verification", {}), dict) else {}
+        selected_action = str(selection.get("selected_action", "") or selected_payload.get("action", "")).strip().lower()
+        followup_window_title = str(
+            nested_result.get("target_window", {}).get("title", "")
+            if isinstance(nested_result.get("target_window", {}), dict)
+            else ""
+        ).strip() or str(args.get("window_title", "") or "").strip()
+        followup_plan = self.surface_exploration_plan(
+            app_name=str(args.get("app_name", "") or "").strip(),
+            window_title=followup_window_title,
+            query=str(args.get("query", "") or "").strip(),
+            limit=max(1, min(int(args.get("exploration_limit", 6) or 6), 12)),
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+        )
+        if not isinstance(followup_plan, dict) or str(followup_plan.get("status", "") or "").strip().lower() != "success":
+            followup_plan = initial_plan if isinstance(initial_plan, dict) else {}
+        followup_snapshot = followup_plan.get("surface_snapshot", {}) if isinstance(followup_plan.get("surface_snapshot", {}), dict) else {}
+        followup_hypothesis_count = int(followup_plan.get("hypothesis_count", 0) or 0)
+        followup_branch_count = int(followup_plan.get("branch_action_count", 0) or 0)
+        followup_ready = bool(followup_plan.get("automation_ready", False))
+        followup_manual = bool(followup_plan.get("manual_attention_required", False))
+        initial_signature = self._surface_exploration_signature(exploration_plan=initial_plan)
+        followup_signature = self._surface_exploration_signature(exploration_plan=followup_plan)
+        attempted_target_entry = {
+            "kind": str(selection.get("kind", "") or "").strip(),
+            "candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+            "label": str(selection.get("label", "") or "").strip(),
+            "selected_action": selected_action,
+            "status": nested_status,
+            "progressed": False,
+            "step_index": step_index,
+            "surface_signature_before": initial_signature,
+            "surface_signature_after": followup_signature,
+        }
+        attempted_targets = self._merge_surface_exploration_attempt_history(
+            attempted_targets=attempted_targets_before,
+            new_entry=attempted_target_entry,
+        )
+        surface_signature_history = self._merge_surface_signature_history(
+            existing=surface_signature_history_before,
+            additions=[initial_signature, followup_signature],
+        )
+        remaining_options = self._surface_exploration_remaining_options(
+            exploration_plan=followup_plan if isinstance(followup_plan, dict) else {},
+            attempted_targets=attempted_targets,
+        )
+        alternative_target_count = int(remaining_options.get("remaining_target_count", 0) or 0)
+        alternative_hypothesis_count = int(remaining_options.get("remaining_hypothesis_count", 0) or 0)
+        alternative_branch_action_count = int(remaining_options.get("remaining_branch_action_count", 0) or 0)
+        alternative_ready = bool(alternative_target_count > 0 and not followup_manual)
+        same_signature = bool(initial_signature and followup_signature and initial_signature == followup_signature)
+        top_followup = (
+            followup_plan.get("top_hypotheses", [])[0]
+            if isinstance(followup_plan.get("top_hypotheses", []), list) and followup_plan.get("top_hypotheses", [])
+            else {}
+        )
+        top_followup = top_followup if isinstance(top_followup, dict) else {}
+        same_top_target = bool(
+            str(top_followup.get("candidate_id", "") or "").strip()
+            and str(top_followup.get("candidate_id", "") or "").strip() == str(selection.get("candidate_id", "") or "").strip()
+            and str(top_followup.get("suggested_action", "") or "").strip().lower() == selected_action
+        )
+        mission_record: Dict[str, Any] = {}
+        progress_made = bool(not same_signature and not same_top_target and nested_status in {"success", "partial"})
+        attempted_target_entry["progressed"] = progress_made
+        updated_advice = {
+            **advice,
+            "exploration_plan": followup_plan if isinstance(followup_plan, dict) else initial_plan,
+            "surface_snapshot": followup_snapshot or advice.get("surface_snapshot", {}),
+            "target_window": (
+                followup_snapshot.get("target_window", {})
+                if isinstance(followup_snapshot.get("target_window", {}), dict) and followup_snapshot.get("target_window")
+                else advice.get("target_window", {})
+            ),
+        }
+        stop_reason_code = ""
+        stop_reason = ""
+        mission_status = nested_status
+        mission_completed = False
+        if nested_status not in {"success", "partial"}:
+            stop_reason_code = "exploration_route_unavailable"
+            stop_reason = str(nested_result.get("message", "") or "The selected recon target could not be executed safely.").strip()
+        elif followup_manual:
+            stop_reason_code = "exploration_manual_review_required"
+            stop_reason = str(
+                followup_plan.get("message", "")
+                or "The current surface still needs manual review before JARVIS should continue exploring it."
+            ).strip()
+            mission_status = "blocked"
+        elif same_signature or same_top_target:
+            if alternative_ready:
+                stop_reason_code = "exploration_followup_available"
+                stop_reason = (
+                    "Surface recon stayed on the same primary target, but JARVIS found another safe branch "
+                    "and is ready to continue without repeating the last step."
+                )
+                mission_status = "partial"
+            else:
+                stop_reason_code = "exploration_no_progress"
+                stop_reason = "Surface recon remained on the same top target after execution, so JARVIS is pausing to avoid looping."
+                mission_status = "blocked"
+        elif followup_hypothesis_count > 0 or followup_branch_count > 0:
+            if followup_ready:
+                stop_reason_code = "exploration_followup_available"
+                stop_reason = str(
+                    followup_plan.get("message", "")
+                    or "JARVIS advanced the surface and found another bounded recon step."
+                ).strip()
+                mission_status = "partial"
+            else:
+                stop_reason_code = "exploration_no_safe_path"
+                stop_reason = str(
+                    followup_plan.get("message", "")
+                    or "Surface recon needs more explicit human guidance before another autonomous step."
+                ).strip()
+                mission_status = "blocked"
+        else:
+            mission_completed = nested_status == "success"
+            stop_reason = str(
+                nested_result.get("message", "")
+                or "Surface recon completed without finding another high-confidence follow-up step."
+            ).strip()
+
+        blocking_surface: Dict[str, Any] = {}
+        resume_contract: Dict[str, Any] = {}
+        exploration_mission: Dict[str, Any] = {
+            "enabled": True,
+            "completed": mission_completed,
+            "selected_action": selected_action,
+            "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+            "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+            "surface_mode": str(followup_plan.get("surface_mode", initial_plan.get("surface_mode", "")) or "").strip() if isinstance(initial_plan, dict) else str(followup_plan.get("surface_mode", "") or "").strip(),
+            "stop_reason_code": stop_reason_code,
+            "stop_reason": stop_reason,
+            "hypothesis_count": followup_hypothesis_count,
+            "branch_action_count": followup_branch_count,
+            "automation_ready": followup_ready,
+            "manual_attention_required": followup_manual,
+            "step_index": step_index,
+            "attempted_target_count": len(attempted_targets),
+            "alternative_target_count": alternative_target_count,
+            "alternative_hypothesis_count": alternative_hypothesis_count,
+            "alternative_branch_action_count": alternative_branch_action_count,
+            "alternative_ready": alternative_ready,
+            "attempted_targets_tail": [dict(row) for row in attempted_targets[-6:]],
+            "surface_signature_history": surface_signature_history,
+            "next_actions": self._dedupe_strings(
+                [
+                    *[
+                        str(row.get("suggested_action", "") or "").strip()
+                        for row in followup_plan.get("top_hypotheses", [])
+                        if isinstance(row, dict) and str(row.get("suggested_action", "") or "").strip()
+                    ],
+                    *[
+                        str(row.get("action", "") or "").strip()
+                        for row in followup_plan.get("branch_actions", [])
+                        if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                    ],
+                ]
+            )[:8] if isinstance(followup_plan, dict) else [],
+        }
+        page_record = {
+            "step_index": step_index,
+            "selected_action": selected_action,
+            "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+            "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+            "status": mission_status if stop_reason_code else nested_status,
+            "message": stop_reason if stop_reason else str(nested_result.get("message", "") or ""),
+            "before_signature": initial_signature,
+            "after_signature": followup_signature,
+            "progressed": progress_made,
+            "attempted_target_count": len(attempted_targets),
+            "alternative_target_count": alternative_target_count,
+        }
+        pause_payload: Dict[str, Any] = {}
+        if stop_reason_code:
+            blocking_surface = self._surface_exploration_blocking_surface(
+                exploration_plan=followup_plan if isinstance(followup_plan, dict) and followup_plan else initial_plan,
+                stop_reason_code=stop_reason_code,
+                selected=selection,
+                attempted_targets=attempted_targets,
+                alternative_target_count=alternative_target_count,
+                alternative_hypothesis_count=alternative_hypothesis_count,
+                alternative_branch_action_count=alternative_branch_action_count,
+            )
+            resume_args = dict(args)
+            resume_args["attempted_targets"] = [dict(row) for row in attempted_targets]
+            resume_args["surface_signature_history"] = list(surface_signature_history)
+            resume_contract = self._surface_exploration_resume_contract(
+                args=resume_args,
+                exploration_plan=followup_plan if isinstance(followup_plan, dict) and followup_plan else initial_plan,
+                blocking_surface=blocking_surface,
+                resume_action=resume_action,
+            )
+            exploration_mission["blocking_surface"] = blocking_surface
+            exploration_mission["resume_contract"] = resume_contract
+            pause_payload = {
+                "status": mission_status,
+                "message": stop_reason,
+                "stop_reason_code": stop_reason_code,
+                "stop_reason": stop_reason,
+                "page_count": 1,
+                "pages_completed": 1 if nested_status in {"success", "partial"} else 0,
+                "requested_target_count": 1,
+                "resolved_target_count": 1 if nested_status in {"success", "partial"} else 0,
+                "remaining_target_count": alternative_target_count,
+                "surface_mode": str(exploration_mission.get("surface_mode", "") or "").strip(),
+                "exploration_query": str(args.get("query", "") or "").strip(),
+                "hypothesis_count": followup_hypothesis_count,
+                "branch_action_count": followup_branch_count,
+                "attempted_target_count": len(attempted_targets),
+                "alternative_target_count": alternative_target_count,
+                "alternative_hypothesis_count": alternative_hypothesis_count,
+                "alternative_branch_action_count": alternative_branch_action_count,
+                "attempted_targets": [dict(row) for row in attempted_targets],
+                "surface_signature_history": surface_signature_history,
+                "selected_action": selected_action,
+                "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+                "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+                "final_page": {
+                    "window_title": str(
+                        followup_snapshot.get("target_window", {}).get("title", "")
+                        if isinstance(followup_snapshot.get("target_window", {}), dict)
+                        else ""
+                    ).strip()
+                    or str(
+                        followup_snapshot.get("active_window", {}).get("title", "")
+                        if isinstance(followup_snapshot.get("active_window", {}), dict)
+                        else ""
+                    ).strip(),
+                    "screen_hash": str(
+                        followup_snapshot.get("observation", {}).get("screen_hash", "")
+                        if isinstance(followup_snapshot.get("observation", {}), dict)
+                        else ""
+                    ).strip(),
+                    "surface_mode": str(exploration_mission.get("surface_mode", "") or "").strip(),
+                },
+                "page_history": [page_record],
+            }
+            if persist_pause:
+                mission_record = self._persist_paused_mission(
+                    mission_kind="exploration",
+                    args=args,
+                    blocking_surface=blocking_surface,
+                    resume_contract=resume_contract,
+                    mission_payload=pause_payload,
+                    warnings=self._dedupe_strings(
+                        [str(item).strip() for item in advice.get("warnings", []) if str(item).strip()]
+                        + [str(item).strip() for item in nested_result.get("warnings", []) if str(item).strip()]
+                    ),
+                    message=stop_reason,
+                )
+
+        return {
+            "attempt": attempt_index,
+            "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+            "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+            "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+            "payload": self._sanitize_payload_for_response(args),
+            "status": mission_status if stop_reason_code else nested_status,
+            "message": stop_reason if stop_reason else str(nested_result.get("message", "") or ""),
+            "final_action": selected_action or str(nested_result.get("final_action", "") or ""),
+            "results": nested_results,
+            "advice": updated_advice,
+            "verification": nested_verification,
+            "mission_record": mission_record if isinstance(mission_record, dict) else {},
+            "exploration_mission": exploration_mission,
+            "exploration_runtime": {
+                "step_index": step_index,
+                "progressed": progress_made,
+                "stop_reason_code": stop_reason_code,
+                "stop_reason": stop_reason,
+                "blocking_surface": blocking_surface,
+                "resume_contract": resume_contract,
+                "page_record": page_record,
+                "pause_payload": pause_payload,
+                "remaining_target_count": alternative_target_count,
+                "attempted_targets": [dict(row) for row in attempted_targets],
+                "surface_signature_history": surface_signature_history,
+                "alternative_target_count": alternative_target_count,
+                "alternative_hypothesis_count": alternative_hypothesis_count,
+                "alternative_branch_action_count": alternative_branch_action_count,
+                "followup_plan": followup_plan if isinstance(followup_plan, dict) else {},
+                "selected_action": selected_action,
+                "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+                "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+            },
+        }
+
+    def _execute_surface_exploration_strategy(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+    ) -> Dict[str, Any]:
+        return self._execute_surface_exploration_attempt(
+            args=args,
+            advice=advice,
+            strategy=strategy,
+            attempt_index=attempt_index,
+            persist_pause=True,
+            resume_action=EXPLORATION_ADVANCE_ACTION,
+            step_index=1,
+        )
+
+    def _execute_surface_exploration_flow_strategy(
+        self,
+        *,
+        args: Dict[str, Any],
+        advice: Dict[str, Any],
+        strategy: Dict[str, Any],
+        attempt_index: int,
+    ) -> Dict[str, Any]:
+        max_exploration_steps = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
+        results: List[Dict[str, Any]] = []
+        step_history: List[Dict[str, Any]] = []
+        current_args = dict(args)
+        current_args["action"] = EXPLORATION_ADVANCE_ACTION
+        current_args["_provided_fields"] = self._dedupe_strings(
+            list(current_args.get("_provided_fields", [])) + ["action"]
+        )
+        current_advice = advice
+        last_verification: Dict[str, Any] = {
+            "enabled": bool(args.get("verify_after_action", True)),
+            "status": "skipped",
+            "verified": False,
+            "message": "surface exploration flow did not execute any bounded recon steps",
+            "checks": [],
+        }
+        mission_record: Dict[str, Any] = {}
+        completed = False
+        stop_reason_code = ""
+        stop_reason = ""
+        message = ""
+        latest_runtime: Dict[str, Any] = {}
+        latest_followup_plan: Dict[str, Any] = (
+            current_advice.get("exploration_plan", {})
+            if isinstance(current_advice.get("exploration_plan", {}), dict)
+            else {}
+        )
+        latest_selected_action = ""
+        latest_selected_candidate_id = ""
+        latest_selected_candidate_label = ""
+
+        for step_index in range(1, max_exploration_steps + 1):
+            if step_index > 1:
+                current_advice = self._advise_surface_exploration_advance(args=current_args)
+            if current_advice.get("status") != "success":
+                stop_reason_code = "exploration_route_unavailable"
+                stop_reason = "; ".join(
+                    str(item).strip()
+                    for item in current_advice.get("blockers", [])
+                    if str(item).strip()
+                ) or str(
+                    current_advice.get("message", "")
+                    or "JARVIS could not route the next bounded exploration step safely."
+                ).strip()
+                latest_followup_plan = (
+                    current_advice.get("exploration_plan", {})
+                    if isinstance(current_advice.get("exploration_plan", {}), dict)
+                    else latest_followup_plan
+                )
+                step_history.append(
+                    {
+                        "step_index": step_index,
+                        "selected_action": "",
+                        "selected_candidate_id": "",
+                        "selected_candidate_label": "",
+                        "status": "blocked",
+                        "message": stop_reason,
+                        "progressed": False,
+                    }
+                )
+                break
+
+            step_payload = self._execute_surface_exploration_attempt(
+                args=current_args,
+                advice=current_advice,
+                strategy=strategy,
+                attempt_index=attempt_index,
+                persist_pause=False,
+                resume_action=EXPLORATION_FLOW_ACTION,
+                step_index=step_index,
+            )
+            results.extend(step_payload.get("results", []) if isinstance(step_payload.get("results", []), list) else [])
+            last_verification = step_payload.get("verification", {}) if isinstance(step_payload.get("verification", {}), dict) else last_verification
+            latest_runtime = (
+                step_payload.get("exploration_runtime", {})
+                if isinstance(step_payload.get("exploration_runtime", {}), dict)
+                else {}
+            )
+            latest_followup_plan = (
+                latest_runtime.get("followup_plan", {})
+                if isinstance(latest_runtime.get("followup_plan", {}), dict)
+                else latest_followup_plan
+            )
+            page_record = latest_runtime.get("page_record", {}) if isinstance(latest_runtime.get("page_record", {}), dict) else {}
+            step_history.append(page_record or {
+                "step_index": step_index,
+                "selected_action": "",
+                "selected_candidate_id": "",
+                "selected_candidate_label": "",
+                "status": str(step_payload.get("status", "") or "").strip().lower(),
+                "message": str(step_payload.get("message", "") or "").strip(),
+                "progressed": False,
+            })
+            step_mission = (
+                step_payload.get("exploration_mission", {})
+                if isinstance(step_payload.get("exploration_mission", {}), dict)
+                else {}
+            )
+            latest_selected_action = str(step_mission.get("selected_action", "") or latest_runtime.get("selected_action", "") or "").strip()
+            latest_selected_candidate_id = str(step_mission.get("selected_candidate_id", "") or latest_runtime.get("selected_candidate_id", "") or "").strip()
+            latest_selected_candidate_label = str(step_mission.get("selected_candidate_label", "") or latest_runtime.get("selected_candidate_label", "") or "").strip()
+            current_args["attempted_targets"] = [
+                dict(row)
+                for row in latest_runtime.get("attempted_targets", [])
+                if isinstance(row, dict)
+            ] if isinstance(latest_runtime.get("attempted_targets", []), list) else current_args.get("attempted_targets", [])
+            current_args["surface_signature_history"] = [
+                str(item).strip()
+                for item in latest_runtime.get("surface_signature_history", [])
+                if str(item).strip()
+            ] if isinstance(latest_runtime.get("surface_signature_history", []), list) else current_args.get("surface_signature_history", [])
+            if bool(step_mission.get("completed", False)):
+                completed = True
+                message = str(step_payload.get("message", "") or "surface exploration flow completed").strip()
+                break
+            step_stop_reason_code = str(step_mission.get("stop_reason_code", "") or latest_runtime.get("stop_reason_code", "") or "").strip()
+            step_stop_reason = str(step_mission.get("stop_reason", "") or latest_runtime.get("stop_reason", "") or step_payload.get("message", "") or "").strip()
+            if step_stop_reason_code == "exploration_followup_available" and step_index < max_exploration_steps:
+                latest_snapshot = (
+                    latest_followup_plan.get("surface_snapshot", {})
+                    if isinstance(latest_followup_plan.get("surface_snapshot", {}), dict)
+                    else {}
+                )
+                target_window = latest_snapshot.get("target_window", {}) if isinstance(latest_snapshot.get("target_window", {}), dict) else {}
+                active_window = latest_snapshot.get("active_window", {}) if isinstance(latest_snapshot.get("active_window", {}), dict) else {}
+                latest_window_title = str(
+                    target_window.get("title", "")
+                    or active_window.get("title", "")
+                    or current_args.get("window_title", "")
+                    or ""
+                ).strip()
+                latest_filters = latest_followup_plan.get("filters", {}) if isinstance(latest_followup_plan.get("filters", {}), dict) else {}
+                if latest_window_title:
+                    current_args["window_title"] = latest_window_title
+                elif "window_title" in current_args:
+                    current_args.pop("window_title", None)
+                if str(latest_filters.get("app_name", "") or "").strip() and not str(current_args.get("app_name", "") or "").strip():
+                    current_args["app_name"] = str(latest_filters.get("app_name", "") or "").strip()
+                continue
+            stop_reason_code = step_stop_reason_code or "exploration_no_safe_path"
+            stop_reason = step_stop_reason or "surface exploration flow stopped before a safe follow-up could be selected"
+            if stop_reason_code == "exploration_followup_available" and step_index >= max_exploration_steps:
+                stop_reason_code = "exploration_step_limit_reached"
+                stop_reason = (
+                    f"JARVIS completed {step_index} bounded recon step"
+                    f"{'' if step_index == 1 else 's'} and found another safe follow-up, "
+                    f"so it paused at the configured step limit of {max_exploration_steps}."
+                )
+            message = stop_reason
+            break
+
+        if completed and not message:
+            message = "surface exploration flow completed"
+        if not completed and not stop_reason_code and not message:
+            stop_reason_code = "exploration_no_safe_path"
+            stop_reason = "JARVIS could not identify a safe bounded continuation for the current unsupported-app surface."
+            message = stop_reason
+
+        if completed:
+            verification = {
+                "enabled": bool(args.get("verify_after_action", True)),
+                "status": "passed",
+                "verified": True,
+                "message": message,
+                "checks": [
+                    {
+                        "name": "exploration_steps_completed",
+                        "passed": len(step_history) > 0,
+                        "steps_completed": len(step_history),
+                    },
+                    {
+                        "name": "exploration_flow_completed",
+                        "passed": True,
+                        "max_steps": max_exploration_steps,
+                    },
+                ],
+            }
+            exploration_mission = {
+                "enabled": True,
+                "completed": True,
+                "step_count": len(step_history),
+                "steps_completed": len(step_history),
+                "max_steps": max_exploration_steps,
+                "auto_continued": len(step_history) > 1,
+                "selected_action": latest_selected_action,
+                "selected_candidate_id": latest_selected_candidate_id,
+                "selected_candidate_label": latest_selected_candidate_label,
+                "surface_mode": str(latest_followup_plan.get("surface_mode", "") or "").strip(),
+                "stop_reason_code": "",
+                "stop_reason": "",
+                "hypothesis_count": int(latest_followup_plan.get("hypothesis_count", 0) or 0) if isinstance(latest_followup_plan, dict) else 0,
+                "branch_action_count": int(latest_followup_plan.get("branch_action_count", 0) or 0) if isinstance(latest_followup_plan, dict) else 0,
+                "attempted_target_count": len(
+                    [row for row in current_args.get("attempted_targets", []) if isinstance(row, dict)]
+                )
+                if isinstance(current_args.get("attempted_targets", []), list)
+                else 0,
+                "alternative_target_count": int(latest_runtime.get("alternative_target_count", 0) or 0),
+                "alternative_hypothesis_count": int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
+                "alternative_branch_action_count": int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+                "attempted_targets_tail": [
+                    dict(row)
+                    for row in current_args.get("attempted_targets", [])[-6:]
+                    if isinstance(row, dict)
+                ]
+                if isinstance(current_args.get("attempted_targets", []), list)
+                else [],
+                "surface_signature_history": [
+                    str(item).strip()
+                    for item in current_args.get("surface_signature_history", [])
+                    if str(item).strip()
+                ]
+                if isinstance(current_args.get("surface_signature_history", []), list)
+                else [],
+                "automation_ready": bool(latest_followup_plan.get("automation_ready", False)) if isinstance(latest_followup_plan, dict) else False,
+                "manual_attention_required": bool(latest_followup_plan.get("manual_attention_required", False)) if isinstance(latest_followup_plan, dict) else False,
+                "next_actions": [],
+                "step_history": step_history,
+            }
+            return {
+                "attempt": attempt_index,
+                "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+                "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+                "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+                "payload": self._sanitize_payload_for_response(args),
+                "status": "success",
+                "message": message,
+                "final_action": latest_selected_action or EXPLORATION_FLOW_ACTION,
+                "results": results,
+                "advice": {
+                    **current_advice,
+                    "action": EXPLORATION_FLOW_ACTION,
+                    "route_mode": "surface_exploration_flow",
+                    "exploration_plan": latest_followup_plan if isinstance(latest_followup_plan, dict) else current_advice.get("exploration_plan", {}),
+                },
+                "verification": verification,
+                "mission_record": {},
+                "exploration_mission": exploration_mission,
+            }
+
+        pause_snapshot = latest_followup_plan if isinstance(latest_followup_plan, dict) and latest_followup_plan else (
+            current_advice.get("exploration_plan", {})
+            if isinstance(current_advice.get("exploration_plan", {}), dict)
+            else {}
+        )
+        selected_stub = {
+            "candidate_id": latest_selected_candidate_id,
+            "label": latest_selected_candidate_label,
+            "selected_action": latest_selected_action,
+        }
+        blocking_surface = latest_runtime.get("blocking_surface", {}) if isinstance(latest_runtime.get("blocking_surface", {}), dict) else {}
+        if not blocking_surface:
+            blocking_surface = self._surface_exploration_blocking_surface(
+                exploration_plan=pause_snapshot,
+                stop_reason_code=stop_reason_code,
+                selected=selected_stub,
+                attempted_targets=[
+                    dict(row)
+                    for row in current_args.get("attempted_targets", [])
+                    if isinstance(row, dict)
+                ] if isinstance(current_args.get("attempted_targets", []), list) else [],
+                alternative_target_count=int(latest_runtime.get("alternative_target_count", 0) or 0),
+                alternative_hypothesis_count=int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
+                alternative_branch_action_count=int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+            )
+        if isinstance(blocking_surface, dict) and blocking_surface:
+            blocking_surface["stop_reason_code"] = stop_reason_code
+            blocking_surface["stop_reason"] = stop_reason
+            blocking_surface["resume_action"] = EXPLORATION_FLOW_ACTION
+        resume_contract = latest_runtime.get("resume_contract", {}) if isinstance(latest_runtime.get("resume_contract", {}), dict) else {}
+        if not resume_contract:
+            resume_contract = self._surface_exploration_resume_contract(
+                args=current_args,
+                exploration_plan=pause_snapshot,
+                blocking_surface=blocking_surface,
+                resume_action=EXPLORATION_FLOW_ACTION,
+            )
+        pause_payload = {
+            "status": "partial" if stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"} and results else "blocked",
+            "message": message,
+            "stop_reason_code": stop_reason_code,
+            "stop_reason": stop_reason,
+            "page_count": len(step_history),
+            "pages_completed": sum(1 for row in step_history if bool(row.get("progressed", False))),
+            "requested_target_count": len(step_history),
+            "resolved_target_count": sum(1 for row in step_history if str(row.get("status", "") or "").strip().lower() in {"success", "partial", "blocked"}),
+            "remaining_target_count": int(latest_runtime.get("remaining_target_count", 0) or 0),
+            "surface_mode": str(pause_snapshot.get("surface_mode", "") or "").strip(),
+            "exploration_query": str(args.get("query", "") or "").strip(),
+            "hypothesis_count": int(pause_snapshot.get("hypothesis_count", 0) or 0) if isinstance(pause_snapshot, dict) else 0,
+            "branch_action_count": int(pause_snapshot.get("branch_action_count", 0) or 0) if isinstance(pause_snapshot, dict) else 0,
+            "attempted_target_count": len(
+                [row for row in current_args.get("attempted_targets", []) if isinstance(row, dict)]
+            )
+            if isinstance(current_args.get("attempted_targets", []), list)
+            else 0,
+            "alternative_target_count": int(latest_runtime.get("alternative_target_count", 0) or 0),
+            "alternative_hypothesis_count": int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
+            "alternative_branch_action_count": int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+            "attempted_targets": [
+                dict(row)
+                for row in current_args.get("attempted_targets", [])
+                if isinstance(row, dict)
+            ] if isinstance(current_args.get("attempted_targets", []), list) else [],
+            "surface_signature_history": [
+                str(item).strip()
+                for item in current_args.get("surface_signature_history", [])
+                if str(item).strip()
+            ] if isinstance(current_args.get("surface_signature_history", []), list) else [],
+            "selected_action": latest_selected_action,
+            "selected_candidate_id": latest_selected_candidate_id,
+            "selected_candidate_label": latest_selected_candidate_label,
+            "final_page": {
+                "window_title": str(
+                    pause_snapshot.get("surface_snapshot", {}).get("target_window", {}).get("title", "")
+                    if isinstance(pause_snapshot.get("surface_snapshot", {}), dict)
+                    and isinstance(pause_snapshot.get("surface_snapshot", {}).get("target_window", {}), dict)
+                    else ""
+                ).strip(),
+                "surface_mode": str(pause_snapshot.get("surface_mode", "") or "").strip(),
+            },
+            "page_history": step_history,
+            "step_count": len(step_history),
+            "steps_completed": sum(1 for row in step_history if bool(row.get("progressed", False))),
+            "max_steps": max_exploration_steps,
+            "auto_continued": len(step_history) > 1,
+        }
+        mission_record = self._persist_paused_mission(
+            mission_kind="exploration",
+            args=args,
+            blocking_surface=blocking_surface,
+            resume_contract=resume_contract,
+            mission_payload=pause_payload,
+            warnings=self._dedupe_strings(
+                [str(item).strip() for item in current_advice.get("warnings", []) if str(item).strip()]
+            ),
+            message=message,
+        )
+        if mission_record:
+            pause_payload["mission_record"] = mission_record
+        verification_status = "passed" if results else "skipped"
+        verification = {
+            "enabled": bool(args.get("verify_after_action", True)),
+            "status": verification_status,
+            "verified": bool(results),
+            "message": message,
+            "checks": [
+                {
+                    "name": "exploration_steps_completed",
+                    "passed": len(step_history) > 0,
+                    "steps_completed": len(step_history),
+                },
+                {
+                    "name": "exploration_flow_progress",
+                    "passed": any(bool(row.get("progressed", False)) for row in step_history),
+                    "max_steps": max_exploration_steps,
+                },
+            ],
+        }
+        pause_status = "partial" if results and stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"} else "blocked"
+        exploration_mission = {
+            "enabled": True,
+            "completed": False,
+            "step_count": len(step_history),
+            "steps_completed": sum(1 for row in step_history if bool(row.get("progressed", False))),
+            "max_steps": max_exploration_steps,
+            "auto_continued": len(step_history) > 1,
+            "selected_action": latest_selected_action,
+            "selected_candidate_id": latest_selected_candidate_id,
+            "selected_candidate_label": latest_selected_candidate_label,
+            "surface_mode": str(pause_payload.get("surface_mode", "") or "").strip(),
+            "stop_reason_code": stop_reason_code,
+            "stop_reason": stop_reason,
+            "hypothesis_count": int(pause_payload.get("hypothesis_count", 0) or 0),
+            "branch_action_count": int(pause_payload.get("branch_action_count", 0) or 0),
+            "attempted_target_count": int(pause_payload.get("attempted_target_count", 0) or 0),
+            "alternative_target_count": int(pause_payload.get("alternative_target_count", 0) or 0),
+            "alternative_hypothesis_count": int(pause_payload.get("alternative_hypothesis_count", 0) or 0),
+            "alternative_branch_action_count": int(pause_payload.get("alternative_branch_action_count", 0) or 0),
+            "attempted_targets_tail": [
+                dict(row)
+                for row in pause_payload.get("attempted_targets", [])[-6:]
+                if isinstance(row, dict)
+            ] if isinstance(pause_payload.get("attempted_targets", []), list) else [],
+            "surface_signature_history": [
+                str(item).strip()
+                for item in pause_payload.get("surface_signature_history", [])
+                if str(item).strip()
+            ] if isinstance(pause_payload.get("surface_signature_history", []), list) else [],
+            "automation_ready": bool(pause_snapshot.get("automation_ready", False)) if isinstance(pause_snapshot, dict) else False,
+            "manual_attention_required": bool(pause_snapshot.get("manual_attention_required", False)) if isinstance(pause_snapshot, dict) else False,
+            "next_actions": self._dedupe_strings(
+                [
+                    *[
+                        str(row.get("suggested_action", "") or "").strip()
+                        for row in pause_snapshot.get("top_hypotheses", [])
+                        if isinstance(row, dict) and str(row.get("suggested_action", "") or "").strip()
+                    ],
+                    *[
+                        str(row.get("action", "") or "").strip()
+                        for row in pause_snapshot.get("branch_actions", [])
+                        if isinstance(row, dict) and str(row.get("action", "") or "").strip()
+                    ],
+                ]
+            )[:8] if isinstance(pause_snapshot, dict) else [],
+            "blocking_surface": blocking_surface,
+            "resume_contract": resume_contract,
+            "step_history": step_history,
+            "mission_record": mission_record,
+        }
+        return {
+            "attempt": attempt_index,
+            "strategy_id": str(strategy.get("strategy_id", f"attempt_{attempt_index}") or f"attempt_{attempt_index}"),
+            "strategy_title": str(strategy.get("title", f"Attempt {attempt_index}") or f"Attempt {attempt_index}"),
+            "strategy_reason": str(strategy.get("reason", "") or "").strip(),
+            "payload": self._sanitize_payload_for_response(args),
+            "status": pause_status,
+            "message": message,
+            "final_action": latest_selected_action or EXPLORATION_FLOW_ACTION,
+            "results": results,
+            "advice": {
+                **current_advice,
+                "action": EXPLORATION_FLOW_ACTION,
+                "route_mode": "surface_exploration_flow",
+                "exploration_plan": pause_snapshot if isinstance(pause_snapshot, dict) else current_advice.get("exploration_plan", {}),
+                "resume_action": EXPLORATION_FLOW_ACTION,
+                "resume_contract": resume_contract,
+                "blocking_surface": blocking_surface,
+                "mission_record": mission_record,
+            },
+            "verification": verification,
+            "mission_record": mission_record,
+            "exploration_mission": exploration_mission,
+        }
+
+    def _surface_exploration_hypotheses(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        surface_mode: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        query_targets = [dict(row) for row in snapshot.get("query_targets", []) if isinstance(row, dict)]
+        related_candidates = [dict(row) for row in snapshot.get("query_related_candidates", []) if isinstance(row, dict)]
+        selection_candidates = [dict(row) for row in snapshot.get("selection_candidates", []) if isinstance(row, dict)]
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        dialog_targets = [
+            dict(row)
+            for row in safety_signals.get("dialog_button_targets", [])
+            if isinstance(row, dict)
+        ]
+        form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
+        wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        candidate_specs: List[tuple[str, Dict[str, Any]]] = []
+        for source_name, rows in (
+            ("query_target", query_targets),
+            ("related_candidate", related_candidates),
+            ("selection_candidate", selection_candidates),
+            ("dialog_button", dialog_targets),
+            ("navigation_target", [dict(row) for row in form_page_state.get("available_navigation_targets", []) if isinstance(row, dict)]),
+            ("tab_target", [dict(row) for row in form_page_state.get("available_tabs", []) if isinstance(row, dict)]),
+            ("drilldown_target", [dict(row) for row in form_page_state.get("available_drilldown_targets", []) if isinstance(row, dict)]),
+            ("expandable_group", [dict(row) for row in form_page_state.get("available_expandable_groups", []) if isinstance(row, dict)]),
+            ("wizard_requirement", [dict(row) for row in wizard_page_state.get("pending_requirements", []) if isinstance(row, dict)]),
+            ("form_requirement", [dict(row) for row in form_page_state.get("pending_requirements", []) if isinstance(row, dict)]),
+        ):
+            for row in rows:
+                candidate_specs.append((source_name, row))
+
+        hypotheses: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for source_name, candidate in candidate_specs:
+            candidate_key = self._element_identity_key(candidate) or "|".join(
+                [
+                    source_name,
+                    str(candidate.get("name", "") or "").strip(),
+                    str(candidate.get("control_type", "") or "").strip(),
+                ]
+            )
+            if not candidate_key or candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            hypothesis = self._surface_exploration_hypothesis(
+                candidate=candidate,
+                source_name=source_name,
+                snapshot=snapshot,
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                surface_mode=surface_mode,
+            )
+            if isinstance(hypothesis, dict) and hypothesis:
+                hypotheses.append(hypothesis)
+        hypotheses.sort(
+            key=lambda row: (
+                -float(row.get("score", 0.0) or 0.0),
+                1 if bool(row.get("manual_attention_required", False)) else 0,
+                str(row.get("label", "") or "").lower(),
+            )
+        )
+        return hypotheses[: max(1, min(int(limit or 8), 12))]
+
+    def _surface_exploration_hypothesis(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        source_name: str,
+        snapshot: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        surface_mode: str,
+    ) -> Dict[str, Any]:
+        normalized_candidate = self._element_state_summary(
+            dict(candidate),
+            match_score=float(candidate.get("match_score")) if isinstance(candidate.get("match_score"), (int, float)) else None,
+        )
+        label = str(normalized_candidate.get("name", "") or "").strip()
+        control_type = self._normalize_probe_text(normalized_candidate.get("control_type", ""))
+        if not label and not control_type:
+            return {}
+        surface_flags = snapshot.get("surface_flags", {}) if isinstance(snapshot.get("surface_flags", {}), dict) else {}
+        safety_signals = snapshot.get("safety_signals", {}) if isinstance(snapshot.get("safety_signals", {}), dict) else {}
+        suggested_action = self._surface_exploration_action_for_candidate(
+            candidate=normalized_candidate,
+            source_name=source_name,
+            surface_flags=surface_flags,
+            safety_signals=safety_signals,
+        )
+        if not suggested_action:
+            return {}
+        app_hint = str(app_name or snapshot.get("filters", {}).get("app_name", "") or "").strip()
+        window_hint = str(
+            window_title
+            or snapshot.get("target_window", {}).get("title", "")
+            or snapshot.get("filters", {}).get("window_title", "")
+            or ""
+        ).strip()
+        action_payload: Dict[str, Any] = {
+            "action": suggested_action,
+        }
+        if app_hint:
+            action_payload["app_name"] = app_hint
+        if window_hint:
+            action_payload["window_title"] = window_hint
+        target_query = label or str(query or "").strip()
+        if suggested_action in {
+            "click",
+            "select_list_item",
+            "select_tree_item",
+            "expand_tree_item",
+            "select_sidebar_item",
+            "select_context_menu_item",
+            "press_dialog_button",
+            "select_tab_page",
+            "open_dropdown",
+            "focus_input_field",
+            "focus_checkbox",
+            "select_radio_option",
+            "select_table_row",
+            "invoke_toolbar_action",
+        } and target_query:
+            action_payload["query"] = target_query
+        if str(normalized_candidate.get("element_id", "") or "").strip():
+            action_payload["element_id"] = str(normalized_candidate.get("element_id", "") or "").strip()
+        if str(normalized_candidate.get("control_type", "") or "").strip():
+            action_payload["control_type"] = str(normalized_candidate.get("control_type", "") or "").strip()
+
+        recommended_path = self._surface_exploration_action_path(
+            suggested_action=suggested_action,
+            action_payload=action_payload,
+            candidate=normalized_candidate,
+            surface_flags=surface_flags,
+            source_name=source_name,
+        )
+        source_base_scores = {
+            "query_target": 0.9,
+            "dialog_button": 0.88,
+            "navigation_target": 0.84,
+            "tab_target": 0.84,
+            "drilldown_target": 0.8,
+            "expandable_group": 0.78,
+            "selection_candidate": 0.74,
+            "related_candidate": 0.68,
+            "wizard_requirement": 0.7,
+            "form_requirement": 0.7,
+        }
+        score = float(source_base_scores.get(source_name, 0.6))
+        explicit_match = (
+            float(candidate.get("match_score"))
+            if isinstance(candidate.get("match_score"), (int, float))
+            else self._element_query_match_score(candidate, query) if str(query or "").strip() else 0.0
+        )
+        score += min(0.2, max(0.0, explicit_match) * 0.18)
+        if self._coerce_surface_bool(normalized_candidate.get("enabled")) is not False:
+            score += 0.03
+        if self._coerce_surface_bool(normalized_candidate.get("visible")) is not False:
+            score += 0.03
+        if suggested_action == "press_dialog_button" and bool(safety_signals.get("destructive_warning_visible", False)):
+            score -= 0.18
+        already_active = bool(
+            self._coerce_surface_bool(normalized_candidate.get("selected")) is True
+            or self._coerce_surface_bool(normalized_candidate.get("checked")) is True
+            or (suggested_action == "expand_tree_item" and self._coerce_surface_bool(normalized_candidate.get("expanded")) is True)
+        )
+        if already_active:
+            score -= 0.06
+        confidence = max(0.05, min(0.99, round(score, 3)))
+        state_tags = [
+            tag
+            for tag, enabled in (
+                ("enabled", self._coerce_surface_bool(normalized_candidate.get("enabled")) is not False),
+                ("visible", self._coerce_surface_bool(normalized_candidate.get("visible")) is not False),
+                ("selected", self._coerce_surface_bool(normalized_candidate.get("selected")) is True),
+                ("checked", self._coerce_surface_bool(normalized_candidate.get("checked")) is True),
+                ("expanded", self._coerce_surface_bool(normalized_candidate.get("expanded")) is True),
+            )
+            if enabled
+        ]
+        manual_attention_required = bool(
+            safety_signals.get("destructive_warning_visible", False)
+            or safety_signals.get("admin_approval_required", False)
+            or safety_signals.get("secure_desktop_likely", False)
+        )
+        return {
+            "candidate_id": self._element_identity_key(normalized_candidate) or f"{source_name}:{label}:{control_type}",
+            "label": label or str(normalized_candidate.get("automation_id", "") or "").strip() or control_type or "target",
+            "control_type": str(normalized_candidate.get("control_type", "") or "").strip(),
+            "source": source_name,
+            "surface_mode": surface_mode,
+            "score": confidence,
+            "confidence": confidence,
+            "query_match_score": round(max(0.0, explicit_match), 3),
+            "suggested_action": suggested_action,
+            "action_payload": action_payload,
+            "recommended_path": recommended_path,
+            "state_tags": state_tags,
+            "already_active": already_active,
+            "manual_attention_required": manual_attention_required,
+            "reason": self._surface_exploration_reason(
+                candidate=normalized_candidate,
+                source_name=source_name,
+                suggested_action=suggested_action,
+                query=query,
+                already_active=already_active,
+            ),
+            "candidate_state": normalized_candidate,
+        }
+
+    def _surface_exploration_branch_actions(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        workflow_surfaces = [dict(row) for row in snapshot.get("workflow_surfaces", []) if isinstance(row, dict)]
+        recommended_actions = [str(action).strip().lower() for action in snapshot.get("recommended_actions", []) if str(action).strip()]
+        app_hint = str(app_name or snapshot.get("filters", {}).get("app_name", "") or "").strip()
+        window_hint = str(
+            window_title
+            or snapshot.get("target_window", {}).get("title", "")
+            or snapshot.get("filters", {}).get("window_title", "")
+            or ""
+        ).strip()
+        rows: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for workflow in workflow_surfaces:
+            action_name = str(workflow.get("action", "") or "").strip().lower()
+            if not action_name or action_name in seen:
+                continue
+            if not bool(workflow.get("matched", False)) and action_name not in recommended_actions:
+                continue
+            seen.add(action_name)
+            definition = self._workflow_definition(action_name)
+            payload: Dict[str, Any] = {"action": action_name}
+            if app_hint:
+                payload["app_name"] = app_hint
+            if window_hint:
+                payload["window_title"] = window_hint
+            if bool(definition.get("requires_input", False)) and str(query or "").strip():
+                input_field = str(definition.get("input_field", "") or "").strip()
+                if input_field and input_field.lower() != "none":
+                    payload[input_field] = str(query).strip()
+                    if input_field != "query":
+                        payload["query"] = str(query).strip()
+            rows.append(
+                {
+                    "action": action_name,
+                    "title": str(workflow.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()),
+                    "matched": bool(workflow.get("matched", False)),
+                    "supported": bool(workflow.get("supported", False)),
+                    "confidence": 0.88 if bool(workflow.get("matched", False)) else 0.72,
+                    "reason": (
+                        "This workflow already matches the visible surface."
+                        if bool(workflow.get("matched", False))
+                        else "This workflow is supported for the current surface and profile."
+                    ),
+                    "action_payload": payload,
+                    "recommended_followups": [str(item).strip() for item in workflow.get("recommended_followups", []) if str(item).strip()][:6],
+                }
+            )
+        for action_name in recommended_actions:
+            if action_name in seen:
+                continue
+            seen.add(action_name)
+            definition = self._workflow_definition(action_name)
+            payload: Dict[str, Any] = {"action": action_name}
+            if app_hint:
+                payload["app_name"] = app_hint
+            if window_hint:
+                payload["window_title"] = window_hint
+            if bool(definition.get("requires_input", False)) and str(query or "").strip():
+                input_field = str(definition.get("input_field", "") or "").strip()
+                if input_field and input_field.lower() != "none":
+                    payload[input_field] = str(query).strip()
+                    if input_field != "query":
+                        payload["query"] = str(query).strip()
+            rows.append(
+                {
+                    "action": action_name,
+                    "title": str(definition.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()),
+                    "matched": False,
+                    "supported": True,
+                    "confidence": 0.68,
+                    "reason": "The current surface recommends this next action.",
+                    "action_payload": payload,
+                    "recommended_followups": [str(item).strip() for item in definition.get("recommended_followups", []) if str(item).strip()][:6],
+                }
+            )
+        rows.sort(key=lambda row: (-float(row.get("confidence", 0.0) or 0.0), str(row.get("action", "") or "")))
+        return rows[: max(1, min(int(limit or 8), 12))]
+
+    def _surface_exploration_action_for_candidate(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        source_name: str,
+        surface_flags: Dict[str, Any],
+        safety_signals: Dict[str, Any],
+    ) -> str:
+        control_type = self._normalize_probe_text(candidate.get("control_type", ""))
+        dialog_visible = bool(surface_flags.get("dialog_visible", False) or safety_signals.get("dialog_visible", False))
+        if source_name == "dialog_button":
+            return "press_dialog_button"
+        if source_name == "navigation_target" and control_type in {"treeitem", "listitem"}:
+            return "select_sidebar_item"
+        if source_name == "tab_target" or control_type == "tabitem":
+            return "select_tab_page"
+        if source_name == "expandable_group":
+            return "expand_tree_item"
+        if source_name == "drilldown_target":
+            return "click"
+        if control_type in {"button", "splitbutton"}:
+            return "press_dialog_button" if dialog_visible else "click"
+        if control_type == "hyperlink":
+            return "click"
+        if control_type == "menuitem":
+            return "select_context_menu_item" if bool(surface_flags.get("context_menu_visible", False)) else "click"
+        if control_type == "listitem":
+            if bool(surface_flags.get("sidebar_visible", False)) and not bool(surface_flags.get("main_content_visible", False)):
+                return "select_sidebar_item"
+            return "select_list_item"
+        if control_type == "treeitem":
+            return "expand_tree_item" if self._coerce_surface_bool(candidate.get("expanded")) is False else "select_tree_item"
+        if control_type in {"dataitem", "row"}:
+            return "select_table_row"
+        if control_type == "combobox":
+            return "open_dropdown"
+        if control_type in {"edit", "document"}:
+            return "focus_input_field"
+        if control_type == "checkbox":
+            return "focus_checkbox"
+        if control_type == "radiobutton":
+            return "select_radio_option"
+        if control_type in {"toolbar", "tool bar"}:
+            return "focus_toolbar"
+        return "click"
+
+    def _surface_exploration_action_path(
+        self,
+        *,
+        suggested_action: str,
+        action_payload: Dict[str, Any],
+        candidate: Dict[str, Any],
+        surface_flags: Dict[str, Any],
+        source_name: str,
+    ) -> List[Dict[str, Any]]:
+        prep_steps: List[Dict[str, Any]] = []
+        clean_action = str(suggested_action or "").strip().lower()
+        if clean_action == "select_sidebar_item" and not bool(surface_flags.get("sidebar_visible", False)):
+            prep_steps.append(
+                self._plan_step(
+                    action="focus_sidebar",
+                    args={},
+                    phase="recon_prep",
+                    optional=False,
+                    reason="Focus the visible sidebar before selecting a sidebar target.",
+                )
+            )
+        elif clean_action in {"select_tree_item", "expand_tree_item"} and not bool(
+            surface_flags.get("tree_visible", False) or surface_flags.get("folder_tree_visible", False) or surface_flags.get("navigation_tree_visible", False)
+        ):
+            prep_steps.append(
+                self._plan_step(
+                    action="focus_navigation_tree",
+                    args={},
+                    phase="recon_prep",
+                    optional=False,
+                    reason="Focus the navigation tree before targeting a tree item.",
+                )
+            )
+        elif clean_action == "select_list_item" and not bool(
+            surface_flags.get("list_visible", False) or surface_flags.get("file_list_visible", False) or surface_flags.get("message_list_visible", False)
+        ):
+            prep_steps.append(
+                self._plan_step(
+                    action="focus_list_surface",
+                    args={},
+                    phase="recon_prep",
+                    optional=False,
+                    reason="Focus the list surface before selecting a list item.",
+                )
+            )
+        elif clean_action == "select_table_row" and not bool(surface_flags.get("table_visible", False)):
+            prep_steps.append(
+                self._plan_step(
+                    action="focus_data_table",
+                    args={},
+                    phase="recon_prep",
+                    optional=False,
+                    reason="Focus the data table before selecting a table row.",
+                )
+            )
+        elif clean_action == "focus_input_field" and bool(surface_flags.get("sidebar_visible", False)) and not bool(surface_flags.get("main_content_visible", False)):
+            prep_steps.append(
+                self._plan_step(
+                    action="focus_main_content",
+                    args={},
+                    phase="recon_prep",
+                    optional=False,
+                    reason="Move focus into the main content area before targeting an input field.",
+                )
+            )
+        action_reason = (
+            f"Act on the surfaced {str(candidate.get('control_type', '') or 'control').strip() or 'control'} target"
+            if source_name != "dialog_button"
+            else "Press the surfaced dialog button target."
+        )
+        prep_steps.append(
+            self._plan_step(
+                action=clean_action,
+                args=action_payload,
+                phase="recon_action",
+                optional=False,
+                reason=action_reason,
+            )
+        )
+        return prep_steps
+
+    def _surface_exploration_reason(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        source_name: str,
+        suggested_action: str,
+        query: str,
+        already_active: bool,
+    ) -> str:
+        label = str(candidate.get("name", "") or "").strip() or "target"
+        source_messages = {
+            "query_target": "directly matched the requested query",
+            "related_candidate": "is closely related to the matched target",
+            "selection_candidate": "looks selectable on the current surface",
+            "dialog_button": "is exposed as a live dialog action",
+            "navigation_target": "is exposed as a navigation target on the current page",
+            "tab_target": "is exposed as an available tab on the current page",
+            "drilldown_target": "looks like a nested page or deeper settings entry",
+            "expandable_group": "looks like a collapsed group that may reveal more controls",
+            "wizard_requirement": "looks like a wizard requirement that should be resolved before continuing",
+            "form_requirement": "looks like a form requirement that should be resolved before committing",
+        }
+        reason = f"{label} {source_messages.get(source_name, 'is visible on the current surface')}."
+        if str(query or "").strip():
+            reason = f"{reason} Query: {str(query).strip()}."
+        if already_active:
+            reason = f"{reason} The target already appears active, so this path may be more useful as a refocus or verification step."
+        return f"{reason} Suggested action: {suggested_action}."
+
+    def _surface_exploration_surface_mode(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        surface_flags: Dict[str, Any],
+        safety_signals: Dict[str, Any],
+        snapshot: Dict[str, Any],
+    ) -> str:
+        if bool(surface_flags.get("dialog_visible", False) or safety_signals.get("dialog_visible", False)):
+            return "dialog"
+        if bool(snapshot.get("wizard_page_state", {})):
+            return "wizard"
+        if bool(snapshot.get("form_page_state", {})):
+            return "form"
+        if bool(surface_flags.get("tree_visible", False) or surface_flags.get("folder_tree_visible", False) or surface_flags.get("navigation_tree_visible", False)):
+            return "tree_navigation"
+        if bool(surface_flags.get("sidebar_visible", False)):
+            return "sidebar_navigation"
+        if bool(surface_flags.get("table_visible", False)):
+            return "table_navigation"
+        if bool(surface_flags.get("list_visible", False) or surface_flags.get("file_list_visible", False) or surface_flags.get("message_list_visible", False)):
+            return "list_navigation"
+        category = str(app_profile.get("category", "") or "").strip().lower()
+        return f"{category}_surface" if category else "generic_surface"
 
     def _surface_flags(
         self,

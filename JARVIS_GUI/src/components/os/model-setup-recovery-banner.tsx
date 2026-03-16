@@ -51,6 +51,8 @@ export default function ModelSetupRecoveryBanner({
     resumeAdvice,
     watchdogHistory,
     latestWatchdogRun,
+    supervisorStatus,
+    backendSupervisorEnabled,
     autoResumeCandidateCount,
     resumeReadyCount,
     manualAttentionCount,
@@ -68,6 +70,8 @@ export default function ModelSetupRecoveryBanner({
     sweepRecovery,
     watchdogRecovery,
     resetWatchdogHistory,
+    configureWatchdogSupervisor,
+    triggerWatchdogSupervisor,
   } = useModelSetupRecovery();
 
   if (!latestMission && !loading) {
@@ -99,6 +103,8 @@ export default function ModelSetupRecoveryBanner({
   const latestWatchdogUpdatedAt = formatTimestamp(
     String(latestWatchdogRun?.updated_at ?? latestWatchdogRun?.created_at ?? '')
   );
+  const supervisorIntervalS = Number(supervisorStatus?.interval_s ?? 0);
+  const supervisorLastTick = formatTimestamp(String(supervisorStatus?.last_tick_at ?? ''));
 
   return (
     <div
@@ -127,6 +133,9 @@ export default function ModelSetupRecoveryBanner({
             {runningCount > 0 ? <Badge variant="outline">running:{runningCount}</Badge> : null}
             {stalledCount > 0 ? <Badge variant="destructive">stalled:{stalledCount}</Badge> : null}
             {watchActiveRuns ? <Badge variant="outline">watch</Badge> : null}
+            <Badge variant={backendSupervisorEnabled ? 'secondary' : 'outline'}>
+              daemon:{backendSupervisorEnabled ? 'on' : 'off'}
+            </Badge>
           </div>
           <p className="text-sm text-primary/90">{summaryText}</p>
           <p className="text-[11px] text-muted-foreground">
@@ -136,12 +145,25 @@ export default function ModelSetupRecoveryBanner({
             {activeRunHealth ? ` • health: ${activeRunHealth}` : ''}
             {dynamicPollMs > 0 ? ` • poll: ${Math.round(dynamicPollMs / 1000)}s` : ''}
             {watchdogCount > 0 ? ` • watchdog runs: ${watchdogCount}` : ''}
+            {backendSupervisorEnabled && supervisorIntervalS > 0
+              ? ` • daemon interval: ${Math.round(supervisorIntervalS)}s`
+              : ''}
           </p>
           {watchdogCount > 0 ? (
             <p className="text-[11px] text-muted-foreground">
               latest watchdog: {String(latestWatchdogRun?.status ?? 'unknown')}
               {' • '}updated: {latestWatchdogUpdatedAt}
               {latestWatchdogSummary ? ` • ${latestWatchdogSummary}` : ''}
+            </p>
+          ) : null}
+          {supervisorStatus ? (
+            <p className="text-[11px] text-muted-foreground">
+              daemon: {backendSupervisorEnabled ? 'enabled' : 'disabled'}
+              {' • '}active: {Boolean(supervisorStatus.active) ? 'yes' : 'no'}
+              {' • '}last tick: {supervisorLastTick}
+              {String(supervisorStatus.last_result_status ?? '').trim()
+                ? ` • last result: ${String(supervisorStatus.last_result_status ?? '').trim()}`
+                : ''}
             </p>
           ) : null}
         </div>
@@ -305,6 +327,72 @@ export default function ModelSetupRecoveryBanner({
           >
             {watchdogging ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5" />}
             Watchdog
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+            onClick={async () => {
+              try {
+                const payload = await configureWatchdogSupervisor({
+                  enabled: !backendSupervisorEnabled,
+                  intervalS: supervisorIntervalS > 0 ? supervisorIntervalS : 45,
+                  currentScope: false,
+                });
+                toast({
+                  title: backendSupervisorEnabled ? 'Recovery Daemon Disabled' : 'Recovery Daemon Enabled',
+                  description:
+                    String(payload?.last_result_message ?? '').trim() ||
+                    (backendSupervisorEnabled
+                      ? 'JARVIS stopped automatic local-model recovery ticks.'
+                      : 'JARVIS will now run bounded local-model recovery ticks in the background.'),
+                });
+              } catch (error) {
+                toast({
+                  variant: 'destructive',
+                  title: 'Recovery Daemon Update Failed',
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : 'JARVIS could not update the local-model recovery daemon.',
+                });
+              }
+            }}
+            disabled={loading || watchdogging}
+          >
+            <BrainCircuit className="h-3.5 w-3.5" />
+            {backendSupervisorEnabled ? 'Disable Daemon' : 'Enable Daemon'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+            onClick={async () => {
+              try {
+                const payload = await triggerWatchdogSupervisor({
+                  currentScope: false,
+                });
+                toast({
+                  title: 'Recovery Daemon Triggered',
+                  description:
+                    String(payload?.message ?? '').trim() ||
+                    'JARVIS ran a bounded background recovery tick.',
+                });
+              } catch (error) {
+                toast({
+                  variant: 'destructive',
+                  title: 'Recovery Daemon Trigger Failed',
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : 'JARVIS could not trigger the recovery daemon.',
+                });
+              }
+            }}
+            disabled={loading || watchdogging}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Trigger Daemon
           </Button>
           <Button
             type="button"

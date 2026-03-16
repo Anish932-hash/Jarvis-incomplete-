@@ -61,10 +61,14 @@ import {
   type CoworkerStackStatusResponse,
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
+  type DesktopExplorationMission,
   type DesktopInteractInput,
   type DesktopInteractResponse,
+  type DesktopRecoveryDaemonStatusResponse,
+  type DesktopRecoveryWatchdogHistoryResponse,
   type DesktopMissionRecord,
   type DesktopMissionSnapshotResponse,
+  type DesktopSurfaceExplorationResponse,
   type GoalListItem,
   type ModelBridgeProfile,
   type ModelBridgeProfilesResponse,
@@ -74,6 +78,7 @@ import {
   type ModelSetupInstallHistoryResponse,
   type ModelSetupInstallResponse,
   type ModelSetupRecoveryWatchdogHistoryResponse,
+  type ModelSetupRecoveryWatchdogSupervisorStatusResponse,
   type ModelSetupManualPipelineResponse,
   type ModelSetupManualRun,
   type ModelSetupManualRunHistoryResponse,
@@ -149,7 +154,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Activity, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, TerminalSquare, Trash2 } from 'lucide-react';
+import { Activity, BrainCircuit, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, Sparkles, TerminalSquare, Trash2, Workflow } from 'lucide-react';
 import { ARG_TEMPLATES, QUICK_ACTIONS } from './action-templates';
 import { validateActionArgs } from './action-arg-validation';
 import VoiceContinuousLifecyclePanel from './voice-continuous-lifecycle-panel';
@@ -1091,9 +1096,20 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopCoworkerVerifyText, setDesktopCoworkerVerifyText] = useState('');
   const [desktopCoworkerRetryOnVerificationFailure, setDesktopCoworkerRetryOnVerificationFailure] = useState(true);
   const [desktopCoworkerMaxStrategyAttempts, setDesktopCoworkerMaxStrategyAttempts] = useState(2);
+  const [desktopCoworkerMaxExplorationSteps, setDesktopCoworkerMaxExplorationSteps] = useState(3);
   const [desktopCoworkerBusy, setDesktopCoworkerBusy] = useState(false);
   const [desktopCoworkerAdvice, setDesktopCoworkerAdvice] = useState<DesktopActionAdviceResponse | null>(null);
   const [desktopCoworkerResult, setDesktopCoworkerResult] = useState<DesktopInteractResponse | null>(null);
+  const [desktopCoworkerExploration, setDesktopCoworkerExploration] = useState<DesktopSurfaceExplorationResponse | null>(null);
+  const [desktopCoworkerExplorationBusy, setDesktopCoworkerExplorationBusy] = useState(false);
+  const [desktopCoworkerExplorationAdvanceBusy, setDesktopCoworkerExplorationAdvanceBusy] = useState(false);
+  const [desktopCoworkerExplorationFlowBusy, setDesktopCoworkerExplorationFlowBusy] = useState(false);
+  const desktopCoworkerExplorationMission = useMemo(() => {
+    const payload = desktopCoworkerResult?.exploration_mission;
+    return payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as DesktopExplorationMission)
+      : null;
+  }, [desktopCoworkerResult]);
   const [desktopMissionSnapshot, setDesktopMissionSnapshot] = useState<DesktopMissionSnapshotResponse | null>(null);
   const [desktopMissionStatusFilter, setDesktopMissionStatusFilter] = useState('paused');
   const [desktopMissionKindFilter, setDesktopMissionKindFilter] = useState('');
@@ -1102,6 +1118,12 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopMissionSnapshotBusy, setDesktopMissionSnapshotBusy] = useState(false);
   const [desktopMissionResumeBusy, setDesktopMissionResumeBusy] = useState(false);
   const [desktopMissionResetBusy, setDesktopMissionResetBusy] = useState(false);
+  const [desktopRecoveryDaemonStatus, setDesktopRecoveryDaemonStatus] = useState<DesktopRecoveryDaemonStatusResponse | null>(null);
+  const [desktopRecoveryDaemonBusy, setDesktopRecoveryDaemonBusy] = useState(false);
+  const [desktopRecoveryDaemonTriggerBusy, setDesktopRecoveryDaemonTriggerBusy] = useState(false);
+  const [desktopRecoveryWatchdogHistory, setDesktopRecoveryWatchdogHistory] =
+    useState<DesktopRecoveryWatchdogHistoryResponse | null>(null);
+  const [desktopRecoveryWatchdogBusy, setDesktopRecoveryWatchdogBusy] = useState(false);
   const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
   const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
   const [approvalPrompt, setApprovalPrompt] = useState<PendingApprovalPrompt | null>(null);
@@ -1229,6 +1251,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [modelSetupPreflightState, setModelSetupPreflightState] = useState<ModelSetupPreflightResponse | null>(null);
   const [modelSetupInstallHistoryState, setModelSetupInstallHistoryState] = useState<ModelSetupInstallHistoryResponse | null>(null);
   const [modelSetupWatchdogHistoryState, setModelSetupWatchdogHistoryState] = useState<ModelSetupRecoveryWatchdogHistoryResponse | null>(null);
+  const [modelSetupWatchdogSupervisorState, setModelSetupWatchdogSupervisorState] =
+    useState<ModelSetupRecoveryWatchdogSupervisorStatusResponse | null>(null);
   const [modelSetupInstallResult, setModelSetupInstallResult] = useState<ModelSetupInstallResponse | null>(null);
   const [modelBridgeProfilesState, setModelBridgeProfilesState] = useState<ModelBridgeProfilesResponse | null>(null);
   const [loadingRuntimeHealth, setLoadingRuntimeHealth] = useState(false);
@@ -1274,6 +1298,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [modelSetupPreflightLastRefreshAt, setModelSetupPreflightLastRefreshAt] = useState(0);
   const [modelSetupInstallLastRefreshAt, setModelSetupInstallLastRefreshAt] = useState(0);
   const [modelSetupWatchdogHistoryLastRefreshAt, setModelSetupWatchdogHistoryLastRefreshAt] = useState(0);
+  const [modelSetupWatchdogSupervisorLastRefreshAt, setModelSetupWatchdogSupervisorLastRefreshAt] = useState(0);
   const [modelBridgeProfilesLastRefreshAt, setModelBridgeProfilesLastRefreshAt] = useState(0);
   const [modelOperationsLastRefreshAt, setModelOperationsLastRefreshAt] = useState(0);
   const [coworkerStackLastRefreshAt, setCoworkerStackLastRefreshAt] = useState(0);
@@ -1646,6 +1671,7 @@ const modelSetupManualRunsRefreshLockRef = useRef(false);
 const modelSetupPreflightRefreshLockRef = useRef(false);
 const modelSetupInstallHistoryRefreshLockRef = useRef(false);
 const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
+const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const modelSetupManualRunActiveCountRef = useRef(0);
   const modelSetupInstallActiveCountRef = useRef(0);
   const modelBridgeProfilesRefreshLockRef = useRef(false);
@@ -1777,6 +1803,19 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
     }
     return desktopMissionSnapshot.latest_paused as DesktopMissionRecord;
   }, [desktopMissionSnapshot]);
+  const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
+  const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
+  const desktopRecoveryWatchdogLatestRun = useMemo(() => {
+    const latestRun =
+      desktopRecoveryWatchdogHistory?.latest_run && isObjectRecord(desktopRecoveryWatchdogHistory.latest_run)
+        ? desktopRecoveryWatchdogHistory.latest_run
+        : null;
+    if (latestRun) return latestRun;
+    return desktopRecoveryWatchdogHistory?.latest_triggered_run &&
+      isObjectRecord(desktopRecoveryWatchdogHistory.latest_triggered_run)
+      ? desktopRecoveryWatchdogHistory.latest_triggered_run
+      : null;
+  }, [desktopRecoveryWatchdogHistory]);
   const selectedRecoveryProfileMeta = useMemo(() => {
     const normalized = selectedRecoveryProfile.trim().toLowerCase();
     if (!normalized) return null;
@@ -2075,6 +2114,10 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
   const modelSetupLatestWatchdogRun = useMemo(
     () => asObjectRecord(modelSetupWatchdogHistory.latest_run),
     [modelSetupWatchdogHistory]
+  );
+  const modelSetupWatchdogSupervisor = useMemo(
+    () => asObjectRecord(modelSetupWatchdogSupervisorState),
+    [modelSetupWatchdogSupervisorState]
   );
   const modelSetupStoredMissionRunSummary = useMemo(
     () => asObjectRecord(modelSetupStoredMission.active_run_summary),
@@ -7438,6 +7481,29 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
     [resolveModelSetupScope, toast]
   );
 
+  const refreshModelSetupWatchdogSupervisor = useCallback(
+    async (options?: { quiet?: boolean }) => {
+      if (modelSetupWatchdogSupervisorRefreshLockRef.current) return;
+      modelSetupWatchdogSupervisorRefreshLockRef.current = true;
+      try {
+        const payload = await backendClient.modelSetupRecoveryWatchdogSupervisor({ history_limit: 6 });
+        setModelSetupWatchdogSupervisorState(payload);
+        setModelSetupWatchdogSupervisorLastRefreshAt(Date.now());
+      } catch (error) {
+        if (!options?.quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Setup Watchdog Daemon Failed',
+            description: getErrorMessage(error),
+          });
+        }
+      } finally {
+        modelSetupWatchdogSupervisorRefreshLockRef.current = false;
+      }
+    },
+    [toast]
+  );
+
   const refreshModelSetupMission = useCallback(
     async (options?: {
       quiet?: boolean;
@@ -7460,6 +7526,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
         setModelSetupMissionState(payload);
         setModelSetupMissionLastRefreshAt(now);
         await refreshModelSetupWatchdogHistory({ quiet: true, scope });
+        await refreshModelSetupWatchdogSupervisor({ quiet: true });
         if (inlineAdvice) {
           setModelSetupResumeAdviceState(inlineAdvice);
           setModelSetupResumeAdviceLastRefreshAt(now);
@@ -7485,7 +7552,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
         modelSetupMissionRefreshLockRef.current = false;
       }
     },
-    [refreshModelSetupResumeAdvice, refreshModelSetupWatchdogHistory, resolveModelSetupScope, toast]
+    [refreshModelSetupResumeAdvice, refreshModelSetupWatchdogHistory, refreshModelSetupWatchdogSupervisor, resolveModelSetupScope, toast]
   );
 
   const scaffoldModelSetupWorkspace = useCallback(
@@ -7987,6 +8054,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
           refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
           refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
           refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogSupervisor({ quiet: true }),
         ]);
         toast({
           title: dryRun ? 'Setup Mission Preview Ready' : 'Setup Mission Started',
@@ -8076,6 +8144,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
           refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
           refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
           refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogSupervisor({ quiet: true }),
           refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
         ]);
         toast({
@@ -8167,6 +8236,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
           refreshModelSetupPreflight({ quiet: true, scope: responseScope }),
           refreshModelSetupInstallHistory({ quiet: true, scope: responseScope }),
           refreshModelSetupManualRuns({ quiet: true, scope: responseScope }),
+          refreshModelSetupWatchdogSupervisor({ quiet: true }),
           refreshModelSetupWatchdogHistory({ quiet: true, scope: responseScope }),
         ]);
         const triggered = Boolean(payload.auto_resume_triggered);
@@ -8208,6 +8278,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
       refreshModelSetupPreflight,
       refreshModelSetupResumeAdvice,
       refreshModelSetupWatchdogHistory,
+      refreshModelSetupWatchdogSupervisor,
       refreshModelSetupWorkspace,
       resolveModelSetupScope,
       toast,
@@ -8305,6 +8376,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
       refreshModelSetupPreflight,
       refreshModelSetupResumeAdvice,
       refreshModelSetupWatchdogHistory,
+      refreshModelSetupWatchdogSupervisor,
       refreshModelSetupWorkspace,
       resolveModelSetupScope,
       toast,
@@ -8418,6 +8490,7 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
       refreshModelSetupPreflight,
       refreshModelSetupResumeAdvice,
       refreshModelSetupWatchdogHistory,
+      refreshModelSetupWatchdogSupervisor,
       refreshModelSetupWorkspace,
       resolveModelSetupScope,
       toast,
@@ -8453,6 +8526,95 @@ const modelSetupWatchdogHistoryRefreshLockRef = useRef(false);
       }
     },
     [refreshModelSetupWatchdogHistory, resolveModelSetupScope, toast]
+  );
+
+  const configureModelSetupWatchdogSupervisor = useCallback(
+    async (input?: {
+      enabled?: boolean;
+      intervalS?: number;
+      currentScope?: boolean;
+      maxMissions?: number;
+      maxAutoResumes?: number;
+      continueFollowupActions?: boolean;
+      maxFollowupWaves?: number;
+      scope?: ModelSetupScopeDescriptor | null;
+    }) => {
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('watchdog_daemon');
+      try {
+        const scope = resolveModelSetupScope(input?.scope);
+        const payload = await backendClient.updateModelSetupRecoveryWatchdogSupervisor(withModelSetupScope({
+          enabled: input?.enabled,
+          interval_s: input?.intervalS,
+          current_scope: input?.currentScope,
+          max_missions: input?.maxMissions,
+          max_auto_resumes: input?.maxAutoResumes,
+          continue_followup_actions: input?.continueFollowupActions,
+          max_followup_waves: input?.maxFollowupWaves,
+          history_limit: 6,
+        }, scope));
+        setModelSetupWatchdogSupervisorState(payload);
+        setModelSetupWatchdogSupervisorLastRefreshAt(Date.now());
+        await refreshModelSetupWatchdogHistory({ quiet: true, scope });
+        toast({
+          title: Boolean(payload.enabled) ? 'Setup Recovery Daemon Enabled' : 'Setup Recovery Daemon Disabled',
+          description:
+            Boolean(payload.enabled)
+              ? 'JARVIS will keep running bounded local-model recovery ticks in the background.'
+              : 'JARVIS stopped automatic local-model recovery ticks.',
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Recovery Daemon Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [refreshModelSetupWatchdogHistory, resolveModelSetupScope, toast]
+  );
+
+  const triggerModelSetupWatchdogSupervisor = useCallback(
+    async (options?: { scope?: ModelSetupScopeDescriptor | null }) => {
+      setRunningModelSetupMission(true);
+      setRunningModelSetupMissionMode('watchdog_daemon_trigger');
+      try {
+        const scope = resolveModelSetupScope(options?.scope);
+        const payload = await backendClient.triggerModelSetupRecoveryWatchdogSupervisor(withModelSetupScope({
+          current_scope: false,
+          history_limit: 6,
+        }, scope));
+        const supervisor = asObjectRecord(payload.supervisor);
+        if (Object.keys(supervisor).length > 0) {
+          setModelSetupWatchdogSupervisorState(supervisor as ModelSetupRecoveryWatchdogSupervisorStatusResponse);
+          setModelSetupWatchdogSupervisorLastRefreshAt(Date.now());
+        } else {
+          await refreshModelSetupWatchdogSupervisor({ quiet: true });
+        }
+        await refreshModelSetupWatchdogHistory({ quiet: true, scope });
+        await refreshModelSetupMission({ quiet: true, scope });
+        toast({
+          title: 'Setup Recovery Daemon Triggered',
+          description:
+            String(payload.message ?? '').trim() ||
+            String(asObjectRecord(payload.result).message ?? '').trim() ||
+            'JARVIS ran a bounded local-model recovery daemon tick.',
+        });
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Setup Recovery Daemon Trigger Failed',
+          description: getErrorMessage(error),
+        });
+      } finally {
+        setRunningModelSetupMission(false);
+        setRunningModelSetupMissionMode('');
+      }
+    },
+    [refreshModelSetupMission, refreshModelSetupWatchdogHistory, refreshModelSetupWatchdogSupervisor, resolveModelSetupScope, toast]
   );
 
   const resetStoredModelSetupMission = useCallback(
@@ -9521,6 +9683,11 @@ useEffect(() => {
 if (!open || activeTab !== 'runtime' || modelSetupWatchdogHistoryState) return;
 void refreshModelSetupWatchdogHistory({ quiet: true });
 }, [activeTab, modelSetupWatchdogHistoryState, open, refreshModelSetupWatchdogHistory]);
+
+useEffect(() => {
+if (!open || activeTab !== 'runtime' || modelSetupWatchdogSupervisorState) return;
+void refreshModelSetupWatchdogSupervisor({ quiet: true });
+}, [activeTab, modelSetupWatchdogSupervisorState, open, refreshModelSetupWatchdogSupervisor]);
 
 useEffect(() => {
   const activeCount = Number(modelSetupInstallHistoryState?.active_count ?? 0);
@@ -12258,12 +12425,221 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [desktopMissionAppFilter, desktopMissionKindFilter, desktopMissionStatusFilter, toast]
   );
 
+  const refreshDesktopRecoveryDaemonStatus = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopRecoveryDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopRecoveryDaemon({ history_limit: 8 });
+        setDesktopRecoveryDaemonStatus(payload);
+        const daemonSnapshot =
+          payload.snapshot && typeof payload.snapshot === 'object' && !Array.isArray(payload.snapshot)
+            ? (payload.snapshot as DesktopMissionSnapshotResponse)
+            : null;
+        const daemonHistory =
+          payload.watchdog_history &&
+          typeof payload.watchdog_history === 'object' &&
+          !Array.isArray(payload.watchdog_history)
+            ? (payload.watchdog_history as DesktopRecoveryWatchdogHistoryResponse)
+            : null;
+        if (daemonSnapshot) {
+          setDesktopMissionSnapshot(daemonSnapshot);
+        }
+        setDesktopRecoveryWatchdogHistory(daemonHistory);
+        if (!quiet) {
+          toast({
+            title: 'Desktop Recovery Daemon Ready',
+            description:
+              String(payload.last_result_message ?? '').trim() ||
+              `Daemon ${Boolean(payload.enabled) ? 'enabled' : 'disabled'} • last result: ${String(payload.last_result_status ?? 'idle')}.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Desktop Recovery Daemon Refresh Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopRecoveryDaemonBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const configureDesktopRecoveryDaemon = useCallback(
+    async ({
+      enabled,
+      intervalS,
+      limit,
+      maxAutoResumes,
+      missionStatus,
+      missionKind,
+      appName,
+      stopReasonCode,
+      resumeForce,
+    }: {
+      enabled?: boolean;
+      intervalS?: number;
+      limit?: number;
+      maxAutoResumes?: number;
+      missionStatus?: string;
+      missionKind?: string;
+      appName?: string;
+      stopReasonCode?: string;
+      resumeForce?: boolean;
+    } = {}) => {
+      setDesktopRecoveryDaemonBusy(true);
+      try {
+        const payload = await backendClient.updateDesktopRecoveryDaemon({
+          enabled,
+          interval_s: intervalS,
+          limit,
+          max_auto_resumes: maxAutoResumes,
+          mission_status: missionStatus,
+          mission_kind: missionKind,
+          app_name: appName,
+          stop_reason_code: stopReasonCode,
+          resume_force: resumeForce,
+          history_limit: 8,
+        });
+        setDesktopRecoveryDaemonStatus(payload);
+        const daemonSnapshot =
+          payload.snapshot && typeof payload.snapshot === 'object' && !Array.isArray(payload.snapshot)
+            ? (payload.snapshot as DesktopMissionSnapshotResponse)
+            : null;
+        const daemonHistory =
+          payload.watchdog_history &&
+          typeof payload.watchdog_history === 'object' &&
+          !Array.isArray(payload.watchdog_history)
+            ? (payload.watchdog_history as DesktopRecoveryWatchdogHistoryResponse)
+            : null;
+        if (daemonSnapshot) {
+          setDesktopMissionSnapshot(daemonSnapshot);
+        } else {
+          await refreshDesktopMissions({ quiet: true });
+        }
+        setDesktopRecoveryWatchdogHistory(daemonHistory);
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Recovery Daemon Update Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopRecoveryDaemonBusy(false);
+      }
+    },
+    [refreshDesktopMissions, toast]
+  );
+
+  const triggerDesktopRecoveryDaemon = useCallback(
+    async ({
+      limit,
+      maxAutoResumes,
+      missionStatus,
+      missionKind,
+      appName,
+      stopReasonCode,
+      resumeForce,
+    }: {
+      limit?: number;
+      maxAutoResumes?: number;
+      missionStatus?: string;
+      missionKind?: string;
+      appName?: string;
+      stopReasonCode?: string;
+      resumeForce?: boolean;
+    } = {}) => {
+      setDesktopRecoveryDaemonTriggerBusy(true);
+      try {
+        const payload = await backendClient.triggerDesktopRecoveryDaemon({
+          limit,
+          max_auto_resumes: maxAutoResumes,
+          mission_status: missionStatus,
+          mission_kind: missionKind,
+          app_name: appName,
+          stop_reason_code: stopReasonCode,
+          resume_force: resumeForce,
+          history_limit: 8,
+        });
+        const supervisor =
+          payload.supervisor && typeof payload.supervisor === 'object' && !Array.isArray(payload.supervisor)
+            ? (payload.supervisor as DesktopRecoveryDaemonStatusResponse)
+            : null;
+        if (supervisor) {
+          setDesktopRecoveryDaemonStatus(supervisor);
+          const daemonSnapshot =
+            supervisor.snapshot && typeof supervisor.snapshot === 'object' && !Array.isArray(supervisor.snapshot)
+              ? (supervisor.snapshot as DesktopMissionSnapshotResponse)
+              : null;
+          const daemonHistory =
+            supervisor.watchdog_history &&
+            typeof supervisor.watchdog_history === 'object' &&
+            !Array.isArray(supervisor.watchdog_history)
+              ? (supervisor.watchdog_history as DesktopRecoveryWatchdogHistoryResponse)
+              : null;
+          if (daemonSnapshot) {
+            setDesktopMissionSnapshot(daemonSnapshot);
+          } else {
+            await refreshDesktopMissions({ quiet: true });
+          }
+          setDesktopRecoveryWatchdogHistory(daemonHistory);
+        } else {
+          await refreshDesktopMissions({ quiet: true });
+          await refreshDesktopRecoveryDaemonStatus({ quiet: true });
+        }
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Desktop Recovery Daemon Trigger Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopRecoveryDaemonTriggerBusy(false);
+      }
+    },
+    [refreshDesktopMissions, refreshDesktopRecoveryDaemonStatus, toast]
+  );
+
+  const resetDesktopRecoveryWatchdogHistory = useCallback(async () => {
+    setDesktopRecoveryWatchdogBusy(true);
+    try {
+      const payload = await backendClient.resetDesktopRecoveryWatchdogHistory();
+      await refreshDesktopRecoveryDaemonStatus({ quiet: true });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Desktop Recovery Watchdog Reset Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopRecoveryWatchdogBusy(false);
+    }
+  }, [refreshDesktopRecoveryDaemonStatus, toast]);
+
   const previewDesktopCoworkerRoute = useCallback(async () => {
     setDesktopCoworkerBusy(true);
     try {
       const payload = buildDesktopCoworkerPayload();
       const advice = await backendClient.desktopActionAdvice(payload);
       setDesktopCoworkerAdvice(advice);
+      const exploration =
+        advice.exploration_plan &&
+        typeof advice.exploration_plan === 'object' &&
+        !Array.isArray(advice.exploration_plan)
+          ? (advice.exploration_plan as DesktopSurfaceExplorationResponse)
+          : null;
+      setDesktopCoworkerExploration(exploration);
       if (String(advice.status ?? '').trim().toLowerCase() === 'success') {
         toast({
           title: 'Desktop Route Ready',
@@ -12290,6 +12666,289 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       setDesktopCoworkerBusy(false);
     }
   }, [buildDesktopCoworkerPayload, toast]);
+
+  const exploreDesktopCoworkerSurface = useCallback(async () => {
+    if (
+      !desktopCoworkerAppName.trim() &&
+      !desktopCoworkerWindowTitle.trim() &&
+      !desktopCoworkerQuery.trim()
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing Surface Context',
+        description: 'Provide an app name, window title, or query before exploring the current desktop surface.',
+      });
+      return null;
+    }
+    setDesktopCoworkerExplorationBusy(true);
+    try {
+      const payload = await backendClient.desktopSurfaceExploration({
+        app_name: desktopCoworkerAppName.trim() || undefined,
+        window_title: desktopCoworkerWindowTitle.trim() || undefined,
+        query: desktopCoworkerQuery.trim() || undefined,
+        limit: 6,
+      });
+      setDesktopCoworkerExploration(payload);
+      toast({
+        title: 'Surface Recon Ready',
+        description:
+          String(payload.message ?? '').trim() ||
+          `${Number(payload.hypothesis_count ?? 0)} exploration hypothesis${Number(payload.hypothesis_count ?? 0) === 1 ? '' : 'es'} generated.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Surface Recon Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerExplorationBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerQuery, desktopCoworkerWindowTitle, toast]);
+
+  const advanceDesktopCoworkerExploration = useCallback(async () => {
+    const explorationFilters =
+      desktopCoworkerExploration?.filters &&
+      typeof desktopCoworkerExploration.filters === 'object' &&
+      !Array.isArray(desktopCoworkerExploration.filters)
+        ? (desktopCoworkerExploration.filters as Record<string, unknown>)
+        : null;
+    const appName =
+      desktopCoworkerAppName.trim() ||
+      String(explorationFilters?.app_name ?? '').trim();
+    const windowTitle =
+      desktopCoworkerWindowTitle.trim() ||
+      String(explorationFilters?.window_title ?? '').trim();
+    const query =
+      desktopCoworkerQuery.trim() ||
+      String(explorationFilters?.query ?? '').trim();
+    const attemptedTargets = Array.isArray(desktopCoworkerExplorationMission?.attempted_targets)
+      ? desktopCoworkerExplorationMission.attempted_targets.filter(
+          (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+        )
+      : Array.isArray(desktopCoworkerExplorationMission?.attempted_targets_tail)
+        ? desktopCoworkerExplorationMission.attempted_targets_tail.filter(
+            (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+          )
+        : [];
+    const surfaceSignatureHistory = Array.isArray(desktopCoworkerExplorationMission?.surface_signature_history)
+      ? desktopCoworkerExplorationMission.surface_signature_history
+          .map((item) => String(item ?? '').trim())
+          .filter(Boolean)
+      : [];
+    if (!appName && !windowTitle && !query) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing Surface Context',
+        description: 'Run surface recon or provide an app name, window title, or query before asking JARVIS to advance it.',
+      });
+      return null;
+    }
+    setDesktopCoworkerExplorationAdvanceBusy(true);
+    try {
+      const response = await backendClient.desktopAdvanceSurfaceExploration({
+        app_name: appName || undefined,
+        window_title: windowTitle || undefined,
+        query: query || undefined,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        focus_first: desktopCoworkerFocusFirst,
+        verify_after_action: desktopCoworkerVerifyAfterAction,
+        verify_text: desktopCoworkerVerifyText.trim() || undefined,
+        retry_on_verification_failure: desktopCoworkerRetryOnVerificationFailure,
+        max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
+        attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
+        surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
+      });
+      setDesktopCoworkerResult(response);
+      const responseAdvice =
+        response.advice && typeof response.advice === 'object' && !Array.isArray(response.advice)
+          ? (response.advice as DesktopActionAdviceResponse)
+          : null;
+      if (responseAdvice) {
+        setDesktopCoworkerAdvice(responseAdvice);
+      }
+      const exploration =
+        response.exploration_plan &&
+        typeof response.exploration_plan === 'object' &&
+        !Array.isArray(response.exploration_plan)
+          ? (response.exploration_plan as DesktopSurfaceExplorationResponse)
+          : responseAdvice?.exploration_plan &&
+              typeof responseAdvice.exploration_plan === 'object' &&
+              !Array.isArray(responseAdvice.exploration_plan)
+            ? (responseAdvice.exploration_plan as DesktopSurfaceExplorationResponse)
+            : null;
+      setDesktopCoworkerExploration(exploration);
+      await refreshDesktopMissions({ quiet: true });
+      await refreshDesktopRecoveryDaemonStatus({ quiet: true });
+      const responseStatus = String(response.status ?? '').trim().toLowerCase();
+      if (responseStatus === 'success' || responseStatus === 'partial') {
+        toast({
+          title: responseStatus === 'success' ? 'Surface Recon Advanced' : 'Surface Recon Paused',
+          description:
+            String(response.message ?? '').trim() ||
+            String(response.final_action ?? '').trim() ||
+            'JARVIS advanced the current unsupported-app surface.',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Surface Recon Advance Failed',
+          description: String(response.message ?? 'JARVIS could not advance the current surface safely.'),
+        });
+      }
+      return response;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Surface Recon Advance Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerExplorationAdvanceBusy(false);
+    }
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    desktopCoworkerExploration,
+    desktopCoworkerExplorationMission,
+    desktopCoworkerFocusFirst,
+    desktopCoworkerMaxStrategyAttempts,
+    desktopCoworkerQuery,
+    desktopCoworkerRetryOnVerificationFailure,
+    desktopCoworkerVerifyAfterAction,
+    desktopCoworkerVerifyText,
+    desktopCoworkerWindowTitle,
+    refreshDesktopMissions,
+    refreshDesktopRecoveryDaemonStatus,
+    toast,
+  ]);
+
+  const completeDesktopCoworkerExplorationFlow = useCallback(async () => {
+    const explorationFilters =
+      desktopCoworkerExploration?.filters &&
+      typeof desktopCoworkerExploration.filters === 'object' &&
+      !Array.isArray(desktopCoworkerExploration.filters)
+        ? (desktopCoworkerExploration.filters as Record<string, unknown>)
+        : null;
+    const appName =
+      desktopCoworkerAppName.trim() ||
+      String(explorationFilters?.app_name ?? '').trim();
+    const windowTitle =
+      desktopCoworkerWindowTitle.trim() ||
+      String(explorationFilters?.window_title ?? '').trim();
+    const query =
+      desktopCoworkerQuery.trim() ||
+      String(explorationFilters?.query ?? '').trim();
+    const attemptedTargets = Array.isArray(desktopCoworkerExplorationMission?.attempted_targets)
+      ? desktopCoworkerExplorationMission.attempted_targets.filter(
+          (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+        )
+      : Array.isArray(desktopCoworkerExplorationMission?.attempted_targets_tail)
+        ? desktopCoworkerExplorationMission.attempted_targets_tail.filter(
+            (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+          )
+        : [];
+    const surfaceSignatureHistory = Array.isArray(desktopCoworkerExplorationMission?.surface_signature_history)
+      ? desktopCoworkerExplorationMission.surface_signature_history
+          .map((item) => String(item ?? '').trim())
+          .filter(Boolean)
+      : [];
+    if (!appName && !windowTitle && !query) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing Surface Context',
+        description: 'Run surface recon or provide an app name, window title, or query before asking JARVIS to run a bounded exploration flow.',
+      });
+      return null;
+    }
+    setDesktopCoworkerExplorationFlowBusy(true);
+    try {
+      const response = await backendClient.desktopCompleteSurfaceExplorationFlow({
+        app_name: appName || undefined,
+        window_title: windowTitle || undefined,
+        query: query || undefined,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        focus_first: desktopCoworkerFocusFirst,
+        verify_after_action: desktopCoworkerVerifyAfterAction,
+        verify_text: desktopCoworkerVerifyText.trim() || undefined,
+        retry_on_verification_failure: desktopCoworkerRetryOnVerificationFailure,
+        max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
+        max_exploration_steps: desktopCoworkerMaxExplorationSteps,
+        attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
+        surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
+      });
+      setDesktopCoworkerResult(response);
+      const responseAdvice =
+        response.advice && typeof response.advice === 'object' && !Array.isArray(response.advice)
+          ? (response.advice as DesktopActionAdviceResponse)
+          : null;
+      if (responseAdvice) {
+        setDesktopCoworkerAdvice(responseAdvice);
+      }
+      const exploration =
+        response.exploration_plan &&
+        typeof response.exploration_plan === 'object' &&
+        !Array.isArray(response.exploration_plan)
+          ? (response.exploration_plan as DesktopSurfaceExplorationResponse)
+          : responseAdvice?.exploration_plan &&
+              typeof responseAdvice.exploration_plan === 'object' &&
+              !Array.isArray(responseAdvice.exploration_plan)
+            ? (responseAdvice.exploration_plan as DesktopSurfaceExplorationResponse)
+            : null;
+      setDesktopCoworkerExploration(exploration);
+      await refreshDesktopMissions({ quiet: true });
+      await refreshDesktopRecoveryDaemonStatus({ quiet: true });
+      const responseStatus = String(response.status ?? '').trim().toLowerCase();
+      if (responseStatus === 'success' || responseStatus === 'partial' || responseStatus === 'blocked') {
+        toast({
+          title:
+            responseStatus === 'success'
+              ? 'Exploration Flow Completed'
+              : responseStatus === 'partial'
+                ? 'Exploration Flow Paused'
+                : 'Exploration Flow Blocked',
+          description:
+            String(response.message ?? '').trim() ||
+            'JARVIS ran a bounded unsupported-app exploration flow.',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Exploration Flow Failed',
+          description: String(response.message ?? 'JARVIS could not complete the bounded exploration flow safely.'),
+        });
+      }
+      return response;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Exploration Flow Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopCoworkerExplorationFlowBusy(false);
+    }
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    desktopCoworkerExploration,
+    desktopCoworkerExplorationMission,
+    desktopCoworkerFocusFirst,
+    desktopCoworkerMaxExplorationSteps,
+    desktopCoworkerMaxStrategyAttempts,
+    desktopCoworkerQuery,
+    desktopCoworkerRetryOnVerificationFailure,
+    desktopCoworkerVerifyAfterAction,
+    desktopCoworkerVerifyText,
+    desktopCoworkerWindowTitle,
+    refreshDesktopMissions,
+    refreshDesktopRecoveryDaemonStatus,
+    toast,
+  ]);
 
   const refreshDesktopAppProfiles = useCallback(async () => {
     setDesktopAppProfileCatalogBusy(true);
@@ -12398,6 +13057,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopCoworkerAdvice(responseAdvice);
       }
       await refreshDesktopMissions({ quiet: true, preferredMissionId: missionId });
+      await refreshDesktopRecoveryDaemonStatus({ quiet: true });
       if (String(response.status ?? '').trim().toLowerCase() === 'success') {
         toast({
           title: 'Desktop Mission Resumed',
@@ -12423,7 +13083,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopMissionResumeBusy(false);
     }
-  }, [desktopCoworkerAppName, desktopCoworkerWindowTitle, refreshDesktopMissions, selectedDesktopMission, toast]);
+  }, [desktopCoworkerAppName, desktopCoworkerWindowTitle, refreshDesktopMissions, refreshDesktopRecoveryDaemonStatus, selectedDesktopMission, toast]);
 
   const resetDesktopMissionSelection = useCallback(
     async ({ selectedOnly = false }: { selectedOnly?: boolean } = {}) => {
@@ -12451,6 +13111,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           setDesktopMissionSelectedId((current) => (current.trim() === missionId ? '' : current));
         }
         await refreshDesktopMissions({ quiet: true });
+        await refreshDesktopRecoveryDaemonStatus({ quiet: true });
         toast({
           title: selectedOnly ? 'Desktop Mission Cleared' : 'Filtered Desktop Missions Cleared',
           description: `${Number(payload.removed ?? 0)} desktop mission record(s) were removed from runtime memory.`,
@@ -12472,6 +13133,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       desktopMissionKindFilter,
       desktopMissionStatusFilter,
       refreshDesktopMissions,
+      refreshDesktopRecoveryDaemonStatus,
       selectedDesktopMission,
       toast,
     ]
@@ -12480,7 +13142,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   useEffect(() => {
     if (!open) return;
     void refreshDesktopMissions({ quiet: true });
-  }, [open, refreshDesktopMissions]);
+    void refreshDesktopRecoveryDaemonStatus({ quiet: true });
+  }, [open, refreshDesktopMissions, refreshDesktopRecoveryDaemonStatus]);
 
   useEffect(() => {
     const missionRecord =
@@ -12497,7 +13160,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     if (!missionId) return;
     setDesktopMissionSelectedId(missionId);
     void refreshDesktopMissions({ quiet: true, preferredMissionId: missionId });
-  }, [desktopCoworkerAdvice, desktopCoworkerResult, refreshDesktopMissions]);
+    void refreshDesktopRecoveryDaemonStatus({ quiet: true });
+  }, [desktopCoworkerAdvice, desktopCoworkerResult, refreshDesktopMissions, refreshDesktopRecoveryDaemonStatus]);
 
   const runDesktopCoworkerRoute = useCallback(async () => {
     setDesktopCoworkerBusy(true);
@@ -12512,6 +13176,17 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       if (responseAdvice) {
         setDesktopCoworkerAdvice(responseAdvice);
       }
+      const exploration =
+        response.exploration_plan &&
+        typeof response.exploration_plan === 'object' &&
+        !Array.isArray(response.exploration_plan)
+          ? (response.exploration_plan as DesktopSurfaceExplorationResponse)
+          : responseAdvice?.exploration_plan &&
+              typeof responseAdvice.exploration_plan === 'object' &&
+              !Array.isArray(responseAdvice.exploration_plan)
+            ? (responseAdvice.exploration_plan as DesktopSurfaceExplorationResponse)
+            : null;
+      setDesktopCoworkerExploration(exploration);
       if (String(response.status ?? '').trim().toLowerCase() === 'success') {
         toast({
           title: 'Desktop Action Executed',
@@ -14769,7 +15444,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                 placeholder="What JARVIS should type after focus/click."
                               />
                             </div>
-                            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
                               <div className="flex h-9 items-center justify-between rounded-md border border-primary/20 bg-background/60 px-2">
                                 <span className="text-[11px] text-muted-foreground">Auto-launch app</span>
                                 <Switch
@@ -14827,6 +15502,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   disabled={desktopCoworkerUseProfileDefaults}
                                 />
                               </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Exploration Steps</p>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={8}
+                                  value={String(desktopCoworkerMaxExplorationSteps)}
+                                  onChange={(event) => {
+                                    const nextValue = Number.parseInt(event.target.value, 10);
+                                    setDesktopCoworkerMaxExplorationSteps(Number.isFinite(nextValue) ? Math.max(1, Math.min(8, nextValue)) : 3);
+                                  }}
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
                             </div>
                             <div className="space-y-1">
                               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Verify Text</p>
@@ -14871,34 +15560,79 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                 type="button"
                                 variant="outline"
                                 className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => void exploreDesktopCoworkerSurface()}
+                                disabled={desktopCoworkerExplorationBusy}
+                              >
+                                {desktopCoworkerExplorationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
+                                Explore Surface
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => void advanceDesktopCoworkerExploration()}
+                                disabled={
+                                  desktopCoworkerExplorationAdvanceBusy ||
+                                  desktopCoworkerBusy ||
+                                  (!desktopCoworkerExploration &&
+                                    !desktopCoworkerAppName.trim() &&
+                                    !desktopCoworkerWindowTitle.trim() &&
+                                    !desktopCoworkerQuery.trim())
+                                }
+                              >
+                                {desktopCoworkerExplorationAdvanceBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                Advance Recon
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
+                                onClick={() => void completeDesktopCoworkerExplorationFlow()}
+                                disabled={
+                                  desktopCoworkerExplorationFlowBusy ||
+                                  desktopCoworkerBusy ||
+                                  (!desktopCoworkerExploration &&
+                                    !desktopCoworkerAppName.trim() &&
+                                    !desktopCoworkerWindowTitle.trim() &&
+                                    !desktopCoworkerQuery.trim())
+                                }
+                              >
+                                {desktopCoworkerExplorationFlowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Workflow className="h-4 w-4" />}
+                                Explore Flow
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="gap-2 border-primary/30 bg-transparent"
                                 onClick={() => {
                                   setDesktopCoworkerAdvice(null);
                                   setDesktopCoworkerResult(null);
+                                  setDesktopCoworkerExploration(null);
                                 }}
                               >
                                 Clear Router State
                               </Button>
                             </div>
-                            {desktopCoworkerAdvice ? (
+                            {desktopCoworkerAdvice || desktopCoworkerExploration ? (
                               <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.3fr_1fr]">
                                 <div className="rounded-md border border-primary/20 bg-background/30 p-2">
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                                       Execution Plan
                                     </p>
-                                    {desktopCoworkerAdvice.target_window ? (
+                                    {desktopCoworkerAdvice?.target_window ? (
                                       <Badge variant="outline">
                                         target:{' '}
                                         {String(
-                                          (desktopCoworkerAdvice.target_window as Record<string, unknown>).title ??
-                                            (desktopCoworkerAdvice.target_window as Record<string, unknown>).process_name ??
+                                          (desktopCoworkerAdvice?.target_window as Record<string, unknown>).title ??
+                                            (desktopCoworkerAdvice?.target_window as Record<string, unknown>).process_name ??
                                             'window'
                                         )}
                                       </Badge>
                                     ) : null}
                                   </div>
                                   <div className="space-y-2">
-                                    {(desktopCoworkerAdvice.execution_plan ?? []).map((step, index) => (
+                                    {(desktopCoworkerAdvice?.execution_plan ?? []).map((step, index) => (
                                       <div key={`${String(step.action ?? 'step')}-${index}`} className="rounded border border-primary/15 bg-background/40 p-2">
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                           <p className="text-xs font-medium text-primary/90">
@@ -14919,7 +15653,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         ) : null}
                                       </div>
                                     ))}
-                                    {(desktopCoworkerAdvice.execution_plan ?? []).length === 0 ? (
+                                    {(desktopCoworkerAdvice?.execution_plan ?? []).length === 0 ? (
                                       <p className="text-[11px] text-muted-foreground">No routed steps yet. Preview a route first.</p>
                                     ) : null}
                                   </div>
@@ -14952,8 +15686,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         const appliedKeys = profileDefaultsApplied ? Object.keys(profileDefaultsApplied).filter(Boolean) : [];
                                         return (
                                           <>
-                                      <p>risk: {String(desktopCoworkerAdvice.risk_level ?? 'unknown')}</p>
-                                      <p>mode: {String(desktopCoworkerAdvice.route_mode ?? 'unknown')}</p>
+                                      <p>risk: {String(desktopCoworkerAdvice?.risk_level ?? 'unknown')}</p>
+                                      <p>mode: {String(desktopCoworkerAdvice?.route_mode ?? 'unknown')}</p>
                                       {appProfile && String(appProfile.name ?? '').trim() ? (
                                         <p>
                                           profile: {String(appProfile.name ?? '').trim()}
@@ -14963,12 +15697,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       <p>
                                         active:{' '}
                                         {String(
-                                          (desktopCoworkerAdvice.active_window as Record<string, unknown> | undefined)?.title ??
-                                            (desktopCoworkerAdvice.active_window as Record<string, unknown> | undefined)?.process_name ??
+                                          (desktopCoworkerAdvice?.active_window as Record<string, unknown> | undefined)?.title ??
+                                            (desktopCoworkerAdvice?.active_window as Record<string, unknown> | undefined)?.process_name ??
                                             'n/a'
                                         )}
                                       </p>
-                                      <p>candidates: {Number(desktopCoworkerAdvice.candidate_windows?.length ?? 0)}</p>
+                                      <p>candidates: {Number(desktopCoworkerAdvice?.candidate_windows?.length ?? 0)}</p>
                                       <p>verify: {verificationPlan?.enabled === false ? 'disabled' : 'enabled'}</p>
                                       <p>strategy tries: {Number(verificationPlan?.max_strategy_attempts ?? 1)}</p>
                                       {String(verificationPlan?.verify_text ?? '').trim() ? (
@@ -14987,20 +15721,175 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       Warnings / Blockers
                                     </p>
                                     <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-                                      {(desktopCoworkerAdvice.warnings ?? []).map((warning, index) => (
+                                      {(desktopCoworkerAdvice?.warnings ?? []).map((warning, index) => (
                                         <p key={`warning-${index}`}>warn: {warning}</p>
                                       ))}
-                                      {(desktopCoworkerAdvice.blockers ?? []).map((blocker, index) => (
+                                      {(desktopCoworkerAdvice?.blockers ?? []).map((blocker, index) => (
                                         <p key={`blocker-${index}`} className="text-amber-300/90">
                                           block: {blocker}
                                         </p>
                                       ))}
-                                      {(desktopCoworkerAdvice.warnings ?? []).length === 0 &&
-                                      (desktopCoworkerAdvice.blockers ?? []).length === 0 ? (
+                                      {(desktopCoworkerAdvice?.warnings ?? []).length === 0 &&
+                                      (desktopCoworkerAdvice?.blockers ?? []).length === 0 ? (
                                         <p>Route is clear.</p>
                                       ) : null}
                                     </div>
                                   </div>
+                                  {desktopCoworkerExploration ? (
+                                    <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                        Surface Recon
+                                      </p>
+                                      {(() => {
+                                        const explorationMission =
+                                          desktopCoworkerResult?.exploration_mission &&
+                                          typeof desktopCoworkerResult.exploration_mission === 'object' &&
+                                          !Array.isArray(desktopCoworkerResult.exploration_mission)
+                                            ? (desktopCoworkerResult.exploration_mission as DesktopExplorationMission)
+                                            : null;
+                                        return explorationMission ? (
+                                          <div className="mt-2 rounded border border-primary/15 bg-background/40 p-2 text-[11px] text-muted-foreground">
+                                            <p>
+                                              flow: {Boolean(explorationMission.completed) ? 'completed' : 'paused'}
+                                              {' • '}steps: {Number(explorationMission.steps_completed ?? explorationMission.step_count ?? 0)}
+                                              {typeof explorationMission.max_steps === 'number' ? `/${Number(explorationMission.max_steps)}` : ''}
+                                            </p>
+                                            {Boolean(explorationMission.auto_continued) ? <p>auto-continued: yes</p> : null}
+                                            {Number(explorationMission.attempted_target_count ?? 0) > 0 ||
+                                            Number(explorationMission.alternative_target_count ?? 0) > 0 ? (
+                                              <p>
+                                                attempted: {Number(explorationMission.attempted_target_count ?? 0)}
+                                                {' • '}alternatives: {Number(explorationMission.alternative_target_count ?? 0)}
+                                                {Boolean(explorationMission.alternative_ready) ? ' • next-safe: ready' : ''}
+                                              </p>
+                                            ) : null}
+                                            {Array.isArray(explorationMission.attempted_targets_tail) &&
+                                            explorationMission.attempted_targets_tail.length > 0 ? (
+                                              <p>
+                                                recent:{' '}
+                                                {explorationMission.attempted_targets_tail
+                                                  .slice(-3)
+                                                  .map((item) =>
+                                                    String(
+                                                      item?.selected_candidate_label ??
+                                                        item?.label ??
+                                                        item?.candidate_id ??
+                                                        item?.selected_action ??
+                                                        'target'
+                                                    ).trim()
+                                                  )
+                                                  .filter(Boolean)
+                                                  .join(' -> ')}
+                                              </p>
+                                            ) : null}
+                                            {String(explorationMission.stop_reason ?? '').trim() ? (
+                                              <p className="text-amber-300/90">{String(explorationMission.stop_reason ?? '').trim()}</p>
+                                            ) : null}
+                                          </div>
+                                        ) : null;
+                                      })()}
+                                      <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                                        <p>
+                                          mode: {String(desktopCoworkerExploration.surface_mode ?? 'generic_surface')}
+                                          {' • '}automation:{Boolean(desktopCoworkerExploration.automation_ready) ? 'ready' : 'cautious'}
+                                        </p>
+                                        <p>
+                                          hypotheses: {Number(desktopCoworkerExploration.hypothesis_count ?? 0)}
+                                          {' • '}branches: {Number(desktopCoworkerExploration.branch_action_count ?? 0)}
+                                        </p>
+                                        {Number(desktopCoworkerExploration.attempted_target_count ?? 0) > 0 ||
+                                        Number(desktopCoworkerExploration.remaining_target_count ?? 0) > 0 ? (
+                                          <p>
+                                            attempted: {Number(desktopCoworkerExploration.attempted_target_count ?? 0)}
+                                            {' • '}remaining: {Number(desktopCoworkerExploration.remaining_target_count ?? 0)}
+                                            {' • '}remaining branches: {Number(desktopCoworkerExploration.remaining_branch_action_count ?? 0)}
+                                          </p>
+                                        ) : null}
+                                        {Array.isArray(desktopCoworkerExploration.attempted_targets_tail) &&
+                                        desktopCoworkerExploration.attempted_targets_tail.length > 0 ? (
+                                          <p>
+                                            recent:{' '}
+                                            {desktopCoworkerExploration.attempted_targets_tail
+                                              .slice(-3)
+                                              .map((item) =>
+                                                String(
+                                                  item?.selected_candidate_label ??
+                                                    item?.label ??
+                                                    item?.candidate_id ??
+                                                    item?.selected_action ??
+                                                    'target'
+                                                ).trim()
+                                              )
+                                              .filter(Boolean)
+                                              .join(' -> ')}
+                                          </p>
+                                        ) : null}
+                                        {Array.isArray(desktopCoworkerExploration.attention_signals) &&
+                                        desktopCoworkerExploration.attention_signals.length > 0 ? (
+                                          <p className="text-amber-300/90">
+                                            review: {desktopCoworkerExploration.attention_signals.slice(0, 3).join(', ')}
+                                          </p>
+                                        ) : null}
+                                        {String(desktopCoworkerExploration.message ?? '').trim() ? (
+                                          <p>{String(desktopCoworkerExploration.message ?? '').trim()}</p>
+                                        ) : null}
+                                      </div>
+                                      <div className="mt-2 space-y-2">
+                                        {(desktopCoworkerExploration.top_hypotheses ?? []).slice(0, 3).map((row, index) => (
+                                          <div
+                                            key={`desktop-recon-hypothesis-${index}-${String(row.candidate_id ?? row.label ?? 'target')}`}
+                                            className="rounded border border-primary/15 bg-background/40 p-2"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="text-xs font-medium text-primary/90">
+                                                {index + 1}. {String(row.label ?? row.control_type ?? 'target')}
+                                              </p>
+                                              {row.suggested_action ? (
+                                                <Badge variant="secondary">{String(row.suggested_action)}</Badge>
+                                              ) : null}
+                                              {typeof row.confidence === 'number' ? (
+                                                <Badge variant="outline">confidence:{row.confidence.toFixed(2)}</Badge>
+                                              ) : null}
+                                            </div>
+                                            {String(row.reason ?? '').trim() ? (
+                                              <p className="mt-1 text-[11px] text-muted-foreground">{String(row.reason ?? '').trim()}</p>
+                                            ) : null}
+                                            {Array.isArray(row.recommended_path) && row.recommended_path.length > 0 ? (
+                                              <p className="mt-1 text-[11px] text-muted-foreground">
+                                                path:{' '}
+                                                {row.recommended_path
+                                                  .map((step) => humanizeRuntimeLabel(String(step.action ?? 'step')))
+                                                  .join(' -> ')}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                        ))}
+                                        {(desktopCoworkerExploration.branch_actions ?? []).slice(0, 3).map((row, index) => (
+                                          <div
+                                            key={`desktop-recon-branch-${index}-${String(row.action ?? 'branch')}`}
+                                            className="rounded border border-primary/15 bg-background/40 p-2"
+                                          >
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="text-xs font-medium text-primary/90">
+                                                branch: {String(row.title ?? row.action ?? 'workflow')}
+                                              </p>
+                                              {row.action ? <Badge variant="outline">{String(row.action)}</Badge> : null}
+                                              {typeof row.confidence === 'number' ? (
+                                                <Badge variant="outline">confidence:{row.confidence.toFixed(2)}</Badge>
+                                              ) : null}
+                                            </div>
+                                            {String(row.reason ?? '').trim() ? (
+                                              <p className="mt-1 text-[11px] text-muted-foreground">{String(row.reason ?? '').trim()}</p>
+                                            ) : null}
+                                          </div>
+                                        ))}
+                                        {Number(desktopCoworkerExploration.hypothesis_count ?? 0) === 0 &&
+                                        Number(desktopCoworkerExploration.branch_action_count ?? 0) === 0 ? (
+                                          <p className="text-[11px] text-muted-foreground">No high-confidence surface hypotheses yet.</p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  ) : null}
                                   <div className="rounded-md border border-primary/20 bg-background/30 p-2">
                                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                                       Last Routed Result
@@ -15081,6 +15970,160 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           ) : null}
                                         </div>
                                       </div>
+                                      {desktopRecoveryDaemonStatus ? (
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="font-semibold uppercase tracking-wider text-primary/80">
+                                                Recovery Daemon
+                                              </p>
+                                              <Badge variant={desktopRecoveryDaemonEnabled ? 'secondary' : 'outline'}>
+                                                {desktopRecoveryDaemonEnabled ? 'enabled' : 'disabled'}
+                                              </Badge>
+                                              {desktopRecoveryDaemonStatus.active ? (
+                                                <Badge variant="outline">active</Badge>
+                                              ) : null}
+                                              {desktopRecoveryDaemonStatus.inflight ? (
+                                                <Badge variant="outline">tick:running</Badge>
+                                              ) : null}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                                onClick={() => void refreshDesktopRecoveryDaemonStatus()}
+                                                disabled={desktopRecoveryDaemonBusy}
+                                              >
+                                                {desktopRecoveryDaemonBusy ? (
+                                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                  <RefreshCw className="h-4 w-4" />
+                                                )}
+                                                Refresh Daemon
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                                onClick={async () => {
+                                                  const payload = await configureDesktopRecoveryDaemon({
+                                                    enabled: !desktopRecoveryDaemonEnabled,
+                                                    intervalS: desktopRecoveryDaemonIntervalS > 0 ? desktopRecoveryDaemonIntervalS : 45,
+                                                    missionStatus: desktopMissionStatusFilter.trim() || 'paused',
+                                                    missionKind: desktopMissionKindFilter.trim() || undefined,
+                                                    appName: desktopMissionAppFilter.trim() || undefined,
+                                                  });
+                                                  if (!payload) return;
+                                                  toast({
+                                                    title: desktopRecoveryDaemonEnabled
+                                                      ? 'Desktop Recovery Daemon Disabled'
+                                                      : 'Desktop Recovery Daemon Enabled',
+                                                    description:
+                                                      String(payload.last_result_message ?? '').trim() ||
+                                                      (desktopRecoveryDaemonEnabled
+                                                        ? 'JARVIS stopped bounded desktop recovery ticks.'
+                                                        : 'JARVIS will now run bounded desktop recovery ticks in the background.'),
+                                                  });
+                                                }}
+                                                disabled={desktopRecoveryDaemonBusy}
+                                              >
+                                                <BrainCircuit className="h-4 w-4" />
+                                                {desktopRecoveryDaemonEnabled ? 'Disable Daemon' : 'Enable Daemon'}
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                                onClick={async () => {
+                                                  const payload = await triggerDesktopRecoveryDaemon({
+                                                    missionStatus: desktopMissionStatusFilter.trim() || 'paused',
+                                                    missionKind: desktopMissionKindFilter.trim() || undefined,
+                                                    appName: desktopMissionAppFilter.trim() || undefined,
+                                                  });
+                                                  if (!payload) return;
+                                                  toast({
+                                                    title: 'Desktop Recovery Daemon Triggered',
+                                                    description:
+                                                      String(payload.message ?? '').trim() ||
+                                                      'JARVIS ran a bounded desktop recovery tick.',
+                                                  });
+                                                }}
+                                                disabled={desktopRecoveryDaemonTriggerBusy}
+                                              >
+                                                {desktopRecoveryDaemonTriggerBusy ? (
+                                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                  <Sparkles className="h-4 w-4" />
+                                                )}
+                                                Trigger Daemon
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                                onClick={async () => {
+                                                  const payload = await resetDesktopRecoveryWatchdogHistory();
+                                                  if (!payload) return;
+                                                  toast({
+                                                    title: 'Desktop Watchdog History Cleared',
+                                                    description: `${Number(payload.removed ?? 0)} daemon run record(s) were removed.`,
+                                                  });
+                                                }}
+                                                disabled={
+                                                  desktopRecoveryWatchdogBusy ||
+                                                  Number(desktopRecoveryWatchdogHistory?.count ?? 0) === 0
+                                                }
+                                              >
+                                                {desktopRecoveryWatchdogBusy ? (
+                                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                  <RefreshCw className="h-4 w-4" />
+                                                )}
+                                                Clear Watchdog
+                                              </Button>
+                                            </div>
+                                          </div>
+                                          <p className="mt-2 text-primary/80">
+                                            {String(desktopRecoveryDaemonStatus.last_result_message ?? '').trim() ||
+                                              'JARVIS can keep scanning paused desktop missions and auto-resume the bounded safe ones.'}
+                                          </p>
+                                          <p className="mt-1">
+                                            interval: {desktopRecoveryDaemonIntervalS > 0 ? `${Math.round(desktopRecoveryDaemonIntervalS)}s` : 'n/a'}
+                                            {' • '}limit: {Number(desktopRecoveryDaemonStatus.limit ?? 0)}
+                                            {' • '}auto resumes: {Number(desktopRecoveryDaemonStatus.max_auto_resumes ?? 0)}
+                                            {' • '}last result: {String(desktopRecoveryDaemonStatus.last_result_status ?? 'idle')}
+                                          </p>
+                                          <p className="mt-1">
+                                            runs: {Number(desktopRecoveryDaemonStatus.run_count ?? 0)}
+                                            {' • '}manual: {Number(desktopRecoveryDaemonStatus.manual_trigger_count ?? 0)}
+                                            {' • '}auto: {Number(desktopRecoveryDaemonStatus.auto_trigger_count ?? 0)}
+                                            {' • '}last tick: {formatIso(String(desktopRecoveryDaemonStatus.last_tick_at ?? ''))}
+                                          </p>
+                                          {desktopRecoveryWatchdogHistory ? (
+                                            <div className="mt-2 rounded border border-primary/10 bg-background/25 p-2">
+                                              <p className="font-semibold uppercase tracking-wider text-primary/80">
+                                                Watchdog Runs
+                                              </p>
+                                              <p className="mt-1">
+                                                stored: {Number(desktopRecoveryWatchdogHistory.count ?? 0)}
+                                                {' • '}triggered:{Number(desktopRecoveryWatchdogHistory.triggered_run_count ?? 0)}
+                                                {' • '}blocked:{Number(desktopRecoveryWatchdogHistory.blocked_run_count ?? 0)}
+                                                {' • '}errors:{Number(desktopRecoveryWatchdogHistory.error_run_count ?? 0)}
+                                              </p>
+                                              {desktopRecoveryWatchdogLatestRun ? (
+                                                <p className="mt-1">
+                                                  latest: {String(desktopRecoveryWatchdogLatestRun.status ?? 'idle')}
+                                                  {' • '}updated:{formatIso(String(desktopRecoveryWatchdogLatestRun.updated_at ?? ''))}
+                                                  {String(desktopRecoveryWatchdogLatestRun.message ?? '').trim()
+                                                    ? ` • ${String(desktopRecoveryWatchdogLatestRun.message ?? '').trim()}`
+                                                    : ''}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
                                       <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1.1fr_0.9fr]">
                                       <div className="space-y-2">
                                         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -15125,7 +16168,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               type="button"
                                               variant="outline"
                                             className="gap-2 border-primary/30 bg-transparent"
-                                            onClick={() => void refreshDesktopMissions()}
+                                            onClick={() => {
+                                              void refreshDesktopMissions();
+                                              void refreshDesktopRecoveryDaemonStatus({ quiet: true });
+                                            }}
                                             disabled={desktopMissionSnapshotBusy}
                                           >
                                             {desktopMissionSnapshotBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -21617,6 +22663,82 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             </div>
                                           ))}
                                         </div>
+                                      </div>
+                                    ) : null}
+                                    {Object.keys(modelSetupWatchdogSupervisor).length > 0 ? (
+                                      <div className="rounded border border-primary/15 bg-background/20 px-2 py-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Watchdog Daemon</p>
+                                          <div className="flex items-center gap-2">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 gap-1 px-2 text-[10px]"
+                                              onClick={() =>
+                                                void configureModelSetupWatchdogSupervisor({
+                                                  enabled: !Boolean(modelSetupWatchdogSupervisor.enabled),
+                                                  intervalS: Number(modelSetupWatchdogSupervisor.interval_s ?? 45),
+                                                  currentScope: false,
+                                                })
+                                              }
+                                              disabled={
+                                                runningModelSetupMission &&
+                                                runningModelSetupMissionMode === 'watchdog_daemon'
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'watchdog_daemon' ? (
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                              ) : (
+                                                <RefreshCw className="h-3 w-3" />
+                                              )}
+                                              {Boolean(modelSetupWatchdogSupervisor.enabled) ? 'Disable' : 'Enable'}
+                                            </Button>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 gap-1 px-2 text-[10px]"
+                                              onClick={() => void triggerModelSetupWatchdogSupervisor()}
+                                              disabled={
+                                                runningModelSetupMission &&
+                                                runningModelSetupMissionMode === 'watchdog_daemon_trigger'
+                                              }
+                                            >
+                                              {runningModelSetupMission && runningModelSetupMissionMode === 'watchdog_daemon_trigger' ? (
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                              ) : (
+                                                <Activity className="h-3 w-3" />
+                                              )}
+                                              Trigger
+                                            </Button>
+                                            <Badge
+                                              variant={Boolean(modelSetupWatchdogSupervisor.enabled) ? 'secondary' : 'outline'}
+                                            >
+                                              {Boolean(modelSetupWatchdogSupervisor.enabled) ? 'enabled' : 'disabled'}
+                                            </Badge>
+                                            <Badge
+                                              variant={Boolean(modelSetupWatchdogSupervisor.active) ? 'outline' : 'secondary'}
+                                            >
+                                              active:{Boolean(modelSetupWatchdogSupervisor.active) ? 'yes' : 'no'}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          interval:{Number(modelSetupWatchdogSupervisor.interval_s ?? 0).toFixed(0)}s
+                                          {' • '}runs:{Number(modelSetupWatchdogSupervisor.run_count ?? 0)}
+                                          {' • '}manual:{Number(modelSetupWatchdogSupervisor.manual_trigger_count ?? 0)}
+                                          {' • '}auto:{Number(modelSetupWatchdogSupervisor.auto_trigger_count ?? 0)}
+                                          {' • '}errors:{Number(modelSetupWatchdogSupervisor.consecutive_error_count ?? 0)}
+                                          {String(modelSetupWatchdogSupervisor.next_due_at ?? '').trim()
+                                            ? ` • next:${String(modelSetupWatchdogSupervisor.next_due_at ?? '').trim()}`
+                                            : ''}
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-primary/80">
+                                          last:{String(modelSetupWatchdogSupervisor.last_result_status ?? 'unknown')}
+                                          {' • '}tick:{String(modelSetupWatchdogSupervisor.last_tick_at ?? 'n/a')}
+                                          {String(modelSetupWatchdogSupervisor.last_result_message ?? '').trim()
+                                            ? ` • ${String(modelSetupWatchdogSupervisor.last_result_message ?? '').trim()}`
+                                            : ''}
+                                        </p>
                                       </div>
                                     ) : null}
                                     {modelSetupWatchdogHistoryItems.length > 0 ? (

@@ -636,6 +636,36 @@ class FakeDesktopService:
                 "completed_at": "2026-03-14T08:05:00+00:00",
             },
         ]
+        self.desktop_recovery_supervisor_state: Dict[str, Any] = {
+            "enabled": False,
+            "active": True,
+            "inflight": False,
+            "interval_s": 45.0,
+            "limit": 12,
+            "max_auto_resumes": 2,
+            "mission_status": "paused",
+            "mission_kind": "",
+            "app_name": "",
+            "stop_reason_code": "",
+            "resume_force": False,
+            "last_tick_at": "",
+            "last_success_at": "",
+            "last_error_at": "",
+            "last_duration_ms": 0.0,
+            "last_result_status": "idle",
+            "last_result_message": "",
+            "last_trigger_source": "",
+            "last_trigger_at": "",
+            "last_config_source": "",
+            "next_due_at": "",
+            "run_count": 0,
+            "manual_trigger_count": 0,
+            "auto_trigger_count": 0,
+            "consecutive_error_count": 0,
+            "last_summary": {},
+            "updated_at": "",
+        }
+        self.desktop_recovery_watchdog_runs: list[Dict[str, Any]] = []
         self.desktop_workflow_catalog_items: list[Dict[str, Any]] = [
             {
                 "action": "focus_address_bar",
@@ -4019,6 +4049,107 @@ class FakeDesktopService:
                 "workspace_root": scope["workspace_root"],
                 "manifest_path": scope["manifest_path"],
             },
+        }
+
+    def model_setup_recovery_watchdog_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        _ = history_limit
+        history = self.model_setup_recovery_watchdog_history(
+            limit=6,
+            current_scope=False,
+            manifest_path="E:/scopes/mission/JARVIS_BACKEND/Models_manifest.txt",
+            workspace_root="E:/scopes/mission",
+        )
+        return {
+            "status": "success",
+            "active": True,
+            "enabled": True,
+            "inflight": False,
+            "interval_s": 45.0,
+            "current_scope": False,
+            "manifest_path": "E:/scopes/mission/JARVIS_BACKEND/Models_manifest.txt",
+            "workspace_root": "E:/scopes/mission",
+            "max_missions": 6,
+            "max_auto_resumes": 2,
+            "continue_followup_actions": True,
+            "max_followup_waves": 3,
+            "last_tick_at": "2026-03-15T10:05:00+00:00",
+            "last_result_status": "success",
+            "last_result_message": "Recovery watchdog auto-resumed 1 stored mission.",
+            "last_trigger_source": "daemon",
+            "run_count": 3,
+            "manual_trigger_count": 1,
+            "auto_trigger_count": 2,
+            "consecutive_error_count": 0,
+            "watchdog_history": history,
+        }
+
+    def configure_model_setup_recovery_watchdog_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        max_missions: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        continue_followup_actions: Optional[bool] = None,
+        max_followup_waves: Optional[int] = None,
+        current_scope: Optional[bool] = None,
+        manifest_path: Optional[str] = None,
+        workspace_root: Optional[str] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        _ = max_missions
+        _ = max_auto_resumes
+        _ = continue_followup_actions
+        _ = max_followup_waves
+        _ = current_scope
+        scope = self._record_model_setup_scope(
+            "configure_model_setup_recovery_watchdog_supervisor",
+            manifest_path=str(manifest_path or ""),
+            workspace_root=str(workspace_root or ""),
+        )
+        payload = self.model_setup_recovery_watchdog_supervisor_status(history_limit=history_limit)
+        payload.update(
+            {
+                "enabled": bool(enabled) if enabled is not None else True,
+                "interval_s": float(interval_s) if interval_s is not None else 45.0,
+                "manifest_path": scope["manifest_path"] or payload["manifest_path"],
+                "workspace_root": scope["workspace_root"] or payload["workspace_root"],
+            }
+        )
+        return payload
+
+    def trigger_model_setup_recovery_watchdog_supervisor(
+        self,
+        *,
+        dry_run: Optional[bool] = None,
+        current_scope: Optional[bool] = None,
+        manifest_path: Optional[str] = None,
+        workspace_root: Optional[str] = None,
+        max_missions: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        continue_followup_actions: Optional[bool] = None,
+        max_followup_waves: Optional[int] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        payload = self.model_setup_mission_recovery_watchdog(
+            current_scope=bool(current_scope) if current_scope is not None else False,
+            max_missions=int(max_missions) if max_missions is not None else 6,
+            max_auto_resumes=int(max_auto_resumes) if max_auto_resumes is not None else 2,
+            continue_followup_actions=bool(continue_followup_actions) if continue_followup_actions is not None else True,
+            max_followup_waves=int(max_followup_waves) if max_followup_waves is not None else 3,
+            manifest_path=str(manifest_path or ""),
+            workspace_root=str(workspace_root or ""),
+            dry_run=bool(dry_run) if dry_run is not None else False,
+        )
+        return {
+            "status": "success",
+            "message": "daemon tick executed",
+            "result": payload,
+            "supervisor": self.model_setup_recovery_watchdog_supervisor_status(history_limit=history_limit),
         }
 
     def model_setup_manual_pipeline(
@@ -13082,6 +13213,297 @@ class FakeDesktopService:
             },
         }
 
+    def desktop_recovery_watchdog_history(
+        self,
+        *,
+        limit: int = 20,
+        status: str = "",
+        source: str = "",
+        app_name: str = "",
+        mission_kind: str = "",
+    ) -> Dict[str, Any]:
+        rows = [dict(item) for item in self.desktop_recovery_watchdog_runs]
+        clean_status = str(status or "").strip().lower()
+        clean_source = str(source or "").strip().lower()
+        clean_app = str(app_name or "").strip().lower()
+        clean_kind = str(mission_kind or "").strip().lower()
+        if clean_status:
+            rows = [row for row in rows if str(row.get("status", "") or "").strip().lower() == clean_status]
+        if clean_source:
+            rows = [row for row in rows if str(row.get("source", "") or "").strip().lower() == clean_source]
+        if clean_app:
+            rows = [row for row in rows if str(row.get("app_name", "") or "").strip().lower() == clean_app]
+        if clean_kind:
+            rows = [row for row in rows if str(row.get("mission_kind", "") or "").strip().lower() == clean_kind]
+        rows.sort(key=lambda row: str(row.get("updated_at", "") or ""), reverse=True)
+        items = rows[: max(1, int(limit or 20))]
+        return {
+            "status": "success",
+            "count": len(items),
+            "total": len(rows),
+            "items": items,
+            "status_counts": {
+                key: len([row for row in rows if str(row.get("status", "") or "").strip().lower() == key])
+                for key in {str(row.get("status", "") or "").strip().lower() for row in rows if str(row.get("status", "") or "").strip()}
+            },
+            "source_counts": {
+                key: len([row for row in rows if str(row.get("source", "") or "").strip().lower() == key])
+                for key in {str(row.get("source", "") or "").strip().lower() for row in rows if str(row.get("source", "") or "").strip()}
+            },
+            "app_counts": {
+                key: len([row for row in rows if str(row.get("app_name", "") or "").strip() == key])
+                for key in {str(row.get("app_name", "") or "").strip() for row in rows if str(row.get("app_name", "") or "").strip()}
+            },
+            "mission_kind_counts": {
+                key: len([row for row in rows if str(row.get("mission_kind", "") or "").strip().lower() == key])
+                for key in {str(row.get("mission_kind", "") or "").strip().lower() for row in rows if str(row.get("mission_kind", "") or "").strip()}
+            },
+            "triggered_run_count": len([row for row in rows if int(row.get("auto_resume_triggered_count", 0) or 0) > 0]),
+            "blocked_run_count": len([row for row in rows if int(row.get("blocked_count", 0) or 0) > 0]),
+            "error_run_count": len([row for row in rows if int(row.get("error_count", 0) or 0) > 0]),
+            "latest_run": items[0] if items else None,
+            "latest_triggered_run": next((row for row in items if int(row.get("auto_resume_triggered_count", 0) or 0) > 0), None),
+            "latest_blocked_run": next((row for row in items if int(row.get("blocked_count", 0) or 0) > 0), None),
+            "latest_error_run": next((row for row in items if int(row.get("error_count", 0) or 0) > 0), None),
+            "filters": {
+                "status": clean_status,
+                "source": clean_source,
+                "app_name": clean_app,
+                "mission_kind": clean_kind,
+            },
+        }
+
+    def reset_desktop_recovery_watchdog_history(
+        self,
+        *,
+        run_id: str = "",
+        status: str = "",
+        source: str = "",
+        app_name: str = "",
+        mission_kind: str = "",
+    ) -> Dict[str, Any]:
+        clean_id = str(run_id or "").strip()
+        clean_status = str(status or "").strip().lower()
+        clean_source = str(source or "").strip().lower()
+        clean_app = str(app_name or "").strip().lower()
+        clean_kind = str(mission_kind or "").strip().lower()
+        removed = 0
+        if clean_id:
+            before = len(self.desktop_recovery_watchdog_runs)
+            self.desktop_recovery_watchdog_runs = [
+                row for row in self.desktop_recovery_watchdog_runs if str(row.get("run_id", "") or "").strip() != clean_id
+            ]
+            removed = before - len(self.desktop_recovery_watchdog_runs)
+        else:
+            keep: list[Dict[str, Any]] = []
+            for row in self.desktop_recovery_watchdog_runs:
+                should_remove = True
+                if clean_status:
+                    should_remove = should_remove and str(row.get("status", "") or "").strip().lower() == clean_status
+                if clean_source:
+                    should_remove = should_remove and str(row.get("source", "") or "").strip().lower() == clean_source
+                if clean_app:
+                    should_remove = should_remove and str(row.get("app_name", "") or "").strip().lower() == clean_app
+                if clean_kind:
+                    should_remove = should_remove and str(row.get("mission_kind", "") or "").strip().lower() == clean_kind
+                if not any([clean_status, clean_source, clean_app, clean_kind]):
+                    should_remove = True
+                if should_remove:
+                    removed += 1
+                    continue
+                keep.append(row)
+            self.desktop_recovery_watchdog_runs = keep
+        return {
+            "status": "success",
+            "removed": removed,
+            "filters": {
+                "run_id": clean_id,
+                "status": clean_status,
+                "source": clean_source,
+                "app_name": clean_app,
+                "mission_kind": clean_kind,
+            },
+        }
+
+    def desktop_recovery_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
+        payload = dict(self.desktop_recovery_supervisor_state)
+        payload["status"] = "success"
+        payload["snapshot"] = self.desktop_mission_status(
+            limit=int(payload.get("limit", 12) or 12),
+            status=str(payload.get("mission_status", "") or "").strip(),
+            mission_kind=str(payload.get("mission_kind", "") or "").strip(),
+            app_name=str(payload.get("app_name", "") or "").strip(),
+            stop_reason_code=str(payload.get("stop_reason_code", "") or "").strip(),
+        )
+        payload["watchdog_history"] = self.desktop_recovery_watchdog_history(
+            limit=max(1, int(history_limit or 6)),
+            app_name=str(payload.get("app_name", "") or "").strip(),
+            mission_kind=str(payload.get("mission_kind", "") or "").strip(),
+        )
+        return payload
+
+    def configure_desktop_recovery_supervisor(
+        self,
+        *,
+        enabled: bool | None = None,
+        interval_s: float | None = None,
+        limit: int | None = None,
+        max_auto_resumes: int | None = None,
+        mission_status: str | None = None,
+        mission_kind: str | None = None,
+        app_name: str | None = None,
+        stop_reason_code: str | None = None,
+        resume_force: bool | None = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        state = self.desktop_recovery_supervisor_state
+        if enabled is not None:
+            state["enabled"] = bool(enabled)
+        if interval_s is not None:
+            state["interval_s"] = float(interval_s)
+        if limit is not None:
+            state["limit"] = int(limit)
+        if max_auto_resumes is not None:
+            state["max_auto_resumes"] = int(max_auto_resumes)
+        if mission_status is not None:
+            state["mission_status"] = str(mission_status or "").strip()
+        if mission_kind is not None:
+            state["mission_kind"] = str(mission_kind or "").strip()
+        if app_name is not None:
+            state["app_name"] = str(app_name or "").strip()
+        if stop_reason_code is not None:
+            state["stop_reason_code"] = str(stop_reason_code or "").strip()
+        if resume_force is not None:
+            state["resume_force"] = bool(resume_force)
+        state["last_config_source"] = "api"
+        state["updated_at"] = "2026-03-15T10:30:00+00:00"
+        return self.desktop_recovery_supervisor_status(history_limit=history_limit)
+
+    def trigger_desktop_recovery_supervisor(
+        self,
+        *,
+        limit: int | None = None,
+        max_auto_resumes: int | None = None,
+        mission_status: str | None = None,
+        mission_kind: str | None = None,
+        app_name: str | None = None,
+        stop_reason_code: str | None = None,
+        resume_force: bool | None = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        state = self.desktop_recovery_supervisor_state
+        snapshot = self.desktop_mission_status(
+            limit=int(limit or state.get("limit", 12) or 12),
+            status=str(mission_status if mission_status is not None else state.get("mission_status", "") or "").strip(),
+            mission_kind=str(mission_kind if mission_kind is not None else state.get("mission_kind", "") or "").strip(),
+            app_name=str(app_name if app_name is not None else state.get("app_name", "") or "").strip(),
+            stop_reason_code=str(
+                stop_reason_code if stop_reason_code is not None else state.get("stop_reason_code", "") or ""
+            ).strip(),
+        )
+        ready_items = [
+            item for item in snapshot.get("items", [])
+            if isinstance(item, dict) and bool(item.get("resume_ready", False))
+        ] if isinstance(snapshot.get("items", []), list) else []
+        bounded_limit = max(0, int(max_auto_resumes if max_auto_resumes is not None else state.get("max_auto_resumes", 2) or 2))
+        triggered_items = ready_items[:bounded_limit]
+        for item in triggered_items:
+            mission_id = str(item.get("mission_id", "") or "").strip()
+            for row in self.desktop_mission_items:
+                if str(row.get("mission_id", "") or "").strip() != mission_id:
+                    continue
+                row["status"] = "completed"
+                row["latest_result_status"] = "success"
+                row["latest_result_message"] = "Desktop recovery daemon resumed this mission."
+                row["completed_at"] = "2026-03-15T10:32:00+00:00"
+                row["updated_at"] = "2026-03-15T10:32:00+00:00"
+                row["resume_attempts"] = int(row.get("resume_attempts", 0) or 0) + 1
+                break
+        state["run_count"] = int(state.get("run_count", 0) or 0) + 1
+        state["manual_trigger_count"] = int(state.get("manual_trigger_count", 0) or 0) + 1
+        state["last_trigger_source"] = "manual_api"
+        state["last_trigger_at"] = "2026-03-15T10:32:00+00:00"
+        state["last_tick_at"] = "2026-03-15T10:32:00+00:00"
+        state["last_success_at"] = "2026-03-15T10:32:00+00:00"
+        state["last_result_status"] = "success" if triggered_items else "idle"
+        state["last_result_message"] = (
+            f"Desktop recovery daemon resumed {len(triggered_items)} paused mission"
+            f"{'' if len(triggered_items) == 1 else 's'}."
+            if triggered_items
+            else "Desktop recovery daemon did not find resumable paused missions."
+        )
+        state["last_summary"] = {
+            "status": state["last_result_status"],
+            "auto_resume_triggered_count": len(triggered_items),
+            "resume_ready_count": len(ready_items),
+            "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+            "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
+        }
+        state["updated_at"] = "2026-03-15T10:32:00+00:00"
+        self.desktop_recovery_watchdog_runs.insert(
+            0,
+            {
+                "run_id": f"desktop_watchdog_{len(self.desktop_recovery_watchdog_runs) + 1}",
+                "status": state["last_result_status"],
+                "message": state["last_result_message"],
+                "source": "manual_api",
+                "trigger_source": "manual_api",
+                "limit": int(limit or state.get("limit", 12) or 12),
+                "max_auto_resumes": bounded_limit,
+                "mission_status": str(mission_status if mission_status is not None else state.get("mission_status", "") or "").strip(),
+                "mission_kind": str(mission_kind if mission_kind is not None else state.get("mission_kind", "") or "").strip(),
+                "app_name": str(app_name if app_name is not None else state.get("app_name", "") or "").strip(),
+                "stop_reason_code": str(
+                    stop_reason_code if stop_reason_code is not None else state.get("stop_reason_code", "") or ""
+                ).strip(),
+                "resume_force": bool(resume_force if resume_force is not None else state.get("resume_force", False)),
+                "evaluated_count": int(snapshot.get("count", 0) or 0),
+                "auto_resume_attempted_count": len(triggered_items),
+                "auto_resume_triggered_count": len(triggered_items),
+                "resume_ready_count": max(0, len(ready_items) - len(triggered_items)),
+                "manual_attention_count": int(snapshot.get("manual_attention_count", 0) or 0),
+                "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+                "idle_count": 0,
+                "error_count": 0,
+                "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
+                "triggered_mission_ids": [str(item.get("mission_id", "") or "").strip() for item in triggered_items],
+                "ready_mission_ids": [
+                    str(item.get("mission_id", "") or "").strip() for item in ready_items[len(triggered_items):]
+                ],
+                "blocked_mission_ids": [
+                    str(item.get("mission_id", "") or "").strip()
+                    for item in snapshot.get("items", [])
+                    if isinstance(item, dict) and bool(item.get("manual_attention_required", False))
+                ],
+                "latest_triggered_mission_id": str(triggered_items[0].get("mission_id", "") or "").strip() if triggered_items else "",
+                "filters": {
+                    "status": str(mission_status if mission_status is not None else state.get("mission_status", "") or "").strip(),
+                    "mission_kind": str(mission_kind if mission_kind is not None else state.get("mission_kind", "") or "").strip(),
+                    "app_name": str(app_name if app_name is not None else state.get("app_name", "") or "").strip(),
+                    "stop_reason_code": str(
+                        stop_reason_code if stop_reason_code is not None else state.get("stop_reason_code", "") or ""
+                    ).strip(),
+                },
+                "created_at": "2026-03-15T10:32:00+00:00",
+                "updated_at": "2026-03-15T10:32:00+00:00",
+            },
+        )
+        return {
+            "status": state["last_result_status"],
+            "message": state["last_result_message"],
+            "result": {
+                "status": state["last_result_status"],
+                "message": state["last_result_message"],
+                "auto_resume_triggered_count": len(triggered_items),
+                "resume_ready_count": len(ready_items),
+                "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+                "evaluated_count": int(snapshot.get("count", 0) or 0),
+                "triggered_mission_ids": [str(item.get("mission_id", "") or "").strip() for item in triggered_items],
+                "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
+            },
+            "supervisor": self.desktop_recovery_supervisor_status(history_limit=history_limit),
+        }
+
     def desktop_action_advice(
         self,
         *,
@@ -13092,6 +13514,8 @@ class FakeDesktopService:
         text: str = "",
         mission_id: str = "",
         mission_kind: str = "",
+        candidate_id: str = "",
+        branch_action: str = "",
         keys: list[str] | None = None,
         ensure_app_launch: bool | None = None,
         focus_first: bool | None = None,
@@ -13100,6 +13524,8 @@ class FakeDesktopService:
         verify_text: str = "",
         retry_on_verification_failure: bool | None = None,
         max_strategy_attempts: int | None = None,
+        exploration_limit: int | None = None,
+        max_exploration_steps: int | None = None,
         max_wizard_pages: int | None = None,
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
@@ -13117,6 +13543,8 @@ class FakeDesktopService:
             "text": text,
             "mission_id": mission_id,
             "mission_kind": mission_kind,
+            "candidate_id": candidate_id,
+            "branch_action": branch_action,
             "keys": list(keys or []),
             "ensure_app_launch": ensure_app_launch,
             "focus_first": focus_first,
@@ -13125,6 +13553,8 @@ class FakeDesktopService:
             "verify_text": verify_text,
             "retry_on_verification_failure": retry_on_verification_failure,
             "max_strategy_attempts": max_strategy_attempts,
+            "exploration_limit": exploration_limit,
+            "max_exploration_steps": max_exploration_steps,
             "max_wizard_pages": max_wizard_pages,
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
@@ -13144,6 +13574,8 @@ class FakeDesktopService:
         text: str = "",
         mission_id: str = "",
         mission_kind: str = "",
+        candidate_id: str = "",
+        branch_action: str = "",
         keys: list[str] | None = None,
         ensure_app_launch: bool | None = None,
         focus_first: bool | None = None,
@@ -13152,6 +13584,8 @@ class FakeDesktopService:
         verify_text: str = "",
         retry_on_verification_failure: bool | None = None,
         max_strategy_attempts: int | None = None,
+        exploration_limit: int | None = None,
+        max_exploration_steps: int | None = None,
         max_wizard_pages: int | None = None,
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
@@ -13169,6 +13603,8 @@ class FakeDesktopService:
             "text": text,
             "mission_id": mission_id,
             "mission_kind": mission_kind,
+            "candidate_id": candidate_id,
+            "branch_action": branch_action,
             "keys": list(keys or []),
             "ensure_app_launch": ensure_app_launch,
             "focus_first": focus_first,
@@ -13177,6 +13613,8 @@ class FakeDesktopService:
             "verify_text": verify_text,
             "retry_on_verification_failure": retry_on_verification_failure,
             "max_strategy_attempts": max_strategy_attempts,
+            "exploration_limit": exploration_limit,
+            "max_exploration_steps": max_exploration_steps,
             "max_wizard_pages": max_wizard_pages,
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
@@ -13374,6 +13812,118 @@ class FakeDesktopService:
                 "include_elements": include_elements,
                 "include_workflow_probes": include_workflow_probes,
             },
+        }
+
+    def desktop_surface_exploration(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 8,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+    ) -> Dict[str, Any]:
+        snapshot = self.desktop_surface_snapshot(
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+            limit=max(12, int(limit or 8) * 2),
+            include_observation=include_observation,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+        )
+        elements = snapshot.get("elements", {}).get("items", []) if isinstance(snapshot.get("elements", {}), dict) else []
+        top_target = {}
+        if isinstance(elements, list):
+            normalized_query = str(query or "").strip().lower()
+            for row in elements:
+                if not isinstance(row, dict):
+                    continue
+                if normalized_query and normalized_query in str(row.get("name", "") or "").strip().lower():
+                    top_target = dict(row)
+                    break
+            if not top_target and elements:
+                top_target = dict(elements[0]) if isinstance(elements[0], dict) else {}
+        target_label = str(top_target.get("name", "") or query or app_name or "surface target").strip()
+        suggested_action = "select_list_item" if str(top_target.get("control_type", "") or "").strip().lower() == "listitem" else "click"
+        return {
+            "status": "success",
+            "profile_name": str(snapshot.get("app_profile", {}).get("name", "") or "").strip(),
+            "category": str(snapshot.get("app_profile", {}).get("category", "") or "").strip(),
+            "surface_mode": "list_navigation" if suggested_action == "select_list_item" else "generic_surface",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "attention_signals": [],
+            "hypothesis_count": 1 if top_target else 0,
+            "branch_action_count": len(snapshot.get("recommended_actions", [])) if isinstance(snapshot.get("recommended_actions", []), list) else 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": str(top_target.get("element_id", "") or "candidate_1"),
+                    "label": target_label,
+                    "control_type": str(top_target.get("control_type", "") or "").strip(),
+                    "source": "query_target",
+                    "surface_mode": "list_navigation" if suggested_action == "select_list_item" else "generic_surface",
+                    "score": 0.91,
+                    "confidence": 0.91,
+                    "query_match_score": 1.0 if query else 0.75,
+                    "suggested_action": suggested_action,
+                    "action_payload": {
+                        "action": suggested_action,
+                        "app_name": app_name,
+                        "window_title": window_title or str(snapshot.get("target_window", {}).get("title", "") or "").strip(),
+                        "query": target_label,
+                    },
+                    "recommended_path": [
+                        {
+                            "action": suggested_action,
+                            "args": {
+                                "action": suggested_action,
+                                "query": target_label,
+                            },
+                            "phase": "recon_action",
+                            "optional": False,
+                            "reason": "Act on the surfaced control target.",
+                        }
+                    ],
+                    "state_tags": ["enabled", "visible"],
+                    "already_active": False,
+                    "manual_attention_required": False,
+                    "reason": f"{target_label} directly matched the requested surface query.",
+                    "candidate_state": top_target,
+                }
+            ] if top_target else [],
+            "branch_actions": [
+                {
+                    "action": str(action_name or "").strip(),
+                    "title": str(action_name or "").strip().replace("_", " ").title(),
+                    "matched": False,
+                    "supported": True,
+                    "confidence": 0.7,
+                    "reason": "The current surface recommends this next action.",
+                    "action_payload": {"action": str(action_name or "").strip(), "app_name": app_name},
+                    "recommended_followups": [],
+                }
+                for action_name in (snapshot.get("recommended_actions", []) if isinstance(snapshot.get("recommended_actions", []), list) else [])[: max(1, int(limit or 8))]
+            ],
+            "top_path": [
+                {
+                    "action": suggested_action,
+                    "args": {"action": suggested_action, "query": target_label},
+                    "phase": "recon_action",
+                    "optional": False,
+                    "reason": "Act on the surfaced control target.",
+                }
+            ] if top_target else [],
+            "surface_snapshot": snapshot,
+            "filters": {
+                "app_name": app_name,
+                "window_title": window_title,
+                "query": query,
+                "limit": limit,
+            },
+            "message": f"Top target: {target_label} via {suggested_action}.",
         }
 
 
@@ -13773,6 +14323,46 @@ def test_model_setup_mission_routes(api_server: tuple[str, FakeDesktopService]) 
     assert status == 200
     assert watchdog_cleared["status"] == "success"
     assert watchdog_cleared["removed"] == 1
+
+    status, watchdog_supervisor = request_json(
+        "GET",
+        f"{base_url}/models/setup/mission/recovery-watchdog/supervisor?history_limit=6",
+    )
+    assert status == 200
+    assert watchdog_supervisor["status"] == "success"
+    assert watchdog_supervisor["enabled"] is True
+    assert watchdog_supervisor["watchdog_history"]["triggered_run_count"] == 1
+
+    status, watchdog_supervisor_updated = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/recovery-watchdog/supervisor",
+        {
+            "enabled": False,
+            "interval_s": 60,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+        },
+    )
+    assert status == 200
+    assert watchdog_supervisor_updated["status"] == "success"
+    assert watchdog_supervisor_updated["enabled"] is False
+    assert watchdog_supervisor_updated["interval_s"] == 60.0
+
+    status, watchdog_triggered = request_json(
+        "POST",
+        f"{base_url}/models/setup/mission/recovery-watchdog/supervisor/trigger",
+        {
+            "current_scope": False,
+            "manifest_path": manifest_path,
+            "workspace_root": workspace_root,
+            "max_missions": 4,
+            "max_auto_resumes": 1,
+        },
+    )
+    assert status == 200
+    assert watchdog_triggered["status"] == "success"
+    assert watchdog_triggered["result"]["auto_resume_triggered_count"] == 1
+    assert watchdog_triggered["supervisor"]["status"] == "success"
 
     status, cleared = request_json(
         "POST",
@@ -16451,6 +17041,107 @@ def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesk
     assert remaining["recovery_profile_counts"] == {"admin_review": 1}
 
 
+def test_desktop_recovery_daemon_routes_status_update_and_trigger(
+    api_server: tuple[str, FakeDesktopService]
+) -> None:
+    base_url, _ = api_server
+
+    status, initial = request_json("GET", f"{base_url}/runtime/desktop-missions/recovery-daemon")
+    assert status == 200
+    assert initial["status"] == "success"
+    assert initial["enabled"] is False
+    assert initial["snapshot"]["status"] == "success"
+    assert initial["snapshot"]["count"] == 1
+
+    status, updated = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon",
+        payload={
+            "enabled": True,
+            "interval_s": 30,
+            "limit": 6,
+            "max_auto_resumes": 1,
+            "mission_status": "paused",
+            "mission_kind": "wizard",
+            "app_name": "installer",
+            "resume_force": True,
+        },
+    )
+    assert status == 200
+    assert updated["status"] == "success"
+    assert updated["enabled"] is True
+    assert updated["interval_s"] == 30.0
+    assert updated["limit"] == 6
+    assert updated["max_auto_resumes"] == 1
+    assert updated["mission_kind"] == "wizard"
+    assert updated["app_name"] == "installer"
+    assert updated["resume_force"] is True
+
+    status, triggered = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon/trigger",
+        payload={
+            "limit": 4,
+            "max_auto_resumes": 1,
+            "mission_status": "paused",
+            "mission_kind": "wizard",
+            "app_name": "installer",
+        },
+    )
+    assert status == 200
+    assert triggered["status"] == "idle"
+    assert triggered["supervisor"]["status"] == "success"
+    assert triggered["supervisor"]["run_count"] == 1
+    assert triggered["supervisor"]["manual_trigger_count"] == 1
+    assert triggered["supervisor"]["snapshot"]["status"] == "success"
+    assert triggered["supervisor"]["watchdog_history"]["count"] == 1
+
+
+def test_desktop_recovery_daemon_history_routes(
+    api_server: tuple[str, FakeDesktopService]
+) -> None:
+    base_url, _ = api_server
+
+    status, _ = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon/trigger",
+        payload={
+            "limit": 4,
+            "max_auto_resumes": 1,
+            "mission_status": "paused",
+            "mission_kind": "wizard",
+            "app_name": "installer",
+        },
+    )
+    assert status == 200
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon/history?limit=4&app_name=installer&mission_kind=wizard",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_run"]["app_name"] == "installer"
+    assert history["latest_run"]["mission_kind"] == "wizard"
+
+    status, reset_payload = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon/history/reset",
+        payload={"app_name": "installer", "mission_kind": "wizard"},
+    )
+    assert status == 200
+    assert reset_payload["status"] == "success"
+    assert reset_payload["removed"] == 1
+
+    status, empty_history = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-missions/recovery-daemon/history?limit=4",
+    )
+    assert status == 200
+    assert empty_history["count"] == 0
+
+
 def test_desktop_workflow_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
     base_url, _ = api_server
 
@@ -16594,6 +17285,34 @@ def test_desktop_interact_route_forwards_resume_mission_payload(api_server: tupl
     assert payload["resume_force"] is True
 
 
+def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "bluetooth",
+            "ensure_app_launch": True,
+            "focus_first": True,
+            "verify_after_action": False,
+            "max_strategy_attempts": 3,
+            "exploration_limit": 8,
+            "max_exploration_steps": 4,
+        },
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["action"] == "complete_surface_exploration_flow"
+    assert payload["app_name"] == "settings"
+    assert payload["query"] == "bluetooth"
+    assert payload["max_strategy_attempts"] == 3
+    assert payload["exploration_limit"] == 8
+    assert payload["max_exploration_steps"] == 4
+
+
 def test_desktop_surface_snapshot_route(api_server: tuple[str, FakeDesktopService]) -> None:
     base_url, _ = api_server
 
@@ -16612,6 +17331,23 @@ def test_desktop_surface_snapshot_route(api_server: tuple[str, FakeDesktopServic
     assert payload["surface_flags"]["window_targeted"] is True
     assert any(item["action"] == "open_bookmarks" for item in payload["workflow_surfaces"])
     assert "navigate" in payload["recommended_actions"]
+
+
+def test_desktop_surface_exploration_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        f"{base_url}/desktop/surfaces/exploration?app_name=explorer&query=Documents&limit=6",
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["surface_mode"] == "list_navigation"
+    assert payload["automation_ready"] is True
+    assert payload["hypothesis_count"] == 1
+    assert payload["top_hypotheses"][0]["label"] == "Documents"
+    assert payload["top_hypotheses"][0]["suggested_action"] == "select_list_item"
+    assert payload["top_path"][0]["action"] == payload["top_hypotheses"][0]["suggested_action"]
 
 
 def test_oauth_token_routes_upsert_list_refresh_revoke(api_server: tuple[str, FakeDesktopService]) -> None:

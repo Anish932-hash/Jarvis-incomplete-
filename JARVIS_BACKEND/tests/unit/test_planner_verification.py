@@ -667,6 +667,32 @@ def test_desktop_interact_step_routes_terminal_command_in_terminal_context() -> 
     assert steps[0].args.get("press_enter") is True
 
 
+def test_desktop_interact_step_routes_surface_exploration_flow_in_settings_context() -> None:
+    planner = Planner()
+
+    text = "explore surface for bluetooth in settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[0].args.get("query") == "bluetooth"
+    assert steps[0].args.get("action") == "complete_surface_exploration_flow"
+
+
+def test_desktop_interact_step_routes_advance_surface_exploration_in_settings_context() -> None:
+    planner = Planner()
+
+    text = "advance recon for bluetooth in settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert steps and steps[0].action == "desktop_interact"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[0].args.get("query") == "bluetooth"
+    assert steps[0].args.get("action") == "advance_surface_exploration"
+
+
 def test_voice_delivery_fallback_uses_notification_when_tts_route_is_blocked() -> None:
     planner = Planner()
 
@@ -1586,6 +1612,19 @@ def test_desktop_interact_step_routes_resume_blocked_settings_flow_to_resume_mis
     assert steps[0].args.get("app_name") == "settings"
 
 
+def test_desktop_interact_step_routes_resume_paused_surface_exploration_to_resume_mission() -> None:
+    planner = Planner()
+
+    text = "resume the paused exploration in settings"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent == "desktop_interact"
+    assert len(steps) == 1
+    assert steps[0].args.get("action") == "resume_mission"
+    assert steps[0].args.get("mission_kind") == "exploration"
+    assert steps[0].args.get("app_name") == "settings"
+
+
 def test_desktop_interact_step_routes_enable_and_disable_switch_for_settings_commands() -> None:
     planner = Planner()
 
@@ -1913,6 +1952,24 @@ def test_compound_desktop_request_inherits_installer_context_for_resume_mission(
     assert steps[1].args.get("action") == "resume_mission"
     assert steps[1].args.get("mission_kind") == "wizard"
     assert steps[0].step_id in steps[1].depends_on
+
+
+def test_compound_desktop_request_inherits_settings_context_for_surface_exploration_flow() -> None:
+    planner = Planner()
+
+    text = "open settings and list processes and explore surface for bluetooth"
+    intent, steps = planner._build_primary_steps(text, text.lower())  # noqa: SLF001
+
+    assert intent.startswith("compound_")
+    assert len(steps) == 3
+    assert steps[0].action == "open_app"
+    assert steps[0].args.get("app_name") == "settings"
+    assert steps[1].action == "list_processes"
+    assert steps[2].action == "desktop_interact"
+    assert steps[2].args.get("app_name") == "settings"
+    assert steps[2].args.get("query") == "bluetooth"
+    assert steps[2].args.get("action") == "complete_surface_exploration_flow"
+    assert steps[0].step_id in steps[2].depends_on
 
 
 def test_compound_desktop_request_builds_settings_change_and_commit_chain() -> None:

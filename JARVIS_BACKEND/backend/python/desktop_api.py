@@ -27,6 +27,8 @@ from backend.python.core.oauth_flow import OAuthFlowManager
 from backend.python.core.oauth_token_store import OAuthTokenStore
 from backend.python.core.provider_credentials import ProviderCredentialManager
 from backend.python.core.desktop_action_router import DesktopActionRouter
+from backend.python.core.desktop_recovery_watchdog_memory import DesktopRecoveryWatchdogMemory
+from backend.python.core.desktop_recovery_supervisor import DesktopRecoverySupervisor
 from backend.python.core.provider_verifier import ProviderCredentialVerifier
 from backend.python.core.rust_runtime import RustRuntimeBridge
 from backend.python.core.task_state import GoalStatus
@@ -44,6 +46,7 @@ from backend.python.inference.model_setup_mission import build_model_setup_missi
 from backend.python.inference.model_setup_mission import execute_model_setup_mission
 from backend.python.inference.model_setup_mission_memory import ModelSetupMissionMemory
 from backend.python.inference.model_setup_watchdog_memory import ModelSetupRecoveryWatchdogMemory
+from backend.python.inference.model_setup_watchdog_supervisor import ModelSetupRecoveryWatchdogSupervisor
 from backend.python.inference.model_setup_manual_pipeline import build_model_setup_manual_pipeline
 from backend.python.inference.model_setup_planner import build_model_setup_plan
 from backend.python.inference.model_setup_preflight import build_model_setup_preflight
@@ -159,6 +162,18 @@ class DesktopBackendService:
         self.provider_credentials.refresh(overwrite_env=False)
         self.provider_verifier = ProviderCredentialVerifier(self.provider_credentials)
         self.desktop_action_router = DesktopActionRouter()
+        self.desktop_recovery_supervisor = DesktopRecoverySupervisor(
+            enabled=self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ENABLED", False),
+            interval_s=self._env_float("JARVIS_DESKTOP_RECOVERY_DAEMON_INTERVAL_S", 45.0, minimum=5.0, maximum=3600.0),
+            limit=self._env_int("JARVIS_DESKTOP_RECOVERY_DAEMON_LIMIT", 12, minimum=1, maximum=200),
+            max_auto_resumes=self._env_int("JARVIS_DESKTOP_RECOVERY_DAEMON_MAX_AUTO_RESUMES", 2, minimum=0, maximum=32),
+            mission_status=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_STATUS", "paused") or "paused").strip() or "paused",
+            mission_kind=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_KIND", "") or "").strip(),
+            app_name=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_APP", "") or "").strip(),
+            stop_reason_code=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_STOP_REASON", "") or "").strip(),
+            resume_force=self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_FORCE_RESUME", False),
+        )
+        self.desktop_recovery_watchdog_memory = DesktopRecoveryWatchdogMemory()
         self.model_registry = ModelRegistry(
             provider_credentials=self.provider_credentials,
             enforce_provider_keys=self._env_bool("JARVIS_MODEL_ENFORCE_PROVIDER_KEYS", False),
@@ -172,6 +187,17 @@ class DesktopBackendService:
         )
         self.model_setup_mission_memory = ModelSetupMissionMemory()
         self.model_setup_recovery_watchdog_memory = ModelSetupRecoveryWatchdogMemory()
+        self.model_setup_recovery_watchdog_supervisor = ModelSetupRecoveryWatchdogSupervisor(
+            enabled=self._env_bool("JARVIS_MODEL_SETUP_WATCHDOG_ENABLED", False),
+            interval_s=self._env_float("JARVIS_MODEL_SETUP_WATCHDOG_INTERVAL_S", 45.0, minimum=5.0, maximum=3600.0),
+            max_missions=self._env_int("JARVIS_MODEL_SETUP_WATCHDOG_MAX_MISSIONS", 6, minimum=1, maximum=64),
+            max_auto_resumes=self._env_int("JARVIS_MODEL_SETUP_WATCHDOG_MAX_AUTO_RESUMES", 2, minimum=0, maximum=64),
+            continue_followup_actions=self._env_bool("JARVIS_MODEL_SETUP_WATCHDOG_CONTINUE_FOLLOWUPS", True),
+            max_followup_waves=self._env_int("JARVIS_MODEL_SETUP_WATCHDOG_MAX_FOLLOWUP_WAVES", 3, minimum=0, maximum=8),
+            current_scope=self._env_bool("JARVIS_MODEL_SETUP_WATCHDOG_CURRENT_SCOPE", False),
+            manifest_path=str(os.getenv("JARVIS_MODEL_SETUP_WATCHDOG_MANIFEST_PATH", "") or "").strip(),
+            workspace_root=str(os.getenv("JARVIS_MODEL_SETUP_WATCHDOG_WORKSPACE_ROOT", "") or "").strip(),
+        )
         self.model_setup_manual_runner = ModelSetupManualRunner(provider_credentials=self.provider_credentials)
         self.model_setup_manual_run_manager = ModelSetupManualRunManager(
             self.model_setup_manual_runner,
@@ -1496,6 +1522,10 @@ class DesktopBackendService:
         self._thread.start()
         future = asyncio.run_coroutine_threadsafe(self.kernel.start(), self._loop)
         future.result(timeout=20)
+        self.desktop_recovery_supervisor.start(self._execute_desktop_recovery_supervisor_tick)
+        self.model_setup_recovery_watchdog_supervisor.start(
+            self._execute_model_setup_watchdog_supervisor_tick
+        )
         self._start_context_opportunity_worker()
         self._start_bridge_scheduler_worker()
         if self._context_autostart:
@@ -1569,6 +1599,14 @@ class DesktopBackendService:
             self._persist_bridge_scheduler_autotune_state(force=True)
         except Exception as exc:  # noqa: BLE001
             self.log.warning(f"Bridge scheduler autotune state persist failed: {exc}")
+        try:
+            self.model_setup_recovery_watchdog_supervisor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Model setup watchdog supervisor stop failed: {exc}")
+        try:
+            self.desktop_recovery_supervisor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Desktop recovery supervisor stop failed: {exc}")
         self._stop_bridge_scheduler_worker()
         self._stop_context_opportunity_worker()
         self._cancel_all_voice_continuous_sessions(reason="service_stop")
@@ -7181,6 +7219,8 @@ class DesktopBackendService:
         text: str = "",
         mission_id: str = "",
         mission_kind: str = "",
+        candidate_id: str = "",
+        branch_action: str = "",
         keys: Optional[List[str]] = None,
         ensure_app_launch: Optional[bool] = None,
         focus_first: Optional[bool] = None,
@@ -7189,6 +7229,8 @@ class DesktopBackendService:
         verify_text: str = "",
         retry_on_verification_failure: Optional[bool] = None,
         max_strategy_attempts: Optional[int] = None,
+        exploration_limit: Optional[int] = None,
+        max_exploration_steps: Optional[int] = None,
         max_wizard_pages: Optional[int] = None,
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
@@ -7209,6 +7251,8 @@ class DesktopBackendService:
                 "text": text,
                 "mission_id": mission_id,
                 "mission_kind": mission_kind,
+                "candidate_id": candidate_id,
+                "branch_action": branch_action,
                 "keys": list(keys or []),
             }
             if ensure_app_launch is not None:
@@ -7225,6 +7269,10 @@ class DesktopBackendService:
                 payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
             if max_strategy_attempts is not None:
                 payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            if exploration_limit is not None:
+                payload["exploration_limit"] = int(exploration_limit or 6)
+            if max_exploration_steps is not None:
+                payload["max_exploration_steps"] = int(max_exploration_steps or 3)
             if max_wizard_pages is not None:
                 payload["max_wizard_pages"] = int(max_wizard_pages or 6)
             if allow_warning_pages is not None:
@@ -7253,6 +7301,8 @@ class DesktopBackendService:
         text: str = "",
         mission_id: str = "",
         mission_kind: str = "",
+        candidate_id: str = "",
+        branch_action: str = "",
         keys: Optional[List[str]] = None,
         ensure_app_launch: Optional[bool] = None,
         focus_first: Optional[bool] = None,
@@ -7261,6 +7311,8 @@ class DesktopBackendService:
         verify_text: str = "",
         retry_on_verification_failure: Optional[bool] = None,
         max_strategy_attempts: Optional[int] = None,
+        exploration_limit: Optional[int] = None,
+        max_exploration_steps: Optional[int] = None,
         max_wizard_pages: Optional[int] = None,
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
@@ -7281,6 +7333,8 @@ class DesktopBackendService:
                 "text": text,
                 "mission_id": mission_id,
                 "mission_kind": mission_kind,
+                "candidate_id": candidate_id,
+                "branch_action": branch_action,
                 "keys": list(keys or []),
             }
             if ensure_app_launch is not None:
@@ -7297,6 +7351,10 @@ class DesktopBackendService:
                 payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
             if max_strategy_attempts is not None:
                 payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+            if exploration_limit is not None:
+                payload["exploration_limit"] = int(exploration_limit or 6)
+            if max_exploration_steps is not None:
+                payload["max_exploration_steps"] = int(max_exploration_steps or 3)
             if max_wizard_pages is not None:
                 payload["max_wizard_pages"] = int(max_wizard_pages or 6)
             if allow_warning_pages is not None:
@@ -7374,6 +7432,34 @@ class DesktopBackendService:
                 include_workflow_probes=include_workflow_probes,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop surface payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_surface_exploration(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 8,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.surface_exploration_plan(
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                limit=limit,
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop surface exploration payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -7470,6 +7556,387 @@ class DesktopBackendService:
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop mission reset payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def _execute_desktop_recovery_supervisor_tick(
+        self,
+        *,
+        limit: int = 12,
+        max_auto_resumes: int = 2,
+        mission_status: str = "paused",
+        mission_kind: str = "",
+        app_name: str = "",
+        stop_reason_code: str = "",
+        resume_force: bool = False,
+        trigger_source: str = "",
+    ) -> Dict[str, Any]:
+        bounded_limit = max(1, min(int(limit), 200))
+        clean_mission_status = str(mission_status or "").strip()
+        clean_mission_kind = str(mission_kind or "").strip()
+        clean_app_name = str(app_name or "").strip()
+        clean_stop_reason_code = str(stop_reason_code or "").strip()
+        clean_trigger_source = str(trigger_source or "manual").strip().lower() or "manual"
+        snapshot = self.desktop_mission_status(
+            limit=bounded_limit,
+            status=clean_mission_status,
+            mission_kind=clean_mission_kind,
+            app_name=clean_app_name,
+            stop_reason_code=clean_stop_reason_code,
+        )
+        if not isinstance(snapshot, dict) or snapshot.get("status") == "error":
+            payload = {
+                "status": "error",
+                "message": str(snapshot.get("message", "") if isinstance(snapshot, dict) else "").strip() or "unable to refresh desktop mission snapshot",
+                "snapshot_before": _to_jsonable(snapshot) if isinstance(snapshot, dict) else {},
+                "results": [],
+                "limit": bounded_limit,
+                "max_auto_resumes": max(0, min(int(max_auto_resumes), 32)),
+                "mission_status": clean_mission_status,
+                "mission_kind": clean_mission_kind,
+                "app_name": clean_app_name,
+                "stop_reason_code": clean_stop_reason_code,
+                "resume_force": bool(resume_force),
+                "trigger_source": clean_trigger_source,
+                "filters": {
+                    "status": clean_mission_status,
+                    "mission_kind": clean_mission_kind,
+                    "app_name": clean_app_name,
+                    "stop_reason_code": clean_stop_reason_code,
+                },
+                "evaluated_count": 0,
+                "auto_resume_attempted_count": 0,
+                "auto_resume_triggered_count": 0,
+                "resume_ready_count": 0,
+                "manual_attention_count": 0,
+                "blocked_count": 0,
+                "idle_count": 0,
+                "error_count": 1,
+                "triggered_mission_ids": [],
+                "ready_mission_ids": [],
+                "blocked_mission_ids": [],
+                "stop_reason": "snapshot_error",
+            }
+            return self._record_desktop_recovery_watchdog_run(payload, source=clean_trigger_source)
+
+        rows = [
+            dict(item)
+            for item in snapshot.get("items", [])
+            if isinstance(item, dict)
+        ] if isinstance(snapshot.get("items", []), list) else []
+        rows.sort(
+            key=lambda row: (
+                max(0, int(row.get("recovery_priority", 0) or 0)),
+                str(row.get("updated_at", row.get("created_at", "")) or ""),
+            ),
+            reverse=True,
+        )
+        bounded_auto_resumes = max(0, min(int(max_auto_resumes), 32))
+        results: List[Dict[str, Any]] = []
+        triggered_mission_ids: List[str] = []
+        ready_mission_ids: List[str] = []
+        blocked_mission_ids: List[str] = []
+        auto_resume_attempted_count = 0
+        auto_resume_triggered_count = 0
+        resume_ready_count = 0
+        manual_attention_count = 0
+        blocked_count = 0
+        idle_count = 0
+        error_count = 0
+
+        for row in rows:
+            mission_id = str(row.get("mission_id", "") or "").strip()
+            classification_before = (
+                "ready"
+                if bool(row.get("resume_ready", False))
+                else "blocked"
+                if bool(row.get("manual_attention_required", False)) or bool(row.get("approval_blocked", False))
+                else "idle"
+            )
+            entry: Dict[str, Any] = {
+                "mission_id": mission_id,
+                "mission_kind": str(row.get("mission_kind", "") or "").strip(),
+                "app_name": str(row.get("app_name", "") or "").strip(),
+                "recovery_profile": str(row.get("recovery_profile", "") or "").strip(),
+                "recovery_priority": max(0, int(row.get("recovery_priority", 0) or 0)),
+                "classification_before": classification_before,
+                "classification_after": classification_before,
+                "auto_resume_attempted": False,
+                "auto_resume_triggered": False,
+                "status": str(row.get("status", "") or "").strip().lower(),
+                "message": str(row.get("recovery_hint", row.get("stop_reason", "")) or "").strip(),
+            }
+            if classification_before == "ready" and auto_resume_triggered_count < bounded_auto_resumes:
+                auto_resume_attempted_count += 1
+                auto_resume_triggered = False
+                try:
+                    response = self.desktop_interact(
+                        action="resume_mission",
+                        mission_id=mission_id,
+                        mission_kind=str(row.get("mission_kind", "") or "").strip(),
+                        app_name=str(row.get("app_name", "") or "").strip(),
+                        window_title=str(row.get("blocking_window_title", row.get("anchor_window_title", "")) or "").strip(),
+                        resume_contract=row.get("resume_contract") if isinstance(row.get("resume_contract"), dict) else None,
+                        blocking_surface=row.get("blocking_surface") if isinstance(row.get("blocking_surface"), dict) else None,
+                        resume_force=bool(resume_force),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    response = {"status": "error", "message": str(exc)}
+                response_payload = dict(response) if isinstance(response, dict) else {"status": "error", "message": "invalid desktop resume payload"}
+                auto_resume_triggered = str(response_payload.get("status", "") or "").strip().lower() == "success"
+                if auto_resume_triggered:
+                    auto_resume_triggered_count += 1
+                    triggered_mission_ids.append(mission_id)
+                else:
+                    error_count += 1
+                entry.update(
+                    {
+                        "auto_resume_attempted": True,
+                        "auto_resume_triggered": auto_resume_triggered,
+                        "classification_after": "running" if auto_resume_triggered else "error",
+                        "status": str(response_payload.get("status", "") or "").strip().lower(),
+                        "result": _to_jsonable(response_payload),
+                        "result_message": str(response_payload.get("message", response_payload.get("final_action", "")) or "").strip(),
+                    }
+                )
+            elif classification_before == "ready":
+                resume_ready_count += 1
+                if mission_id:
+                    ready_mission_ids.append(mission_id)
+                entry["auto_resume_deferred"] = True
+                entry["defer_reason"] = "max_auto_resumes_reached"
+            elif classification_before == "blocked":
+                manual_attention_count += 1
+                blocked_count += 1
+                if mission_id:
+                    blocked_mission_ids.append(mission_id)
+            else:
+                idle_count += 1
+            results.append(entry)
+
+        snapshot_after = self.desktop_mission_status(
+            limit=bounded_limit,
+            status=clean_mission_status,
+            mission_kind=clean_mission_kind,
+            app_name=clean_app_name,
+            stop_reason_code=clean_stop_reason_code,
+        )
+        if auto_resume_triggered_count > 0:
+            status_name = "success"
+            message = (
+                f"Desktop recovery daemon resumed {auto_resume_triggered_count} paused mission"
+                f"{'' if auto_resume_triggered_count == 1 else 's'}."
+            )
+        elif resume_ready_count > 0:
+            status_name = "ready"
+            message = (
+                f"Desktop recovery daemon found {resume_ready_count} resume-ready mission"
+                f"{'' if resume_ready_count == 1 else 's'} but left them queued."
+            )
+        elif blocked_count > 0:
+            status_name = "blocked"
+            message = (
+                f"Desktop recovery daemon found {blocked_count} paused mission"
+                f"{'' if blocked_count == 1 else 's'} still waiting on manual review."
+            )
+        else:
+            status_name = "idle"
+            message = "Desktop recovery daemon did not find resumable paused missions."
+        stop_reason = "desktop_recovery_idle"
+        if auto_resume_triggered_count > 0:
+            stop_reason = "auto_resume_triggered"
+        elif resume_ready_count > 0:
+            stop_reason = "ready_backlog"
+        elif blocked_count > 0:
+            stop_reason = "manual_attention_required"
+        elif error_count > 0:
+            stop_reason = "resume_error"
+        payload = {
+            "status": status_name,
+            "message": message,
+            "snapshot_before": _to_jsonable(snapshot),
+            "snapshot_after": _to_jsonable(snapshot_after) if isinstance(snapshot_after, dict) else {},
+            "results": [_to_jsonable(item) for item in results],
+            "limit": bounded_limit,
+            "max_auto_resumes": bounded_auto_resumes,
+            "mission_status": clean_mission_status,
+            "mission_kind": clean_mission_kind,
+            "app_name": clean_app_name,
+            "stop_reason_code": clean_stop_reason_code,
+            "resume_force": bool(resume_force),
+            "trigger_source": clean_trigger_source,
+            "filters": {
+                "status": clean_mission_status,
+                "mission_kind": clean_mission_kind,
+                "app_name": clean_app_name,
+                "stop_reason_code": clean_stop_reason_code,
+            },
+            "evaluated_count": len(results),
+            "auto_resume_attempted_count": auto_resume_attempted_count,
+            "auto_resume_triggered_count": auto_resume_triggered_count,
+            "resume_ready_count": resume_ready_count,
+            "manual_attention_count": manual_attention_count,
+            "blocked_count": blocked_count,
+            "idle_count": idle_count,
+            "error_count": error_count,
+            "triggered_mission_ids": triggered_mission_ids,
+            "ready_mission_ids": ready_mission_ids,
+            "blocked_mission_ids": blocked_mission_ids,
+            "stop_reason": stop_reason,
+        }
+        return self._record_desktop_recovery_watchdog_run(payload, source=clean_trigger_source)
+
+    def _record_desktop_recovery_watchdog_run(
+        self,
+        payload: Dict[str, Any],
+        *,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        result_payload = dict(payload) if isinstance(payload, dict) else {}
+        memory = getattr(self, "desktop_recovery_watchdog_memory", None)
+        if memory is None:
+            return result_payload
+        try:
+            recorded = memory.record(
+                watchdog_payload=result_payload,
+                source=str(source or "manual").strip().lower() or "manual",
+            )
+            run = recorded.get("run", {}) if isinstance(recorded, dict) else {}
+            if isinstance(run, dict) and run:
+                result_payload["watchdog_run"] = _to_jsonable(run)
+        except Exception:
+            pass
+        return result_payload
+
+    def desktop_recovery_watchdog_history(
+        self,
+        *,
+        limit: int = 20,
+        status: str = "",
+        source: str = "",
+        app_name: str = "",
+        mission_kind: str = "",
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 200))
+        memory = getattr(self, "desktop_recovery_watchdog_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop recovery watchdog memory unavailable"}
+        try:
+            return memory.snapshot(
+                limit=bounded,
+                status=str(status or "").strip(),
+                source=str(source or "").strip(),
+                app_name=str(app_name or "").strip(),
+                mission_kind=str(mission_kind or "").strip(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_desktop_recovery_watchdog_history(
+        self,
+        *,
+        run_id: str = "",
+        status: str = "",
+        source: str = "",
+        app_name: str = "",
+        mission_kind: str = "",
+    ) -> Dict[str, Any]:
+        memory = getattr(self, "desktop_recovery_watchdog_memory", None)
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop recovery watchdog memory unavailable"}
+        try:
+            return memory.reset(
+                run_id=str(run_id or "").strip(),
+                status=str(status or "").strip(),
+                source=str(source or "").strip(),
+                app_name=str(app_name or "").strip(),
+                mission_kind=str(mission_kind or "").strip(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_recovery_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_recovery_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop recovery supervisor unavailable"}
+        payload = supervisor.status()
+        payload["snapshot"] = self.desktop_mission_status(
+            limit=int(payload.get("limit", 12) or 12),
+            status=str(payload.get("mission_status", "") or "").strip(),
+            mission_kind=str(payload.get("mission_kind", "") or "").strip(),
+            app_name=str(payload.get("app_name", "") or "").strip(),
+            stop_reason_code=str(payload.get("stop_reason_code", "") or "").strip(),
+        )
+        history = self.desktop_recovery_watchdog_history(
+            limit=max(1, min(int(history_limit), 20)),
+            status="",
+            source="",
+            app_name=str(payload.get("app_name", "") or "").strip(),
+            mission_kind=str(payload.get("mission_kind", "") or "").strip(),
+        )
+        payload["watchdog_history"] = _to_jsonable(history) if isinstance(history, dict) else {}
+        return payload
+
+    def configure_desktop_recovery_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        limit: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        mission_status: Optional[str] = None,
+        mission_kind: Optional[str] = None,
+        app_name: Optional[str] = None,
+        stop_reason_code: Optional[str] = None,
+        resume_force: Optional[bool] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_recovery_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop recovery supervisor unavailable"}
+        supervisor.configure(
+            enabled=enabled,
+            interval_s=interval_s,
+            limit=limit,
+            max_auto_resumes=max_auto_resumes,
+            mission_status=mission_status,
+            mission_kind=mission_kind,
+            app_name=app_name,
+            stop_reason_code=stop_reason_code,
+            resume_force=resume_force,
+            source="api",
+        )
+        return self.desktop_recovery_supervisor_status(history_limit=history_limit)
+
+    def trigger_desktop_recovery_supervisor(
+        self,
+        *,
+        limit: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        mission_status: Optional[str] = None,
+        mission_kind: Optional[str] = None,
+        app_name: Optional[str] = None,
+        stop_reason_code: Optional[str] = None,
+        resume_force: Optional[bool] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_recovery_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop recovery supervisor unavailable"}
+        payload = supervisor.trigger_now(
+            source="manual_api",
+            limit=limit,
+            max_auto_resumes=max_auto_resumes,
+            mission_status=mission_status,
+            mission_kind=mission_kind,
+            app_name=app_name,
+            stop_reason_code=stop_reason_code,
+            resume_force=resume_force,
+        )
+        payload["supervisor"] = _to_jsonable(self.desktop_recovery_supervisor_status(history_limit=history_limit))
+        return payload
 
     @staticmethod
     def _resolve_model_setup_manifest_path(*, manifest_path: str = "", workspace_root: str = "") -> str:
@@ -9487,6 +9954,114 @@ class DesktopBackendService:
             )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def _execute_model_setup_watchdog_supervisor_tick(
+        self,
+        *,
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        current_scope: bool = False,
+        max_missions: int = 6,
+        max_auto_resumes: int = 2,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        manifest_path: str = "",
+        workspace_root: str = "",
+    ) -> Dict[str, Any]:
+        return self.model_setup_mission_recovery_watchdog(
+            dry_run=bool(dry_run),
+            continue_on_error=bool(continue_on_error),
+            current_scope=bool(current_scope),
+            max_missions=max_missions,
+            max_auto_resumes=max_auto_resumes,
+            continue_followup_actions=bool(continue_followup_actions),
+            max_followup_waves=max_followup_waves,
+            manifest_path=str(manifest_path or "").strip(),
+            workspace_root=str(workspace_root or "").strip(),
+        )
+
+    def model_setup_recovery_watchdog_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "model_setup_recovery_watchdog_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "model setup watchdog supervisor unavailable"}
+        status_payload = supervisor.status()
+        scope_filters = self._model_setup_watchdog_history_scope_filters(
+            manifest_path=str(status_payload.get("manifest_path", "") or "").strip(),
+            workspace_root=str(status_payload.get("workspace_root", "") or "").strip(),
+        )
+        history = self.model_setup_recovery_watchdog_history(
+            limit=max(1, min(int(history_limit), 20)),
+            current_scope=False,
+            **scope_filters,
+        )
+        status_payload["watchdog_history"] = _to_jsonable(history) if isinstance(history, dict) else {}
+        return status_payload
+
+    def configure_model_setup_recovery_watchdog_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        max_missions: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        continue_followup_actions: Optional[bool] = None,
+        max_followup_waves: Optional[int] = None,
+        current_scope: Optional[bool] = None,
+        manifest_path: Optional[str] = None,
+        workspace_root: Optional[str] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "model_setup_recovery_watchdog_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "model setup watchdog supervisor unavailable"}
+        supervisor.configure(
+            enabled=enabled,
+            interval_s=interval_s,
+            max_missions=max_missions,
+            max_auto_resumes=max_auto_resumes,
+            continue_followup_actions=continue_followup_actions,
+            max_followup_waves=max_followup_waves,
+            current_scope=current_scope,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+            source="api",
+        )
+        return self.model_setup_recovery_watchdog_supervisor_status(history_limit=history_limit)
+
+    def trigger_model_setup_recovery_watchdog_supervisor(
+        self,
+        *,
+        dry_run: Optional[bool] = None,
+        current_scope: Optional[bool] = None,
+        manifest_path: Optional[str] = None,
+        workspace_root: Optional[str] = None,
+        max_missions: Optional[int] = None,
+        max_auto_resumes: Optional[int] = None,
+        continue_followup_actions: Optional[bool] = None,
+        max_followup_waves: Optional[int] = None,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "model_setup_recovery_watchdog_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "model setup watchdog supervisor unavailable"}
+        payload = supervisor.trigger_now(
+            source="manual_api",
+            dry_run=dry_run,
+            current_scope=current_scope,
+            manifest_path=manifest_path,
+            workspace_root=workspace_root,
+            max_missions=max_missions,
+            max_auto_resumes=max_auto_resumes,
+            continue_followup_actions=continue_followup_actions,
+            max_followup_waves=max_followup_waves,
+        )
+        status_payload = self.model_setup_recovery_watchdog_supervisor_status(history_limit=history_limit)
+        payload["supervisor"] = _to_jsonable(status_payload)
+        return payload
 
     def model_setup_mission_resume(
         self,
@@ -40228,6 +40803,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 typed_text = str(query.get("text", [""])[0] or "").strip()
                 mission_id = str(query.get("mission_id", [""])[0] or "").strip()
                 mission_kind = str(query.get("mission_kind", [""])[0] or "").strip().lower()
+                candidate_id = str(query.get("candidate_id", [""])[0] or "").strip()
+                branch_action = str(query.get("branch_action", [""])[0] or "").strip()
                 keys = [
                     str(item).strip().lower()
                     for item in str(query.get("keys", [""])[0] or "").split(",")
@@ -40241,6 +40818,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     text=typed_text,
                     mission_id=mission_id,
                     mission_kind=mission_kind,
+                    candidate_id=candidate_id,
+                    branch_action=branch_action,
                     keys=keys or None,
                     ensure_app_launch=self._parse_bool(str(query.get("ensure_app_launch", ["0"])[0]), default=False) if "ensure_app_launch" in query else None,
                     focus_first=self._parse_bool(str(query.get("focus_first", ["1"])[0]), default=True) if "focus_first" in query else None,
@@ -40257,6 +40836,18 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         minimum=1,
                         maximum=4,
                     ) if "max_strategy_attempts" in query else None,
+                    exploration_limit=self._parse_int(
+                        str(query.get("exploration_limit", ["6"])[0]),
+                        6,
+                        minimum=1,
+                        maximum=12,
+                    ) if "exploration_limit" in query else None,
+                    max_exploration_steps=self._parse_int(
+                        str(query.get("max_exploration_steps", ["3"])[0]),
+                        3,
+                        minimum=1,
+                        maximum=8,
+                    ) if "max_exploration_steps" in query else None,
                     max_wizard_pages=self._parse_int(
                         str(query.get("max_wizard_pages", ["6"])[0]),
                         6,
@@ -40317,6 +40908,19 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
+            if path == "/desktop/surfaces/exploration":
+                limit = self._parse_int(str(query.get("limit", ["8"])[0]), 8, minimum=1, maximum=24)
+                payload = self.server.service.desktop_surface_exploration(
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    window_title=str(query.get("window_title", [""])[0] or "").strip(),
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    limit=limit,
+                    include_observation=self._parse_bool(str(query.get("include_observation", ["1"])[0]), default=True),
+                    include_elements=self._parse_bool(str(query.get("include_elements", ["1"])[0]), default=True),
+                    include_workflow_probes=self._parse_bool(str(query.get("include_workflow_probes", ["1"])[0]), default=True),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
             if path == "/runtime/desktop-workflows":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
                 payload = self.server.service.desktop_workflow_memory_status(
@@ -40337,6 +40941,22 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     mission_kind=str(query.get("mission_kind", [""])[0] or "").strip(),
                     app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
                     stop_reason_code=str(query.get("stop_reason_code", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/recovery-daemon":
+                history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=20)
+                payload = self.server.service.desktop_recovery_supervisor_status(history_limit=history_limit)
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/recovery-daemon/history":
+                limit = self._parse_int(str(query.get("limit", ["20"])[0]), 20, minimum=1, maximum=200)
+                payload = self.server.service.desktop_recovery_watchdog_history(
+                    limit=limit,
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    source=str(query.get("source", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    mission_kind=str(query.get("mission_kind", [""])[0] or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
@@ -40428,6 +41048,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     status=str(query.get("status", [""])[0] or "").strip(),
                     current_scope=current_scope,
                     **scope,
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-watchdog/supervisor":
+                history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=20)
+                payload = self.server.service.model_setup_recovery_watchdog_supervisor_status(
+                    history_limit=history_limit,
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
@@ -41969,6 +42596,81 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") != "error" else 400, payload)
                 return
+            if path == "/models/setup/mission/recovery-watchdog/supervisor":
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.configure_model_setup_recovery_watchdog_supervisor(
+                    enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
+                    interval_s=(
+                        self._parse_float(str(body.get("interval_s", "45") or "45"), 45.0, minimum=5.0, maximum=3600.0)
+                        if body.get("interval_s") is not None
+                        else None
+                    ),
+                    max_missions=(
+                        self._parse_int(str(body.get("max_missions", "6") or "6"), 6, minimum=1, maximum=64)
+                        if body.get("max_missions") is not None
+                        else None
+                    ),
+                    max_auto_resumes=(
+                        self._parse_int(str(body.get("max_auto_resumes", "2") or "2"), 2, minimum=0, maximum=64)
+                        if body.get("max_auto_resumes") is not None
+                        else None
+                    ),
+                    continue_followup_actions=(
+                        bool(body.get("continue_followup_actions"))
+                        if body.get("continue_followup_actions") is not None
+                        else None
+                    ),
+                    max_followup_waves=(
+                        self._parse_int(str(body.get("max_followup_waves", "3") or "3"), 3, minimum=0, maximum=8)
+                        if body.get("max_followup_waves") is not None
+                        else None
+                    ),
+                    current_scope=(
+                        bool(body.get("current_scope"))
+                        if body.get("current_scope") is not None
+                        else None
+                    ),
+                    manifest_path=scope.get("manifest_path") if scope.get("manifest_path") else None,
+                    workspace_root=scope.get("workspace_root") if scope.get("workspace_root") else None,
+                    history_limit=self._parse_int(str(body.get("history_limit", "6") or "6"), 6, minimum=1, maximum=20),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
+            if path == "/models/setup/mission/recovery-watchdog/supervisor/trigger":
+                scope = self._parse_model_setup_scope_body(body)
+                payload = self.server.service.trigger_model_setup_recovery_watchdog_supervisor(
+                    dry_run=(bool(body.get("dry_run")) if body.get("dry_run") is not None else None),
+                    current_scope=(
+                        bool(body.get("current_scope"))
+                        if body.get("current_scope") is not None
+                        else None
+                    ),
+                    manifest_path=scope.get("manifest_path") if scope.get("manifest_path") else None,
+                    workspace_root=scope.get("workspace_root") if scope.get("workspace_root") else None,
+                    max_missions=(
+                        self._parse_int(str(body.get("max_missions", "6") or "6"), 6, minimum=1, maximum=64)
+                        if body.get("max_missions") is not None
+                        else None
+                    ),
+                    max_auto_resumes=(
+                        self._parse_int(str(body.get("max_auto_resumes", "2") or "2"), 2, minimum=0, maximum=64)
+                        if body.get("max_auto_resumes") is not None
+                        else None
+                    ),
+                    continue_followup_actions=(
+                        bool(body.get("continue_followup_actions"))
+                        if body.get("continue_followup_actions") is not None
+                        else None
+                    ),
+                    max_followup_waves=(
+                        self._parse_int(str(body.get("max_followup_waves", "3") or "3"), 3, minimum=0, maximum=8)
+                        if body.get("max_followup_waves") is not None
+                        else None
+                    ),
+                    history_limit=self._parse_int(str(body.get("history_limit", "6") or "6"), 6, minimum=1, maximum=20),
+                )
+                self._send_json(200 if payload.get("status") != "error" else 400, payload)
+                return
             if path == "/models/setup/mission/reset":
                 payload = self.server.service.reset_model_setup_mission(
                     mission_id=str(body.get("mission_id", "") or "").strip(),
@@ -42114,6 +42816,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 typed_text = str(body.get("text", "") or "").strip()
                 mission_id = str(body.get("mission_id", "") or "").strip()
                 mission_kind = str(body.get("mission_kind", "") or "").strip().lower()
+                candidate_id = str(body.get("candidate_id", "") or "").strip()
+                branch_action = str(body.get("branch_action", "") or "").strip()
                 keys_raw = body.get("keys", [])
                 keys = [
                     str(item).strip().lower()
@@ -42132,6 +42836,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     text=typed_text,
                     mission_id=mission_id,
                     mission_kind=mission_kind,
+                    candidate_id=candidate_id,
+                    branch_action=branch_action,
                     keys=keys or None,
                     ensure_app_launch=bool(body.get("ensure_app_launch")) if "ensure_app_launch" in body else None,
                     focus_first=bool(body.get("focus_first")) if "focus_first" in body else None,
@@ -42140,6 +42846,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     verify_text=str(body.get("verify_text", "") or "").strip(),
                     retry_on_verification_failure=bool(body.get("retry_on_verification_failure")) if "retry_on_verification_failure" in body else None,
                     max_strategy_attempts=self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
+                    exploration_limit=self._parse_int(str(body.get("exploration_limit", 6)), 6, minimum=1, maximum=12) if "exploration_limit" in body else None,
+                    max_exploration_steps=self._parse_int(str(body.get("max_exploration_steps", 3)), 3, minimum=1, maximum=8) if "max_exploration_steps" in body else None,
                     max_wizard_pages=self._parse_int(str(body.get("max_wizard_pages", 6)), 6, minimum=1, maximum=12) if "max_wizard_pages" in body else None,
                     allow_warning_pages=bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
                     max_form_pages=self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,
@@ -42319,6 +43027,106 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/recovery-daemon":
+                payload = self.server.service.configure_desktop_recovery_supervisor(
+                    enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
+                    interval_s=(
+                        self._parse_float(str(body.get("interval_s", "45") or "45"), 45.0, minimum=5.0, maximum=3600.0)
+                        if body.get("interval_s") is not None
+                        else None
+                    ),
+                    limit=(
+                        self._parse_int(str(body.get("limit", "12") or "12"), 12, minimum=1, maximum=200)
+                        if body.get("limit") is not None
+                        else None
+                    ),
+                    max_auto_resumes=(
+                        self._parse_int(str(body.get("max_auto_resumes", "2") or "2"), 2, minimum=0, maximum=32)
+                        if body.get("max_auto_resumes") is not None
+                        else None
+                    ),
+                    mission_status=(
+                        str(body.get("mission_status", "") or "").strip()
+                        if body.get("mission_status") is not None
+                        else None
+                    ),
+                    mission_kind=(
+                        str(body.get("mission_kind", "") or "").strip()
+                        if body.get("mission_kind") is not None
+                        else None
+                    ),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    stop_reason_code=(
+                        str(body.get("stop_reason_code", "") or "").strip()
+                        if body.get("stop_reason_code") is not None
+                        else None
+                    ),
+                    resume_force=(bool(body.get("resume_force")) if body.get("resume_force") is not None else None),
+                    history_limit=self._parse_int(
+                        str(body.get("history_limit", "6") or "6"),
+                        6,
+                        minimum=1,
+                        maximum=20,
+                    ),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/recovery-daemon/trigger":
+                payload = self.server.service.trigger_desktop_recovery_supervisor(
+                    limit=(
+                        self._parse_int(str(body.get("limit", "12") or "12"), 12, minimum=1, maximum=200)
+                        if body.get("limit") is not None
+                        else None
+                    ),
+                    max_auto_resumes=(
+                        self._parse_int(str(body.get("max_auto_resumes", "2") or "2"), 2, minimum=0, maximum=32)
+                        if body.get("max_auto_resumes") is not None
+                        else None
+                    ),
+                    mission_status=(
+                        str(body.get("mission_status", "") or "").strip()
+                        if body.get("mission_status") is not None
+                        else None
+                    ),
+                    mission_kind=(
+                        str(body.get("mission_kind", "") or "").strip()
+                        if body.get("mission_kind") is not None
+                        else None
+                    ),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    stop_reason_code=(
+                        str(body.get("stop_reason_code", "") or "").strip()
+                        if body.get("stop_reason_code") is not None
+                        else None
+                    ),
+                    resume_force=(bool(body.get("resume_force")) if body.get("resume_force") is not None else None),
+                    history_limit=self._parse_int(
+                        str(body.get("history_limit", "6") or "6"),
+                        6,
+                        minimum=1,
+                        maximum=20,
+                    ),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
+                return
+            if path == "/runtime/desktop-missions/recovery-daemon/history/reset":
+                payload = self.server.service.reset_desktop_recovery_watchdog_history(
+                    run_id=str(body.get("run_id", "") or "").strip(),
+                    status=str(body.get("status", "") or "").strip(),
+                    source=str(body.get("source", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    mission_kind=str(body.get("mission_kind", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
 
             if path == "/oauth/authorize":

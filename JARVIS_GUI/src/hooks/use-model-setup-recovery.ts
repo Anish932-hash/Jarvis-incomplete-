@@ -6,6 +6,7 @@ import {
   backendClient,
   type ModelSetupRecoveryWatchdogHistoryResponse,
   type ModelSetupRecoveryWatchdogRunRecord,
+  type ModelSetupRecoveryWatchdogSupervisorStatusResponse,
   type ModelSetupMissionHistoryResponse,
   type ModelSetupMissionLaunchResponse,
   type ModelSetupMissionRecord,
@@ -89,6 +90,7 @@ export function useModelSetupRecovery({
   const [snapshot, setSnapshot] = useState<ModelSetupMissionHistoryResponse | null>(null);
   const [resumeAdvice, setResumeAdvice] = useState<ModelSetupResumeAdviceResponse | null>(null);
   const [watchdogHistory, setWatchdogHistory] = useState<ModelSetupRecoveryWatchdogHistoryResponse | null>(null);
+  const [supervisorStatus, setSupervisorStatus] = useState<ModelSetupRecoveryWatchdogSupervisorStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [sweeping, setSweeping] = useState(false);
@@ -223,6 +225,8 @@ export function useModelSetupRecovery({
         current_scope: currentScope,
       });
       setWatchdogHistory(watchdogPayload);
+      const supervisorPayload = await backendClient.modelSetupRecoveryWatchdogSupervisor({ history_limit: limit });
+      setSupervisorStatus(supervisorPayload);
 
       if (preferred) {
         const advice = await backendClient.modelSetupMissionResumeAdvice({
@@ -232,7 +236,7 @@ export function useModelSetupRecovery({
           ...missionScopeInput(preferred),
         });
         setResumeAdvice(advice);
-        return { snapshot: payload, resumeAdvice: advice, watchdogHistory: watchdogPayload };
+        return { snapshot: payload, resumeAdvice: advice, watchdogHistory: watchdogPayload, supervisorStatus: supervisorPayload };
       }
 
       const advice = await backendClient.modelSetupMissionResumeAdvice({
@@ -240,7 +244,7 @@ export function useModelSetupRecovery({
         current_scope: currentScope,
       });
       setResumeAdvice(advice);
-      return { snapshot: payload, resumeAdvice: advice, watchdogHistory: watchdogPayload };
+      return { snapshot: payload, resumeAdvice: advice, watchdogHistory: watchdogPayload, supervisorStatus: supervisorPayload };
     } finally {
       setLoading(false);
     }
@@ -374,16 +378,91 @@ export function useModelSetupRecovery({
     [latestMission, refreshSnapshot]
   );
 
+  const configureWatchdogSupervisor = useCallback(
+    async (input?: {
+      enabled?: boolean;
+      intervalS?: number;
+      maxMissions?: number;
+      maxAutoResumes?: number;
+      continueFollowupActions?: boolean;
+      maxFollowupWaves?: number;
+      currentScope?: boolean;
+      scope?: { manifest_path?: string; workspace_root?: string } | null;
+    }): Promise<ModelSetupRecoveryWatchdogSupervisorStatusResponse | null> => {
+      const missionScope = missionScopeInput(latestMission);
+      const scope = {
+        manifest_path: String(input?.scope?.manifest_path ?? missionScope.manifest_path ?? '').trim() || undefined,
+        workspace_root: String(input?.scope?.workspace_root ?? missionScope.workspace_root ?? '').trim() || undefined,
+      };
+      const response = await backendClient.updateModelSetupRecoveryWatchdogSupervisor({
+        enabled: input?.enabled,
+        interval_s: input?.intervalS,
+        max_missions: input?.maxMissions,
+        max_auto_resumes: input?.maxAutoResumes,
+        continue_followup_actions: input?.continueFollowupActions,
+        max_followup_waves: input?.maxFollowupWaves,
+        current_scope: input?.currentScope,
+        history_limit: limit,
+        ...scope,
+      });
+      setSupervisorStatus(response);
+      await refreshSnapshot();
+      return response;
+    },
+    [latestMission, limit, refreshSnapshot]
+  );
+
+  const triggerWatchdogSupervisor = useCallback(
+    async (input?: {
+      dryRun?: boolean;
+      currentScope?: boolean;
+      maxMissions?: number;
+      maxAutoResumes?: number;
+      continueFollowupActions?: boolean;
+      maxFollowupWaves?: number;
+      scope?: { manifest_path?: string; workspace_root?: string } | null;
+    }): Promise<Record<string, unknown> | null> => {
+      const missionScope = missionScopeInput(latestMission);
+      const scope = {
+        manifest_path: String(input?.scope?.manifest_path ?? missionScope.manifest_path ?? '').trim() || undefined,
+        workspace_root: String(input?.scope?.workspace_root ?? missionScope.workspace_root ?? '').trim() || undefined,
+      };
+      const response = await backendClient.triggerModelSetupRecoveryWatchdogSupervisor({
+        dry_run: input?.dryRun,
+        current_scope: input?.currentScope,
+        max_missions: input?.maxMissions,
+        max_auto_resumes: input?.maxAutoResumes,
+        continue_followup_actions: input?.continueFollowupActions,
+        max_followup_waves: input?.maxFollowupWaves,
+        history_limit: limit,
+        ...scope,
+      });
+      const supervisor = response.supervisor;
+      if (supervisor && typeof supervisor === 'object' && !Array.isArray(supervisor)) {
+        setSupervisorStatus(supervisor as ModelSetupRecoveryWatchdogSupervisorStatusResponse);
+      }
+      await refreshSnapshot();
+      return response as Record<string, unknown>;
+    },
+    [latestMission, limit, refreshSnapshot]
+  );
+
+  const backendSupervisorEnabled = useMemo(
+    () => Boolean(supervisorStatus?.enabled ?? false),
+    [supervisorStatus]
+  );
+
   const autoWatchdogEligible = useMemo(
     () =>
       enabled &&
+      !backendSupervisorEnabled &&
       !loading &&
       !resuming &&
       !sweeping &&
       !watchdogging &&
       Boolean(latestMission) &&
       (autoResumeCandidateCount > 0 || watchActiveRuns || stalledCount > 0),
-    [enabled, latestMission, loading, resuming, snapshot, stalledCount, sweeping, watchdogging, watchActiveRuns]
+    [backendSupervisorEnabled, enabled, latestMission, loading, resuming, snapshot, stalledCount, sweeping, watchdogging, watchActiveRuns]
   );
 
   useEffect(() => {
@@ -391,6 +470,7 @@ export function useModelSetupRecovery({
       setSnapshot(null);
       setResumeAdvice(null);
       setWatchdogHistory(null);
+      setSupervisorStatus(null);
       return;
     }
     void refreshSnapshot();
@@ -444,6 +524,8 @@ export function useModelSetupRecovery({
     resumeAdvice,
     watchdogHistory,
     latestWatchdogRun,
+    supervisorStatus,
+    backendSupervisorEnabled,
     missionRows,
     latestMission,
     dynamicPollMs,
@@ -463,6 +545,8 @@ export function useModelSetupRecovery({
     sweepRecovery,
     watchdogRecovery,
     resetWatchdogHistory,
+    configureWatchdogSupervisor,
+    triggerWatchdogSupervisor,
   };
 }
 

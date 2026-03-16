@@ -205,3 +205,97 @@ def test_desktop_mission_memory_matches_anchor_and_blocking_window_titles_for_ap
     reset = memory.reset(app_name="account control")
     assert reset["status"] == "success"
     assert reset["removed"] == 1
+
+
+def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: Path) -> None:
+    memory = DesktopMissionMemory(store_path=str(tmp_path / "desktop_mission_memory.json"))
+
+    saved_ready = memory.save_paused_mission(
+        mission_kind="exploration",
+        args={"app_name": "settings", "query": "bluetooth"},
+        resume_contract={
+            "resume_action": "advance_surface_exploration",
+            "resume_signature": "exploration-ready-1",
+            "anchor_app_name": "settings",
+            "resume_payload": {"action": "advance_surface_exploration", "app_name": "settings", "query": "bluetooth"},
+        },
+        blocking_surface={
+            "window_title": "Settings",
+            "surface_signature": "surface-exploration-ready-1",
+            "surface_mode": "list_navigation",
+        },
+        mission_payload={
+            "status": "partial",
+            "message": "JARVIS advanced the surface and found another bounded recon step.",
+            "stop_reason_code": "exploration_followup_available",
+            "surface_mode": "list_navigation",
+            "exploration_query": "bluetooth",
+            "hypothesis_count": 2,
+            "branch_action_count": 1,
+            "attempted_target_count": 1,
+            "alternative_target_count": 1,
+            "alternative_hypothesis_count": 1,
+            "alternative_branch_action_count": 0,
+            "step_count": 1,
+            "steps_completed": 1,
+            "max_steps": 3,
+            "selected_action": "select_list_item",
+            "selected_candidate_id": "list_bluetooth",
+            "selected_candidate_label": "Bluetooth",
+            "attempted_targets": [
+                {
+                    "candidate_id": "list_bluetooth",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_label": "Bluetooth",
+                }
+            ],
+            "surface_signature_history": ["surface-exploration-ready-1", "surface-exploration-ready-2"],
+        },
+        message="JARVIS advanced the surface and found another bounded recon step.",
+    )
+
+    ready_mission = saved_ready["mission"]
+    assert ready_mission["mission_kind"] == "exploration"
+    assert ready_mission["recovery_profile"] == "resume_ready"
+    assert ready_mission["resume_ready"] is True
+    assert ready_mission["surface_mode"] == "list_navigation"
+    assert ready_mission["selected_action"] == "select_list_item"
+    assert ready_mission["selected_candidate_label"] == "Bluetooth"
+    assert ready_mission["attempted_target_count"] == 1
+    assert ready_mission["alternative_target_count"] == 1
+    assert ready_mission["attempted_targets_tail"][0]["candidate_id"] == "list_bluetooth"
+    assert ready_mission["surface_signature_history"] == ["surface-exploration-ready-1", "surface-exploration-ready-2"]
+
+    saved_review = memory.save_paused_mission(
+        mission_kind="exploration",
+        args={"app_name": "settings", "query": "advanced display"},
+        resume_contract={
+            "resume_action": "advance_surface_exploration",
+            "resume_signature": "exploration-review-1",
+            "anchor_app_name": "settings",
+        },
+        blocking_surface={
+            "window_title": "Settings",
+            "surface_signature": "surface-exploration-review-1",
+            "surface_mode": "form_navigation",
+        },
+        mission_payload={
+            "status": "blocked",
+            "message": "The current unsupported-app surface still needs human review before safe exploration can continue.",
+            "stop_reason_code": "exploration_no_safe_path",
+            "surface_mode": "form_navigation",
+            "selected_action": "select_sidebar_item",
+            "selected_candidate_label": "Advanced display",
+        },
+        message="The current unsupported-app surface still needs human review before safe exploration can continue.",
+    )
+
+    review_mission = saved_review["mission"]
+    snapshot = memory.snapshot(status="paused", mission_kind="exploration", app_name="settings")
+
+    assert review_mission["recovery_profile"] == "surface_review"
+    assert review_mission["manual_attention_required"] is True
+    assert review_mission["resume_ready"] is False
+    assert snapshot["count"] == 2
+    assert snapshot["mission_kind_counts"] == {"exploration": 2}
+    assert snapshot["recovery_profile_counts"] == {"resume_ready": 1, "surface_review": 1}

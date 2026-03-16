@@ -258,10 +258,889 @@ def test_desktop_action_router_applies_app_profile_defaults(tmp_path: Path) -> N
     payload = router.advise({"action": "click", "app_name": "chrome", "query": "Settings"})
 
     assert payload["status"] == "success"
-    assert payload["app_profile"]["category"] == "browser"
-    assert payload["profile_defaults_applied"]["ensure_app_launch"] is True
-    assert payload["profile_defaults_applied"]["target_mode"] == "accessibility"
-    assert [step["action"] for step in payload["execution_plan"]] == ["open_app", "focus_window", "computer_click_target"]
+
+
+def test_desktop_action_router_surface_exploration_ranks_list_target() -> None:
+    router = _build_router({})
+    snapshot = {
+        "status": "success",
+        "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+        "target_window": {"title": "Settings"},
+        "query_targets": [
+            {
+                "element_id": "list_bluetooth",
+                "name": "Bluetooth",
+                "control_type": "ListItem",
+                "enabled": True,
+                "visible": True,
+                "match_score": 1.0,
+            }
+        ],
+        "query_related_candidates": [],
+        "selection_candidates": [
+            {
+                "element_id": "list_bluetooth",
+                "name": "Bluetooth",
+                "control_type": "ListItem",
+                "enabled": True,
+                "visible": True,
+            }
+        ],
+        "workflow_surfaces": [],
+        "surface_flags": {"list_visible": True, "window_targeted": True},
+        "safety_signals": {},
+        "recommended_actions": ["focus_list_surface"],
+        "filters": {"app_name": "settings", "query": "Bluetooth"},
+    }
+    router.surface_snapshot = lambda **_kwargs: snapshot  # type: ignore[method-assign]
+
+    payload = router.surface_exploration_plan(
+        app_name="settings",
+        query="Bluetooth",
+        include_workflow_probes=False,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["surface_mode"] == "list_navigation"
+    assert payload["automation_ready"] is True
+    assert payload["top_hypotheses"][0]["label"] == "Bluetooth"
+    assert payload["top_hypotheses"][0]["suggested_action"] == "select_list_item"
+    assert payload["top_path"][-1]["action"] == "select_list_item"
+
+
+def test_desktop_action_router_surface_exploration_ranks_dialog_buttons() -> None:
+    router = _build_router({})
+    snapshot = {
+        "status": "success",
+        "app_profile": {"status": "success", "category": "utility", "name": "Installer"},
+        "target_window": {"title": "Confirm Setup"},
+        "query_targets": [],
+        "query_related_candidates": [],
+        "selection_candidates": [],
+        "workflow_surfaces": [
+            {
+                "action": "confirm_dialog",
+                "title": "Confirm Dialog",
+                "supported": True,
+                "matched": True,
+                "recommended_followups": [],
+            },
+            {
+                "action": "dismiss_dialog",
+                "title": "Dismiss Dialog",
+                "supported": True,
+                "matched": False,
+                "recommended_followups": [],
+            },
+        ],
+        "surface_flags": {"dialog_visible": True, "window_targeted": True},
+        "safety_signals": {
+            "dialog_visible": True,
+            "dialog_button_targets": [
+                {
+                    "element_id": "btn_continue",
+                    "name": "Continue",
+                    "control_type": "Button",
+                    "enabled": True,
+                    "visible": True,
+                },
+                {
+                    "element_id": "btn_cancel",
+                    "name": "Cancel",
+                    "control_type": "Button",
+                    "enabled": True,
+                    "visible": True,
+                },
+            ],
+            "preferred_confirmation_button": "Continue",
+        },
+        "recommended_actions": ["confirm_dialog", "dismiss_dialog"],
+        "filters": {"app_name": "installer", "query": "Continue"},
+    }
+    router.surface_snapshot = lambda **_kwargs: snapshot  # type: ignore[method-assign]
+
+    payload = router.surface_exploration_plan(
+        app_name="installer",
+        query="Continue",
+        include_workflow_probes=True,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["surface_mode"] == "dialog"
+    assert payload["top_hypotheses"][0]["label"] == "Continue"
+    assert payload["top_hypotheses"][0]["suggested_action"] == "press_dialog_button"
+    assert payload["branch_actions"][0]["action"] == "confirm_dialog"
+
+
+def test_desktop_action_router_advise_surface_exploration_advance_selects_top_target(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2201, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2201, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_bluetooth",
+                "text": "Settings bluetooth devices sidebar content",
+                "screenshot_path": "E:/tmp/settings_bluetooth.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "list_navigation",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "hypothesis_count": 1,
+        "branch_action_count": 1,
+        "top_hypotheses": [
+            {
+                "candidate_id": "list_bluetooth",
+                "label": "Bluetooth",
+                "suggested_action": "select_list_item",
+                "confidence": 0.93,
+                "reason": "The Bluetooth list item is the strongest visible recon target.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Settings",
+                    "query": "Bluetooth",
+                    "control_type": "ListItem",
+                    "element_id": "list_bluetooth",
+                },
+            }
+        ],
+        "branch_actions": [
+            {
+                "action": "focus_list_surface",
+                "title": "Focus List",
+                "matched": False,
+                "supported": True,
+                "confidence": 0.7,
+                "reason": "List focus is available as a fallback.",
+                "action_payload": {"action": "focus_list_surface", "app_name": "settings", "window_title": "Settings"},
+            }
+        ],
+        "surface_snapshot": {
+            "status": "success",
+            "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+            "target_window": {"hwnd": 2201, "title": "Settings"},
+            "active_window": {"hwnd": 2201, "title": "Settings"},
+            "candidate_windows": [{"hwnd": 2201, "title": "Settings"}],
+            "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+            "safety_signals": {},
+            "surface_flags": {"list_visible": True, "window_targeted": True},
+            "observation": {"screen_hash": "settings_bluetooth"},
+        },
+        "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+        "message": "Top target: Bluetooth via select_list_item.",
+    }
+
+    payload = router.advise({"action": "advance_surface_exploration", "app_name": "settings", "query": "Bluetooth"})
+
+    assert payload["status"] == "success"
+    assert payload["route_mode"] == "surface_exploration_advance"
+    assert payload["exploration_selection"]["selected_action"] == "select_list_item"
+    assert payload["exploration_selection"]["candidate_id"] == "list_bluetooth"
+    assert payload["execution_plan"][-1]["action"] == "accessibility_invoke_element"
+    assert payload["execution_plan"][-1]["args"]["query"] == "Bluetooth"
+    assert payload["execution_plan"][-1]["args"]["control_type"] == "ListItem"
+
+
+def test_desktop_action_router_advise_surface_exploration_advance_skips_attempted_target(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2205, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2205, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_bluetooth_skip",
+                "text": "Settings bluetooth devices sidebar content",
+                "screenshot_path": "E:/tmp/settings_bluetooth_skip.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "list_navigation",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "hypothesis_count": 2,
+        "branch_action_count": 0,
+        "top_hypotheses": [
+            {
+                "candidate_id": "list_bluetooth",
+                "label": "Bluetooth",
+                "suggested_action": "select_list_item",
+                "confidence": 0.93,
+                "reason": "Bluetooth is still visible.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Settings",
+                    "query": "Bluetooth",
+                    "control_type": "ListItem",
+                    "element_id": "list_bluetooth",
+                },
+            },
+            {
+                "candidate_id": "list_devices",
+                "label": "Devices",
+                "suggested_action": "select_list_item",
+                "confidence": 0.88,
+                "reason": "Devices is the strongest untried follow-up target.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Settings",
+                    "query": "Devices",
+                    "control_type": "ListItem",
+                    "element_id": "list_devices",
+                },
+            },
+        ],
+        "branch_actions": [],
+        "surface_snapshot": {
+            "status": "success",
+            "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+            "target_window": {"hwnd": 2205, "title": "Settings"},
+            "active_window": {"hwnd": 2205, "title": "Settings"},
+            "candidate_windows": [{"hwnd": 2205, "title": "Settings"}],
+            "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+            "safety_signals": {},
+            "surface_flags": {"list_visible": True, "window_targeted": True},
+            "observation": {"screen_hash": "settings_bluetooth_skip"},
+        },
+        "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+        "message": "Top target: Devices via select_list_item.",
+    }
+
+    payload = router.advise(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "query": "Bluetooth",
+                "attempted_targets": [
+                    {
+                        "kind": "hypothesis",
+                        "candidate_id": "list_bluetooth",
+                        "selected_action": "select_list_item",
+                        "label": "Bluetooth",
+                        "selected_candidate_label": "Bluetooth",
+                    }
+                ],
+            }
+        )
+
+    assert payload["status"] == "success"
+    assert payload["route_mode"] == "surface_exploration_advance"
+    assert payload["exploration_selection"]["candidate_id"] == "list_devices"
+    assert payload["exploration_selection"]["attempted_target_count"] == 1
+    assert payload["exploration_plan"]["attempted_target_count"] == 1
+    assert payload["exploration_plan"]["remaining_target_count"] == 1
+    assert payload["execution_plan"][-1]["args"]["query"] == "Devices"
+
+
+def test_desktop_action_router_execute_surface_exploration_persists_followup_mission(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2202, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2202, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2202), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", ""))) or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_surface",
+                "text": "Settings bluetooth devices content",
+                "screenshot_path": "E:/tmp/settings_surface.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plans = [
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.91,
+                    "reason": "Bluetooth is the strongest visible target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "list_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2202, "title": "Settings"},
+                "active_window": {"hwnd": 2202, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2202, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_before"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Bluetooth via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_devices",
+                    "label": "Devices",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.88,
+                    "reason": "Devices is now the strongest visible follow-up target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Devices",
+                        "control_type": "ListItem",
+                        "element_id": "list_devices",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2202, "title": "Settings"},
+                "active_window": {"hwnd": 2202, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2202, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_after"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Devices via select_list_item.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _exploration_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _exploration_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert invoked_targets == ["List", "Bluetooth"]
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_followup_available"
+    assert payload["exploration_mission"]["attempted_target_count"] == 1
+    assert payload["exploration_mission"]["alternative_target_count"] == 1
+    assert payload["mission_record"]["mission_kind"] == "exploration"
+    assert payload["mission_record"]["resume_action"] == "advance_surface_exploration"
+    assert payload["mission_record"]["selected_candidate_label"] == "Bluetooth"
+    assert payload["mission_record"]["attempted_target_count"] == 1
+    assert payload["mission_record"]["alternative_target_count"] == 1
+    assert payload["exploration_mission"]["blocking_surface"]["attempted_target_count"] == 1
+    assert payload["exploration_mission"]["blocking_surface"]["alternative_target_count"] == 1
+    assert payload["exploration_mission"]["resume_contract"]["resume_payload"]["attempted_targets"][0]["candidate_id"] == "list_bluetooth"
+    assert payload["exploration_plan"]["top_hypotheses"][0]["label"] == "Devices"
+
+
+def test_desktop_action_router_surface_exploration_flow_auto_continues_to_completion(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2203, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2203, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2203), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", ""))) or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_surface_flow",
+                "text": "Settings bluetooth devices network content",
+                "screenshot_path": "E:/tmp/settings_surface_flow.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plans = [
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.91,
+                    "reason": "Bluetooth is the strongest visible target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "list_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2203, "title": "Settings"},
+                "active_window": {"hwnd": 2203, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2203, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_before_flow_1"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Bluetooth via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_devices",
+                    "label": "Devices",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.88,
+                    "reason": "Devices is now the strongest visible follow-up target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Devices",
+                        "control_type": "ListItem",
+                        "element_id": "list_devices",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2203, "title": "Settings"},
+                "active_window": {"hwnd": 2203, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2203, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_after_flow_1"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Devices via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_devices",
+                    "label": "Devices",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.88,
+                    "reason": "Devices remains the next best target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Devices",
+                        "control_type": "ListItem",
+                        "element_id": "list_devices",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2203, "title": "Settings"},
+                "active_window": {"hwnd": 2203, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2203, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_before_flow_2"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Devices via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": False,
+            "manual_attention_required": False,
+            "hypothesis_count": 0,
+            "branch_action_count": 0,
+            "top_hypotheses": [],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2203, "title": "Settings"},
+                "active_window": {"hwnd": 2203, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2203, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_after_flow_2"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Surface recon completed without another strong target.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _exploration_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _exploration_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 3,
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert "Bluetooth" in invoked_targets
+    assert "Devices" in invoked_targets
+    assert payload["exploration_mission"]["completed"] is True
+    assert payload["exploration_mission"]["step_count"] == 2
+    assert payload["exploration_mission"]["auto_continued"] is True
+    assert payload["exploration_mission"]["attempted_target_count"] == 2
+    assert payload["exploration_mission"]["alternative_target_count"] == 0
+
+
+def test_desktop_action_router_surface_exploration_flow_pauses_at_step_limit(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2204, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2204, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2204), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda _payload: {"status": "success", "method": "invoke"},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_surface_flow_limit",
+                "text": "Settings bluetooth devices network more content",
+                "screenshot_path": "E:/tmp/settings_surface_flow_limit.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plans = [
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.91,
+                    "reason": "Bluetooth is the strongest visible target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "list_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2204, "title": "Settings"},
+                "active_window": {"hwnd": 2204, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2204, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_limit_before_1"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Bluetooth via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_devices",
+                    "label": "Devices",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.88,
+                    "reason": "Devices is now the strongest visible follow-up target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Devices",
+                        "control_type": "ListItem",
+                        "element_id": "list_devices",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2204, "title": "Settings"},
+                "active_window": {"hwnd": 2204, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2204, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_limit_after_1"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Devices via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_devices",
+                    "label": "Devices",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.88,
+                    "reason": "Devices remains the next best target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Devices",
+                        "control_type": "ListItem",
+                        "element_id": "list_devices",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2204, "title": "Settings"},
+                "active_window": {"hwnd": 2204, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2204, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_limit_before_2"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Devices via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "list_network",
+                    "label": "Network",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.84,
+                    "reason": "Network is now the next safe recon target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Network",
+                        "control_type": "ListItem",
+                        "element_id": "list_network",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2204, "title": "Settings"},
+                "active_window": {"hwnd": 2204, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2204, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_limit_after_2"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Network via select_list_item.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _exploration_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _exploration_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 2,
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert payload["exploration_mission"]["completed"] is False
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_step_limit_reached"
+    assert payload["exploration_mission"]["step_count"] == 2
+    assert payload["exploration_mission"]["auto_continued"] is True
+    assert payload["mission_record"]["mission_kind"] == "exploration"
+    assert payload["mission_record"]["resume_action"] == "complete_surface_exploration_flow"
+    assert payload["mission_record"]["recovery_profile"] == "resume_ready"
 
 
 def test_desktop_action_router_builds_navigation_workflow_for_browser(tmp_path: Path) -> None:

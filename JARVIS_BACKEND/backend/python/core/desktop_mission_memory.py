@@ -48,7 +48,7 @@ class DesktopMissionMemory:
         warnings: List[str] | None = None,
     ) -> Dict[str, Any]:
         clean_kind = self._normalize_text(mission_kind)
-        if clean_kind not in {"wizard", "form"}:
+        if clean_kind not in {"wizard", "form", "exploration"}:
             return {"status": "error", "message": "unsupported mission kind"}
         runtime_args = args if isinstance(args, dict) else {}
         contract = dict(resume_contract) if isinstance(resume_contract, dict) else {}
@@ -104,6 +104,31 @@ class DesktopMissionMemory:
                 "requested_target_count": self._coerce_int(payload.get("requested_target_count", 0), minimum=0, maximum=100_000, default=0),
                 "resolved_target_count": self._coerce_int(payload.get("resolved_target_count", 0), minimum=0, maximum=100_000, default=0),
                 "remaining_target_count": self._coerce_int(payload.get("remaining_target_count", 0), minimum=0, maximum=100_000, default=0),
+                "surface_mode": str(payload.get("surface_mode", "") or "").strip(),
+                "exploration_query": str(payload.get("exploration_query", "") or runtime_args.get("query", "") or "").strip(),
+                "hypothesis_count": self._coerce_int(payload.get("hypothesis_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_action_count": self._coerce_int(payload.get("branch_action_count", 0), minimum=0, maximum=100_000, default=0),
+                "attempted_target_count": self._coerce_int(payload.get("attempted_target_count", 0), minimum=0, maximum=100_000, default=0),
+                "alternative_target_count": self._coerce_int(payload.get("alternative_target_count", 0), minimum=0, maximum=100_000, default=0),
+                "alternative_hypothesis_count": self._coerce_int(payload.get("alternative_hypothesis_count", 0), minimum=0, maximum=100_000, default=0),
+                "alternative_branch_action_count": self._coerce_int(payload.get("alternative_branch_action_count", 0), minimum=0, maximum=100_000, default=0),
+                "step_count": self._coerce_int(payload.get("step_count", payload.get("page_count", 0)), minimum=0, maximum=100_000, default=0),
+                "steps_completed": self._coerce_int(payload.get("steps_completed", payload.get("pages_completed", 0)), minimum=0, maximum=100_000, default=0),
+                "max_steps": self._coerce_int(payload.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+                "auto_continued": bool(payload.get("auto_continued", False)),
+                "selected_action": str(payload.get("selected_action", "") or "").strip(),
+                "selected_candidate_id": str(payload.get("selected_candidate_id", "") or "").strip(),
+                "selected_candidate_label": str(payload.get("selected_candidate_label", "") or "").strip(),
+                "attempted_targets_tail": [
+                    dict(item)
+                    for item in payload.get("attempted_targets", [])[-8:]
+                    if isinstance(item, dict)
+                ] if isinstance(payload.get("attempted_targets", []), list) else [],
+                "surface_signature_history": [
+                    str(item).strip()
+                    for item in payload.get("surface_signature_history", [])
+                    if str(item).strip()
+                ][:16] if isinstance(payload.get("surface_signature_history", []), list) else [],
                 "pause_count": self._coerce_int(existing.get("pause_count", 0), minimum=0, maximum=100_000, default=0) + 1,
                 "resume_attempts": self._coerce_int(existing.get("resume_attempts", 0), minimum=0, maximum=100_000, default=0),
                 "last_resume_at": str(existing.get("last_resume_at", "") or "").strip(),
@@ -154,6 +179,29 @@ class DesktopMissionMemory:
             row["updated_at"] = now
             row["latest_result_status"] = outcome
             row["latest_result_message"] = str(message or payload.get("message", "") or "").strip()
+            for field_name in (
+                "attempted_target_count",
+                "alternative_target_count",
+                "alternative_hypothesis_count",
+                "alternative_branch_action_count",
+                "step_count",
+                "steps_completed",
+                "max_steps",
+            ):
+                if field_name in payload:
+                    row[field_name] = self._coerce_int(payload.get(field_name, row.get(field_name, 0)), minimum=0, maximum=100_000, default=0)
+            if isinstance(payload.get("attempted_targets", []), list):
+                row["attempted_targets_tail"] = [
+                    dict(item)
+                    for item in payload.get("attempted_targets", [])[-8:]
+                    if isinstance(item, dict)
+                ]
+            if isinstance(payload.get("surface_signature_history", []), list):
+                row["surface_signature_history"] = [
+                    str(item).strip()
+                    for item in payload.get("surface_signature_history", [])
+                    if str(item).strip()
+                ][:16]
             if completed or outcome == "success":
                 row["status"] = "completed"
                 row["completed_at"] = now
@@ -432,6 +480,23 @@ class DesktopMissionMemory:
             "requested_target_count": self._coerce_int(row.get("requested_target_count", 0), minimum=0, maximum=100_000, default=0),
             "resolved_target_count": self._coerce_int(row.get("resolved_target_count", 0), minimum=0, maximum=100_000, default=0),
             "remaining_target_count": self._coerce_int(row.get("remaining_target_count", 0), minimum=0, maximum=100_000, default=0),
+            "surface_mode": str(row.get("surface_mode", "") or "").strip(),
+            "exploration_query": str(row.get("exploration_query", "") or "").strip(),
+            "hypothesis_count": self._coerce_int(row.get("hypothesis_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_action_count": self._coerce_int(row.get("branch_action_count", 0), minimum=0, maximum=100_000, default=0),
+            "attempted_target_count": self._coerce_int(row.get("attempted_target_count", 0), minimum=0, maximum=100_000, default=0),
+            "alternative_target_count": self._coerce_int(row.get("alternative_target_count", 0), minimum=0, maximum=100_000, default=0),
+            "alternative_hypothesis_count": self._coerce_int(row.get("alternative_hypothesis_count", 0), minimum=0, maximum=100_000, default=0),
+            "alternative_branch_action_count": self._coerce_int(row.get("alternative_branch_action_count", 0), minimum=0, maximum=100_000, default=0),
+            "step_count": self._coerce_int(row.get("step_count", 0), minimum=0, maximum=100_000, default=0),
+            "steps_completed": self._coerce_int(row.get("steps_completed", 0), minimum=0, maximum=100_000, default=0),
+            "max_steps": self._coerce_int(row.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+            "auto_continued": bool(row.get("auto_continued", False)),
+            "selected_action": str(row.get("selected_action", "") or "").strip(),
+            "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
+            "selected_candidate_label": str(row.get("selected_candidate_label", "") or "").strip(),
+            "attempted_targets_tail": [dict(item) for item in row.get("attempted_targets_tail", []) if isinstance(item, dict)] if isinstance(row.get("attempted_targets_tail", []), list) else [],
+            "surface_signature_history": [str(item).strip() for item in row.get("surface_signature_history", []) if str(item).strip()] if isinstance(row.get("surface_signature_history", []), list) else [],
             "pause_count": self._coerce_int(row.get("pause_count", 0), minimum=0, maximum=100_000, default=0),
             "resume_attempts": self._coerce_int(row.get("resume_attempts", 0), minimum=0, maximum=100_000, default=0),
             "latest_result_status": str(row.get("latest_result_status", "") or "").strip(),
@@ -512,6 +577,24 @@ class DesktopMissionMemory:
             recovery_hint = "An operator review surface is likely still in the way of autonomous progress."
             recovery_priority = 72
             approval_blocked = True
+            manual_attention_required = True
+        elif stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"}:
+            recovery_profile = "resume_ready"
+            recovery_hint = (
+                "JARVIS found another safe surface-recon step and can continue exploring this app."
+                if stop_reason_code == "exploration_followup_available"
+                else "JARVIS paused at the configured recon step limit and is ready to continue this exploration flow."
+            )
+            recovery_priority = 88 if stop_reason_code == "exploration_followup_available" else 86
+        elif stop_reason_code in {
+            "exploration_manual_review_required",
+            "exploration_no_safe_path",
+            "exploration_no_progress",
+            "exploration_route_unavailable",
+        }:
+            recovery_profile = "surface_review"
+            recovery_hint = "The current unsupported-app surface still needs human review before safe exploration can continue."
+            recovery_priority = 76
             manual_attention_required = True
         elif status in {"paused", "resuming"}:
             recovery_profile = "resume_ready"
