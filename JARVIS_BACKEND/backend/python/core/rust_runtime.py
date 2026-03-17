@@ -585,6 +585,35 @@ class RustRuntimeBridge:
     def desktop_context(self, timeout_s: float = 8.0) -> Dict[str, Any]:
         return self.request("desktop_context", payload={}, timeout_s=timeout_s)
 
+    def window_topology_snapshot(
+        self,
+        *,
+        query: str = "",
+        timeout_s: float = 4.0,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        clean_query = str(query or "").strip()
+        if clean_query:
+            payload["query"] = clean_query
+        return self.request(
+            "window_topology_snapshot",
+            payload=payload,
+            timeout_s=max(0.8, min(float(timeout_s), 15.0)),
+        )
+
+    def surface_exploration_router(
+        self,
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: float = 5.0,
+    ) -> Dict[str, Any]:
+        safe_payload = dict(payload) if isinstance(payload, dict) else {}
+        return self.request(
+            "surface_exploration_router",
+            payload=safe_payload,
+            timeout_s=max(0.8, min(float(timeout_s), 20.0)),
+        )
+
     def runtime_load(self, *, timeout_s: float = 2.0) -> Dict[str, Any]:
         return self.request(
             "runtime_load",

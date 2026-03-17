@@ -45,3 +45,46 @@ def test_request_returns_missing_binary_error(monkeypatch, tmp_path: Path) -> No
     payload = bridge.request("health_check", payload={})
     assert payload["status"] == "error"
     assert payload["error_code"] == "runtime_missing"
+
+
+def test_window_topology_snapshot_forwards_query(monkeypatch, tmp_path: Path) -> None:
+    bridge = RustRuntimeBridge(logger=_DummyLogger(), binary_path=str(tmp_path / "missing-rust-bin.exe"))
+    captured: dict[str, object] = {}
+
+    def _fake_request(event: str, payload: dict | None = None, timeout_s: float = 0.0, **_kwargs: object) -> dict:
+        captured["event"] = event
+        captured["payload"] = payload or {}
+        captured["timeout_s"] = timeout_s
+        return {"status": "success", "data": {"topology_signature": "settings|2|1"}}
+
+    monkeypatch.setattr(bridge, "request", _fake_request)
+
+    payload = bridge.window_topology_snapshot(query="Bluetooth", timeout_s=6.5)
+
+    assert payload["status"] == "success"
+    assert captured["event"] == "window_topology_snapshot"
+    assert captured["payload"] == {"query": "Bluetooth"}
+    assert float(captured["timeout_s"]) == 6.5
+
+
+def test_surface_exploration_router_forwards_payload(monkeypatch, tmp_path: Path) -> None:
+    bridge = RustRuntimeBridge(logger=_DummyLogger(), binary_path=str(tmp_path / "missing-rust-bin.exe"))
+    captured: dict[str, object] = {}
+
+    def _fake_request(event: str, payload: dict | None = None, timeout_s: float = 0.0, **_kwargs: object) -> dict:
+        captured["event"] = event
+        captured["payload"] = payload or {}
+        captured["timeout_s"] = timeout_s
+        return {"status": "success", "data": {"router_hint": "prefer_query_match"}}
+
+    monkeypatch.setattr(bridge, "request", _fake_request)
+
+    payload = bridge.surface_exploration_router(
+        payload={"selection_rows": [{"selection_key": "hypothesis|list_bluetooth"}]},
+        timeout_s=7.25,
+    )
+
+    assert payload["status"] == "success"
+    assert captured["event"] == "surface_exploration_router"
+    assert captured["payload"] == {"selection_rows": [{"selection_key": "hypothesis|list_bluetooth"}]}
+    assert float(captured["timeout_s"]) == 7.25

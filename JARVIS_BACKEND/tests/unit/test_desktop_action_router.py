@@ -25,10 +25,15 @@ def _reset_default_desktop_mission_memory(tmp_path: Path):
     DesktopMissionMemory._DEFAULT_INSTANCE = None
 
 
-def _build_router(action_handlers: Dict[str, Any]) -> DesktopActionRouter:
+def _build_router(
+    action_handlers: Dict[str, Any],
+    *,
+    rust_request_handler: Any | None = None,
+) -> DesktopActionRouter:
     return DesktopActionRouter(
         action_handlers=action_handlers,
         workflow_memory=_isolated_workflow_memory(),
+        rust_request_handler=rust_request_handler,
         settle_delay_s=0.0,
     )
 
@@ -426,6 +431,203 @@ def test_desktop_action_router_surface_exploration_uses_surface_intelligence_for
     assert "Grounded as content with table_navigation" in payload["message"]
 
 
+def test_desktop_action_router_surface_snapshot_includes_rust_topology() -> None:
+    rust_calls: List[str] = []
+
+    def _rust_request(event: str, payload: Dict[str, Any], timeout_s: float) -> Dict[str, Any]:
+        rust_calls.append(event)
+        assert timeout_s > 0.0
+        if event == "window_topology_snapshot":
+            assert str(payload.get("query", "") or "").strip() == "bluetooth"
+            return {
+                "status": "success",
+                "data": {
+                    "topology_signature": "settings|2|1",
+                    "visible_window_count": 2,
+                    "dialog_like_count": 1,
+                    "same_process_window_count": 2,
+                    "window_title_tail": ["Settings", "Bluetooth & devices"],
+                },
+            }
+        return {"status": "error", "message": "unexpected rust event"}
+
+    router = _build_router(
+        {
+            "list_windows": lambda _payload: {"status": "success", "windows": []},
+            "active_window": lambda _payload: {"status": "success", "window": {}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "snapshot_hash",
+                "text": "Settings bluetooth devices",
+            },
+        },
+        rust_request_handler=_rust_request,
+    )
+
+    payload = router.surface_snapshot(app_name="settings", query="bluetooth")
+
+    assert payload["status"] == "success"
+    assert payload["surface_topology"]["topology_signature"] == "settings|2|1"
+    assert payload["surface_topology"]["visible_window_count"] == 2
+    assert "window_topology_snapshot" in rust_calls
+
+
+def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candidate() -> None:
+    router = _build_router(
+        {
+            "list_windows": lambda _payload: {"status": "success", "windows": []},
+            "active_window": lambda _payload: {"status": "success", "window": {}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "window_topology": lambda _payload: {
+                "status": "success",
+                "topology_signature": "settings|3|2",
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "child_dialog_like_visible": True,
+            },
+            "reacquire_window": lambda _payload: {
+                "status": "success",
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "child_dialog_like_visible": True,
+                "candidate": {
+                    "hwnd": 4410,
+                    "title": "Pair device",
+                    "app_name": "settings",
+                    "process_name": "SystemSettings.exe",
+                    "window_signature": "settings|dialog|1280x720|pair_device",
+                    "match_score": 0.81,
+                },
+            },
+        }
+    )
+
+    payload = router.surface_snapshot(app_name="settings", query="bluetooth")
+
+    assert payload["status"] == "success"
+    assert payload["target_window"]["hwnd"] == 4410
+    assert payload["window_reacquisition"]["candidate"]["title"] == "Pair device"
+    assert payload["native_window_topology"]["same_process_window_count"] == 3
+    assert payload["native_window_topology"]["child_dialog_like_visible"] is True
+
+
+def test_desktop_action_router_advise_surface_exploration_advance_prefers_rust_router_ranked_candidate(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    rust_calls: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={},
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        rust_request_handler=lambda event, payload, _timeout_s: (
+            rust_calls.append(event)
+            or {
+                "status": "success",
+                "data": {
+                    "router_hint": "prefer_query_match",
+                    "prefer_nested_branch": True,
+                    "loop_risk": False,
+                    "topology": {
+                        "topology_signature": "settings|2|1",
+                        "visible_window_count": 2,
+                        "dialog_like_count": 1,
+                        "same_process_window_count": 2,
+                    },
+                    "ranked_candidates": [
+                        {
+                            "selection_key": router._surface_exploration_selection_key(
+                                kind="hypothesis",
+                                candidate_id="list_bluetooth",
+                                selected_action="select_list_item",
+                                label="Bluetooth",
+                            ),
+                            "rank": 1,
+                            "rust_score": 0.18,
+                            "router_hint": "prefer_query_match",
+                            "reasons": ["query label overlap", "dialog visible"],
+                        },
+                        {
+                            "selection_key": router._surface_exploration_selection_key(
+                                kind="hypothesis",
+                                candidate_id="list_devices",
+                                selected_action="select_list_item",
+                                label="Devices",
+                            ),
+                            "rank": 2,
+                            "rust_score": 0.0,
+                            "router_hint": "fallback_rank",
+                            "reasons": ["fallback"],
+                        },
+                    ],
+                },
+            }
+            if event == "surface_exploration_router"
+            else {"status": "error", "message": "unexpected rust event"}
+        ),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "list_navigation",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "attention_signals": [],
+        "hypothesis_count": 2,
+        "branch_action_count": 1,
+        "top_hypotheses": [
+            {
+                "candidate_id": "list_devices",
+                "label": "Devices",
+                "suggested_action": "select_list_item",
+                "confidence": 0.65,
+                "reason": "Devices list is visible.",
+                "action_payload": {"action": "select_list_item", "app_name": "settings", "query": "Devices"},
+            },
+            {
+                "candidate_id": "list_bluetooth",
+                "label": "Bluetooth",
+                "suggested_action": "select_list_item",
+                "confidence": 0.60,
+                "reason": "Bluetooth row is visible.",
+                "action_payload": {"action": "select_list_item", "app_name": "settings", "query": "Bluetooth"},
+            },
+        ],
+        "branch_actions": [
+            {
+                "action": "focus_list_surface",
+                "title": "Focus List Surface",
+                "supported": True,
+                "matched": True,
+                "confidence": 0.15,
+                "reason": "Keep focus on the current list.",
+                "action_payload": {"action": "focus_list_surface", "app_name": "settings"},
+            }
+        ],
+        "surface_snapshot": {"target_window": {"title": "Settings"}},
+        "surface_topology": {
+            "topology_signature": "settings|2|1",
+            "visible_window_count": 2,
+            "dialog_like_count": 1,
+            "same_process_window_count": 2,
+        },
+        "message": "Surface recon found safe list targets.",
+    }
+
+    payload = router.advise({"action": "advance_surface_exploration", "app_name": "settings", "query": "Bluetooth"})
+
+    assert payload["status"] == "success"
+    assert payload["exploration_selection"]["candidate_id"] == "list_bluetooth"
+    assert payload["exploration_selection"]["rust_router_hint"] == "prefer_query_match"
+    assert payload["exploration_selection"]["rust_score"] == pytest.approx(0.18)
+    assert payload["exploration_selection"]["surface_topology"]["topology_signature"] == "settings|2|1"
+    assert "surface_exploration_router" in rust_calls
+
+
 def test_desktop_action_router_advise_surface_exploration_advance_selects_top_target(tmp_path: Path) -> None:
     registry = _build_registry(
         tmp_path,
@@ -725,6 +927,124 @@ def test_desktop_action_router_advise_surface_exploration_prefers_nested_dialog_
     assert payload["exploration_selection"]["selected_action"] == "press_dialog_button"
     assert payload["exploration_selection"]["candidate_id"] == "dialog_ok"
     assert float(payload["exploration_selection"]["branch_score"]) > 0.0
+    assert payload["execution_plan"][-1]["args"]["query"] == "OK"
+
+
+def test_desktop_action_router_advise_surface_exploration_prefers_native_child_dialog_cluster(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [
+                    {"hwnd": 2310, "title": "Bluetooth & devices", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+                    {"hwnd": 2311, "title": "Pair device", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+                ],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2311, "title": "Pair device", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "dialog_resolution",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "hypothesis_count": 2,
+        "branch_action_count": 0,
+        "top_hypotheses": [
+            {
+                "candidate_id": "row_previous",
+                "label": "Previous page",
+                "suggested_action": "select_list_item",
+                "confidence": 0.76,
+                "reason": "Previous page is a strong visible target.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Bluetooth & devices",
+                    "query": "Previous page",
+                    "control_type": "ListItem",
+                    "element_id": "row_previous",
+                },
+            },
+            {
+                "candidate_id": "dialog_ok",
+                "label": "OK",
+                "suggested_action": "press_dialog_button",
+                "confidence": 0.65,
+                "reason": "OK resolves the adopted child dialog.",
+                "action_payload": {
+                    "action": "press_dialog_button",
+                    "app_name": "settings",
+                    "window_title": "Pair device",
+                    "query": "OK",
+                    "control_type": "Button",
+                    "element_id": "dialog_ok",
+                },
+            },
+        ],
+        "branch_actions": [],
+        "surface_snapshot": {
+            "status": "success",
+            "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+            "target_window": {"hwnd": 2311, "title": "Pair device"},
+            "active_window": {"hwnd": 2310, "title": "Bluetooth & devices"},
+            "candidate_windows": [{"hwnd": 2311, "title": "Pair device"}],
+            "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+            "safety_signals": {},
+            "surface_flags": {"window_targeted": True},
+            "native_window_topology": {
+                "topology_signature": "settings|3|2",
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "child_dialog_like_visible": True,
+            },
+            "window_reacquisition": {
+                "candidate": {"hwnd": 2311, "title": "Pair device", "match_score": 0.82},
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "child_dialog_like_visible": True,
+            },
+            "observation": {"screen_hash": "pair_device_child_dialog"},
+        },
+        "filters": {"app_name": "settings", "window_title": "Bluetooth & devices", "query": "Bluetooth"},
+        "message": "A child pairing dialog is open inside Bluetooth settings.",
+    }
+
+    payload = router.advise(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "window_title": "Bluetooth & devices",
+            "query": "Bluetooth",
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "row_previous",
+                    "selected_candidate_label": "Previous page",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                }
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["exploration_selection"]["selected_action"] == "press_dialog_button"
+    assert payload["exploration_selection"]["candidate_id"] == "dialog_ok"
+    assert float(payload["exploration_selection"]["branch_score"]) >= 0.2
     assert payload["execution_plan"][-1]["args"]["query"] == "OK"
 
 
@@ -4354,6 +4674,60 @@ def test_desktop_action_router_resume_mission_stays_blocked_while_uac_surface_is
     assert advice["resume_context"]["blocking_surface_still_visible"] is True
     assert advice["resume_context"]["current_approval_kind"] == "elevation_consent"
     assert advice["blocking_surface"]["approval_kind"] == "elevation_consent"
+
+
+def test_desktop_action_router_resume_mission_context_uses_related_window_reacquisition_cluster() -> None:
+    router = _build_router({})
+    router.surface_snapshot = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "target_window": {},
+        "active_window": {},
+        "surface_flags": {},
+        "safety_signals": {},
+        "observation": {"screen_hash": "resume_related_cluster"},
+        "native_window_topology": {
+            "topology_signature": "settings|3|2",
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "child_dialog_like_visible": True,
+        },
+        "window_reacquisition": {
+            "candidate": {
+                "hwnd": 1440,
+                "title": "Bluetooth & devices",
+                "match_score": 0.67,
+            },
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "child_dialog_like_visible": True,
+        },
+    }
+
+    context = router._resume_mission_context(
+        args={},
+        resume_contract={
+            "mission_kind": "form",
+            "resume_action": "complete_form_flow",
+            "surface_match_hints": {
+                "anchor_app_name": "settings",
+                "anchor_window_title": "Device settings",
+            },
+        },
+        blocking_surface={},
+        resume_payload={
+            "action": "complete_form_flow",
+            "app_name": "settings",
+        },
+    )
+
+    assert context["status"] == "ready"
+    assert context["window_reacquired"] is True
+    assert context["reacquired_candidate_hwnd"] == 1440
+    assert context["reacquired_candidate_title"] == "Bluetooth & devices"
+    assert float(context["reacquisition_match_score"]) == pytest.approx(0.67)
+    assert context["native_same_process_window_count"] == 3
+    assert context["native_related_window_count"] == 2
+    assert context["native_child_dialog_like_visible"] is True
 
 
 def test_desktop_action_router_execute_resume_mission_completes_wizard_after_uac_clears(tmp_path: Path) -> None:

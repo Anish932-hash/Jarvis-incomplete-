@@ -13,6 +13,7 @@ from backend.python.perception.surface_intelligence import SurfaceIntelligenceAn
 
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
+RustRequestHandler = Callable[[str, Dict[str, Any], float], Dict[str, Any]]
 EXPLORATION_ADVANCE_ACTION = "advance_surface_exploration"
 EXPLORATION_FLOW_ACTION = "complete_surface_exploration_flow"
 RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow", EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION}
@@ -2717,6 +2718,7 @@ class DesktopActionRouter:
         app_profile_registry: Optional[DesktopAppProfileRegistry] = None,
         workflow_memory: Optional[DesktopWorkflowMemory] = None,
         mission_memory: Optional[DesktopMissionMemory] = None,
+        rust_request_handler: Optional[RustRequestHandler] = None,
         settle_delay_s: float = 0.35,
     ) -> None:
         self._handlers = self._default_handlers()
@@ -2726,6 +2728,7 @@ class DesktopActionRouter:
         self._workflow_memory = workflow_memory or DesktopWorkflowMemory.default()
         self._mission_memory = mission_memory or DesktopMissionMemory.default()
         self._surface_intelligence = SurfaceIntelligenceAnalyzer()
+        self._rust_request_handler = rust_request_handler if callable(rust_request_handler) else None
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -3298,6 +3301,58 @@ class DesktopActionRouter:
             return payload.get("window", {})
         return payload if isinstance(payload, dict) else {}
 
+    def _window_topology_snapshot(
+        self,
+        *,
+        query: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        include_windows: bool = False,
+        limit: int = 80,
+    ) -> Dict[str, Any]:
+        payload = self._call(
+            "window_topology",
+            {
+                "query": str(query or "").strip(),
+                "app_name": str(app_name or "").strip(),
+                "window_title": str(window_title or "").strip(),
+                "include_windows": bool(include_windows),
+                "limit": max(1, min(int(limit), 300)),
+            },
+        )
+        return dict(payload) if isinstance(payload, dict) and payload.get("status") == "success" else {}
+
+    def _reacquire_window(
+        self,
+        *,
+        query: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        window_signature: str = "",
+        hwnd: int = 0,
+        pid: int = 0,
+        parent_hwnd: int = 0,
+        parent_pid: int = 0,
+        include_candidates: bool = True,
+        limit: int = 80,
+    ) -> Dict[str, Any]:
+        payload = self._call(
+            "reacquire_window",
+            {
+                "query": str(query or "").strip(),
+                "app_name": str(app_name or "").strip(),
+                "window_title": str(window_title or "").strip(),
+                "window_signature": str(window_signature or "").strip(),
+                "hwnd": int(hwnd or 0),
+                "pid": int(pid or 0),
+                "parent_hwnd": int(parent_hwnd or 0),
+                "parent_pid": int(parent_pid or 0),
+                "include_candidates": bool(include_candidates),
+                "limit": max(1, min(int(limit), 300)),
+            },
+        )
+        return dict(payload) if isinstance(payload, dict) else {}
+
     def _call(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         handler = self._handlers.get(action)
         if handler is None:
@@ -3307,6 +3362,48 @@ class DesktopActionRouter:
             return result if isinstance(result, dict) else {"status": "error", "message": f"invalid result from {action}"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def _rust_request(
+        self,
+        *,
+        event: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: float = 4.0,
+    ) -> Dict[str, Any]:
+        if not callable(self._rust_request_handler):
+            return {"status": "skipped", "message": "rust_request_handler_unavailable"}
+        clean_event = str(event or "").strip()
+        if not clean_event:
+            return {"status": "error", "message": "event is required"}
+        safe_payload = dict(payload) if isinstance(payload, dict) else {}
+        try:
+            result = self._rust_request_handler(
+                clean_event,
+                safe_payload,
+                max(0.8, min(float(timeout_s), 20.0)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+        return result if isinstance(result, dict) else {"status": "error", "message": "invalid rust response"}
+
+    def _rust_window_topology_snapshot(
+        self,
+        *,
+        query: str = "",
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        clean_query = str(query or "").strip()
+        if clean_query:
+            payload["query"] = clean_query
+        result = self._rust_request(
+            event="window_topology_snapshot",
+            payload=payload,
+            timeout_s=3.2,
+        )
+        if str(result.get("status", "") or "").strip().lower() != "success":
+            return {}
+        data = result.get("data")
+        return dict(data) if isinstance(data, dict) else {}
 
     @staticmethod
     def _plan_step(*, action: str, args: Dict[str, Any], phase: str, optional: bool, reason: str) -> Dict[str, Any]:
@@ -4551,14 +4648,45 @@ class DesktopActionRouter:
         target_window = current_snapshot.get("target_window", {}) if isinstance(current_snapshot.get("target_window", {}), dict) else {}
         active_window = current_snapshot.get("active_window", {}) if isinstance(current_snapshot.get("active_window", {}), dict) else {}
         surface_flags = current_snapshot.get("surface_flags", {}) if isinstance(current_snapshot.get("surface_flags", {}), dict) else {}
+        window_reacquisition = (
+            current_snapshot.get("window_reacquisition", {})
+            if isinstance(current_snapshot.get("window_reacquisition", {}), dict)
+            else {}
+        )
+        native_window_topology = (
+            current_snapshot.get("native_window_topology", {})
+            if isinstance(current_snapshot.get("native_window_topology", {}), dict)
+            else {}
+        )
+        reacquired_candidate = (
+            window_reacquisition.get("candidate", {})
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else {}
+        )
         current_window_title = str(target_window.get("title", "") or active_window.get("title", "") or "").strip()
         current_window_hwnd = int(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0)
         current_dialog_kind = str(dialog_state.get("dialog_kind", "") or "").strip()
         current_approval_kind = str(dialog_state.get("approval_kind", "") or "").strip()
+        reacquisition_match_score = float(reacquired_candidate.get("match_score", 0.0) or 0.0)
+        native_same_process_window_count = max(
+            int(window_reacquisition.get("same_process_window_count", 0) or 0),
+            int(native_window_topology.get("same_process_window_count", 0) or 0),
+        )
+        native_related_window_count = max(
+            int(window_reacquisition.get("related_window_count", 0) or 0),
+            int(native_window_topology.get("related_window_count", 0) or 0),
+        )
+        native_child_dialog_like_visible = bool(
+            window_reacquisition.get("child_dialog_like_visible", False)
+            or native_window_topology.get("child_dialog_like_visible", False)
+        )
         window_reacquired = bool(
             surface_flags.get("window_targeted", False)
             or self._window_matches(target_window, app_name=anchor_app_name, window_title=anchor_window_title or blocking_window_title)
             or self._window_matches(active_window, app_name=anchor_app_name, window_title=anchor_window_title or blocking_window_title)
+            or self._window_matches(reacquired_candidate, app_name=anchor_app_name, window_title=anchor_window_title or blocking_window_title)
+            or (reacquisition_match_score >= 0.52 and native_same_process_window_count > 0)
+            or (reacquisition_match_score >= 0.42 and native_related_window_count > 1)
         )
         current_signature = self._mission_surface_signature(snapshot=current_snapshot, mission_kind=mission_kind)
         blocking_signature = str(
@@ -4614,9 +4742,14 @@ class DesktopActionRouter:
                 "The blocking review or approval surface still appears to be active."
             )
         elif not window_reacquired:
-            warnings.append(
-                "The blocking surface appears to be clear, but JARVIS could not strongly reacquire the target app window and will rely on normal target discovery during resume."
-            )
+            if reacquired_candidate:
+                warnings.append(
+                    "The blocking surface appears to be clear, but JARVIS only found a weak related window candidate and will keep normal target discovery active during resume."
+                )
+            else:
+                warnings.append(
+                    "The blocking surface appears to be clear, but JARVIS could not strongly reacquire the target app window and will rely on normal target discovery during resume."
+                )
         message = (
             "The paused desktop mission is ready to resume."
             if not blockers
@@ -4635,6 +4768,13 @@ class DesktopActionRouter:
             "current_window_hwnd": current_window_hwnd,
             "current_dialog_kind": current_dialog_kind,
             "current_approval_kind": current_approval_kind,
+            "window_reacquisition": window_reacquisition,
+            "reacquired_candidate_hwnd": int(reacquired_candidate.get("hwnd", 0) or 0),
+            "reacquired_candidate_title": str(reacquired_candidate.get("title", "") or "").strip(),
+            "reacquisition_match_score": reacquisition_match_score,
+            "native_same_process_window_count": native_same_process_window_count,
+            "native_related_window_count": native_related_window_count,
+            "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "continuation_target_count": len(continuation_targets),
             "visible_continuation_target_count": visible_continuation_target_count,
             "remaining_continuation_target_count": remaining_continuation_target_count,
@@ -7714,6 +7854,32 @@ class DesktopActionRouter:
         accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
         vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
         focus_title = str(args.get("window_title", "") or primary_candidate.get("title", "") or args.get("app_name", "") or "").strip()
+        native_window_topology = self._window_topology_snapshot(
+            query=str(query or "").strip(),
+            app_name=str(args.get("app_name", "") or "").strip(),
+            window_title=focus_title,
+            include_windows=False,
+            limit=bounded,
+        )
+        window_reacquisition = self._reacquire_window(
+            query=str(query or "").strip(),
+            app_name=str(args.get("app_name", "") or "").strip(),
+            window_title=focus_title,
+            window_signature=str(primary_candidate.get("window_signature", "") or "").strip(),
+            hwnd=int(primary_candidate.get("hwnd", 0) or 0),
+            pid=int(primary_candidate.get("pid", 0) or 0),
+            include_candidates=True,
+            limit=bounded,
+        )
+        reacquired_candidate = (
+            dict(window_reacquisition.get("candidate", {}))
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else {}
+        )
+        if not primary_candidate and reacquired_candidate:
+            primary_candidate = reacquired_candidate
+            candidate_hwnd = int(primary_candidate.get("hwnd", 0) or 0)
+            candidates = [primary_candidate, *[window for window in candidates if int(window.get("hwnd", 0) or 0) != candidate_hwnd]]
 
         observation: Dict[str, Any] = {}
         if include_observation and vision_ready:
@@ -7920,6 +8086,7 @@ class DesktopActionRouter:
             visual_context=None,
             query=str(query or "").strip(),
         )
+        surface_topology = self._rust_window_topology_snapshot(query=str(query or "").strip())
         recommended_actions = self._dedupe_strings(
             [
                 *self._surface_intelligence_recommendations(
@@ -7961,6 +8128,9 @@ class DesktopActionRouter:
                 "text": str(observation.get("text", "") or ""),
                 "screenshot_path": str(observation.get("screenshot_path", "") or ""),
             },
+            "native_window_topology": native_window_topology,
+            "window_reacquisition": window_reacquisition,
+            "surface_topology": surface_topology,
             "workflow_surfaces": workflow_surfaces,
             "surface_summary": surface_summary,
             "surface_intelligence": surface_intelligence,
@@ -8444,6 +8614,11 @@ class DesktopActionRouter:
             if isinstance(snapshot_payload.get("surface_intelligence", {}), dict)
             else {}
         )
+        surface_topology = (
+            snapshot_payload.get("surface_topology", {})
+            if isinstance(snapshot_payload.get("surface_topology", {}), dict)
+            else {}
+        )
         clean_query = str(query or snapshot_payload.get("filters", {}).get("query", "") or "").strip()
         surface_mode = self._surface_exploration_surface_mode(
             app_profile=app_profile,
@@ -8530,6 +8705,7 @@ class DesktopActionRouter:
             "category": category,
             "surface_mode": surface_mode,
             "surface_intelligence": surface_intelligence,
+            "surface_topology": surface_topology,
             "automation_ready": automation_ready,
             "manual_attention_required": manual_attention_required,
             "attention_signals": manual_attention_signals,
@@ -8595,6 +8771,21 @@ class DesktopActionRouter:
         dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
         form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
         wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        native_window_topology = (
+            snapshot.get("native_window_topology", {})
+            if isinstance(snapshot.get("native_window_topology", {}), dict)
+            else {}
+        )
+        window_reacquisition = (
+            snapshot.get("window_reacquisition", {})
+            if isinstance(snapshot.get("window_reacquisition", {}), dict)
+            else {}
+        )
+        reacquired_candidate = (
+            window_reacquisition.get("candidate", {})
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else {}
+        )
         breadcrumb_path = [
             str(item).strip()
             for item in form_page_state.get("breadcrumb_path", [])
@@ -8634,6 +8825,15 @@ class DesktopActionRouter:
             "selected_navigation_target": selected_navigation_target,
             "selected_tab": selected_tab,
             "surface_path": surface_path,
+            "native_same_process_window_count": int(native_window_topology.get("same_process_window_count", 0) or 0),
+            "native_related_window_count": int(native_window_topology.get("related_window_count", 0) or 0),
+            "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
+            "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
+            "reacquired_candidate_hwnd": int(reacquired_candidate.get("hwnd", 0) or 0),
+            "reacquired_candidate_title": str(reacquired_candidate.get("title", "") or "").strip(),
+            "reacquisition_match_score": float(window_reacquisition.get("candidate", {}).get("match_score", 0.0) or 0.0)
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else 0.0,
         }
 
     def _surface_exploration_transition_summary(
@@ -8648,6 +8848,8 @@ class DesktopActionRouter:
         after_window_title = str(after_state.get("window_title", "") or "").strip()
         before_window_hwnd = int(before_state.get("window_hwnd", 0) or 0)
         after_window_hwnd = int(after_state.get("window_hwnd", 0) or 0)
+        before_reacquired_hwnd = int(before_state.get("reacquired_candidate_hwnd", 0) or 0)
+        after_reacquired_hwnd = int(after_state.get("reacquired_candidate_hwnd", 0) or 0)
         window_title_changed = bool(
             self._normalize_probe_text(before_window_title) != self._normalize_probe_text(after_window_title)
         )
@@ -8656,10 +8858,17 @@ class DesktopActionRouter:
             and after_window_hwnd
             and before_window_hwnd != after_window_hwnd
         )
+        reacquired_window_changed = bool(
+            before_reacquired_hwnd
+            and after_reacquired_hwnd
+            and before_reacquired_hwnd != after_reacquired_hwnd
+        )
         window_changed = bool(
             after_window_title
-            and (window_hwnd_changed or window_title_changed)
+            and (window_hwnd_changed or window_title_changed or reacquired_window_changed)
         )
+        same_process_cluster_visible = bool(int(after_state.get("native_same_process_window_count", 0) or 0) > 1)
+        child_dialog_cluster_visible = bool(after_state.get("native_child_dialog_like_visible", False))
         before_path = [
             str(item).strip()
             for item in before_state.get("surface_path", [])
@@ -8724,6 +8933,11 @@ class DesktopActionRouter:
             "window_title_after": after_window_title,
             "window_hwnd_before": before_window_hwnd,
             "window_hwnd_after": after_window_hwnd,
+            "reacquired_window_hwnd_before": before_reacquired_hwnd,
+            "reacquired_window_hwnd_after": after_reacquired_hwnd,
+            "reacquired_window_changed": reacquired_window_changed,
+            "same_process_cluster_visible": same_process_cluster_visible,
+            "child_dialog_cluster_visible": child_dialog_cluster_visible,
             "surface_path_before": before_path,
             "surface_path_after": after_path,
             "path_changed": path_changed,
@@ -8799,6 +9013,18 @@ class DesktopActionRouter:
                 for item in row.get("surface_path_after", [])
                 if str(item).strip()
             ][:8] if isinstance(row.get("surface_path_after", []), list) else [],
+            "rust_router_hint": str(row.get("rust_router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(row.get("rust_loop_risk", False)),
+            "surface_topology_signature": str(row.get("surface_topology_signature", "") or "").strip(),
+            "topology_visible_window_count": self._surface_topology_summary(
+                topology={"visible_window_count": row.get("topology_visible_window_count", 0)}
+            ).get("topology_visible_window_count", 0),
+            "topology_dialog_like_count": self._surface_topology_summary(
+                topology={"dialog_like_count": row.get("topology_dialog_like_count", 0)}
+            ).get("topology_dialog_like_count", 0),
+            "topology_same_process_window_count": self._surface_topology_summary(
+                topology={"same_process_window_count": row.get("topology_same_process_window_count", 0)}
+            ).get("topology_same_process_window_count", 0),
         }
 
     def _surface_exploration_attempt_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -8821,6 +9047,24 @@ class DesktopActionRouter:
         if not isinstance(rows, list):
             return []
         return [str(item).strip() for item in rows if str(item).strip()][:24]
+
+    @staticmethod
+    def _surface_topology_summary(*, topology: Any) -> Dict[str, Any]:
+        if not isinstance(topology, dict):
+            return {}
+
+        def _clean_int(value: Any) -> int:
+            try:
+                return max(0, int(value or 0))
+            except Exception:
+                return 0
+
+        return {
+            "surface_topology_signature": str(topology.get("topology_signature", "") or "").strip(),
+            "topology_visible_window_count": _clean_int(topology.get("visible_window_count", 0)),
+            "topology_dialog_like_count": _clean_int(topology.get("dialog_like_count", 0)),
+            "topology_same_process_window_count": _clean_int(topology.get("same_process_window_count", 0)),
+        }
 
     def _normalize_surface_exploration_branch_entry(self, row: Any) -> Dict[str, Any]:
         if not isinstance(row, dict):
@@ -8874,6 +9118,18 @@ class DesktopActionRouter:
             "surface_signature": surface_signature,
             "window_title": window_title,
             "surface_path_tail": surface_path_tail,
+            "rust_router_hint": str(row.get("rust_router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(row.get("rust_loop_risk", False)),
+            "surface_topology_signature": str(row.get("surface_topology_signature", "") or "").strip(),
+            "topology_visible_window_count": self._surface_topology_summary(
+                topology={"visible_window_count": row.get("topology_visible_window_count", 0)}
+            ).get("topology_visible_window_count", 0),
+            "topology_dialog_like_count": self._surface_topology_summary(
+                topology={"dialog_like_count": row.get("topology_dialog_like_count", 0)}
+            ).get("topology_dialog_like_count", 0),
+            "topology_same_process_window_count": self._surface_topology_summary(
+                topology={"same_process_window_count": row.get("topology_same_process_window_count", 0)}
+            ).get("topology_same_process_window_count", 0),
         }
 
     def _surface_exploration_branch_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -9094,6 +9350,11 @@ class DesktopActionRouter:
             for item in state_summary.get("surface_path", [])
             if str(item).strip()
         ] if isinstance(state_summary.get("surface_path", []), list) else []
+        current_reacquired_title = str(state_summary.get("reacquired_candidate_title", "") or "").strip()
+        current_reacquired_hwnd = int(state_summary.get("reacquired_candidate_hwnd", 0) or 0)
+        native_same_process_window_count = max(0, int(state_summary.get("native_same_process_window_count", 0) or 0))
+        native_related_window_count = max(0, int(state_summary.get("native_related_window_count", 0) or 0))
+        native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         latest_branch = dict(branch_history[-1]) if branch_history else {}
         recent_selection_keys = {
             self._surface_exploration_selection_key(
@@ -9112,12 +9373,20 @@ class DesktopActionRouter:
                     str(latest_branch.get("transition_kind", "") or "").strip().lower()
                     in {"child_window", "drilldown", "pane_shift", "dialog_shift"}
                     or current_surface_path
+                    or native_child_dialog_like_visible
+                    or bool(current_reacquired_hwnd)
                 )
             ),
             "current_window_title": current_window_title,
             "current_surface_path": current_surface_path,
             "current_surface_mode": str(state_summary.get("surface_mode", "") or "").strip().lower(),
             "current_dialog_visible": bool(state_summary.get("dialog_visible", False)),
+            "current_reacquired_title": current_reacquired_title,
+            "current_reacquired_hwnd": current_reacquired_hwnd,
+            "native_same_process_window_count": native_same_process_window_count,
+            "native_related_window_count": native_related_window_count,
+            "native_child_dialog_like_visible": native_child_dialog_like_visible,
+            "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "last_branch_kind": str(latest_branch.get("transition_kind", "") or "").strip().lower(),
             "latest_selected_action": str(latest_branch.get("selected_action", "") or "").strip().lower(),
             "latest_selected_candidate_id": str(latest_branch.get("selected_candidate_id", "") or "").strip(),
@@ -9146,6 +9415,11 @@ class DesktopActionRouter:
             for item in branch_context.get("current_surface_path", [])
             if str(item).strip()
         ] if isinstance(branch_context.get("current_surface_path", []), list) else []
+        current_reacquired_title = self._normalize_probe_text(branch_context.get("current_reacquired_title", ""))
+        current_reacquired_hwnd = int(branch_context.get("current_reacquired_hwnd", 0) or 0)
+        native_same_process_window_count = max(0, int(branch_context.get("native_same_process_window_count", 0) or 0))
+        native_related_window_count = max(0, int(branch_context.get("native_related_window_count", 0) or 0))
+        native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         latest_occurrences = max(0, int(branch_context.get("latest_branch_occurrences", 0) or 0))
         recent_selection_keys = {
             str(item).strip()
@@ -9164,6 +9438,10 @@ class DesktopActionRouter:
         if current_window_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_window_title:
             score += 0.04
         if current_surface_path and self._normalize_probe_text(label) in current_surface_path:
+            score += 0.05
+        if current_reacquired_title and self._text_match_score(current_reacquired_title, label) > 0:
+            score += 0.04
+        if current_reacquired_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_reacquired_title:
             score += 0.05
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
@@ -9191,6 +9469,23 @@ class DesktopActionRouter:
             if selected_action in {"select_tab_page", "select_sidebar_item", "select_list_item", "focus_input_field", "press_dialog_button"}:
                 score += 0.06
 
+        if native_child_dialog_like_visible:
+            if selected_action == "press_dialog_button":
+                score += 0.14 if last_branch_kind in {"child_window", "dialog_shift"} else 0.08
+            elif last_branch_kind in {"child_window", "dialog_shift"}:
+                score -= 0.06
+            elif kind == "branch_action":
+                score -= 0.03
+        if native_same_process_window_count > 1:
+            if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "dialog_shift"}:
+                score += 0.06
+            elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "focus_input_field", "open_dropdown"}:
+                score += 0.03
+        if native_related_window_count > 1 and kind == "hypothesis":
+            if selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
+                score += 0.03
+        if current_reacquired_hwnd and selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "dialog_shift"}:
+            score += 0.04
         if bool(branch_context.get("current_dialog_visible", False)):
             if selected_action == "press_dialog_button":
                 score += 0.12
@@ -9199,6 +9494,72 @@ class DesktopActionRouter:
         if latest_occurrences >= 2 and kind == "branch_action":
             score -= 0.06
         return round(score, 4)
+
+    def _surface_exploration_rust_router(
+        self,
+        *,
+        args: Dict[str, Any],
+        exploration_plan: Dict[str, Any],
+        selection_rows: List[Dict[str, Any]],
+        branch_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not selection_rows:
+            return {}
+        payload = {
+            "query": str(args.get("query", "") or "").strip(),
+            "surface_mode": str(exploration_plan.get("surface_mode", "") or "").strip(),
+            "current_window_title": str(branch_context.get("current_window_title", "") or "").strip(),
+            "current_surface_path": [
+                str(item).strip()
+                for item in branch_context.get("current_surface_path", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("current_surface_path", []), list) else [],
+            "current_dialog_visible": bool(branch_context.get("current_dialog_visible", False)),
+            "current_reacquired_title": str(branch_context.get("current_reacquired_title", "") or "").strip(),
+            "current_reacquired_hwnd": int(branch_context.get("current_reacquired_hwnd", 0) or 0),
+            "native_same_process_window_count": max(0, int(branch_context.get("native_same_process_window_count", 0) or 0)),
+            "native_related_window_count": max(0, int(branch_context.get("native_related_window_count", 0) or 0)),
+            "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
+            "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
+            "selection_rows": [
+                {
+                    "selection_key": str(row.get("selection_key", "") or "").strip(),
+                    "kind": str(row.get("kind", "") or "").strip(),
+                    "candidate_id": str(row.get("candidate_id", "") or "").strip(),
+                    "label": str(row.get("label", "") or "").strip(),
+                    "selected_action": str(row.get("selected_action", "") or "").strip(),
+                    "confidence": float(row.get("confidence", 0.0) or 0.0),
+                }
+                for row in selection_rows
+                if str(row.get("selection_key", "") or "").strip()
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": str(row.get("transition_kind", "") or "").strip(),
+                    "selected_action": str(row.get("selected_action", "") or "").strip(),
+                    "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
+                    "selected_candidate_label": str(row.get("selected_candidate_label", "") or "").strip(),
+                    "window_title": str(row.get("window_title", "") or "").strip(),
+                    "surface_path_tail": [
+                        str(item).strip()
+                        for item in row.get("surface_path_tail", [])
+                        if str(item).strip()
+                    ] if isinstance(row.get("surface_path_tail", []), list) else [],
+                    "occurrences": max(1, int(row.get("occurrences", 1) or 1)),
+                }
+                for row in self._surface_exploration_branch_history(args=args)
+                if isinstance(row, dict)
+            ],
+        }
+        result = self._rust_request(
+            event="surface_exploration_router",
+            payload=payload,
+            timeout_s=4.5,
+        )
+        if str(result.get("status", "") or "").strip().lower() != "success":
+            return {}
+        data = result.get("data")
+        return dict(data) if isinstance(data, dict) else {}
 
     def _select_surface_exploration_target(
         self,
@@ -9251,6 +9612,42 @@ class DesktopActionRouter:
             )
             enriched_rows.append(row_payload)
         selection_rows = enriched_rows
+        rust_router = self._surface_exploration_rust_router(
+            args=args,
+            exploration_plan=plan,
+            selection_rows=selection_rows,
+            branch_context=branch_context,
+        )
+        rust_rank_rows = (
+            rust_router.get("ranked_candidates", [])
+            if isinstance(rust_router.get("ranked_candidates", []), list)
+            else []
+        )
+        rust_rank_map = {
+            str(row.get("selection_key", "") or "").strip(): dict(row)
+            for row in rust_rank_rows
+            if isinstance(row, dict) and str(row.get("selection_key", "") or "").strip()
+        }
+        if rust_rank_map:
+            rust_enriched_rows: List[Dict[str, Any]] = []
+            for row in selection_rows:
+                row_payload = dict(row)
+                rust_row = rust_rank_map.get(str(row_payload.get("selection_key", "") or "").strip(), {})
+                rust_score = float(rust_row.get("rust_score", 0.0) or 0.0)
+                row_payload["rust_score"] = round(rust_score, 4)
+                row_payload["rust_rank"] = max(0, int(rust_row.get("rank", 0) or 0))
+                row_payload["rust_router_hint"] = str(rust_row.get("router_hint", "") or "").strip()
+                row_payload["rust_reasons"] = [
+                    str(item).strip()
+                    for item in rust_row.get("reasons", [])
+                    if str(item).strip()
+                ] if isinstance(rust_row.get("reasons", []), list) else []
+                row_payload["confidence"] = round(
+                    max(0.0, min(0.99, float(row_payload.get("confidence", 0.0) or 0.0) + rust_score)),
+                    4,
+                )
+                rust_enriched_rows.append(row_payload)
+            selection_rows = rust_enriched_rows
 
         matched_selection: Dict[str, Any] = {}
         if explicit_candidate_id:
@@ -9291,6 +9688,7 @@ class DesktopActionRouter:
                 key=lambda row: (
                     -float(row.get("confidence", 0.0) or 0.0),
                     -float(row.get("branch_score", 0.0) or 0.0),
+                    -float(row.get("rust_score", 0.0) or 0.0),
                     0 if row.get("kind") == "hypothesis" else 1,
                     str(row.get("label", "") or "").lower(),
                 )
@@ -9356,15 +9754,42 @@ class DesktopActionRouter:
             label=str(selected.get("label", "") or "").strip(),
         )
         selected["attempted_target_count"] = len(attempted_keys)
-        if float(selected.get("branch_score", 0.0) or 0.0):
+        if float(selected.get("branch_score", 0.0) or 0.0) or float(selected.get("rust_score", 0.0) or 0.0):
+            branch_adjustment = float(selected.get("branch_score", 0.0) or 0.0)
+            rust_adjustment = float(selected.get("rust_score", 0.0) or 0.0)
+            adjustment_parts: List[str] = []
+            if branch_adjustment:
+                adjustment_parts.append(f"nested branch steering {branch_adjustment:+.2f}")
+            if rust_adjustment:
+                adjustment_parts.append(f"rust topology routing {rust_adjustment:+.2f}")
             selected["message"] = (
                 f"{str(selected.get('reason', '') or '').strip() or selected.get('message', '')} "
-                f"Nested branch steering adjusted this target by {float(selected.get('branch_score', 0.0) or 0.0):+.2f}."
+                f"{'; '.join(adjustment_parts).capitalize()}."
             ).strip()
         else:
             selected["message"] = str(selected.get("reason", "") or "").strip() or (
                 f"Surface recon selected {selected.get('label', 'target')} via {selected.get('selected_action', 'action')}."
             )
+        selected_topology = (
+            dict(plan.get("surface_topology", {}))
+            if isinstance(plan.get("surface_topology", {}), dict)
+            else {}
+        )
+        if rust_router:
+            rust_topology = (
+                dict(rust_router.get("topology", {}))
+                if isinstance(rust_router.get("topology", {}), dict)
+                else {}
+            )
+            if rust_topology:
+                selected_topology = rust_topology
+            selected["rust_router"] = {
+                "router_hint": str(rust_router.get("router_hint", "") or "").strip(),
+                "prefer_nested_branch": bool(rust_router.get("prefer_nested_branch", False)),
+                "loop_risk": bool(rust_router.get("loop_risk", False)),
+            }
+        if selected_topology:
+            selected["surface_topology"] = selected_topology
         selected["warnings"] = []
         selected["blockers"] = []
         return selected
@@ -9392,6 +9817,25 @@ class DesktopActionRouter:
         dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
         form_page_state = snapshot.get("form_page_state", {}) if isinstance(snapshot.get("form_page_state", {}), dict) else {}
         wizard_page_state = snapshot.get("wizard_page_state", {}) if isinstance(snapshot.get("wizard_page_state", {}), dict) else {}
+        selected_topology = (
+            dict(selected.get("surface_topology", {}))
+            if isinstance(selected.get("surface_topology", {}), dict)
+            else (
+                dict(snapshot.get("surface_topology", {}))
+                if isinstance(snapshot.get("surface_topology", {}), dict)
+                else (
+                    dict(plan.get("surface_topology", {}))
+                    if isinstance(plan.get("surface_topology", {}), dict)
+                    else {}
+                )
+            )
+        )
+        topology_summary = self._surface_topology_summary(topology=selected_topology)
+        rust_router = (
+            dict(selected.get("rust_router", {}))
+            if isinstance(selected.get("rust_router", {}), dict)
+            else {}
+        )
         recommended_actions = self._dedupe_strings(
             [
                 str(selected.get("selected_action", "") or "").strip(),
@@ -9532,6 +9976,10 @@ class DesktopActionRouter:
             "confirmation_dialog_buttons": [str(item).strip() for item in safety_signals.get("confirmation_dialog_buttons", []) if str(item).strip()][:6] if isinstance(safety_signals.get("confirmation_dialog_buttons", []), list) else [],
             "destructive_dialog_buttons": [str(item).strip() for item in safety_signals.get("destructive_dialog_buttons", []) if str(item).strip()][:6] if isinstance(safety_signals.get("destructive_dialog_buttons", []), list) else [],
             "credential_fields": [dict(row) for row in dialog_state.get("credential_fields", []) if isinstance(row, dict)] if isinstance(dialog_state.get("credential_fields", []), list) else [],
+            "surface_topology": selected_topology,
+            **topology_summary,
+            "rust_router_hint": str(selected.get("rust_router_hint", "") or rust_router.get("router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(rust_router.get("loop_risk", False) or selected.get("rust_loop_risk", False)),
             "pending_requirements": pending_requirements[:12],
             "manual_required_controls": [dict(row) for row in form_page_state.get("manual_required_controls", []) if isinstance(row, dict)][:12] if isinstance(form_page_state.get("manual_required_controls", []), list) else [],
             "blocking_controls": pending_requirements[:12],
@@ -9851,6 +10299,11 @@ class DesktopActionRouter:
                 "selected_action": str(selected.get("selected_action", "") or "").strip(),
                 "confidence": float(selected.get("confidence", 0.0) or 0.0),
                 "branch_score": float(selected.get("branch_score", 0.0) or 0.0),
+                "rust_score": float(selected.get("rust_score", 0.0) or 0.0),
+                "rust_rank": int(selected.get("rust_rank", 0) or 0),
+                "rust_router_hint": str(selected.get("rust_router_hint", "") or "").strip(),
+                "rust_router": dict(selected.get("rust_router", {})) if isinstance(selected.get("rust_router", {}), dict) else {},
+                "surface_topology": dict(selected.get("surface_topology", {})) if isinstance(selected.get("surface_topology", {}), dict) else {},
                 "selection_key": str(selected.get("selection_key", "") or "").strip(),
                 "attempted_target_count": int(selected.get("attempted_target_count", 0) or 0),
                 "reason": str(selected.get("reason", "") or "").strip(),
@@ -9898,6 +10351,23 @@ class DesktopActionRouter:
     ) -> Dict[str, Any]:
         selection = advice.get("exploration_selection", {}) if isinstance(advice.get("exploration_selection", {}), dict) else {}
         selected_payload = selection.get("action_payload", {}) if isinstance(selection.get("action_payload", {}), dict) else {}
+        selection_rust_router = (
+            dict(selection.get("rust_router", {}))
+            if isinstance(selection.get("rust_router", {}), dict)
+            else {}
+        )
+        selection_topology = (
+            dict(selection.get("surface_topology", {}))
+            if isinstance(selection.get("surface_topology", {}), dict)
+            else {}
+        )
+        selection_topology_summary = self._surface_topology_summary(topology=selection_topology)
+        selection_rust_router_hint = str(
+            selection.get("rust_router_hint", "") or selection_rust_router.get("router_hint", "") or ""
+        ).strip()
+        selection_rust_loop_risk = bool(
+            selection_rust_router.get("loop_risk", False) or selection.get("rust_loop_risk", False)
+        )
         if not selected_payload:
             message = "Surface recon did not have an executable next step."
             return {
@@ -10005,6 +10475,9 @@ class DesktopActionRouter:
                 for item in transition_summary.get("surface_path_after", [])
                 if str(item).strip()
             ] if isinstance(transition_summary.get("surface_path_after", []), list) else [],
+            "rust_router_hint": selection_rust_router_hint,
+            "rust_loop_risk": selection_rust_loop_risk,
+            **selection_topology_summary,
         }
         attempted_targets = self._merge_surface_exploration_attempt_history(
             attempted_targets=attempted_targets_before,
@@ -10033,6 +10506,9 @@ class DesktopActionRouter:
                 for item in transition_summary.get("surface_path_after", [])
                 if str(item).strip()
             ] if isinstance(transition_summary.get("surface_path_after", []), list) else [],
+            "rust_router_hint": selection_rust_router_hint,
+            "rust_loop_risk": selection_rust_loop_risk,
+            **selection_topology_summary,
         }
         branch_history = self._merge_surface_exploration_branch_history(
             existing=branch_history_before,
@@ -10186,6 +10662,8 @@ class DesktopActionRouter:
             "selected_action": selected_action,
             "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
             "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+            "rust_router_hint": selection_rust_router_hint,
+            "rust_loop_risk": selection_rust_loop_risk,
             "surface_mode": str(followup_plan.get("surface_mode", initial_plan.get("surface_mode", "")) or "").strip() if isinstance(initial_plan, dict) else str(followup_plan.get("surface_mode", "") or "").strip(),
             "stop_reason_code": stop_reason_code,
             "stop_reason": stop_reason,
@@ -10212,6 +10690,8 @@ class DesktopActionRouter:
             "branch_history_tail": [dict(row) for row in branch_history[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_targets[-6:]],
             "surface_signature_history": surface_signature_history,
+            "surface_topology": selection_topology,
+            **selection_topology_summary,
             "next_actions": self._dedupe_strings(
                 [
                     *[
@@ -10254,6 +10734,9 @@ class DesktopActionRouter:
             "branch_transition_count": branch_transition_count,
             "branch_repeat_count": branch_repeat_count,
             "surface_path_depth": surface_path_depth,
+            "rust_router_hint": selection_rust_router_hint,
+            "rust_loop_risk": selection_rust_loop_risk,
+            **selection_topology_summary,
         }
         pause_payload: Dict[str, Any] = {}
         if stop_reason_code:
@@ -10317,6 +10800,10 @@ class DesktopActionRouter:
                 "selected_action": selected_action,
                 "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
                 "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+                "rust_router_hint": selection_rust_router_hint,
+                "rust_loop_risk": selection_rust_loop_risk,
+                "surface_topology": selection_topology,
+                **selection_topology_summary,
                 "final_page": {
                     "window_title": str(transition_summary.get("window_title_after", "") or "").strip(),
                     "screen_hash": str(
@@ -10388,6 +10875,10 @@ class DesktopActionRouter:
                 "selected_action": selected_action,
                 "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
                 "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+                "rust_router_hint": selection_rust_router_hint,
+                "rust_loop_risk": selection_rust_loop_risk,
+                "surface_topology": selection_topology,
+                **selection_topology_summary,
             },
         }
 
@@ -10640,6 +11131,8 @@ class DesktopActionRouter:
                 "selected_action": latest_selected_action,
                 "selected_candidate_id": latest_selected_candidate_id,
                 "selected_candidate_label": latest_selected_candidate_label,
+                "rust_router_hint": str(latest_runtime.get("rust_router_hint", "") or "").strip(),
+                "rust_loop_risk": bool(latest_runtime.get("rust_loop_risk", False)),
                 "surface_mode": str(latest_followup_plan.get("surface_mode", "") or "").strip(),
                 "stop_reason_code": "",
                 "stop_reason": "",
@@ -10690,6 +11183,11 @@ class DesktopActionRouter:
                 ]
                 if isinstance(current_args.get("surface_signature_history", []), list)
                 else [],
+                "surface_topology": dict(latest_runtime.get("surface_topology", {})) if isinstance(latest_runtime.get("surface_topology", {}), dict) else {},
+                "surface_topology_signature": str(latest_runtime.get("surface_topology_signature", "") or "").strip(),
+                "topology_visible_window_count": int(latest_runtime.get("topology_visible_window_count", 0) or 0),
+                "topology_dialog_like_count": int(latest_runtime.get("topology_dialog_like_count", 0) or 0),
+                "topology_same_process_window_count": int(latest_runtime.get("topology_same_process_window_count", 0) or 0),
                 "automation_ready": bool(latest_followup_plan.get("automation_ready", False)) if isinstance(latest_followup_plan, dict) else False,
                 "manual_attention_required": bool(latest_followup_plan.get("manual_attention_required", False)) if isinstance(latest_followup_plan, dict) else False,
                 "next_actions": [],
@@ -10816,6 +11314,13 @@ class DesktopActionRouter:
             "selected_action": latest_selected_action,
             "selected_candidate_id": latest_selected_candidate_id,
             "selected_candidate_label": latest_selected_candidate_label,
+            "rust_router_hint": str(latest_runtime.get("rust_router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(latest_runtime.get("rust_loop_risk", False)),
+            "surface_topology": dict(latest_runtime.get("surface_topology", {})) if isinstance(latest_runtime.get("surface_topology", {}), dict) else {},
+            "surface_topology_signature": str(latest_runtime.get("surface_topology_signature", "") or "").strip(),
+            "topology_visible_window_count": int(latest_runtime.get("topology_visible_window_count", 0) or 0),
+            "topology_dialog_like_count": int(latest_runtime.get("topology_dialog_like_count", 0) or 0),
+            "topology_same_process_window_count": int(latest_runtime.get("topology_same_process_window_count", 0) or 0),
             "final_page": {
                 "window_title": str(
                     pause_snapshot.get("surface_snapshot", {}).get("target_window", {}).get("title", "")
@@ -10874,6 +11379,8 @@ class DesktopActionRouter:
             "selected_action": latest_selected_action,
             "selected_candidate_id": latest_selected_candidate_id,
             "selected_candidate_label": latest_selected_candidate_label,
+            "rust_router_hint": str(pause_payload.get("rust_router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(pause_payload.get("rust_loop_risk", False)),
             "surface_mode": str(pause_payload.get("surface_mode", "") or "").strip(),
             "stop_reason_code": stop_reason_code,
             "stop_reason": stop_reason,
@@ -10916,6 +11423,11 @@ class DesktopActionRouter:
                 for item in pause_payload.get("surface_signature_history", [])
                 if str(item).strip()
             ] if isinstance(pause_payload.get("surface_signature_history", []), list) else [],
+            "surface_topology": dict(pause_payload.get("surface_topology", {})) if isinstance(pause_payload.get("surface_topology", {}), dict) else {},
+            "surface_topology_signature": str(pause_payload.get("surface_topology_signature", "") or "").strip(),
+            "topology_visible_window_count": int(pause_payload.get("topology_visible_window_count", 0) or 0),
+            "topology_dialog_like_count": int(pause_payload.get("topology_dialog_like_count", 0) or 0),
+            "topology_same_process_window_count": int(pause_payload.get("topology_same_process_window_count", 0) or 0),
             "automation_ready": bool(pause_snapshot.get("automation_ready", False)) if isinstance(pause_snapshot, dict) else False,
             "manual_attention_required": bool(pause_snapshot.get("manual_attention_required", False)) if isinstance(pause_snapshot, dict) else False,
             "next_actions": self._dedupe_strings(
@@ -16145,6 +16657,16 @@ class DesktopActionRouter:
 
             return active_window_impl(payload)
 
+        def _window_topology(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _window_topology as window_topology_impl
+
+            return window_topology_impl(payload)
+
+        def _reacquire_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _reacquire_window as reacquire_window_impl
+
+            return reacquire_window_impl(payload)
+
         def _focus_window(payload: Dict[str, Any]) -> Dict[str, Any]:
             from backend.python.tools.route_handlers import _focus_window as focus_window_impl
 
@@ -16204,6 +16726,8 @@ class DesktopActionRouter:
             "open_app": _open_app,
             "list_windows": _list_windows,
             "active_window": _active_window,
+            "window_topology": _window_topology,
+            "reacquire_window": _reacquire_window,
             "focus_window": _focus_window,
             "keyboard_type": _keyboard_type,
             "keyboard_hotkey": _keyboard_hotkey,

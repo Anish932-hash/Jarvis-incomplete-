@@ -6,10 +6,17 @@ from typing import Any, Dict, List
 import psutil
 
 try:
+    from backend.python.native.windows import get_native_window_runtime
+except Exception:  # noqa: BLE001
+    get_native_window_runtime = None
+
+try:
     import win32gui
+    import win32con
     import win32process
 except Exception:  # noqa: BLE001
     win32gui = None
+    win32con = None
     win32process = None
 
 
@@ -30,6 +37,17 @@ class WindowManager:
     }
     _FILE_MANAGER_PROCESSES = {"explorer", "totalcmd64", "doublecmd"}
     _ADMIN_PROCESSES = {"mmc", "taskmgr", "regedit", "services", "devmgmt"}
+
+    def __init__(self, *, native_runtime: Any | None = None) -> None:
+        if native_runtime is not None:
+            self._native_runtime = native_runtime
+        elif callable(get_native_window_runtime):
+            try:
+                self._native_runtime = get_native_window_runtime()
+            except Exception:  # noqa: BLE001
+                self._native_runtime = None
+        else:
+            self._native_runtime = None
 
     @classmethod
     def _normalize_text(cls, value: Any) -> str:
@@ -121,6 +139,544 @@ class WindowManager:
             "admin_like": bool(admin_like),
         }
 
+    @classmethod
+    def _text_match_score(cls, haystack: Any, needle: Any) -> float:
+        clean_haystack = cls._normalize_text(haystack)
+        clean_needle = cls._normalize_text(needle)
+        if not clean_haystack or not clean_needle:
+            return 0.0
+        if clean_haystack == clean_needle:
+            return 1.0
+        if clean_needle in clean_haystack:
+            coverage = len(clean_needle) / max(1, len(clean_haystack))
+            return round(max(0.38, min(0.96, coverage + 0.18)), 4)
+        haystack_tokens = set(cls._tokenize(clean_haystack))
+        needle_tokens = set(cls._tokenize(clean_needle))
+        if not haystack_tokens or not needle_tokens:
+            return 0.0
+        overlap = len(haystack_tokens & needle_tokens)
+        if overlap <= 0:
+            return 0.0
+        return round(overlap / max(1, len(needle_tokens)), 4)
+
+    def _compose_window_info(self, raw: Dict[str, Any], *, observation_backend: str) -> Dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {}
+
+        title = str(raw.get("title", "") or "")
+        exe = str(raw.get("exe", "") or "")
+        process_name = str(raw.get("process_name", "") or "")
+        if not process_name and exe:
+            process_name = Path(exe).name
+        class_name = str(raw.get("class_name", "") or "")
+        hwnd = int(raw.get("hwnd", 0) or 0)
+        owner_hwnd = int(raw.get("owner_hwnd", 0) or 0)
+        pid = int(raw.get("pid", 0) or 0)
+        left = int(raw.get("left", 0) or 0)
+        top = int(raw.get("top", 0) or 0)
+        right = int(raw.get("right", 0) or 0)
+        bottom = int(raw.get("bottom", 0) or 0)
+        width = max(0, right - left)
+        height = max(0, bottom - top)
+        app_name = self._derive_app_name(exe=exe, process_name=process_name, title=title)
+        surface_hints = self._infer_surface_hints(
+            title=title,
+            process_name=process_name,
+            class_name=class_name,
+            app_name=app_name,
+        )
+        signature = self._build_window_signature(
+            title=title,
+            exe=exe,
+            process_name=process_name,
+            class_name=class_name,
+            rect=(left, top, right, bottom),
+        )
+        return {
+            "hwnd": hwnd,
+            "owner_hwnd": owner_hwnd,
+            "title": title,
+            "pid": pid,
+            "exe": exe,
+            "process_name": process_name,
+            "app_name": app_name,
+            "class_name": class_name,
+            "visible": bool(raw.get("visible", False)),
+            "enabled": bool(raw.get("enabled", False)),
+            "minimized": bool(raw.get("minimized", False)),
+            "maximized": bool(raw.get("maximized", False)),
+            "is_foreground": bool(raw.get("is_foreground", False)),
+            "width": width,
+            "height": height,
+            "area": width * height,
+            "title_tokens": self._tokenize(title),
+            "window_signature": signature,
+            "surface_hints": surface_hints,
+            "position": {
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom,
+            },
+            "observation_backend": observation_backend,
+        }
+
+    def _window_relation_score(
+        self,
+        *,
+        window: Dict[str, Any],
+        query: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        window_signature: str = "",
+        hwnd: int = 0,
+        owner_hwnd: int = 0,
+        pid: int = 0,
+        parent_hwnd: int = 0,
+        parent_pid: int = 0,
+    ) -> Dict[str, Any]:
+        if not isinstance(window, dict):
+            return {"score": 0.0, "reasons": []}
+        score = 0.0
+        reasons: List[str] = []
+        candidate_hwnd = int(window.get("hwnd", 0) or 0)
+        candidate_owner_hwnd = int(window.get("owner_hwnd", 0) or 0)
+        candidate_pid = int(window.get("pid", 0) or 0)
+        candidate_title = str(window.get("title", "") or "").strip()
+        candidate_process = str(window.get("process_name", "") or "").strip()
+        candidate_app_name = str(window.get("app_name", "") or "").strip()
+        candidate_signature = str(window.get("window_signature", "") or "").strip()
+        if hwnd and candidate_hwnd and candidate_hwnd == int(hwnd):
+            score += 2.4
+            reasons.append("exact_hwnd")
+        if pid and candidate_pid and candidate_pid == int(pid):
+            score += 1.4
+            reasons.append("same_pid")
+        if parent_hwnd and candidate_hwnd and candidate_hwnd == int(parent_hwnd):
+            score += 0.55
+            reasons.append("same_parent_hwnd")
+        if owner_hwnd and candidate_hwnd and candidate_hwnd == int(owner_hwnd):
+            score += 0.7
+            reasons.append("same_owner_hwnd")
+        if hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
+            score += 1.05
+            reasons.append("owned_by_hwnd")
+        elif owner_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(owner_hwnd):
+            score += 0.95
+            reasons.append("owned_by_owner_hwnd")
+        elif parent_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(parent_hwnd):
+            score += 0.82
+            reasons.append("owned_by_parent_hwnd")
+        if parent_pid and candidate_pid and candidate_pid == int(parent_pid):
+            score += 0.7
+            reasons.append("same_parent_pid")
+
+        signature_score = self._text_match_score(candidate_signature, window_signature)
+        if signature_score > 0:
+            score += 0.7 * signature_score
+            reasons.append("signature")
+
+        title_score = self._text_match_score(candidate_title, window_title)
+        if title_score > 0:
+            score += 0.95 * title_score
+            reasons.append("window_title")
+
+        app_title_score = self._text_match_score(candidate_title, app_name)
+        app_process_score = max(
+            self._text_match_score(candidate_process, app_name),
+            self._text_match_score(candidate_app_name, app_name),
+        )
+        if app_title_score > 0:
+            score += 0.42 * app_title_score
+            reasons.append("app_title")
+        if app_process_score > 0:
+            score += 0.78 * app_process_score
+            reasons.append("app_process")
+
+        query_score = max(
+            self._text_match_score(candidate_title, query),
+            self._text_match_score(candidate_process, query),
+            self._text_match_score(candidate_signature, query),
+        )
+        if query_score > 0:
+            score += 0.36 * query_score
+            reasons.append("query")
+
+        if bool(window.get("is_foreground", False)):
+            score += 0.08
+            reasons.append("foreground")
+        if bool(window.get("visible", False)) and bool(window.get("enabled", False)):
+            score += 0.05
+        if bool(window.get("surface_hints", {}).get("dialog_like", False)) if isinstance(window.get("surface_hints", {}), dict) else False:
+            if query_score > 0 or title_score > 0 or parent_pid:
+                score += 0.05
+                reasons.append("dialog_related")
+        return {
+            "score": round(score, 4),
+            "reasons": reasons,
+        }
+
+    def _related_window_cluster(
+        self,
+        *,
+        windows: List[Dict[str, Any]],
+        seed_window: Dict[str, Any],
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+    ) -> List[Dict[str, Any]]:
+        seed = dict(seed_window) if isinstance(seed_window, dict) else {}
+        seed_pid = int(seed.get("pid", 0) or 0)
+        seed_hwnd = int(seed.get("hwnd", 0) or 0)
+        seed_owner_hwnd = int(seed.get("owner_hwnd", 0) or 0)
+        scored_rows: List[tuple[float, Dict[str, Any]]] = []
+        for row in windows:
+            relation = self._window_relation_score(
+                window=row,
+                query=query,
+                app_name=app_name or str(seed.get("app_name", "") or "").strip(),
+                window_title=window_title or str(seed.get("title", "") or "").strip(),
+                window_signature=str(seed.get("window_signature", "") or "").strip(),
+                owner_hwnd=seed_owner_hwnd,
+                pid=seed_pid,
+                hwnd=seed_hwnd,
+                parent_pid=seed_pid,
+                parent_hwnd=seed_hwnd,
+            )
+            relation_score = float(relation.get("score", 0.0) or 0.0)
+            if relation_score <= 0:
+                continue
+            enriched = dict(row)
+            enriched["relation_score"] = round(relation_score, 4)
+            enriched["relation_reasons"] = list(relation.get("reasons", []))
+            scored_rows.append((relation_score, enriched))
+        scored_rows.sort(
+            key=lambda item: (
+                -item[0],
+                -int(item[1].get("area", 0) or 0),
+                str(item[1].get("title", "") or "").lower(),
+            )
+        )
+        return [row for _score, row in scored_rows[:8]]
+
+    def _native_list_windows(self, *, limit: int = 300) -> List[Dict[str, Any]] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.list_windows(limit=limit)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        windows: List[Dict[str, Any]] = []
+        for item in payload.get("windows", []) or []:
+            normalized = self._compose_window_info(item, observation_backend=backend)
+            if normalized:
+                windows.append(normalized)
+        return windows
+
+    def _native_active_window(self) -> Dict[str, Any] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.active_window()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        window = self._compose_window_info(payload.get("window", {}), observation_backend=backend)
+        return window or None
+
+    def _native_focus_window(self, *, title_contains: str = "", hwnd: int | None = None) -> Dict[str, Any] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.focus_window(title_contains=title_contains, hwnd=hwnd)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        window = self._compose_window_info(payload.get("window", {}), observation_backend=backend)
+        if not window:
+            return None
+        return {
+            "status": "success",
+            "focus_applied": bool(payload.get("focus_applied", False)),
+            "window": window,
+        }
+
+    def window_topology_snapshot(
+        self,
+        *,
+        query: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        include_windows: bool = False,
+        limit: int = 80,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 300))
+        windows = self.list_windows()[:bounded]
+        active = self.active_window()
+        if isinstance(active, dict) and active.get("status") == "error":
+            active = {}
+        active = active if isinstance(active, dict) else {}
+        active_pid = int(active.get("pid", 0) or 0)
+        active_hwnd = int(active.get("hwnd", 0) or 0)
+        active_owner_hwnd = int(active.get("owner_hwnd", 0) or 0)
+        active_signature = str(active.get("window_signature", "") or "").strip()
+        active_app_name = str(active.get("app_name", "") or "").strip()
+        same_process_windows = [
+            dict(row)
+            for row in windows
+            if active_pid and int(row.get("pid", 0) or 0) == active_pid
+        ]
+
+        query_matches = [
+            dict(row)
+            for row in windows
+            if max(
+                self._text_match_score(row.get("title", ""), query),
+                self._text_match_score(row.get("process_name", ""), query),
+                self._text_match_score(row.get("app_name", ""), query),
+            ) > 0.0
+        ] if str(query or "").strip() else []
+        app_matches = [
+            dict(row)
+            for row in windows
+            if max(
+                self._text_match_score(row.get("title", ""), app_name),
+                self._text_match_score(row.get("process_name", ""), app_name),
+                self._text_match_score(row.get("app_name", ""), app_name),
+            ) > 0.0
+        ] if str(app_name or "").strip() else []
+        title_matches = [
+            dict(row)
+            for row in windows
+            if self._text_match_score(row.get("title", ""), window_title) > 0.0
+        ] if str(window_title or "").strip() else []
+
+        related_windows = self._related_window_cluster(
+            windows=windows,
+            seed_window=active,
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+        ) if active else []
+        related_hwnds = {
+            int(row.get("hwnd", 0) or 0)
+            for row in related_windows
+            if int(row.get("hwnd", 0) or 0) > 0
+        }
+        owner_linked_windows = [
+            dict(row)
+            for row in related_windows
+            if (
+                active_hwnd
+                and int(row.get("owner_hwnd", 0) or 0) == active_hwnd
+            )
+            or (
+                active_owner_hwnd
+                and (
+                    int(row.get("hwnd", 0) or 0) == active_owner_hwnd
+                    or int(row.get("owner_hwnd", 0) or 0) == active_owner_hwnd
+                )
+            )
+        ]
+        child_dialog_like_visible = any(
+            int(row.get("hwnd", 0) or 0) != active_hwnd
+            and bool(row.get("surface_hints", {}).get("dialog_like", False))
+            for row in related_windows
+            if isinstance(row.get("surface_hints", {}), dict)
+        )
+        owner_link_count = len(
+            {
+                int(row.get("hwnd", 0) or 0)
+                for row in owner_linked_windows
+                if int(row.get("hwnd", 0) or 0) > 0
+            }
+        )
+        owner_chain_visible = bool(
+            owner_link_count > 0
+            or (active_hwnd > 0 and active_owner_hwnd > 0)
+        )
+        topology_backend = str(
+            active.get("observation_backend", "")
+            or (windows[0].get("observation_backend", "") if windows else "")
+            or "pywin32"
+        ).strip() or "pywin32"
+        topology_signature = "|".join(
+            [
+                active_app_name or "unknown",
+                str(len(windows)),
+                str(len(same_process_windows)),
+                str(
+                    sum(
+                        1
+                        for row in windows
+                        if isinstance(row.get("surface_hints", {}), dict)
+                        and bool(row.get("surface_hints", {}).get("dialog_like", False))
+                    )
+                ),
+                str(len(related_hwnds)),
+                str(owner_link_count),
+                str(len(query_matches)),
+            ]
+        )
+        payload = {
+            "status": "success",
+            "backend": topology_backend,
+            "query": str(query or "").strip(),
+            "app_name": str(app_name or "").strip(),
+            "window_title": str(window_title or "").strip(),
+            "active_window": active,
+            "active_hwnd": active_hwnd,
+            "active_pid": active_pid,
+            "active_app_name": active_app_name,
+            "active_window_signature": active_signature,
+            "visible_window_count": len(windows),
+            "dialog_like_count": sum(
+                1
+                for row in windows
+                if isinstance(row.get("surface_hints", {}), dict) and bool(row.get("surface_hints", {}).get("dialog_like", False))
+            ),
+            "same_process_window_count": len(same_process_windows),
+            "query_match_count": len(query_matches),
+            "app_match_count": len(app_matches),
+            "title_match_count": len(title_matches),
+            "related_window_count": len(related_windows),
+            "owner_link_count": owner_link_count,
+            "owner_chain_visible": owner_chain_visible,
+            "child_dialog_like_visible": bool(child_dialog_like_visible),
+            "same_process_titles": [str(row.get("title", "") or "").strip() for row in same_process_windows[:6] if str(row.get("title", "") or "").strip()],
+            "related_window_titles": [str(row.get("title", "") or "").strip() for row in related_windows[:6] if str(row.get("title", "") or "").strip()],
+            "owner_window_titles": [str(row.get("title", "") or "").strip() for row in owner_linked_windows[:6] if str(row.get("title", "") or "").strip()],
+            "topology_signature": topology_signature,
+        }
+        if include_windows:
+            payload["windows"] = [dict(row) for row in windows[:12]]
+            payload["related_windows"] = [dict(row) for row in related_windows[:8]]
+            payload["owner_windows"] = [dict(row) for row in owner_linked_windows[:8]]
+        return payload
+
+    def reacquire_window(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        window_signature: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        parent_hwnd: int | None = None,
+        parent_pid: int | None = None,
+        include_candidates: bool = True,
+        limit: int = 80,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit), 300))
+        windows = self.list_windows()[:bounded]
+        ranked: List[tuple[float, Dict[str, Any]]] = []
+        for row in windows:
+            relation = self._window_relation_score(
+                window=row,
+                query=query,
+                app_name=app_name,
+                window_title=window_title,
+                window_signature=window_signature,
+                hwnd=int(hwnd or 0),
+                pid=int(pid or 0),
+                parent_hwnd=int(parent_hwnd or 0),
+                parent_pid=int(parent_pid or 0),
+            )
+            relation_score = float(relation.get("score", 0.0) or 0.0)
+            if relation_score <= 0.0:
+                continue
+            enriched = dict(row)
+            enriched["match_score"] = round(relation_score, 4)
+            enriched["match_reasons"] = list(relation.get("reasons", []))
+            ranked.append((relation_score, enriched))
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                not bool(item[1].get("is_foreground", False)),
+                -int(item[1].get("area", 0) or 0),
+                str(item[1].get("title", "") or "").lower(),
+            )
+        )
+        candidates = [row for _score, row in ranked[:8]]
+        candidate = dict(candidates[0]) if candidates else {}
+        status = "success" if candidate and float(candidate.get("match_score", 0.0) or 0.0) >= 0.42 else "missing"
+        related_windows = self._related_window_cluster(
+            windows=windows,
+            seed_window=candidate or (self.active_window() if isinstance(self.active_window(), dict) else {}),
+            app_name=app_name,
+            window_title=window_title,
+            query=query,
+        ) if candidate else []
+        candidate_hwnd = int(candidate.get("hwnd", 0) or 0) if candidate else 0
+        candidate_owner_hwnd = int(candidate.get("owner_hwnd", 0) or 0) if candidate else 0
+        owner_linked_windows = [
+            dict(row)
+            for row in related_windows
+            if (
+                candidate_hwnd
+                and int(row.get("owner_hwnd", 0) or 0) == candidate_hwnd
+            )
+            or (
+                candidate_owner_hwnd
+                and (
+                    int(row.get("hwnd", 0) or 0) == candidate_owner_hwnd
+                    or int(row.get("owner_hwnd", 0) or 0) == candidate_owner_hwnd
+                )
+            )
+        ] if candidate else []
+        owner_link_count = len(
+            {
+                int(row.get("hwnd", 0) or 0)
+                for row in owner_linked_windows
+                if int(row.get("hwnd", 0) or 0) > 0
+            }
+        ) if candidate else 0
+        payload = {
+            "status": status,
+            "backend": str(candidate.get("observation_backend", "") or "pywin32"),
+            "query": str(query or "").strip(),
+            "app_name": str(app_name or "").strip(),
+            "window_title": str(window_title or "").strip(),
+            "window_signature": str(window_signature or "").strip(),
+            "candidate": candidate,
+            "related_window_count": len(related_windows),
+            "owner_link_count": owner_link_count,
+            "owner_chain_visible": bool(
+                candidate
+                and (
+                    owner_link_count > 0
+                    or (candidate_hwnd > 0 and candidate_owner_hwnd > 0)
+                )
+            ),
+            "same_process_window_count": len(
+                [
+                    row
+                    for row in windows
+                    if candidate and int(candidate.get("pid", 0) or 0) and int(row.get("pid", 0) or 0) == int(candidate.get("pid", 0) or 0)
+                ]
+            ) if candidate else 0,
+            "child_dialog_like_visible": any(
+                int(row.get("hwnd", 0) or 0) != int(candidate.get("hwnd", 0) or 0)
+                and isinstance(row.get("surface_hints", {}), dict)
+                and bool(row.get("surface_hints", {}).get("dialog_like", False))
+                for row in related_windows
+            ) if candidate else False,
+            "message": "candidate_reacquired" if status == "success" else "no matching related window candidate found",
+        }
+        if include_candidates:
+            payload["candidates"] = [dict(row) for row in candidates]
+            payload["related_windows"] = [dict(row) for row in related_windows]
+            payload["owner_windows"] = [dict(row) for row in owner_linked_windows]
+        return payload
+
     def _get_hwnd_info(self, hwnd: int) -> Dict[str, Any]:
         if win32gui is None or win32process is None:
             return {}
@@ -134,56 +690,39 @@ class WindowManager:
             maximized = bool(win32gui.IsZoomed(hwnd))
             foreground_hwnd = win32gui.GetForegroundWindow()
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            owner_hwnd = int(win32gui.GetWindow(hwnd, getattr(win32con, "GW_OWNER", 4)) or 0)
             proc = psutil.Process(pid)
             exe = proc.exe() if proc else None
             process_name = proc.name() if proc else None
             left, top, right, bottom = rect
-            width = max(0, int(right) - int(left))
-            height = max(0, int(bottom) - int(top))
-            app_name = self._derive_app_name(exe=exe or "", process_name=process_name or "", title=title)
-            surface_hints = self._infer_surface_hints(
-                title=title,
-                process_name=process_name or "",
-                class_name=class_name,
-                app_name=app_name,
-            )
-            signature = self._build_window_signature(
-                title=title,
-                exe=exe or "",
-                process_name=process_name or "",
-                class_name=class_name,
-                rect=rect,
-            )
-            return {
-                "hwnd": hwnd,
-                "title": title,
-                "pid": pid,
-                "exe": exe,
-                "process_name": process_name,
-                "app_name": app_name,
-                "class_name": class_name,
-                "visible": visible,
-                "enabled": enabled,
-                "minimized": minimized,
-                "maximized": maximized,
-                "is_foreground": bool(hwnd == foreground_hwnd),
-                "width": width,
-                "height": height,
-                "area": width * height,
-                "title_tokens": self._tokenize(title),
-                "window_signature": signature,
-                "surface_hints": surface_hints,
-                "position": {
+            return self._compose_window_info(
+                {
+                    "hwnd": hwnd,
+                    "owner_hwnd": owner_hwnd,
+                    "title": title,
+                    "pid": pid,
+                    "exe": exe,
+                    "process_name": process_name,
+                    "class_name": class_name,
+                    "visible": visible,
+                    "enabled": enabled,
+                    "minimized": minimized,
+                    "maximized": maximized,
+                    "is_foreground": bool(hwnd == foreground_hwnd),
                     "left": left,
                     "top": top,
                     "right": right,
                     "bottom": bottom,
                 },
-            }
+                observation_backend="pywin32",
+            )
         except Exception:
             return {}
 
     def list_windows(self) -> List[Dict[str, Any]]:
+        native_windows = self._native_list_windows(limit=300)
+        if native_windows is not None:
+            return native_windows
         if win32gui is None:
             return []
         windows: List[Dict[str, Any]] = []
@@ -199,6 +738,9 @@ class WindowManager:
         return windows
 
     def active_window(self) -> Dict[str, Any]:
+        native_window = self._native_active_window()
+        if native_window is not None:
+            return native_window
         if win32gui is None:
             return {"status": "error", "message": "pywin32 is not available"}
         try:
@@ -214,7 +756,9 @@ class WindowManager:
     def describe_window(self, *, title_contains: str = "", hwnd: int | None = None) -> Dict[str, Any]:
         """Return a richer view of a specific or active window without changing focus."""
         if hwnd is not None:
-            payload = self._get_hwnd_info(int(hwnd))
+            payload = next((item for item in self.list_windows() if int(item.get("hwnd", 0) or 0) == int(hwnd)), {})
+            if not payload:
+                payload = self._get_hwnd_info(int(hwnd))
             return {"status": "success", "window": payload} if payload else {"status": "error", "message": "Window not found"}
 
         if title_contains:
@@ -230,6 +774,9 @@ class WindowManager:
         return {"status": "success", "window": active}
 
     def focus_window(self, title_contains: str = "", hwnd: int | None = None) -> Dict[str, Any]:
+        native_result = self._native_focus_window(title_contains=title_contains, hwnd=hwnd)
+        if native_result is not None:
+            return native_result
         if win32gui is None:
             return {"status": "error", "message": "pywin32 is not available"}
 

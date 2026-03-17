@@ -242,6 +242,12 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "selected_action": "select_list_item",
             "selected_candidate_id": "list_bluetooth",
             "selected_candidate_label": "Bluetooth",
+            "rust_router_hint": "prefer_query_match",
+            "rust_loop_risk": False,
+            "surface_topology_signature": "settings|2|1",
+            "topology_visible_window_count": 2,
+            "topology_dialog_like_count": 1,
+            "topology_same_process_window_count": 2,
             "transition_kind": "child_window",
             "nested_surface_progressed": True,
             "child_window_adopted": True,
@@ -283,6 +289,11 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["surface_mode"] == "list_navigation"
     assert ready_mission["selected_action"] == "select_list_item"
     assert ready_mission["selected_candidate_label"] == "Bluetooth"
+    assert ready_mission["rust_router_hint"] == "prefer_query_match"
+    assert ready_mission["surface_topology_signature"] == "settings|2|1"
+    assert ready_mission["topology_visible_window_count"] == 2
+    assert ready_mission["topology_dialog_like_count"] == 1
+    assert ready_mission["topology_same_process_window_count"] == 2
     assert ready_mission["attempted_target_count"] == 1
     assert ready_mission["alternative_target_count"] == 1
     assert ready_mission["transition_kind"] == "child_window"

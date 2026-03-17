@@ -4,6 +4,7 @@ pub mod file_access;
 pub mod input_analyzer;
 pub mod ipc_bridge;
 pub mod safety_guard;
+pub mod surface_router;
 pub mod system_monitor;
 
 #[cfg(target_os = "windows")]

@@ -83,6 +83,11 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const explorationLastBranchKind = String(latestMission?.last_branch_kind ?? '').trim();
   const explorationBranchRepeatCount = Number(latestMission?.branch_repeat_count ?? 0);
   const explorationSurfaceDepth = Number(latestMission?.surface_path_depth ?? 0);
+  const explorationRustRouterHint = String(latestMission?.rust_router_hint ?? '').trim();
+  const explorationTopologyVisibleWindowCount = Number(latestMission?.topology_visible_window_count ?? 0);
+  const explorationTopologyDialogLikeCount = Number(latestMission?.topology_dialog_like_count ?? 0);
+  const explorationTopologySameProcessWindowCount = Number(latestMission?.topology_same_process_window_count ?? 0);
+  const explorationTopologySignature = String(latestMission?.surface_topology_signature ?? '').trim();
   const updatedAt = formatMissionTimestamp(String(latestMission?.updated_at ?? latestMission?.created_at ?? ''));
   const daemonLastTick = formatMissionTimestamp(String(supervisorStatus?.last_tick_at ?? ''));
   const daemonIntervalS = Number(supervisorStatus?.interval_s ?? 0);
@@ -126,6 +131,17 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
                 {explorationBranchRepeatCount > 1 ? `:${explorationBranchRepeatCount}x` : ''}
               </Badge>
             ) : null}
+            {isExplorationMission && explorationRustRouterHint ? (
+              <Badge variant="outline">rust:{explorationRustRouterHint}</Badge>
+            ) : null}
+            {isExplorationMission &&
+            (explorationTopologyVisibleWindowCount > 0 ||
+              explorationTopologyDialogLikeCount > 0 ||
+              explorationTopologySameProcessWindowCount > 0) ? (
+              <Badge variant="outline">
+                topo:{explorationTopologyVisibleWindowCount}/{explorationTopologyDialogLikeCount}/{explorationTopologySameProcessWindowCount}
+              </Badge>
+            ) : null}
             {manualAttentionCount > 0 ? <Badge variant="outline">review:{manualAttentionCount}</Badge> : null}
             {additionalMissionCount > 0 ? <Badge variant="outline">+{additionalMissionCount} more</Badge> : null}
           </div>
@@ -148,6 +164,15 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               : ''}
             {missionKind === 'exploration' && explorationSurfaceDepth > 0
               ? ` • depth:${explorationSurfaceDepth}`
+              : ''}
+            {missionKind === 'exploration' && explorationRustRouterHint
+              ? ` • rust:${explorationRustRouterHint}`
+              : ''}
+            {missionKind === 'exploration' &&
+            (explorationTopologyVisibleWindowCount > 0 ||
+              explorationTopologyDialogLikeCount > 0 ||
+              explorationTopologySameProcessWindowCount > 0)
+              ? ` • topo:${explorationTopologyVisibleWindowCount}/${explorationTopologyDialogLikeCount}/${explorationTopologySameProcessWindowCount}${explorationTopologySignature ? `(${explorationTopologySignature})` : ''}`
               : ''}
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}

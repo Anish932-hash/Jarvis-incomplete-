@@ -12,6 +12,7 @@ use jarvis_backend::file_access::FileAccess;
 use jarvis_backend::input_analyzer::InputAnalyzer;
 use jarvis_backend::ipc_bridge::IpcBridge;
 use jarvis_backend::safety_guard::SafetyGuard;
+use jarvis_backend::surface_router::{route_surface_exploration, window_topology_snapshot};
 use jarvis_backend::system_monitor::SystemMonitor;
 #[cfg(target_os = "windows")]
 use jarvis_backend::windows_control::WindowsControl;
@@ -293,7 +294,12 @@ fn event_class_name(event: &str) -> &'static str {
     if clean.contains("file_") {
         return "file_io";
     }
-    if clean.contains("window") || clean.contains("desktop") || clean.contains("input_") {
+    if clean.contains("window")
+        || clean.contains("desktop")
+        || clean.contains("input_")
+        || clean.contains("surface_exploration")
+        || clean.contains("topology")
+    {
         return "desktop_context";
     }
     if clean.contains("automation") || clean.contains("batch_") {
@@ -414,6 +420,8 @@ async fn dispatch_internal(
                 "automation_plan_execute",
                 "active_window",
                 "list_windows",
+                "window_topology_snapshot",
+                "surface_exploration_router",
                 "input_snapshot",
                 "file_hash",
                 "file_read_json",
@@ -451,6 +459,8 @@ async fn dispatch_internal(
                     "input_snapshot",
                     "active_window",
                     "list_windows",
+                    "window_topology_snapshot",
+                    "surface_exploration_router",
                 ],
             }))
         }
@@ -744,6 +754,16 @@ async fn dispatch_internal(
             {
                 Err("list_windows is only supported on Windows".to_string())
             }
+        }
+        "window_topology_snapshot" => {
+            let query = payload
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            window_topology_snapshot(query).map_err(|err| err.to_string())
+        }
+        "surface_exploration_router" => {
+            route_surface_exploration(payload).map_err(|err| err.to_string())
         }
         _ => Err(format!("Unsupported event '{event}'")),
     }

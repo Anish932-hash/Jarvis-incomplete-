@@ -39,6 +39,9 @@ NEWS.txt
 LICENSE.txt
 data/desktop_workflow_memory.json
 data/desktop_mission_memory.json
+JARVIS_BACKEND/backend/python/native/windows/_window_bridge*.pyd
+JARVIS_BACKEND/backend/python/native/windows/_window_bridge*.lib
+JARVIS_BACKEND/backend/python/native/windows/_window_bridge*.exp
 
 # Environment variables
 .env

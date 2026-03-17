@@ -119,6 +119,12 @@ class DesktopMissionMemory:
                 "selected_action": str(payload.get("selected_action", "") or "").strip(),
                 "selected_candidate_id": str(payload.get("selected_candidate_id", "") or "").strip(),
                 "selected_candidate_label": str(payload.get("selected_candidate_label", "") or "").strip(),
+                "rust_router_hint": str(payload.get("rust_router_hint", "") or "").strip(),
+                "rust_loop_risk": bool(payload.get("rust_loop_risk", False)),
+                "surface_topology_signature": str(payload.get("surface_topology_signature", "") or "").strip(),
+                "topology_visible_window_count": self._coerce_int(payload.get("topology_visible_window_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_dialog_like_count": self._coerce_int(payload.get("topology_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_same_process_window_count": self._coerce_int(payload.get("topology_same_process_window_count", 0), minimum=0, maximum=100_000, default=0),
                 "transition_kind": str(payload.get("transition_kind", "") or "").strip(),
                 "nested_surface_progressed": bool(payload.get("nested_surface_progressed", False)),
                 "child_window_adopted": bool(payload.get("child_window_adopted", False)),
@@ -256,6 +262,8 @@ class DesktopMissionMemory:
                 "selected_candidate_id",
                 "selected_candidate_label",
                 "last_branch_kind",
+                "rust_router_hint",
+                "surface_topology_signature",
             ):
                 if field_name in payload:
                     row[field_name] = str(payload.get(field_name, row.get(field_name, "")) or "").strip()
@@ -263,9 +271,22 @@ class DesktopMissionMemory:
                 "nested_surface_progressed",
                 "child_window_adopted",
                 "auto_continued",
+                "rust_loop_risk",
             ):
                 if field_name in payload:
                     row[field_name] = bool(payload.get(field_name, row.get(field_name, False)))
+            for field_name in (
+                "topology_visible_window_count",
+                "topology_dialog_like_count",
+                "topology_same_process_window_count",
+            ):
+                if field_name in payload:
+                    row[field_name] = self._coerce_int(
+                        payload.get(field_name, row.get(field_name, 0)),
+                        minimum=0,
+                        maximum=100_000,
+                        default=0,
+                    )
             if isinstance(payload.get("surface_path_tail", []), list):
                 row["surface_path_tail"] = [
                     str(item).strip()
@@ -617,6 +638,12 @@ class DesktopMissionMemory:
             "selected_action": str(row.get("selected_action", "") or "").strip(),
             "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
             "selected_candidate_label": str(row.get("selected_candidate_label", "") or "").strip(),
+            "rust_router_hint": str(row.get("rust_router_hint", "") or "").strip(),
+            "rust_loop_risk": bool(row.get("rust_loop_risk", False)),
+            "surface_topology_signature": str(row.get("surface_topology_signature", "") or "").strip(),
+            "topology_visible_window_count": self._coerce_int(row.get("topology_visible_window_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_dialog_like_count": self._coerce_int(row.get("topology_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_same_process_window_count": self._coerce_int(row.get("topology_same_process_window_count", 0), minimum=0, maximum=100_000, default=0),
             "transition_kind": str(row.get("transition_kind", "") or "").strip(),
             "nested_surface_progressed": bool(row.get("nested_surface_progressed", False)),
             "child_window_adopted": bool(row.get("child_window_adopted", False)),

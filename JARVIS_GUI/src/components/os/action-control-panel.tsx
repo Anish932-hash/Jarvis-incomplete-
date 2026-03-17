@@ -69,6 +69,7 @@ import {
   type DesktopMissionRecord,
   type DesktopMissionSnapshotResponse,
   type DesktopSurfaceExplorationResponse,
+  type DesktopSurfaceExplorationSelection,
   type GoalListItem,
   type ModelBridgeProfile,
   type ModelBridgeProfilesResponse,
@@ -15759,6 +15760,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           !Array.isArray(desktopCoworkerResult.exploration_mission)
                                             ? (desktopCoworkerResult.exploration_mission as DesktopExplorationMission)
                                             : null;
+                                        const explorationSelection =
+                                          desktopCoworkerResult?.exploration_selection &&
+                                          typeof desktopCoworkerResult.exploration_selection === 'object' &&
+                                          !Array.isArray(desktopCoworkerResult.exploration_selection)
+                                            ? (desktopCoworkerResult.exploration_selection as DesktopSurfaceExplorationSelection)
+                                            : null;
+                                        const surfaceTopology =
+                                          desktopCoworkerExploration.surface_topology &&
+                                          typeof desktopCoworkerExploration.surface_topology === 'object' &&
+                                          !Array.isArray(desktopCoworkerExploration.surface_topology)
+                                            ? (desktopCoworkerExploration.surface_topology as Record<string, unknown>)
+                                            : explorationSelection?.surface_topology &&
+                                                typeof explorationSelection.surface_topology === 'object' &&
+                                                !Array.isArray(explorationSelection.surface_topology)
+                                              ? (explorationSelection.surface_topology as Record<string, unknown>)
+                                              : explorationMission?.surface_topology &&
+                                                  typeof explorationMission.surface_topology === 'object' &&
+                                                  !Array.isArray(explorationMission.surface_topology)
+                                                ? (explorationMission.surface_topology as Record<string, unknown>)
+                                                : null;
                                         return explorationMission ? (
                                           <div className="mt-2 rounded border border-primary/15 bg-background/40 p-2 text-[11px] text-muted-foreground">
                                             {(() => {
@@ -15777,6 +15798,47 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               const branchTransitionCount = Number(explorationMission.branch_transition_count ?? 0);
                                               const branchRepeatCount = Number(explorationMission.branch_repeat_count ?? 0);
                                               const surfacePathDepth = Number(explorationMission.surface_path_depth ?? surfacePathTail.length);
+                                              const rustRouterHint = String(
+                                                explorationSelection?.rust_router_hint ??
+                                                  explorationMission.rust_router_hint ??
+                                                  ''
+                                              ).trim();
+                                              const rustScore =
+                                                typeof explorationSelection?.rust_score === 'number'
+                                                  ? explorationSelection.rust_score
+                                                  : null;
+                                              const rustRank =
+                                                typeof explorationSelection?.rust_rank === 'number'
+                                                  ? explorationSelection.rust_rank
+                                                  : null;
+                                              const rustLoopRisk = Boolean(
+                                                explorationMission.rust_loop_risk ??
+                                                  (explorationSelection?.rust_router &&
+                                                  typeof explorationSelection.rust_router === 'object' &&
+                                                  !Array.isArray(explorationSelection.rust_router)
+                                                    ? (explorationSelection.rust_router as Record<string, unknown>).loop_risk
+                                                    : false)
+                                              );
+                                              const topologySignature = String(
+                                                (surfaceTopology?.topology_signature as string | undefined) ??
+                                                  explorationMission.surface_topology_signature ??
+                                                  ''
+                                              ).trim();
+                                              const topologyVisibleWindowCount = Number(
+                                                (surfaceTopology?.visible_window_count as number | undefined) ??
+                                                  explorationMission.topology_visible_window_count ??
+                                                  0
+                                              );
+                                              const topologyDialogLikeCount = Number(
+                                                (surfaceTopology?.dialog_like_count as number | undefined) ??
+                                                  explorationMission.topology_dialog_like_count ??
+                                                  0
+                                              );
+                                              const topologySameProcessWindowCount = Number(
+                                                (surfaceTopology?.same_process_window_count as number | undefined) ??
+                                                  explorationMission.topology_same_process_window_count ??
+                                                  0
+                                              );
                                               const branchHistoryTail = Array.isArray(explorationMission.branch_history_tail)
                                                 ? explorationMission.branch_history_tail.filter(
                                                     (item): item is Record<string, unknown> =>
@@ -15816,6 +15878,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {lastBranchKind ? ` • last: ${humanizeRuntimeLabel(lastBranchKind)}` : ''}
                                                 {branchRepeatCount > 1 ? ` • repeat: ${branchRepeatCount}x` : ''}
                                                 {surfacePathDepth > 0 ? ` • depth: ${surfacePathDepth}` : ''}
+                                              </p>
+                                            ) : null}
+                                            {rustRouterHint || rustScore !== null || rustRank !== null ? (
+                                              <p>
+                                                rust router: {rustRouterHint || 'ranked'}
+                                                {rustScore !== null ? ` • score: ${rustScore.toFixed(2)}` : ''}
+                                                {rustRank !== null && rustRank > 0 ? ` • rank: ${rustRank}` : ''}
+                                                {rustLoopRisk ? ' • loop-risk: yes' : ''}
+                                              </p>
+                                            ) : null}
+                                            {topologyVisibleWindowCount > 0 ||
+                                            topologyDialogLikeCount > 0 ||
+                                            topologySameProcessWindowCount > 0 ? (
+                                              <p>
+                                                topology: windows {topologyVisibleWindowCount}
+                                                {` • dialogs ${topologyDialogLikeCount}`}
+                                                {` • same-process ${topologySameProcessWindowCount}`}
+                                                {topologySignature ? ` • ${topologySignature}` : ''}
                                               </p>
                                             ) : null}
                                             {branchHistoryTail.length > 0 ? (
@@ -15874,6 +15954,73 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           hypotheses: {Number(desktopCoworkerExploration.hypothesis_count ?? 0)}
                                           {' • '}branches: {Number(desktopCoworkerExploration.branch_action_count ?? 0)}
                                         </p>
+                                        {(() => {
+                                          const explorationSelection =
+                                            desktopCoworkerResult?.exploration_selection &&
+                                            typeof desktopCoworkerResult.exploration_selection === 'object' &&
+                                            !Array.isArray(desktopCoworkerResult.exploration_selection)
+                                              ? (desktopCoworkerResult.exploration_selection as DesktopSurfaceExplorationSelection)
+                                              : null;
+                                          const surfaceTopology =
+                                            desktopCoworkerExploration.surface_topology &&
+                                            typeof desktopCoworkerExploration.surface_topology === 'object' &&
+                                            !Array.isArray(desktopCoworkerExploration.surface_topology)
+                                              ? (desktopCoworkerExploration.surface_topology as Record<string, unknown>)
+                                              : explorationSelection?.surface_topology &&
+                                                  typeof explorationSelection.surface_topology === 'object' &&
+                                                  !Array.isArray(explorationSelection.surface_topology)
+                                                ? (explorationSelection.surface_topology as Record<string, unknown>)
+                                                : null;
+                                          const topologyVisibleWindowCount = Number(
+                                            (surfaceTopology?.visible_window_count as number | undefined) ?? 0
+                                          );
+                                          const topologyDialogLikeCount = Number(
+                                            (surfaceTopology?.dialog_like_count as number | undefined) ?? 0
+                                          );
+                                          const topologySameProcessWindowCount = Number(
+                                            (surfaceTopology?.same_process_window_count as number | undefined) ?? 0
+                                          );
+                                          const topologySignature = String(
+                                            (surfaceTopology?.topology_signature as string | undefined) ?? ''
+                                          ).trim();
+                                          const rustRouterHint = String(
+                                            explorationSelection?.rust_router_hint ?? ''
+                                          ).trim();
+                                          const rustScore =
+                                            typeof explorationSelection?.rust_score === 'number'
+                                              ? explorationSelection.rust_score
+                                              : null;
+                                          if (
+                                            !rustRouterHint &&
+                                            rustScore === null &&
+                                            topologyVisibleWindowCount <= 0 &&
+                                            topologyDialogLikeCount <= 0 &&
+                                            topologySameProcessWindowCount <= 0 &&
+                                            !topologySignature
+                                          ) {
+                                            return null;
+                                          }
+                                          return (
+                                            <p>
+                                              {rustRouterHint || rustScore !== null
+                                                ? `rust:${rustRouterHint || 'ranked'}${rustScore !== null ? ` (${rustScore.toFixed(2)})` : ''}`
+                                                : 'rust:idle'}
+                                              {(topologyVisibleWindowCount > 0 ||
+                                                topologyDialogLikeCount > 0 ||
+                                                topologySameProcessWindowCount > 0 ||
+                                                topologySignature) &&
+                                              (rustRouterHint || rustScore !== null)
+                                                ? ' • '
+                                                : ''}
+                                              {topologyVisibleWindowCount > 0 ||
+                                              topologyDialogLikeCount > 0 ||
+                                              topologySameProcessWindowCount > 0 ||
+                                              topologySignature
+                                                ? `topology:${topologyVisibleWindowCount}/${topologyDialogLikeCount}/${topologySameProcessWindowCount}${topologySignature ? ` (${topologySignature})` : ''}`
+                                                : ''}
+                                            </p>
+                                          );
+                                        })()}
                                         {Number(desktopCoworkerExploration.attempted_target_count ?? 0) > 0 ||
                                         Number(desktopCoworkerExploration.remaining_target_count ?? 0) > 0 ? (
                                           <p>

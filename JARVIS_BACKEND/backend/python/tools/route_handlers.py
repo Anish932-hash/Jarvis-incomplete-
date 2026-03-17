@@ -230,6 +230,43 @@ def _active_window(_: Dict[str, Any]) -> Dict[str, Any]:
     return {"status": "success", "window": info}
 
 
+def _window_topology(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.python.pc_control.window_manager import WindowManager
+
+    limit = _to_int(payload.get("limit", 80), 80)
+    include_windows = _to_bool(payload.get("include_windows", False))
+    return WindowManager().window_topology_snapshot(
+        query=str(payload.get("query", "")).strip(),
+        app_name=str(payload.get("app_name", "")).strip(),
+        window_title=str(payload.get("window_title", "")).strip(),
+        include_windows=include_windows,
+        limit=limit,
+    )
+
+
+def _reacquire_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.python.pc_control.window_manager import WindowManager
+
+    limit = _to_int(payload.get("limit", 80), 80)
+    include_candidates = _to_bool(payload.get("include_candidates", True), True)
+    hwnd_raw = payload.get("hwnd")
+    pid_raw = payload.get("pid")
+    parent_hwnd_raw = payload.get("parent_hwnd")
+    parent_pid_raw = payload.get("parent_pid")
+    return WindowManager().reacquire_window(
+        app_name=str(payload.get("app_name", "")).strip(),
+        window_title=str(payload.get("window_title", "")).strip(),
+        query=str(payload.get("query", "")).strip(),
+        window_signature=str(payload.get("window_signature", "")).strip(),
+        hwnd=None if hwnd_raw in {None, ""} else _to_int(hwnd_raw, 0),
+        pid=None if pid_raw in {None, ""} else _to_int(pid_raw, 0),
+        parent_hwnd=None if parent_hwnd_raw in {None, ""} else _to_int(parent_hwnd_raw, 0),
+        parent_pid=None if parent_pid_raw in {None, ""} else _to_int(parent_pid_raw, 0),
+        include_candidates=include_candidates,
+        limit=limit,
+    )
+
+
 def _focus_window(payload: Dict[str, Any]) -> Dict[str, Any]:
     from backend.python.pc_control.window_manager import WindowManager
 

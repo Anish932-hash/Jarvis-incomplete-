@@ -93,6 +93,8 @@ class DesktopBackendService:
             "automation_plan_execute",
             "active_window",
             "list_windows",
+            "window_topology_snapshot",
+            "surface_exploration_router",
             "input_snapshot",
             "file_hash",
             "file_read_json",
@@ -161,7 +163,9 @@ class DesktopBackendService:
         self.provider_credentials = ProviderCredentialManager()
         self.provider_credentials.refresh(overwrite_env=False)
         self.provider_verifier = ProviderCredentialVerifier(self.provider_credentials)
-        self.desktop_action_router = DesktopActionRouter()
+        self.desktop_action_router = DesktopActionRouter(
+            rust_request_handler=self._desktop_router_rust_request,
+        )
         self.desktop_recovery_supervisor = DesktopRecoverySupervisor(
             enabled=self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ENABLED", False),
             interval_s=self._env_float("JARVIS_DESKTOP_RECOVERY_DAEMON_INTERVAL_S", 45.0, minimum=5.0, maximum=3600.0),
@@ -29664,6 +29668,18 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc), "ready": False, "running": False}
 
+    def _desktop_router_rust_request(
+        self,
+        event: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: float = 4.0,
+    ) -> Dict[str, Any]:
+        return self.rust_request(
+            event=str(event or "").strip(),
+            payload=payload if isinstance(payload, dict) else {},
+            timeout_s=max(0.8, min(float(timeout_s), 20.0)),
+        )
+
     def rust_health(self) -> Dict[str, Any]:
         try:
             return self._rust_runtime.health()
@@ -29707,6 +29723,17 @@ class DesktopBackendService:
 
     def rust_desktop_context(self, *, timeout_s: float = 8.0) -> Dict[str, Any]:
         return self._rust_runtime.desktop_context(timeout_s=timeout_s)
+
+    def rust_window_topology_snapshot(self, *, query: str = "", timeout_s: float = 4.0) -> Dict[str, Any]:
+        return self._rust_runtime.window_topology_snapshot(query=query, timeout_s=timeout_s)
+
+    def rust_surface_exploration_router(
+        self,
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout_s: float = 5.0,
+    ) -> Dict[str, Any]:
+        return self._rust_runtime.surface_exploration_router(payload=payload, timeout_s=timeout_s)
 
     def rust_batch_execute(
         self,
