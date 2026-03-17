@@ -307,3 +307,137 @@ def test_evaluation_runner_control_guidance_uses_latest_summary(monkeypatch) -> 
     control_biases = guidance["control_biases"]
     assert float(control_biases["dialog_resolution"]) > 0.12
     assert float(control_biases["recovery_reacquire"]) > 0.1
+
+
+def test_evaluation_catalog_summary_tracks_phase5_lab_dimensions() -> None:
+    runner = EvaluationRunner()
+    payload = runner.catalog(
+        [
+            Scenario(
+                "long_horizon_settings",
+                "Open settings and apply privacy changes",
+                ["desktop_interact"],
+                strict_order=False,
+                required_actions=["desktop_interact"],
+                category="settings",
+                capabilities=["settings_control", "recovery"],
+                risk_level="guarded",
+                pack="long_horizon_and_replay",
+                mission_family="form",
+                autonomy_tier="autonomous",
+                apps=["settings"],
+                recovery_expected=True,
+                native_hybrid_focus=True,
+                replayable=True,
+                horizon_steps=6,
+            ),
+            Scenario(
+                "fast_status",
+                "Check defender status",
+                ["defender_status"],
+                category="system_ops",
+                capabilities=["system_status"],
+                apps=["defender"],
+                replayable=True,
+                horizon_steps=1,
+            ),
+        ]
+    )
+
+    summary = payload["summary"]
+    assert summary["replayable_count"] == 2
+    assert summary["long_horizon_count"] == 1
+    assert float(summary["avg_horizon_steps"]) > 3.0
+    assert summary["max_horizon_steps"] == 6
+
+
+def test_evaluation_runner_lab_reports_replay_candidates_and_installed_app_coverage(monkeypatch) -> None:
+    installed_provider_payload = {
+        "status": "success",
+        "count": 4,
+        "total": 4,
+        "items": [
+            {"name": "Settings", "profile_id": "settings", "aliases": ["settings"], "category": "system"},
+            {"name": "Installer", "profile_id": "installer", "aliases": ["installer"], "category": "system"},
+            {"name": "Visual Studio Code", "profile_id": "vscode", "aliases": ["vscode"], "category": "developer"},
+            {"name": "Clipchamp", "profile_id": "clipchamp", "aliases": ["clipchamp"], "category": "media"},
+        ],
+    }
+    runner = EvaluationRunner(installed_app_catalog_provider=lambda **_: installed_provider_payload)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        text = str(goal.request.text).lower()
+        if "installer" in text:
+            steps = [PlanStep(step_id="s1", action="time_now")]
+        else:
+            steps = [PlanStep(step_id="s1", action="desktop_interact")]
+        return ExecutionPlan(plan_id="plan-1", goal_id=goal.goal_id, intent="test", steps=steps)
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "unsupported_child_dialog_chain",
+            "Explore surface for add bluetooth device in settings and continue through the child dialog chain",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="unsupported_app",
+            capabilities=["surface_exploration", "child_window_adoption", "recovery"],
+            risk_level="guarded",
+            pack="unsupported_and_recovery",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        ),
+        Scenario(
+            "installer_resume_after_prompt",
+            "Resume the blocked installer after approval is completed",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="installer",
+            capabilities=["wizard_mission", "desktop_recovery", "governance"],
+            risk_level="high",
+            pack="installer_and_governance",
+            mission_family="recovery",
+            autonomy_tier="autonomous",
+            apps=["installer"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        ),
+        Scenario(
+            "vscode_long_horizon_debug_loop",
+            "Open vscode, run npm test in the terminal, inspect failures, and reopen the failing file with quick open",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="editor_workflow",
+            capabilities=["editor", "terminal", "quick_open", "desktop_workflow", "command_execution"],
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["vscode"],
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=6,
+        ),
+    ]
+
+    payload = runner.run_with_summary(scenarios)
+    assert payload["status"] == "success"
+
+    lab = runner.lab(history_limit=4)
+    assert lab["status"] == "success"
+    assert lab["coverage"]["long_horizon"]["count"] >= 3
+    assert lab["history_trend"]["run_count"] == 1
+    assert lab["installed_app_coverage"]["benchmarked_installed_app_count"] == 3
+    assert "Clipchamp" in lab["installed_app_coverage"]["missing_apps"]
+    assert lab["replay_candidates"][0]["scenario"] == "installer_resume_after_prompt"
+    assert lab["replay_candidates"][0]["replay_query"]["scenario_name"] == "installer_resume_after_prompt"
