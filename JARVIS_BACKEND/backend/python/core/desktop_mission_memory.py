@@ -132,6 +132,23 @@ class DesktopMissionMemory:
                     for item in payload.get("window_title_history_tail", [])
                     if str(item).strip()
                 ][:8] if isinstance(payload.get("window_title_history_tail", []), list) else [],
+                "last_branch_kind": str(payload.get("last_branch_kind", "") or "").strip(),
+                "branch_transition_count": self._coerce_int(
+                    payload.get(
+                        "branch_transition_count",
+                        len(payload.get("branch_history", []))
+                        if isinstance(payload.get("branch_history", []), list)
+                        else 0,
+                    ),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                ),
+                "branch_history_tail": [
+                    dict(item)
+                    for item in payload.get("branch_history", [])[-8:]
+                    if isinstance(item, dict)
+                ] if isinstance(payload.get("branch_history", []), list) else [],
                 "nested_progress_count": self._coerce_int(
                     payload.get(
                         "nested_progress_count",
@@ -221,6 +238,7 @@ class DesktopMissionMemory:
                 "selected_action",
                 "selected_candidate_id",
                 "selected_candidate_label",
+                "last_branch_kind",
             ):
                 if field_name in payload:
                     row[field_name] = str(payload.get(field_name, row.get(field_name, "")) or "").strip()
@@ -243,6 +261,19 @@ class DesktopMissionMemory:
                     for item in payload.get("window_title_history_tail", [])
                     if str(item).strip()
                 ][:8]
+            if isinstance(payload.get("branch_history", []), list):
+                row["branch_history_tail"] = [
+                    dict(item)
+                    for item in payload.get("branch_history", [])[-8:]
+                    if isinstance(item, dict)
+                ]
+            if "branch_transition_count" in payload:
+                row["branch_transition_count"] = self._coerce_int(
+                    payload.get("branch_transition_count", row.get("branch_transition_count", 0)),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                )
             if "nested_progress_count" in payload:
                 row["nested_progress_count"] = self._coerce_int(
                     payload.get("nested_progress_count", row.get("nested_progress_count", 0)),
@@ -560,6 +591,9 @@ class DesktopMissionMemory:
             "child_window_adopted": bool(row.get("child_window_adopted", False)),
             "surface_path_tail": [str(item).strip() for item in row.get("surface_path_tail", []) if str(item).strip()] if isinstance(row.get("surface_path_tail", []), list) else [],
             "window_title_history_tail": [str(item).strip() for item in row.get("window_title_history_tail", []) if str(item).strip()] if isinstance(row.get("window_title_history_tail", []), list) else [],
+            "last_branch_kind": str(row.get("last_branch_kind", "") or "").strip(),
+            "branch_transition_count": self._coerce_int(row.get("branch_transition_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_history_tail": [dict(item) for item in row.get("branch_history_tail", []) if isinstance(item, dict)] if isinstance(row.get("branch_history_tail", []), list) else [],
             "nested_progress_count": self._coerce_int(row.get("nested_progress_count", 0), minimum=0, maximum=100_000, default=0),
             "attempted_targets_tail": [dict(item) for item in row.get("attempted_targets_tail", []) if isinstance(item, dict)] if isinstance(row.get("attempted_targets_tail", []), list) else [],
             "surface_signature_history": [str(item).strip() for item in row.get("surface_signature_history", []) if str(item).strip()] if isinstance(row.get("surface_signature_history", []), list) else [],
@@ -644,14 +678,32 @@ class DesktopMissionMemory:
             recovery_priority = 72
             approval_blocked = True
             manual_attention_required = True
-        elif stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"}:
+        elif stop_reason_code in {
+            "exploration_followup_available",
+            "exploration_nested_branch_available",
+            "exploration_step_limit_reached",
+            "exploration_nested_branch_limit_reached",
+        }:
             recovery_profile = "resume_ready"
             recovery_hint = (
                 "JARVIS found another safe surface-recon step and can continue exploring this app."
                 if stop_reason_code == "exploration_followup_available"
-                else "JARVIS paused at the configured recon step limit and is ready to continue this exploration flow."
+                else (
+                    "JARVIS advanced into a deeper nested surface and is ready to continue that exploration branch."
+                    if stop_reason_code == "exploration_nested_branch_available"
+                    else (
+                        "JARVIS paused at the configured recon step limit and is ready to continue this exploration flow."
+                        if stop_reason_code == "exploration_step_limit_reached"
+                        else "JARVIS paused at the configured recon step limit after advancing into a deeper nested branch."
+                    )
+                )
             )
-            recovery_priority = 88 if stop_reason_code == "exploration_followup_available" else 86
+            recovery_priority = {
+                "exploration_followup_available": 88,
+                "exploration_nested_branch_available": 89,
+                "exploration_step_limit_reached": 86,
+                "exploration_nested_branch_limit_reached": 87,
+            }.get(stop_reason_code, 86)
         elif stop_reason_code in {
             "exploration_manual_review_required",
             "exploration_no_safe_path",

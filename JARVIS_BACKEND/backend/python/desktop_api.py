@@ -7235,6 +7235,9 @@ class DesktopBackendService:
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
         allow_destructive_forms: Optional[bool] = None,
+        attempted_targets: Optional[List[Dict[str, Any]]] = None,
+        surface_signature_history: Optional[List[str]] = None,
+        branch_history: Optional[List[Dict[str, Any]]] = None,
         resume_contract: Optional[Dict[str, Any]] = None,
         blocking_surface: Optional[Dict[str, Any]] = None,
         resume_force: Optional[bool] = None,
@@ -7281,6 +7284,16 @@ class DesktopBackendService:
                 payload["max_form_pages"] = int(max_form_pages or 5)
             if allow_destructive_forms is not None:
                 payload["allow_destructive_forms"] = bool(allow_destructive_forms)
+            if isinstance(attempted_targets, list) and attempted_targets:
+                payload["attempted_targets"] = [dict(row) for row in attempted_targets if isinstance(row, dict)]
+            if isinstance(surface_signature_history, list) and surface_signature_history:
+                payload["surface_signature_history"] = [
+                    str(item).strip()
+                    for item in surface_signature_history
+                    if str(item).strip()
+                ]
+            if isinstance(branch_history, list) and branch_history:
+                payload["branch_history"] = [dict(row) for row in branch_history if isinstance(row, dict)]
             if isinstance(resume_contract, dict) and resume_contract:
                 payload["resume_contract"] = dict(resume_contract)
             if isinstance(blocking_surface, dict) and blocking_surface:
@@ -7317,6 +7330,9 @@ class DesktopBackendService:
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
         allow_destructive_forms: Optional[bool] = None,
+        attempted_targets: Optional[List[Dict[str, Any]]] = None,
+        surface_signature_history: Optional[List[str]] = None,
+        branch_history: Optional[List[Dict[str, Any]]] = None,
         resume_contract: Optional[Dict[str, Any]] = None,
         blocking_surface: Optional[Dict[str, Any]] = None,
         resume_force: Optional[bool] = None,
@@ -7363,6 +7379,16 @@ class DesktopBackendService:
                 payload["max_form_pages"] = int(max_form_pages or 5)
             if allow_destructive_forms is not None:
                 payload["allow_destructive_forms"] = bool(allow_destructive_forms)
+            if isinstance(attempted_targets, list) and attempted_targets:
+                payload["attempted_targets"] = [dict(row) for row in attempted_targets if isinstance(row, dict)]
+            if isinstance(surface_signature_history, list) and surface_signature_history:
+                payload["surface_signature_history"] = [
+                    str(item).strip()
+                    for item in surface_signature_history
+                    if str(item).strip()
+                ]
+            if isinstance(branch_history, list) and branch_history:
+                payload["branch_history"] = [dict(row) for row in branch_history if isinstance(row, dict)]
             if isinstance(resume_contract, dict) and resume_contract:
                 payload["resume_contract"] = dict(resume_contract)
             if isinstance(blocking_surface, dict) and blocking_surface:

@@ -3478,6 +3478,9 @@ class DesktopActionRouter:
                     "branch_action": ("branch_action",),
                     "attempted_targets": ("attempted_targets",),
                     "surface_signature_history": ("surface_signature_history",),
+                    "branch_history": ("branch_history",),
+                    "last_branch_kind": ("last_branch_kind",),
+                    "branch_transition_count": ("branch_transition_count",),
                     "form_target_plan": ("form_target_plan",),
                     "expected_form_target_count": ("expected_form_target_count",),
                     "control_type": ("control_type",),
@@ -3558,6 +3561,18 @@ class DesktopActionRouter:
             ][:24]
             if isinstance(raw.get("surface_signature_history", []), list)
             else [],
+            "branch_history": [
+                dict(row)
+                for row in (
+                    self._normalize_surface_exploration_branch_entry(item)
+                    for item in raw.get("branch_history", [])
+                )
+                if row
+            ][:16]
+            if isinstance(raw.get("branch_history", []), list)
+            else [],
+            "last_branch_kind": str(raw.get("last_branch_kind", "") or "").strip().lower(),
+            "branch_transition_count": max(0, min(int(raw.get("branch_transition_count", 0) or 0), 100_000)),
             "control_type": str(raw.get("control_type", "") or "").strip(),
             "element_id": str(raw.get("element_id", "") or "").strip(),
             "include_targets": bool(raw.get("include_targets", False)),
@@ -4389,6 +4404,9 @@ class DesktopActionRouter:
             "exploration_limit",
             "attempted_targets",
             "surface_signature_history",
+            "branch_history",
+            "last_branch_kind",
+            "branch_transition_count",
         }
         for field_name in override_fields:
             if field_name not in provided_fields:
@@ -8804,6 +8822,73 @@ class DesktopActionRouter:
             return []
         return [str(item).strip() for item in rows if str(item).strip()][:24]
 
+    def _normalize_surface_exploration_branch_entry(self, row: Any) -> Dict[str, Any]:
+        if not isinstance(row, dict):
+            return {}
+        transition_kind = str(row.get("transition_kind", "") or "").strip().lower()
+        nested_surface_progressed = bool(
+            row.get("nested_surface_progressed", row.get("progressed", False))
+        )
+        if not transition_kind and not nested_surface_progressed:
+            return {}
+        selected_action = str(row.get("selected_action", "") or "").strip().lower()
+        selected_candidate_id = str(
+            row.get("selected_candidate_id", row.get("candidate_id", "")) or ""
+        ).strip()
+        selected_candidate_label = str(
+            row.get("selected_candidate_label", row.get("label", "")) or ""
+        ).strip()
+        surface_path_tail = [
+            str(item).strip()
+            for item in row.get("surface_path_tail", row.get("surface_path_after", []))
+            if str(item).strip()
+        ][:8] if isinstance(row.get("surface_path_tail", row.get("surface_path_after", [])), list) else []
+        window_title = str(
+            row.get("window_title_after", row.get("window_title", row.get("window_title_before", ""))) or ""
+        ).strip()
+        surface_signature = str(
+            row.get("surface_signature_after", row.get("surface_signature", ""))
+            or ""
+        ).strip()
+        surface_mode = str(row.get("surface_mode", "") or "").strip()
+        branch_key_parts = [
+            transition_kind,
+            selected_action,
+            selected_candidate_id,
+            selected_candidate_label.lower(),
+            surface_signature.lower(),
+            window_title.lower(),
+            "|".join(surface_path_tail).lower(),
+        ]
+        branch_key = hashlib.sha1("|".join(branch_key_parts).encode("utf-8")).hexdigest()[:16]
+        return {
+            "branch_key": branch_key,
+            "step_index": max(0, int(row.get("step_index", 0) or 0)),
+            "transition_kind": transition_kind,
+            "nested_surface_progressed": nested_surface_progressed,
+            "child_window_adopted": bool(row.get("child_window_adopted", False)),
+            "selected_action": selected_action,
+            "selected_candidate_id": selected_candidate_id,
+            "selected_candidate_label": selected_candidate_label,
+            "surface_mode": surface_mode,
+            "surface_signature": surface_signature,
+            "window_title": window_title,
+            "surface_path_tail": surface_path_tail,
+        }
+
+    def _surface_exploration_branch_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(args, dict):
+            return []
+        rows = args.get("branch_history", [])
+        if not isinstance(rows, list):
+            return []
+        normalized_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            normalized = self._normalize_surface_exploration_branch_entry(row)
+            if normalized:
+                normalized_rows.append(normalized)
+        return normalized_rows[:16]
+
     def _merge_surface_exploration_attempt_history(
         self,
         *,
@@ -8822,6 +8907,40 @@ class DesktopActionRouter:
         ]
         filtered.append(normalized)
         return filtered[-24:]
+
+    def _merge_surface_exploration_branch_history(
+        self,
+        *,
+        existing: List[Dict[str, Any]],
+        new_entry: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in existing if isinstance(row, dict)]
+        normalized = self._normalize_surface_exploration_branch_entry(new_entry)
+        if not normalized:
+            return rows[:16]
+        branch_key = str(normalized.get("branch_key", "") or "").strip()
+        filtered = [
+            dict(row)
+            for row in rows
+            if str(row.get("branch_key", "") or "").strip() != branch_key
+        ]
+        filtered.append(normalized)
+        return filtered[-16:]
+
+    @staticmethod
+    def _surface_exploration_is_nested_branch_ready(
+        *,
+        transition_kind: str,
+        followup_ready: bool,
+        followup_manual: bool,
+        followup_hypothesis_count: int,
+        followup_branch_count: int,
+    ) -> bool:
+        if not followup_ready or followup_manual:
+            return False
+        if max(0, int(followup_hypothesis_count or 0)) + max(0, int(followup_branch_count or 0)) <= 0:
+            return False
+        return str(transition_kind or "").strip().lower() in {"child_window", "drilldown", "pane_shift"}
 
     @staticmethod
     def _merge_surface_signature_history(
@@ -9087,12 +9206,14 @@ class DesktopActionRouter:
         stop_reason_code: str,
         selected: Dict[str, Any],
         attempted_targets: Optional[List[Dict[str, Any]]] = None,
+        branch_history: Optional[List[Dict[str, Any]]] = None,
         alternative_target_count: int = 0,
         alternative_hypothesis_count: int = 0,
         alternative_branch_action_count: int = 0,
     ) -> Dict[str, Any]:
         plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
         attempted_rows = [dict(row) for row in attempted_targets if isinstance(row, dict)] if isinstance(attempted_targets, list) else []
+        branch_rows = [dict(row) for row in branch_history if isinstance(row, dict)] if isinstance(branch_history, list) else []
         snapshot = plan.get("surface_snapshot", {}) if isinstance(plan.get("surface_snapshot", {}), dict) else {}
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
@@ -9117,9 +9238,17 @@ class DesktopActionRouter:
                 "Review the refreshed recon summary if you want to sanity-check the next move.",
                 "Resume the paused exploration mission to let JARVIS take the next bounded surface step.",
             ],
+            "exploration_nested_branch_available": [
+                "JARVIS advanced into a deeper nested surface and is ready for another bounded recon step there.",
+                "Resume the paused exploration mission to let JARVIS continue from the adopted nested surface.",
+            ],
             "exploration_step_limit_reached": [
                 "Review the refreshed recon summary if you want to sanity-check the next bounded move.",
                 "Resume the paused exploration flow mission to let JARVIS continue exploring this app in another bounded wave.",
+            ],
+            "exploration_nested_branch_limit_reached": [
+                "JARVIS paused at the configured step budget after advancing into a deeper nested surface.",
+                "Resume the paused exploration flow mission to let JARVIS continue from that nested branch in another bounded wave.",
             ],
             "exploration_no_safe_path": [
                 "Inspect the current window and decide what surface JARVIS should target next.",
@@ -9200,6 +9329,8 @@ class DesktopActionRouter:
             for row in attempted_rows
             if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
         )
+        last_branch = dict(branch_rows[-1]) if branch_rows else {}
+        branch_transition_count = len(branch_rows)
         return {
             "mission_kind": "exploration",
             "stop_reason_code": str(stop_reason_code or "").strip(),
@@ -9253,6 +9384,9 @@ class DesktopActionRouter:
             "surface_path_tail": surface_path_tail,
             "window_title_history_tail": window_title_history_tail,
             "nested_progress_count": nested_progress_count,
+            "last_branch_kind": str(last_branch.get("transition_kind", "") or "").strip(),
+            "branch_transition_count": branch_transition_count,
+            "branch_history_tail": [dict(row) for row in branch_rows[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_rows[-6:]],
             "notes": notes[:12],
         }
@@ -9290,6 +9424,7 @@ class DesktopActionRouter:
         ).strip() if isinstance(exploration_plan.get("filters", {}), dict) else str(args.get("query", "") or "").strip()
         attempted_targets = self._surface_exploration_attempt_history(args=args)
         surface_signature_history = self._surface_exploration_signature_history(args=args)
+        branch_history = self._surface_exploration_branch_history(args=args)
         resume_payload: Dict[str, Any] = {
             "action": resume_action,
             "app_name": clean_anchor_app,
@@ -9302,6 +9437,9 @@ class DesktopActionRouter:
             "exploration_limit": max(1, min(int(args.get("exploration_limit", 6) or 6), 12)),
             "attempted_targets": [dict(row) for row in attempted_targets],
             "surface_signature_history": list(surface_signature_history),
+            "branch_history": [dict(row) for row in branch_history],
+            "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
+            "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
         }
         if resume_action == EXPLORATION_FLOW_ACTION:
             resume_payload["max_exploration_steps"] = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
@@ -9360,6 +9498,13 @@ class DesktopActionRouter:
                     for item in blocking_surface.get("surface_path_tail", [])
                     if str(item).strip()
                 ] if isinstance(blocking_surface.get("surface_path_tail", []), list) else [],
+                "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
+                "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
+                "branch_history_tail": [
+                    dict(row)
+                    for row in blocking_surface.get("branch_history_tail", [])[-6:]
+                    if isinstance(row, dict)
+                ] if isinstance(blocking_surface.get("branch_history_tail", []), list) else [dict(row) for row in branch_history[-6:]],
                 "prefer_anchor_on_resume": use_anchor_window,
                 "allow_child_window_adoption": True,
             },
@@ -9369,6 +9514,11 @@ class DesktopActionRouter:
                 for item in blocking_surface.get("window_title_history_tail", [])
                 if str(item).strip()
             ] if isinstance(blocking_surface.get("window_title_history_tail", []), list) else [],
+            "branch_history_tail": [
+                dict(row)
+                for row in blocking_surface.get("branch_history_tail", [])[-6:]
+                if isinstance(row, dict)
+            ] if isinstance(blocking_surface.get("branch_history_tail", []), list) else [dict(row) for row in branch_history[-6:]],
         }
 
     def _advise_surface_exploration_advance(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -9615,6 +9765,7 @@ class DesktopActionRouter:
         initial_plan = advice.get("exploration_plan", {}) if isinstance(advice.get("exploration_plan", {}), dict) else {}
         attempted_targets_before = self._surface_exploration_attempt_history(args=args)
         surface_signature_history_before = self._surface_exploration_signature_history(args=args)
+        branch_history_before = self._surface_exploration_branch_history(args=args)
         nested_result = self.execute(selected_payload)
         nested_status = str(nested_result.get("status", "") or "error").strip().lower() or "error"
         nested_results = nested_result.get("results", []) if isinstance(nested_result.get("results", []), list) else []
@@ -9681,6 +9832,30 @@ class DesktopActionRouter:
             existing=surface_signature_history_before,
             additions=[initial_signature, followup_signature],
         )
+        branch_entry = {
+            "step_index": step_index,
+            "transition_kind": str(transition_summary.get("transition_kind", "") or "").strip(),
+            "nested_surface_progressed": bool(transition_summary.get("nested_surface_progressed", False)),
+            "child_window_adopted": bool(transition_summary.get("child_window_adopted", False)),
+            "selected_action": selected_action,
+            "selected_candidate_id": str(selection.get("candidate_id", "") or "").strip(),
+            "selected_candidate_label": str(selection.get("label", "") or "").strip(),
+            "surface_mode": str(
+                followup_plan.get("surface_mode", initial_plan.get("surface_mode", ""))
+                or ""
+            ).strip() if isinstance(initial_plan, dict) else str(followup_plan.get("surface_mode", "") or "").strip(),
+            "surface_signature": followup_signature,
+            "window_title": str(transition_summary.get("window_title_after", "") or "").strip(),
+            "surface_path_tail": [
+                str(item).strip()
+                for item in transition_summary.get("surface_path_after", [])
+                if str(item).strip()
+            ] if isinstance(transition_summary.get("surface_path_after", []), list) else [],
+        }
+        branch_history = self._merge_surface_exploration_branch_history(
+            existing=branch_history_before,
+            new_entry=branch_entry,
+        )
         remaining_options = self._surface_exploration_remaining_options(
             exploration_plan=followup_plan if isinstance(followup_plan, dict) else {},
             attempted_targets=attempted_targets,
@@ -9689,6 +9864,14 @@ class DesktopActionRouter:
         alternative_hypothesis_count = int(remaining_options.get("remaining_hypothesis_count", 0) or 0)
         alternative_branch_action_count = int(remaining_options.get("remaining_branch_action_count", 0) or 0)
         alternative_ready = bool(alternative_target_count > 0 and not followup_manual)
+        transition_kind = str(transition_summary.get("transition_kind", "") or "").strip().lower()
+        nested_branch_ready = self._surface_exploration_is_nested_branch_ready(
+            transition_kind=transition_kind,
+            followup_ready=followup_ready,
+            followup_manual=followup_manual,
+            followup_hypothesis_count=followup_hypothesis_count,
+            followup_branch_count=followup_branch_count,
+        )
         same_signature = bool(initial_signature and followup_signature and initial_signature == followup_signature)
         top_followup = (
             followup_plan.get("top_hypotheses", [])[0]
@@ -9739,11 +9922,18 @@ class DesktopActionRouter:
             mission_status = "blocked"
         elif (same_signature or same_top_target) and not transition_progressed:
             if alternative_ready:
-                stop_reason_code = "exploration_followup_available"
-                stop_reason = (
-                    "Surface recon stayed on the same primary target, but JARVIS found another safe branch "
-                    "and is ready to continue without repeating the last step."
-                )
+                if nested_branch_ready:
+                    stop_reason_code = "exploration_nested_branch_available"
+                    stop_reason = (
+                        "Surface recon advanced into a deeper nested surface and found another safe branch "
+                        "without repeating the last step."
+                    )
+                else:
+                    stop_reason_code = "exploration_followup_available"
+                    stop_reason = (
+                        "Surface recon stayed on the same primary target, but JARVIS found another safe branch "
+                        "and is ready to continue without repeating the last step."
+                    )
                 mission_status = "partial"
             else:
                 stop_reason_code = "exploration_no_progress"
@@ -9751,10 +9941,14 @@ class DesktopActionRouter:
                 mission_status = "blocked"
         elif followup_hypothesis_count > 0 or followup_branch_count > 0:
             if followup_ready:
-                stop_reason_code = "exploration_followup_available"
+                stop_reason_code = "exploration_nested_branch_available" if nested_branch_ready else "exploration_followup_available"
                 stop_reason = str(
                     followup_plan.get("message", "")
-                    or "JARVIS advanced the surface and found another bounded recon step."
+                    or (
+                        "JARVIS advanced into a deeper nested surface and found another bounded recon step."
+                        if nested_branch_ready
+                        else "JARVIS advanced the surface and found another bounded recon step."
+                    )
                 ).strip()
                 mission_status = "partial"
             else:
@@ -9791,6 +9985,8 @@ class DesktopActionRouter:
             for row in attempted_targets
             if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
         )
+        last_branch_kind = str(branch_history[-1].get("transition_kind", "") or "").strip() if branch_history else ""
+        branch_transition_count = len(branch_history)
 
         blocking_surface: Dict[str, Any] = {}
         resume_contract: Dict[str, Any] = {}
@@ -9819,6 +10015,9 @@ class DesktopActionRouter:
             "surface_path_tail": surface_path_tail,
             "window_title_history_tail": window_title_history_tail,
             "nested_progress_count": nested_progress_count,
+            "last_branch_kind": last_branch_kind,
+            "branch_transition_count": branch_transition_count,
+            "branch_history_tail": [dict(row) for row in branch_history[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_targets[-6:]],
             "surface_signature_history": surface_signature_history,
             "next_actions": self._dedupe_strings(
@@ -9859,6 +10058,8 @@ class DesktopActionRouter:
             "window_title_after": str(transition_summary.get("window_title_after", "") or "").strip(),
             "attempted_target_count": len(attempted_targets),
             "alternative_target_count": alternative_target_count,
+            "last_branch_kind": last_branch_kind,
+            "branch_transition_count": branch_transition_count,
         }
         pause_payload: Dict[str, Any] = {}
         if stop_reason_code:
@@ -9867,6 +10068,7 @@ class DesktopActionRouter:
                 stop_reason_code=stop_reason_code,
                 selected=selection,
                 attempted_targets=attempted_targets,
+                branch_history=branch_history,
                 alternative_target_count=alternative_target_count,
                 alternative_hypothesis_count=alternative_hypothesis_count,
                 alternative_branch_action_count=alternative_branch_action_count,
@@ -9874,6 +10076,9 @@ class DesktopActionRouter:
             resume_args = dict(args)
             resume_args["attempted_targets"] = [dict(row) for row in attempted_targets]
             resume_args["surface_signature_history"] = list(surface_signature_history)
+            resume_args["branch_history"] = [dict(row) for row in branch_history]
+            resume_args["last_branch_kind"] = last_branch_kind
+            resume_args["branch_transition_count"] = branch_transition_count
             resume_contract = self._surface_exploration_resume_contract(
                 args=resume_args,
                 exploration_plan=followup_plan if isinstance(followup_plan, dict) and followup_plan else initial_plan,
@@ -9906,6 +10111,9 @@ class DesktopActionRouter:
                 "surface_path_tail": surface_path_tail,
                 "window_title_history_tail": window_title_history_tail,
                 "nested_progress_count": nested_progress_count,
+                "last_branch_kind": last_branch_kind,
+                "branch_transition_count": branch_transition_count,
+                "branch_history": [dict(row) for row in branch_history],
                 "attempted_targets": [dict(row) for row in attempted_targets],
                 "surface_signature_history": surface_signature_history,
                 "selected_action": selected_action,
@@ -9961,6 +10169,9 @@ class DesktopActionRouter:
                 "surface_path_tail": surface_path_tail,
                 "window_title_history_tail": window_title_history_tail,
                 "nested_progress_count": nested_progress_count,
+                "last_branch_kind": last_branch_kind,
+                "branch_transition_count": branch_transition_count,
+                "branch_history": [dict(row) for row in branch_history],
                 "stop_reason_code": stop_reason_code,
                 "stop_reason": stop_reason,
                 "blocking_surface": blocking_surface,
@@ -10117,13 +10328,31 @@ class DesktopActionRouter:
                 for item in latest_runtime.get("surface_signature_history", [])
                 if str(item).strip()
             ] if isinstance(latest_runtime.get("surface_signature_history", []), list) else current_args.get("surface_signature_history", [])
+            current_args["branch_history"] = [
+                dict(row)
+                for row in latest_runtime.get("branch_history", [])
+                if isinstance(row, dict)
+            ] if isinstance(latest_runtime.get("branch_history", []), list) else current_args.get("branch_history", [])
+            current_args["last_branch_kind"] = str(
+                latest_runtime.get("last_branch_kind", current_args.get("last_branch_kind", "")) or ""
+            ).strip().lower()
+            current_args["branch_transition_count"] = max(
+                0,
+                int(
+                    latest_runtime.get(
+                        "branch_transition_count",
+                        current_args.get("branch_transition_count", 0),
+                    )
+                    or 0
+                ),
+            )
             if bool(step_mission.get("completed", False)):
                 completed = True
                 message = str(step_payload.get("message", "") or "surface exploration flow completed").strip()
                 break
             step_stop_reason_code = str(step_mission.get("stop_reason_code", "") or latest_runtime.get("stop_reason_code", "") or "").strip()
             step_stop_reason = str(step_mission.get("stop_reason", "") or latest_runtime.get("stop_reason", "") or step_payload.get("message", "") or "").strip()
-            if step_stop_reason_code == "exploration_followup_available" and step_index < max_exploration_steps:
+            if step_stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available"} and step_index < max_exploration_steps:
                 latest_snapshot = (
                     latest_followup_plan.get("surface_snapshot", {})
                     if isinstance(latest_followup_plan.get("surface_snapshot", {}), dict)
@@ -10147,12 +10376,22 @@ class DesktopActionRouter:
                 continue
             stop_reason_code = step_stop_reason_code or "exploration_no_safe_path"
             stop_reason = step_stop_reason or "surface exploration flow stopped before a safe follow-up could be selected"
-            if stop_reason_code == "exploration_followup_available" and step_index >= max_exploration_steps:
-                stop_reason_code = "exploration_step_limit_reached"
+            if stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available"} and step_index >= max_exploration_steps:
+                stop_reason_code = (
+                    "exploration_nested_branch_limit_reached"
+                    if stop_reason_code == "exploration_nested_branch_available"
+                    else "exploration_step_limit_reached"
+                )
                 stop_reason = (
                     f"JARVIS completed {step_index} bounded recon step"
                     f"{'' if step_index == 1 else 's'} and found another safe follow-up, "
                     f"so it paused at the configured step limit of {max_exploration_steps}."
+                    if stop_reason_code == "exploration_step_limit_reached"
+                    else (
+                        f"JARVIS completed {step_index} bounded recon step"
+                        f"{'' if step_index == 1 else 's'} and advanced into a deeper nested branch, "
+                        f"so it paused at the configured step limit of {max_exploration_steps}."
+                    )
                 )
             message = stop_reason
             break
@@ -10220,6 +10459,13 @@ class DesktopActionRouter:
                     if str(item).strip()
                 ] if isinstance(latest_runtime.get("window_title_history_tail", []), list) else [],
                 "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
+                "last_branch_kind": str(latest_runtime.get("last_branch_kind", "") or "").strip(),
+                "branch_transition_count": int(latest_runtime.get("branch_transition_count", 0) or 0),
+                "branch_history_tail": [
+                    dict(row)
+                    for row in latest_runtime.get("branch_history", [])[-6:]
+                    if isinstance(row, dict)
+                ] if isinstance(latest_runtime.get("branch_history", []), list) else [],
                 "attempted_targets_tail": [
                     dict(row)
                     for row in current_args.get("attempted_targets", [])[-6:]
@@ -10281,6 +10527,11 @@ class DesktopActionRouter:
                     for row in current_args.get("attempted_targets", [])
                     if isinstance(row, dict)
                 ] if isinstance(current_args.get("attempted_targets", []), list) else [],
+                branch_history=[
+                    dict(row)
+                    for row in current_args.get("branch_history", [])
+                    if isinstance(row, dict)
+                ] if isinstance(current_args.get("branch_history", []), list) else [],
                 alternative_target_count=int(latest_runtime.get("alternative_target_count", 0) or 0),
                 alternative_hypothesis_count=int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
                 alternative_branch_action_count=int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
@@ -10298,7 +10549,7 @@ class DesktopActionRouter:
                 resume_action=EXPLORATION_FLOW_ACTION,
             )
         pause_payload = {
-            "status": "partial" if stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"} and results else "blocked",
+            "status": "partial" if stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached"} and results else "blocked",
             "message": message,
             "stop_reason_code": stop_reason_code,
             "stop_reason": stop_reason,
@@ -10333,6 +10584,13 @@ class DesktopActionRouter:
                 if str(item).strip()
             ] if isinstance(latest_runtime.get("window_title_history_tail", []), list) else [],
             "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
+            "last_branch_kind": str(latest_runtime.get("last_branch_kind", "") or "").strip(),
+            "branch_transition_count": int(latest_runtime.get("branch_transition_count", 0) or 0),
+            "branch_history": [
+                dict(row)
+                for row in current_args.get("branch_history", [])
+                if isinstance(row, dict)
+            ] if isinstance(current_args.get("branch_history", []), list) else [],
             "attempted_targets": [
                 dict(row)
                 for row in current_args.get("attempted_targets", [])
@@ -10393,7 +10651,7 @@ class DesktopActionRouter:
                 },
             ],
         }
-        pause_status = "partial" if results and stop_reason_code in {"exploration_followup_available", "exploration_step_limit_reached"} else "blocked"
+        pause_status = "partial" if results and stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached"} else "blocked"
         exploration_mission = {
             "enabled": True,
             "completed": False,
@@ -10427,6 +10685,13 @@ class DesktopActionRouter:
                 if str(item).strip()
             ] if isinstance(pause_payload.get("window_title_history_tail", []), list) else [],
             "nested_progress_count": int(pause_payload.get("nested_progress_count", 0) or 0),
+            "last_branch_kind": str(pause_payload.get("last_branch_kind", "") or "").strip(),
+            "branch_transition_count": int(pause_payload.get("branch_transition_count", 0) or 0),
+            "branch_history_tail": [
+                dict(row)
+                for row in pause_payload.get("branch_history", [])[-6:]
+                if isinstance(row, dict)
+            ] if isinstance(pause_payload.get("branch_history", []), list) else [],
             "attempted_targets_tail": [
                 dict(row)
                 for row in pause_payload.get("attempted_targets", [])[-6:]
