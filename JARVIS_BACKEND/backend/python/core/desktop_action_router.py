@@ -9081,6 +9081,121 @@ class DesktopActionRouter:
             "remaining_branch_action_count": sum(1 for row in remaining_rows if row.get("kind") == "branch_action"),
         }
 
+    def _surface_exploration_branch_context(
+        self,
+        *,
+        args: Dict[str, Any],
+        exploration_plan: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        branch_history = self._surface_exploration_branch_history(args=args)
+        state_summary = self._surface_exploration_state_summary(exploration_plan=exploration_plan)
+        current_window_title = str(state_summary.get("window_title", "") or "").strip()
+        current_surface_path = [
+            str(item).strip()
+            for item in state_summary.get("surface_path", [])
+            if str(item).strip()
+        ] if isinstance(state_summary.get("surface_path", []), list) else []
+        latest_branch = dict(branch_history[-1]) if branch_history else {}
+        recent_selection_keys = {
+            self._surface_exploration_selection_key(
+                kind="hypothesis",
+                candidate_id=str(row.get("selected_candidate_id", "") or "").strip(),
+                selected_action=str(row.get("selected_action", "") or "").strip(),
+                label=str(row.get("selected_candidate_label", "") or "").strip(),
+            )
+            for row in branch_history[-6:]
+            if isinstance(row, dict)
+        }
+        return {
+            "active": bool(
+                branch_history
+                and (
+                    str(latest_branch.get("transition_kind", "") or "").strip().lower()
+                    in {"child_window", "drilldown", "pane_shift", "dialog_shift"}
+                    or current_surface_path
+                )
+            ),
+            "current_window_title": current_window_title,
+            "current_surface_path": current_surface_path,
+            "current_surface_mode": str(state_summary.get("surface_mode", "") or "").strip().lower(),
+            "current_dialog_visible": bool(state_summary.get("dialog_visible", False)),
+            "last_branch_kind": str(latest_branch.get("transition_kind", "") or "").strip().lower(),
+            "latest_selected_action": str(latest_branch.get("selected_action", "") or "").strip().lower(),
+            "latest_selected_candidate_id": str(latest_branch.get("selected_candidate_id", "") or "").strip(),
+            "latest_selected_candidate_label": str(latest_branch.get("selected_candidate_label", "") or "").strip(),
+            "latest_branch_occurrences": self._surface_exploration_branch_repeat_count(branch_history=branch_history),
+            "recent_selection_keys": {key for key in recent_selection_keys if key},
+        }
+
+    def _surface_exploration_branch_selection_score(
+        self,
+        *,
+        row: Dict[str, Any],
+        branch_context: Dict[str, Any],
+    ) -> float:
+        if not isinstance(row, dict) or not bool(branch_context.get("active", False)):
+            return 0.0
+        score = 0.0
+        kind = str(row.get("kind", "") or "").strip().lower()
+        selected_action = str(row.get("selected_action", "") or "").strip().lower()
+        candidate_id = str(row.get("candidate_id", "") or "").strip()
+        label = str(row.get("label", "") or "").strip()
+        action_payload = dict(row.get("action_payload", {})) if isinstance(row.get("action_payload", {}), dict) else {}
+        current_window_title = self._normalize_probe_text(branch_context.get("current_window_title", ""))
+        current_surface_path = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("current_surface_path", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("current_surface_path", []), list) else []
+        latest_occurrences = max(0, int(branch_context.get("latest_branch_occurrences", 0) or 0))
+        recent_selection_keys = {
+            str(item).strip()
+            for item in branch_context.get("recent_selection_keys", set())
+            if str(item).strip()
+        } if isinstance(branch_context.get("recent_selection_keys", set()), (set, list, tuple)) else set()
+        selection_key = self._surface_exploration_selection_key(
+            kind=kind or "hypothesis",
+            candidate_id=candidate_id,
+            selected_action=selected_action,
+            label=label,
+        )
+        if selection_key in recent_selection_keys:
+            score -= 0.16 if latest_occurrences < 2 else 0.24
+
+        if current_window_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_window_title:
+            score += 0.04
+        if current_surface_path and self._normalize_probe_text(label) in current_surface_path:
+            score += 0.05
+
+        last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
+        if kind == "hypothesis":
+            score += 0.03
+        elif kind == "branch_action":
+            score -= 0.02
+
+        if last_branch_kind == "dialog_shift":
+            if selected_action == "press_dialog_button":
+                score += 0.12
+            elif kind == "branch_action":
+                score -= 0.04
+        elif last_branch_kind == "child_window":
+            if kind == "hypothesis":
+                score += 0.07
+            if selected_action in {"focus_input_field", "open_dropdown", "toggle_switch", "select_list_item", "select_tree_item"}:
+                score += 0.04
+        elif last_branch_kind == "drilldown":
+            if selected_action in {"select_tree_item", "select_list_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
+                score += 0.08
+        elif last_branch_kind == "pane_shift":
+            if selected_action in {"select_tab_page", "select_sidebar_item", "select_list_item", "focus_input_field", "press_dialog_button"}:
+                score += 0.06
+
+        if bool(branch_context.get("current_dialog_visible", False)) and selected_action == "press_dialog_button":
+            score += 0.08
+        if latest_occurrences >= 2 and kind == "branch_action":
+            score -= 0.06
+        return round(score, 4)
+
     def _select_surface_exploration_target(
         self,
         *,
@@ -9117,6 +9232,21 @@ class DesktopActionRouter:
             if str(row.get("selection_key", "") or "").strip()
         }
         selection_rows = self._surface_exploration_selection_rows(exploration_plan=plan)
+        branch_context = self._surface_exploration_branch_context(args=args, exploration_plan=plan)
+        enriched_rows: List[Dict[str, Any]] = []
+        for row in selection_rows:
+            row_payload = dict(row)
+            branch_score = self._surface_exploration_branch_selection_score(
+                row=row_payload,
+                branch_context=branch_context,
+            )
+            row_payload["branch_score"] = branch_score
+            row_payload["confidence"] = round(
+                max(0.0, min(0.99, float(row_payload.get("confidence", 0.0) or 0.0) + branch_score)),
+                4,
+            )
+            enriched_rows.append(row_payload)
+        selection_rows = enriched_rows
 
         matched_selection: Dict[str, Any] = {}
         if explicit_candidate_id:
@@ -9156,6 +9286,7 @@ class DesktopActionRouter:
             selection_rows.sort(
                 key=lambda row: (
                     -float(row.get("confidence", 0.0) or 0.0),
+                    -float(row.get("branch_score", 0.0) or 0.0),
                     0 if row.get("kind") == "hypothesis" else 1,
                     str(row.get("label", "") or "").lower(),
                 )
@@ -9221,9 +9352,15 @@ class DesktopActionRouter:
             label=str(selected.get("label", "") or "").strip(),
         )
         selected["attempted_target_count"] = len(attempted_keys)
-        selected["message"] = str(selected.get("reason", "") or "").strip() or (
-            f"Surface recon selected {selected.get('label', 'target')} via {selected.get('selected_action', 'action')}."
-        )
+        if float(selected.get("branch_score", 0.0) or 0.0):
+            selected["message"] = (
+                f"{str(selected.get('reason', '') or '').strip() or selected.get('message', '')} "
+                f"Nested branch steering adjusted this target by {float(selected.get('branch_score', 0.0) or 0.0):+.2f}."
+            ).strip()
+        else:
+            selected["message"] = str(selected.get("reason", "") or "").strip() or (
+                f"Surface recon selected {selected.get('label', 'target')} via {selected.get('selected_action', 'action')}."
+            )
         selected["warnings"] = []
         selected["blockers"] = []
         return selected
