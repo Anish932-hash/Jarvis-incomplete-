@@ -530,3 +530,76 @@ def test_desktop_mission_memory_marks_branch_family_switch_limit_as_resume_ready
     assert mission["branch_family_signature"] == "5000|2|Bluetooth & devices|Add device"
     assert mission["branch_family_switch_count"] == 1
     assert mission["max_branch_family_switches"] == 1
+
+
+def test_desktop_mission_memory_marks_descendant_chain_limit_as_resume_ready(tmp_path: Path) -> None:
+    memory = DesktopMissionMemory(store_path=str(tmp_path / "desktop_mission_memory_descendant.json"))
+
+    saved = memory.save_paused_mission(
+        mission_kind="exploration",
+        args={
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "pair bluetooth",
+        },
+        resume_contract={
+            "mission_kind": "exploration",
+            "resume_action": "complete_surface_exploration_flow",
+            "anchor_app_name": "settings",
+            "resume_payload": {
+                "action": "complete_surface_exploration_flow",
+                "app_name": "settings",
+                "query": "pair bluetooth",
+                "max_nested_branch_steps": 1,
+                "max_branch_cascade_steps": 1,
+                "max_descendant_chain_steps": 2,
+            },
+        },
+        blocking_surface={
+            "window_title": "Finish Pairing",
+            "surface_signature": "surface-exploration-descendant-limit-1",
+            "surface_mode": "dialog_resolution",
+            "descendant_chain_repeat_count": 2,
+            "descendant_chain_continuity": True,
+            "max_descendant_chain_steps": 2,
+            "topology_direct_child_window_count": 1,
+            "topology_direct_child_dialog_like_count": 1,
+            "topology_descendant_chain_depth": 3,
+            "topology_descendant_dialog_chain_depth": 3,
+            "topology_descendant_query_match_count": 1,
+            "topology_child_chain_signature": "2221|Bluetooth & devices|pairing_chain",
+        },
+        mission_payload={
+            "status": "partial",
+            "message": "JARVIS paused at the configured descendant-chain limit.",
+            "stop_reason_code": "exploration_descendant_chain_limit_reached",
+            "surface_mode": "dialog_resolution",
+            "descendant_chain_repeat_count": 2,
+            "descendant_chain_continuity": True,
+            "max_descendant_chain_steps": 2,
+            "topology_direct_child_window_count": 1,
+            "topology_direct_child_dialog_like_count": 1,
+            "topology_descendant_chain_depth": 3,
+            "topology_descendant_dialog_chain_depth": 3,
+            "topology_descendant_query_match_count": 1,
+            "topology_child_chain_signature": "2221|Bluetooth & devices|pairing_chain",
+        },
+        message="JARVIS paused at the configured descendant-chain limit.",
+    )
+
+    mission = saved["mission"]
+    snapshot = memory.snapshot(status="paused", mission_kind="exploration", app_name="settings")
+
+    assert mission["recovery_profile"] == "resume_ready"
+    assert mission["recovery_priority"] == 93
+    assert mission["resume_ready"] is True
+    assert mission["max_descendant_chain_steps"] == 2
+    assert mission["descendant_chain_repeat_count"] == 2
+    assert mission["descendant_chain_continuity"] is True
+    assert mission["topology_direct_child_window_count"] == 1
+    assert mission["topology_direct_child_dialog_like_count"] == 1
+    assert mission["topology_descendant_chain_depth"] == 3
+    assert mission["topology_descendant_dialog_chain_depth"] == 3
+    assert mission["topology_descendant_query_match_count"] == 1
+    assert mission["topology_child_chain_signature"] == "2221|Bluetooth & devices|pairing_chain"
+    assert snapshot["stop_reason_counts"] == {"exploration_descendant_chain_limit_reached": 1}
