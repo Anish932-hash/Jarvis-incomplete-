@@ -44,9 +44,12 @@ Ocr Models:-
 1)https://huggingface.co/PaddlePaddle/PaddleOCR-VL/tree/main
 
 2)https://huggingface.co/allenai/olmOCR-2-7B-1025/tree/main
-Total = 14 Local AI models
+
+Total = 14 Local AI models.
 
 And these API keys:
 1)Groq
 2)ElevenLabs
 3)Nvidia
+
+Total = 3 API keys.
