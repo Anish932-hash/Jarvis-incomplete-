@@ -60,6 +60,16 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_related_window_count: u32,
     #[serde(default)]
+    pub native_owner_link_count: u32,
+    #[serde(default)]
+    pub native_owner_chain_visible: bool,
+    #[serde(default)]
+    pub native_same_root_owner_window_count: u32,
+    #[serde(default)]
+    pub native_active_owner_chain_depth: u32,
+    #[serde(default)]
+    pub native_max_owner_chain_depth: u32,
+    #[serde(default)]
     pub native_child_dialog_like_visible: bool,
     #[serde(default)]
     pub native_topology_signature: String,
@@ -155,6 +165,18 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         .get("process_id")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let active_hwnd = active_window
+        .get("hwnd")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let active_root_owner_hwnd = active_window
+        .get("root_owner_hwnd")
+        .and_then(Value::as_u64)
+        .unwrap_or(active_hwnd);
+    let active_owner_chain_depth = active_window
+        .get("owner_chain_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
     let active_title = active_window
         .get("title")
         .and_then(Value::as_str)
@@ -163,8 +185,12 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
     let mut dialog_like_count = 0usize;
     let mut same_process_window_count = 0usize;
     let mut query_window_match_count = 0usize;
+    let mut owner_link_count = 0usize;
+    let mut same_root_owner_window_count = 0usize;
+    let mut max_owner_chain_depth = active_owner_chain_depth as usize;
     let mut window_title_tail: Vec<String> = Vec::new();
     let mut class_name_tail: Vec<String> = Vec::new();
+    let mut owner_title_tail: Vec<String> = Vec::new();
     let mut sample_windows: Vec<Value> = Vec::new();
 
     for row in &windows {
@@ -185,12 +211,34 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         {
             same_process_window_count += 1;
         }
+        let row_owner_hwnd = row
+            .get("owner_hwnd")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if row_owner_hwnd > 0 {
+            owner_link_count += 1;
+        }
+        let row_root_owner_hwnd = row
+            .get("root_owner_hwnd")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| row.get("hwnd").and_then(Value::as_u64).unwrap_or(0));
+        let row_owner_chain_depth = row
+            .get("owner_chain_depth")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        if row_owner_chain_depth > max_owner_chain_depth {
+            max_owner_chain_depth = row_owner_chain_depth;
+        }
         let title = row.get("title").and_then(Value::as_str).unwrap_or("").trim();
         if !title.is_empty() {
             window_title_tail.push(title.to_string());
             let title_tokens = tokenize(title);
             if !query_tokens.is_empty() && token_overlap(&query_tokens, &title_tokens) > 0 {
                 query_window_match_count += 1;
+            }
+            if active_root_owner_hwnd > 0 && row_root_owner_hwnd == active_root_owner_hwnd {
+                same_root_owner_window_count += 1;
+                owner_title_tail.push(title.to_string());
             }
         }
         let class_name = row
@@ -222,7 +270,13 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         "dialog_like_count": dialog_like_count,
         "same_process_window_count": same_process_window_count,
         "query_window_match_count": query_window_match_count,
+        "owner_link_count": owner_link_count,
+        "owner_chain_visible": owner_link_count > 0 || active_owner_chain_depth > 0,
+        "same_root_owner_window_count": same_root_owner_window_count,
+        "active_owner_chain_depth": active_owner_chain_depth,
+        "max_owner_chain_depth": max_owner_chain_depth,
         "window_title_tail": window_title_tail.into_iter().take(8).collect::<Vec<_>>(),
+        "owner_title_tail": owner_title_tail.into_iter().take(8).collect::<Vec<_>>(),
         "class_name_tail": class_name_tail.into_iter().take(8).collect::<Vec<_>>(),
         "windows": sample_windows,
         "topology_signature": topology_signature,
@@ -272,6 +326,35 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let native_related_window_count = input.native_related_window_count.max(
         topology
             .get("query_window_match_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    );
+    let native_owner_link_count = input.native_owner_link_count.max(
+        topology
+            .get("owner_link_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    );
+    let native_owner_chain_visible = input.native_owner_chain_visible
+        || topology
+            .get("owner_chain_visible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    let native_same_root_owner_window_count = input.native_same_root_owner_window_count.max(
+        topology
+            .get("same_root_owner_window_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    );
+    let native_active_owner_chain_depth = input.native_active_owner_chain_depth.max(
+        topology
+            .get("active_owner_chain_depth")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    );
+    let native_max_owner_chain_depth = input.native_max_owner_chain_depth.max(
+        topology
+            .get("max_owner_chain_depth")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32,
     );
@@ -377,6 +460,46 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             rust_score += 0.05;
             reasons.push(format!("same_process_cluster:{}", native_same_process_window_count));
         }
+        if native_owner_chain_visible {
+            if selected_action == "press_dialog_button" {
+                rust_score += 0.09;
+                reasons.push("owner_chain_visible".to_string());
+            } else if matches!(
+                selected_action.as_str(),
+                "select_sidebar_item" | "select_tab_page" | "select_list_item" | "select_tree_item" | "focus_input_field"
+            ) {
+                rust_score += 0.04;
+                reasons.push("owner_chain_navigation".to_string());
+            }
+        }
+        if native_owner_link_count > 1 && selected_action == "press_dialog_button" {
+            rust_score += 0.05;
+            reasons.push(format!("owner_link_cluster:{}", native_owner_link_count));
+        }
+        if native_same_root_owner_window_count > 1 && selected_action == "press_dialog_button" {
+            rust_score += 0.07;
+            reasons.push(format!(
+                "same_root_owner_cluster:{}",
+                native_same_root_owner_window_count
+            ));
+        }
+        if native_active_owner_chain_depth > 0 && selected_action == "press_dialog_button" {
+            rust_score += (native_active_owner_chain_depth as f64 * 0.03).min(0.12);
+            reasons.push(format!(
+                "active_owner_chain_depth:{}",
+                native_active_owner_chain_depth
+            ));
+        }
+        if native_max_owner_chain_depth > native_active_owner_chain_depth
+            && selected_action == "press_dialog_button"
+        {
+            rust_score += ((native_max_owner_chain_depth - native_active_owner_chain_depth) as f64 * 0.04)
+                .min(0.16);
+            reasons.push(format!(
+                "deeper_owner_chain_available:{}",
+                native_max_owner_chain_depth
+            ));
+        }
         if native_related_window_count > 1
             && matches!(
                 selected_action.as_str(),
@@ -413,7 +536,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push("same_process_child_window_bias".to_string());
         }
 
-        let router_hint = if (input.current_dialog_visible || active_dialog_visible)
+        let router_hint = if native_max_owner_chain_depth >= 2 && selected_action == "press_dialog_button" {
+            "prefer_modal_chain_resolution"
+        } else if (input.current_dialog_visible || active_dialog_visible)
             && selected_action == "press_dialog_button"
         {
             "prefer_dialog_resolution"
@@ -479,6 +604,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "prefer_nested_branch": prefer_nested_branch,
         "loop_risk": loop_risk,
         "native_topology_signature": input.native_topology_signature,
+        "native_owner_chain_visible": native_owner_chain_visible,
+        "native_owner_link_count": native_owner_link_count,
+        "native_same_root_owner_window_count": native_same_root_owner_window_count,
+        "native_active_owner_chain_depth": native_active_owner_chain_depth,
+        "native_max_owner_chain_depth": native_max_owner_chain_depth,
         "topology": topology,
         "ranked_candidates": ranked_candidates,
     }))
@@ -635,5 +765,59 @@ mod tests {
             Some("press_dialog_button")
         );
         assert!(reasons.iter().any(|value| value.as_str() == Some("native_child_dialog_cluster")));
+    }
+
+    #[test]
+    fn route_surface_exploration_uses_owner_chain_cluster_for_dialog_bias() {
+        let payload = json!({
+            "query": "Continue",
+            "current_dialog_visible": false,
+            "native_owner_link_count": 2,
+            "native_owner_chain_visible": true,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action||press_dialog_button|continue",
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": "Continue",
+                    "selected_action": "press_dialog_button",
+                    "confidence": 0.48
+                },
+                {
+                    "selection_key": "hypothesis|settings_sidebar|select_sidebar_item|settings",
+                    "kind": "hypothesis",
+                    "candidate_id": "settings_sidebar",
+                    "label": "Settings",
+                    "selected_action": "select_sidebar_item",
+                    "confidence": 0.51
+                }
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_sidebar_item",
+                    "selected_candidate_label": "Settings",
+                    "occurrences": 1
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("press_dialog_button")
+        );
+        assert!(reasons.iter().any(|value| value.as_str() == Some("owner_chain_visible")));
     }
 }

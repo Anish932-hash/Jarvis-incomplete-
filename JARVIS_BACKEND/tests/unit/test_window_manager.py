@@ -109,6 +109,116 @@ def test_window_manager_focus_window_prefers_native_runtime() -> None:
     assert payload["window"]["observation_backend"] == "cpp_cython"
 
 
+def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None:
+    class _FakeNativeRuntime:
+        @staticmethod
+        def list_windows(*, limit: int = 120) -> dict:
+            assert limit == 300
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "windows": [
+                    {
+                        "hwnd": 5000,
+                        "owner_hwnd": 0,
+                        "title": "Settings",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "ApplicationFrameWindow",
+                        "visible": True,
+                        "enabled": True,
+                        "minimized": False,
+                        "maximized": True,
+                        "is_foreground": False,
+                        "left": 0,
+                        "top": 0,
+                        "right": 1440,
+                        "bottom": 900,
+                    },
+                    {
+                        "hwnd": 5001,
+                        "owner_hwnd": 5000,
+                        "title": "Bluetooth & devices",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "minimized": False,
+                        "maximized": False,
+                        "is_foreground": True,
+                        "left": 120,
+                        "top": 80,
+                        "right": 1100,
+                        "bottom": 760,
+                    },
+                    {
+                        "hwnd": 5002,
+                        "owner_hwnd": 5001,
+                        "title": "Pair device",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "minimized": False,
+                        "maximized": False,
+                        "is_foreground": False,
+                        "left": 280,
+                        "top": 160,
+                        "right": 980,
+                        "bottom": 640,
+                    },
+                ],
+            }
+
+        @staticmethod
+        def active_window() -> dict:
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "window": {
+                    "hwnd": 5001,
+                    "owner_hwnd": 5000,
+                    "title": "Bluetooth & devices",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": True,
+                    "left": 120,
+                    "top": 80,
+                    "right": 1100,
+                    "bottom": 760,
+                },
+            }
+
+    manager = WindowManager(native_runtime=_FakeNativeRuntime())
+
+    topology = manager.window_topology_snapshot(app_name="settings", query="bluetooth", include_windows=True)
+    reacquired = manager.reacquire_window(app_name="settings", query="pair device", hwnd=5001, pid=777)
+
+    assert topology["status"] == "success"
+    assert topology["backend"] == "cpp_cython"
+    assert topology["owner_chain_visible"] is True
+    assert topology["owner_link_count"] >= 2
+    assert "Settings" in topology["owner_window_titles"]
+    assert "Pair device" in topology["owner_window_titles"]
+    assert len(topology["owner_windows"]) >= 2
+    assert reacquired["status"] == "success"
+    assert reacquired["candidate"]["hwnd"] == 5002
+    assert reacquired["candidate"]["owner_hwnd"] == 5001
+    assert reacquired["owner_chain_visible"] is True
+    assert reacquired["owner_link_count"] >= 2
+
+
 def test_native_window_runtime_reports_missing_extension_build_hint(monkeypatch) -> None:
     from backend.python.native.windows import native_window_runtime as runtime_module
 

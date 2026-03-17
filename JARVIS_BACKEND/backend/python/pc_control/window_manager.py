@@ -171,6 +171,8 @@ class WindowManager:
         class_name = str(raw.get("class_name", "") or "")
         hwnd = int(raw.get("hwnd", 0) or 0)
         owner_hwnd = int(raw.get("owner_hwnd", 0) or 0)
+        root_owner_hwnd = int(raw.get("root_owner_hwnd", hwnd or 0) or hwnd or 0)
+        owner_chain_depth = max(0, int(raw.get("owner_chain_depth", 0) or 0))
         pid = int(raw.get("pid", 0) or 0)
         left = int(raw.get("left", 0) or 0)
         top = int(raw.get("top", 0) or 0)
@@ -195,6 +197,8 @@ class WindowManager:
         return {
             "hwnd": hwnd,
             "owner_hwnd": owner_hwnd,
+            "root_owner_hwnd": root_owner_hwnd,
+            "owner_chain_depth": owner_chain_depth,
             "title": title,
             "pid": pid,
             "exe": exe,
@@ -221,6 +225,115 @@ class WindowManager:
             "observation_backend": observation_backend,
         }
 
+    @staticmethod
+    def _enrich_owner_chain_metrics(windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in windows if isinstance(row, dict)]
+        if not rows:
+            return []
+        hwnd_map = {
+            int(row.get("hwnd", 0) or 0): row
+            for row in rows
+            if int(row.get("hwnd", 0) or 0) > 0
+        }
+        cache: Dict[int, tuple[int, int]] = {}
+
+        def _resolve(hwnd: int) -> tuple[int, int]:
+            clean_hwnd = int(hwnd or 0)
+            if clean_hwnd <= 0:
+                return (0, 0)
+            if clean_hwnd in cache:
+                return cache[clean_hwnd]
+            row = hwnd_map.get(clean_hwnd, {})
+            owner_hwnd = int(row.get("owner_hwnd", 0) or 0) if isinstance(row, dict) else 0
+            explicit_root = int(row.get("root_owner_hwnd", 0) or 0) if isinstance(row, dict) else 0
+            explicit_depth = max(0, int(row.get("owner_chain_depth", 0) or 0)) if isinstance(row, dict) else 0
+            if owner_hwnd <= 0:
+                resolved = (explicit_root or clean_hwnd, explicit_depth if explicit_root else 0)
+                cache[clean_hwnd] = resolved
+                return resolved
+            seen = {clean_hwnd}
+            current_owner = owner_hwnd
+            depth = 0
+            root_owner = explicit_root or clean_hwnd
+            while current_owner > 0 and current_owner not in seen and depth < 24:
+                seen.add(current_owner)
+                depth += 1
+                root_owner = current_owner
+                next_row = hwnd_map.get(current_owner, {})
+                next_owner = int(next_row.get("owner_hwnd", 0) or 0) if isinstance(next_row, dict) else 0
+                if next_owner <= 0:
+                    break
+                current_owner = next_owner
+            resolved = (explicit_root or root_owner or clean_hwnd, max(explicit_depth, depth))
+            cache[clean_hwnd] = resolved
+            return resolved
+
+        enriched: List[Dict[str, Any]] = []
+        for row in rows:
+            row_payload = dict(row)
+            hwnd = int(row_payload.get("hwnd", 0) or 0)
+            root_owner_hwnd, owner_chain_depth = _resolve(hwnd)
+            if hwnd > 0:
+                row_payload["root_owner_hwnd"] = root_owner_hwnd or hwnd
+            else:
+                row_payload["root_owner_hwnd"] = 0
+            row_payload["owner_chain_depth"] = owner_chain_depth
+            enriched.append(row_payload)
+        return enriched
+
+    @staticmethod
+    def _merge_owner_metrics(window: Dict[str, Any], *, windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        if not payload:
+            return {}
+        hwnd = int(payload.get("hwnd", 0) or 0)
+        if hwnd <= 0:
+            return payload
+        match = next(
+            (
+                dict(row)
+                for row in windows
+                if isinstance(row, dict) and int(row.get("hwnd", 0) or 0) == hwnd
+            ),
+            {},
+        )
+        if match:
+            payload["root_owner_hwnd"] = int(match.get("root_owner_hwnd", payload.get("root_owner_hwnd", hwnd)) or hwnd)
+            payload["owner_chain_depth"] = max(0, int(match.get("owner_chain_depth", payload.get("owner_chain_depth", 0)) or 0))
+        else:
+            payload["root_owner_hwnd"] = int(payload.get("root_owner_hwnd", hwnd) or hwnd)
+            payload["owner_chain_depth"] = max(0, int(payload.get("owner_chain_depth", 0) or 0))
+        return payload
+
+    @staticmethod
+    def _owner_chain_rows(window: Dict[str, Any], *, windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        if not payload:
+            return []
+        hwnd_map = {
+            int(row.get("hwnd", 0) or 0): dict(row)
+            for row in windows
+            if isinstance(row, dict) and int(row.get("hwnd", 0) or 0) > 0
+        }
+        current_hwnd = int(payload.get("hwnd", 0) or 0)
+        current_row = hwnd_map.get(current_hwnd, payload)
+        chain: List[Dict[str, Any]] = []
+        seen: set[int] = set()
+        while isinstance(current_row, dict):
+            chain.append(dict(current_row))
+            row_hwnd = int(current_row.get("hwnd", 0) or 0)
+            if row_hwnd <= 0 or row_hwnd in seen:
+                break
+            seen.add(row_hwnd)
+            owner_hwnd = int(current_row.get("owner_hwnd", 0) or 0)
+            if owner_hwnd <= 0:
+                break
+            current_row = hwnd_map.get(owner_hwnd, {})
+            if not current_row:
+                break
+        chain.reverse()
+        return chain[:8]
+
     def _window_relation_score(
         self,
         *,
@@ -231,6 +344,8 @@ class WindowManager:
         window_signature: str = "",
         hwnd: int = 0,
         owner_hwnd: int = 0,
+        root_owner_hwnd: int = 0,
+        owner_chain_depth: int = 0,
         pid: int = 0,
         parent_hwnd: int = 0,
         parent_pid: int = 0,
@@ -241,6 +356,8 @@ class WindowManager:
         reasons: List[str] = []
         candidate_hwnd = int(window.get("hwnd", 0) or 0)
         candidate_owner_hwnd = int(window.get("owner_hwnd", 0) or 0)
+        candidate_root_owner_hwnd = int(window.get("root_owner_hwnd", candidate_hwnd or 0) or candidate_hwnd or 0)
+        candidate_owner_chain_depth = max(0, int(window.get("owner_chain_depth", 0) or 0))
         candidate_pid = int(window.get("pid", 0) or 0)
         candidate_title = str(window.get("title", "") or "").strip()
         candidate_process = str(window.get("process_name", "") or "").strip()
@@ -258,6 +375,9 @@ class WindowManager:
         if owner_hwnd and candidate_hwnd and candidate_hwnd == int(owner_hwnd):
             score += 0.7
             reasons.append("same_owner_hwnd")
+        if root_owner_hwnd and candidate_root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
+            score += 0.68
+            reasons.append("same_root_owner_hwnd")
         if hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
             score += 1.05
             reasons.append("owned_by_hwnd")
@@ -301,6 +421,22 @@ class WindowManager:
         if query_score > 0:
             score += 0.36 * query_score
             reasons.append("query")
+        if query_score >= 0.95:
+            if hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
+                score += 1.25
+                reasons.append("query_owned_child")
+            elif root_owner_hwnd and candidate_root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
+                score += 0.72
+                reasons.append("query_same_root_owner")
+            elif parent_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(parent_hwnd):
+                score += 1.05
+                reasons.append("query_parent_owned_child")
+            elif pid and candidate_pid and candidate_pid == int(pid):
+                score += 0.55
+                reasons.append("query_same_pid_exact")
+        if candidate_owner_chain_depth > owner_chain_depth and candidate_root_owner_hwnd and root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
+            score += min(0.22, 0.08 * max(1, candidate_owner_chain_depth - owner_chain_depth))
+            reasons.append("deeper_owner_chain")
 
         if bool(window.get("is_foreground", False)):
             score += 0.08
@@ -329,6 +465,8 @@ class WindowManager:
         seed_pid = int(seed.get("pid", 0) or 0)
         seed_hwnd = int(seed.get("hwnd", 0) or 0)
         seed_owner_hwnd = int(seed.get("owner_hwnd", 0) or 0)
+        seed_root_owner_hwnd = int(seed.get("root_owner_hwnd", seed_hwnd or 0) or seed_hwnd or 0)
+        seed_owner_chain_depth = max(0, int(seed.get("owner_chain_depth", 0) or 0))
         scored_rows: List[tuple[float, Dict[str, Any]]] = []
         for row in windows:
             relation = self._window_relation_score(
@@ -338,6 +476,8 @@ class WindowManager:
                 window_title=window_title or str(seed.get("title", "") or "").strip(),
                 window_signature=str(seed.get("window_signature", "") or "").strip(),
                 owner_hwnd=seed_owner_hwnd,
+                root_owner_hwnd=seed_root_owner_hwnd,
+                owner_chain_depth=seed_owner_chain_depth,
                 pid=seed_pid,
                 hwnd=seed_hwnd,
                 parent_pid=seed_pid,
@@ -374,7 +514,7 @@ class WindowManager:
             normalized = self._compose_window_info(item, observation_backend=backend)
             if normalized:
                 windows.append(normalized)
-        return windows
+        return self._enrich_owner_chain_metrics(windows)
 
     def _native_active_window(self) -> Dict[str, Any] | None:
         if self._native_runtime is None:
@@ -387,7 +527,9 @@ class WindowManager:
             return None
         backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
         window = self._compose_window_info(payload.get("window", {}), observation_backend=backend)
-        return window or None
+        if not window:
+            return None
+        return self._merge_owner_metrics(window, windows=self.list_windows())
 
     def _native_focus_window(self, *, title_contains: str = "", hwnd: int | None = None) -> Dict[str, Any] | None:
         if self._native_runtime is None:
@@ -422,10 +564,12 @@ class WindowManager:
         active = self.active_window()
         if isinstance(active, dict) and active.get("status") == "error":
             active = {}
-        active = active if isinstance(active, dict) else {}
+        active = self._merge_owner_metrics(active if isinstance(active, dict) else {}, windows=windows)
         active_pid = int(active.get("pid", 0) or 0)
         active_hwnd = int(active.get("hwnd", 0) or 0)
         active_owner_hwnd = int(active.get("owner_hwnd", 0) or 0)
+        active_root_owner_hwnd = int(active.get("root_owner_hwnd", active_hwnd or 0) or active_hwnd or 0)
+        active_owner_chain_depth = max(0, int(active.get("owner_chain_depth", 0) or 0))
         active_signature = str(active.get("window_signature", "") or "").strip()
         active_app_name = str(active.get("app_name", "") or "").strip()
         same_process_windows = [
@@ -484,6 +628,16 @@ class WindowManager:
                     or int(row.get("owner_hwnd", 0) or 0) == active_owner_hwnd
                 )
             )
+            or (
+                active_root_owner_hwnd
+                and int(row.get("root_owner_hwnd", 0) or 0) == active_root_owner_hwnd
+            )
+        ]
+        same_root_owner_windows = [
+            dict(row)
+            for row in windows
+            if active_root_owner_hwnd
+            and int(row.get("root_owner_hwnd", 0) or 0) == active_root_owner_hwnd
         ]
         child_dialog_like_visible = any(
             int(row.get("hwnd", 0) or 0) != active_hwnd
@@ -502,6 +656,15 @@ class WindowManager:
             owner_link_count > 0
             or (active_hwnd > 0 and active_owner_hwnd > 0)
         )
+        max_owner_chain_depth = max(
+            [max(0, int(active.get("owner_chain_depth", 0) or 0))]
+            + [max(0, int(row.get("owner_chain_depth", 0) or 0)) for row in same_root_owner_windows]
+        ) if active else 0
+        owner_chain_titles = [
+            str(row.get("title", "") or "").strip()
+            for row in self._owner_chain_rows(active, windows=windows)
+            if str(row.get("title", "") or "").strip()
+        ]
         topology_backend = str(
             active.get("observation_backend", "")
             or (windows[0].get("observation_backend", "") if windows else "")
@@ -522,6 +685,8 @@ class WindowManager:
                 ),
                 str(len(related_hwnds)),
                 str(owner_link_count),
+                str(len(same_root_owner_windows)),
+                str(max_owner_chain_depth),
                 str(len(query_matches)),
             ]
         )
@@ -549,10 +714,15 @@ class WindowManager:
             "related_window_count": len(related_windows),
             "owner_link_count": owner_link_count,
             "owner_chain_visible": owner_chain_visible,
+            "same_root_owner_window_count": len(same_root_owner_windows),
+            "active_owner_chain_depth": active_owner_chain_depth,
+            "max_owner_chain_depth": max_owner_chain_depth,
             "child_dialog_like_visible": bool(child_dialog_like_visible),
             "same_process_titles": [str(row.get("title", "") or "").strip() for row in same_process_windows[:6] if str(row.get("title", "") or "").strip()],
             "related_window_titles": [str(row.get("title", "") or "").strip() for row in related_windows[:6] if str(row.get("title", "") or "").strip()],
             "owner_window_titles": [str(row.get("title", "") or "").strip() for row in owner_linked_windows[:6] if str(row.get("title", "") or "").strip()],
+            "same_root_owner_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_windows[:6] if str(row.get("title", "") or "").strip()],
+            "owner_chain_titles": owner_chain_titles[:8],
             "topology_signature": topology_signature,
         }
         if include_windows:
@@ -577,6 +747,14 @@ class WindowManager:
     ) -> Dict[str, Any]:
         bounded = max(1, min(int(limit), 300))
         windows = self.list_windows()[:bounded]
+        anchor_window = next(
+            (
+                dict(row)
+                for row in windows
+                if int(row.get("hwnd", 0) or 0) == int(hwnd or 0)
+            ),
+            {},
+        )
         ranked: List[tuple[float, Dict[str, Any]]] = []
         for row in windows:
             relation = self._window_relation_score(
@@ -586,6 +764,8 @@ class WindowManager:
                 window_title=window_title,
                 window_signature=window_signature,
                 hwnd=int(hwnd or 0),
+                root_owner_hwnd=int(anchor_window.get("root_owner_hwnd", hwnd or 0) or hwnd or 0),
+                owner_chain_depth=max(0, int(anchor_window.get("owner_chain_depth", 0) or 0)),
                 pid=int(pid or 0),
                 parent_hwnd=int(parent_hwnd or 0),
                 parent_pid=int(parent_pid or 0),
@@ -631,6 +811,18 @@ class WindowManager:
                     or int(row.get("owner_hwnd", 0) or 0) == candidate_owner_hwnd
                 )
             )
+            or (
+                candidate
+                and int(candidate.get("root_owner_hwnd", 0) or 0)
+                and int(row.get("root_owner_hwnd", 0) or 0) == int(candidate.get("root_owner_hwnd", 0) or 0)
+            )
+        ] if candidate else []
+        same_root_owner_windows = [
+            dict(row)
+            for row in windows
+            if candidate
+            and int(candidate.get("root_owner_hwnd", 0) or 0)
+            and int(row.get("root_owner_hwnd", 0) or 0) == int(candidate.get("root_owner_hwnd", 0) or 0)
         ] if candidate else []
         owner_link_count = len(
             {
@@ -638,6 +830,15 @@ class WindowManager:
                 for row in owner_linked_windows
                 if int(row.get("hwnd", 0) or 0) > 0
             }
+        ) if candidate else 0
+        owner_chain_titles = [
+            str(row.get("title", "") or "").strip()
+            for row in self._owner_chain_rows(candidate, windows=windows)
+            if str(row.get("title", "") or "").strip()
+        ] if candidate else []
+        max_owner_chain_depth = max(
+            [max(0, int(candidate.get("owner_chain_depth", 0) or 0))]
+            + [max(0, int(row.get("owner_chain_depth", 0) or 0)) for row in same_root_owner_windows]
         ) if candidate else 0
         payload = {
             "status": status,
@@ -656,6 +857,10 @@ class WindowManager:
                     or (candidate_hwnd > 0 and candidate_owner_hwnd > 0)
                 )
             ),
+            "same_root_owner_window_count": len(same_root_owner_windows),
+            "candidate_root_owner_hwnd": int(candidate.get("root_owner_hwnd", 0) or 0) if candidate else 0,
+            "candidate_owner_chain_depth": max(0, int(candidate.get("owner_chain_depth", 0) or 0)) if candidate else 0,
+            "max_owner_chain_depth": max_owner_chain_depth,
             "same_process_window_count": len(
                 [
                     row
@@ -670,6 +875,8 @@ class WindowManager:
                 for row in related_windows
             ) if candidate else False,
             "message": "candidate_reacquired" if status == "success" else "no matching related window candidate found",
+            "owner_chain_titles": owner_chain_titles[:8],
+            "same_root_owner_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_windows[:6] if str(row.get("title", "") or "").strip()],
         }
         if include_candidates:
             payload["candidates"] = [dict(row) for row in candidates]
@@ -735,7 +942,7 @@ class WindowManager:
             return True
 
         win32gui.EnumWindows(callback, None)
-        return windows
+        return self._enrich_owner_chain_metrics(windows)
 
     def active_window(self) -> Dict[str, Any]:
         native_window = self._native_active_window()
@@ -745,7 +952,7 @@ class WindowManager:
             return {"status": "error", "message": "pywin32 is not available"}
         try:
             hwnd = win32gui.GetForegroundWindow()
-            return self._get_hwnd_info(hwnd)
+            return self._merge_owner_metrics(self._get_hwnd_info(hwnd), windows=self.list_windows())
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 

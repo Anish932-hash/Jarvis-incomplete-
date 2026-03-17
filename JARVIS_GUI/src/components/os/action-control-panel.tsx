@@ -1098,6 +1098,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopCoworkerRetryOnVerificationFailure, setDesktopCoworkerRetryOnVerificationFailure] = useState(true);
   const [desktopCoworkerMaxStrategyAttempts, setDesktopCoworkerMaxStrategyAttempts] = useState(2);
   const [desktopCoworkerMaxExplorationSteps, setDesktopCoworkerMaxExplorationSteps] = useState(3);
+  const [desktopCoworkerMaxNestedBranchSteps, setDesktopCoworkerMaxNestedBranchSteps] = useState(3);
   const [desktopCoworkerBusy, setDesktopCoworkerBusy] = useState(false);
   const [desktopCoworkerAdvice, setDesktopCoworkerAdvice] = useState<DesktopActionAdviceResponse | null>(null);
   const [desktopCoworkerResult, setDesktopCoworkerResult] = useState<DesktopInteractResponse | null>(null);
@@ -12889,6 +12890,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         retry_on_verification_failure: desktopCoworkerRetryOnVerificationFailure,
         max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
         max_exploration_steps: desktopCoworkerMaxExplorationSteps,
+        max_nested_branch_steps: desktopCoworkerMaxNestedBranchSteps,
         attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
         surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
         branch_history: branchHistory.length > 0 ? branchHistory : undefined,
@@ -12952,6 +12954,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     desktopCoworkerExplorationMission,
     desktopCoworkerFocusFirst,
     desktopCoworkerMaxExplorationSteps,
+    desktopCoworkerMaxNestedBranchSteps,
     desktopCoworkerMaxStrategyAttempts,
     desktopCoworkerQuery,
     desktopCoworkerRetryOnVerificationFailure,
@@ -15529,6 +15532,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                   className="h-9 border-primary/20 bg-background/60 text-xs"
                                 />
                               </div>
+                              <div className="space-y-1">
+                                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Nested Branch Steps</p>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={8}
+                                  value={String(desktopCoworkerMaxNestedBranchSteps)}
+                                  onChange={(event) => {
+                                    const nextValue = Number.parseInt(event.target.value, 10);
+                                    setDesktopCoworkerMaxNestedBranchSteps(Number.isFinite(nextValue) ? Math.max(1, Math.min(8, nextValue)) : 3);
+                                  }}
+                                  className="h-9 border-primary/20 bg-background/60 text-xs"
+                                />
+                              </div>
                             </div>
                             <div className="space-y-1">
                               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Verify Text</p>
@@ -15839,12 +15856,27 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   explorationMission.topology_same_process_window_count ??
                                                   0
                                               );
+                                              const topologyOwnerLinkCount = Number(
+                                                (surfaceTopology?.owner_link_count as number | undefined) ??
+                                                  explorationMission.topology_owner_link_count ??
+                                                  0
+                                              );
+                                              const topologyOwnerChainVisible = Boolean(
+                                                (surfaceTopology?.owner_chain_visible as boolean | undefined) ??
+                                                  explorationMission.topology_owner_chain_visible ??
+                                                  false
+                                              );
                                               const branchHistoryTail = Array.isArray(explorationMission.branch_history_tail)
                                                 ? explorationMission.branch_history_tail.filter(
                                                     (item): item is Record<string, unknown> =>
                                                       Boolean(item && typeof item === 'object' && !Array.isArray(item))
                                                   )
                                                 : [];
+                                              const nestedChainCount = Number(explorationMission.nested_chain_count ?? 0);
+                                              const childWindowChainCount = Number(explorationMission.child_window_chain_count ?? 0);
+                                              const paneCascadeCount = Number(explorationMission.pane_cascade_count ?? 0);
+                                              const drilldownCascadeCount = Number(explorationMission.drilldown_cascade_count ?? 0);
+                                              const maxNestedBranchSteps = Number(explorationMission.max_nested_branch_steps ?? 0);
                                               return (
                                                 <>
                                             <p>
@@ -15880,6 +15912,18 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {surfacePathDepth > 0 ? ` • depth: ${surfacePathDepth}` : ''}
                                               </p>
                                             ) : null}
+                                            {nestedChainCount > 0 ||
+                                            childWindowChainCount > 0 ||
+                                            paneCascadeCount > 0 ||
+                                            drilldownCascadeCount > 0 ? (
+                                              <p>
+                                                chain: {nestedChainCount}
+                                                {childWindowChainCount > 0 ? ` • child windows ${childWindowChainCount}` : ''}
+                                                {paneCascadeCount > 0 ? ` • panes ${paneCascadeCount}` : ''}
+                                                {drilldownCascadeCount > 0 ? ` • drilldowns ${drilldownCascadeCount}` : ''}
+                                                {maxNestedBranchSteps > 0 ? ` • limit ${maxNestedBranchSteps}` : ''}
+                                              </p>
+                                            ) : null}
                                             {rustRouterHint || rustScore !== null || rustRank !== null ? (
                                               <p>
                                                 rust router: {rustRouterHint || 'ranked'}
@@ -15890,11 +15934,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             ) : null}
                                             {topologyVisibleWindowCount > 0 ||
                                             topologyDialogLikeCount > 0 ||
-                                            topologySameProcessWindowCount > 0 ? (
+                                            topologySameProcessWindowCount > 0 ||
+                                            topologyOwnerLinkCount > 0 ||
+                                            topologyOwnerChainVisible ? (
                                               <p>
                                                 topology: windows {topologyVisibleWindowCount}
                                                 {` • dialogs ${topologyDialogLikeCount}`}
                                                 {` • same-process ${topologySameProcessWindowCount}`}
+                                                {topologyOwnerLinkCount > 0 ? ` • owner-links ${topologyOwnerLinkCount}` : ''}
+                                                {topologyOwnerChainVisible ? ' • owner-chain yes' : ''}
                                                 {topologySignature ? ` • ${topologySignature}` : ''}
                                               </p>
                                             ) : null}

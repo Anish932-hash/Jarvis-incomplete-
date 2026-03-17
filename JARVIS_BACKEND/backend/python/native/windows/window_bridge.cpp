@@ -16,6 +16,8 @@ namespace {
 struct WindowSnapshot {
     long long hwnd = 0;
     long long owner_hwnd = 0;
+    long long root_owner_hwnd = 0;
+    int owner_chain_depth = 0;
     long pid = 0;
     std::string title;
     std::string exe;
@@ -151,6 +153,8 @@ std::string snapshot_to_json(const WindowSnapshot& snapshot) {
     output << "{"
            << "\"hwnd\":" << snapshot.hwnd << ","
            << "\"owner_hwnd\":" << snapshot.owner_hwnd << ","
+           << "\"root_owner_hwnd\":" << snapshot.root_owner_hwnd << ","
+           << "\"owner_chain_depth\":" << snapshot.owner_chain_depth << ","
            << "\"pid\":" << snapshot.pid << ","
            << "\"title\":\"" << json_escape(snapshot.title) << "\","
            << "\"exe\":\"" << json_escape(snapshot.exe) << "\","
@@ -203,8 +207,26 @@ bool collect_window_snapshot(HWND hwnd, HWND foreground, WindowSnapshot& snapsho
         }
     }
 
+    HWND owner = GetWindow(hwnd, GW_OWNER);
+    int owner_chain_depth = 0;
+    HWND root_owner = hwnd;
+    HWND current_owner = owner;
+    int guard = 0;
+    while (current_owner != nullptr && current_owner != HWND(0) && guard < 32) {
+        ++owner_chain_depth;
+        root_owner = current_owner;
+        HWND next_owner = GetWindow(current_owner, GW_OWNER);
+        if (next_owner == current_owner) {
+            break;
+        }
+        current_owner = next_owner;
+        ++guard;
+    }
+
     snapshot.hwnd = static_cast<long long>(reinterpret_cast<intptr_t>(hwnd));
-    snapshot.owner_hwnd = static_cast<long long>(reinterpret_cast<intptr_t>(GetWindow(hwnd, GW_OWNER)));
+    snapshot.owner_hwnd = static_cast<long long>(reinterpret_cast<intptr_t>(owner));
+    snapshot.root_owner_hwnd = static_cast<long long>(reinterpret_cast<intptr_t>(root_owner));
+    snapshot.owner_chain_depth = owner_chain_depth;
     snapshot.pid = static_cast<long>(pid);
     snapshot.title = wide_to_utf8(std::wstring(title_buffer, static_cast<std::size_t>(title_size)));
     snapshot.exe = wide_to_utf8(exe_path);

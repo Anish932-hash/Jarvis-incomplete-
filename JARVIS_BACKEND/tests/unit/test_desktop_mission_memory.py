@@ -248,6 +248,8 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "topology_visible_window_count": 2,
             "topology_dialog_like_count": 1,
             "topology_same_process_window_count": 2,
+            "topology_owner_link_count": 2,
+            "topology_owner_chain_visible": True,
             "transition_kind": "child_window",
             "nested_surface_progressed": True,
             "child_window_adopted": True,
@@ -258,6 +260,10 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "branch_transition_count": 1,
             "branch_repeat_count": 1,
             "surface_path_depth": 2,
+            "nested_chain_count": 1,
+            "child_window_chain_count": 1,
+            "pane_cascade_count": 0,
+            "drilldown_cascade_count": 0,
             "branch_history": [
                 {
                     "step_index": 1,
@@ -294,6 +300,8 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["topology_visible_window_count"] == 2
     assert ready_mission["topology_dialog_like_count"] == 1
     assert ready_mission["topology_same_process_window_count"] == 2
+    assert ready_mission["topology_owner_link_count"] == 2
+    assert ready_mission["topology_owner_chain_visible"] is True
     assert ready_mission["attempted_target_count"] == 1
     assert ready_mission["alternative_target_count"] == 1
     assert ready_mission["transition_kind"] == "child_window"
@@ -306,6 +314,10 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["branch_transition_count"] == 1
     assert ready_mission["branch_repeat_count"] == 1
     assert ready_mission["surface_path_depth"] == 2
+    assert ready_mission["nested_chain_count"] == 1
+    assert ready_mission["child_window_chain_count"] == 1
+    assert ready_mission["pane_cascade_count"] == 0
+    assert ready_mission["drilldown_cascade_count"] == 0
     assert ready_mission["branch_history_tail"][0]["window_title"] == "Bluetooth & devices"
     assert ready_mission["attempted_targets_tail"][0]["candidate_id"] == "list_bluetooth"
     assert ready_mission["surface_signature_history"] == ["surface-exploration-ready-1", "surface-exploration-ready-2"]
@@ -343,3 +355,58 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert snapshot["count"] == 2
     assert snapshot["mission_kind_counts"] == {"exploration": 2}
     assert snapshot["recovery_profile_counts"] == {"resume_ready": 1, "surface_review": 1}
+
+
+def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path: Path) -> None:
+    memory = DesktopMissionMemory(store_path=str(tmp_path / "desktop_mission_memory.json"))
+
+    saved = memory.save_paused_mission(
+        mission_kind="exploration",
+        args={"app_name": "settings", "query": "pair device"},
+        resume_contract={
+            "resume_action": "complete_surface_exploration_flow",
+            "resume_signature": "exploration-chain-limit-1",
+            "anchor_app_name": "settings",
+            "resume_payload": {
+                "action": "complete_surface_exploration_flow",
+                "app_name": "settings",
+                "query": "pair device",
+                "max_nested_branch_steps": 1,
+            },
+        },
+        blocking_surface={
+            "window_title": "Pair device",
+            "surface_signature": "surface-exploration-chain-limit-1",
+            "surface_mode": "dialog_resolution",
+            "nested_chain_count": 2,
+            "child_window_chain_count": 2,
+            "topology_owner_link_count": 2,
+            "topology_owner_chain_visible": True,
+        },
+        mission_payload={
+            "status": "partial",
+            "message": "JARVIS paused at the configured nested child-window chain limit.",
+            "stop_reason_code": "exploration_nested_chain_limit_reached",
+            "surface_mode": "dialog_resolution",
+            "nested_chain_count": 2,
+            "child_window_chain_count": 2,
+            "pane_cascade_count": 0,
+            "drilldown_cascade_count": 0,
+            "topology_owner_link_count": 2,
+            "topology_owner_chain_visible": True,
+        },
+        message="JARVIS paused at the configured nested child-window chain limit.",
+    )
+
+    mission = saved["mission"]
+    snapshot = memory.snapshot(status="paused", mission_kind="exploration", app_name="settings")
+
+    assert mission["recovery_profile"] == "resume_ready"
+    assert mission["recovery_priority"] == 90
+    assert mission["resume_ready"] is True
+    assert mission["nested_chain_count"] == 2
+    assert mission["child_window_chain_count"] == 2
+    assert mission["topology_owner_link_count"] == 2
+    assert mission["topology_owner_chain_visible"] is True
+    assert snapshot["recovery_profile_counts"] == {"resume_ready": 1}
+    assert snapshot["stop_reason_counts"] == {"exploration_nested_chain_limit_reached": 1}

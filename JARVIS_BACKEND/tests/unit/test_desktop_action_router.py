@@ -486,15 +486,20 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
                 "topology_signature": "settings|3|2",
                 "same_process_window_count": 3,
                 "related_window_count": 2,
+                "owner_link_count": 2,
+                "owner_chain_visible": True,
                 "child_dialog_like_visible": True,
             },
             "reacquire_window": lambda _payload: {
                 "status": "success",
                 "same_process_window_count": 3,
                 "related_window_count": 2,
+                "owner_link_count": 2,
+                "owner_chain_visible": True,
                 "child_dialog_like_visible": True,
                 "candidate": {
                     "hwnd": 4410,
+                    "owner_hwnd": 4401,
                     "title": "Pair device",
                     "app_name": "settings",
                     "process_name": "SystemSettings.exe",
@@ -510,7 +515,12 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
     assert payload["status"] == "success"
     assert payload["target_window"]["hwnd"] == 4410
     assert payload["window_reacquisition"]["candidate"]["title"] == "Pair device"
+    assert payload["window_reacquisition"]["candidate"]["owner_hwnd"] == 4401
+    assert payload["window_reacquisition"]["owner_chain_visible"] is True
+    assert payload["window_reacquisition"]["owner_link_count"] == 2
     assert payload["native_window_topology"]["same_process_window_count"] == 3
+    assert payload["native_window_topology"]["owner_chain_visible"] is True
+    assert payload["native_window_topology"]["owner_link_count"] == 2
     assert payload["native_window_topology"]["child_dialog_like_visible"] is True
 
 
@@ -2077,6 +2087,202 @@ def test_desktop_action_router_surface_exploration_blocks_repeated_nested_branch
     assert payload["exploration_mission"]["stop_reason_code"] == "exploration_nested_branch_loop_guard"
     assert payload["exploration_mission"]["branch_repeat_count"] == 2
     assert payload["mission_record"]["recovery_profile"] == "surface_review"
+
+
+def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_limit(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [
+                    {"hwnd": 2221, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+                    {"hwnd": 2222, "title": "Pair device", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+                ],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2222, "title": "Pair device", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2222), "title": "Pair device"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", ""))) or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_nested_chain_limit",
+                "text": "Settings bluetooth pair device nested child surface",
+                "screenshot_path": "E:/tmp/settings_nested_chain_limit.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plan_calls = {"count": 0}
+
+    def _surface_plan(**_kwargs: Any) -> Dict[str, Any]:
+        plan_calls["count"] += 1
+        if plan_calls["count"] == 1:
+            return {
+                "status": "success",
+                "surface_mode": "dialog_resolution",
+                "automation_ready": True,
+                "manual_attention_required": False,
+                "hypothesis_count": 1,
+                "branch_action_count": 0,
+                "top_hypotheses": [
+                    {
+                        "candidate_id": "dialog_pair",
+                        "label": "Pair",
+                        "suggested_action": "press_dialog_button",
+                        "confidence": 0.92,
+                        "reason": "The adopted child dialog exposes a safe next step.",
+                        "action_payload": {
+                            "action": "press_dialog_button",
+                            "app_name": "settings",
+                            "window_title": "Pair device",
+                            "query": "Pair",
+                            "control_type": "Button",
+                            "element_id": "dialog_pair",
+                        },
+                    }
+                ],
+                "branch_actions": [],
+                "surface_snapshot": {
+                    "status": "success",
+                    "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                    "target_window": {"hwnd": 2222, "title": "Pair device"},
+                    "active_window": {"hwnd": 2222, "title": "Pair device"},
+                    "candidate_windows": [{"hwnd": 2222, "title": "Pair device"}],
+                    "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                    "safety_signals": {},
+                    "surface_flags": {"window_targeted": True, "dialog_visible": True},
+                    "native_window_topology": {
+                        "topology_signature": "settings|3|2|2",
+                        "same_process_window_count": 3,
+                        "related_window_count": 2,
+                        "owner_link_count": 2,
+                        "owner_chain_visible": True,
+                        "child_dialog_like_visible": True,
+                    },
+                    "window_reacquisition": {
+                        "candidate": {"hwnd": 2222, "title": "Pair device", "match_score": 0.84, "owner_hwnd": 2221},
+                        "same_process_window_count": 3,
+                        "related_window_count": 2,
+                        "owner_link_count": 2,
+                        "owner_chain_visible": True,
+                        "child_dialog_like_visible": True,
+                    },
+                    "form_page_state": {
+                        "page_kind": "dialog_resolution",
+                        "breadcrumb_path": ["Devices", "Bluetooth", "Pair device"],
+                    },
+                    "observation": {"screen_hash": "settings_nested_chain_limit"},
+                },
+                "filters": {"app_name": "settings", "window_title": "Pair device", "query": "Bluetooth"},
+                "message": "A nested pairing dialog chain is still active.",
+            }
+        return {
+            "status": "success",
+            "surface_mode": "dialog_resolution",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "dialog_confirm_pair",
+                    "label": "Confirm pairing",
+                    "suggested_action": "press_dialog_button",
+                    "confidence": 0.88,
+                    "reason": "A deeper child confirmation dialog is now active.",
+                    "action_payload": {
+                        "action": "press_dialog_button",
+                        "app_name": "settings",
+                        "window_title": "Confirm Pairing",
+                        "query": "Confirm",
+                        "control_type": "Button",
+                        "element_id": "dialog_confirm_pair",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2223, "title": "Confirm Pairing"},
+                "active_window": {"hwnd": 2223, "title": "Confirm Pairing"},
+                "candidate_windows": [{"hwnd": 2223, "title": "Confirm Pairing"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"window_targeted": True, "dialog_visible": True},
+                "native_window_topology": {
+                    "topology_signature": "settings|4|3|3",
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "child_dialog_like_visible": True,
+                },
+                "window_reacquisition": {
+                    "candidate": {"hwnd": 2223, "title": "Confirm Pairing", "match_score": 0.89, "owner_hwnd": 2222},
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "child_dialog_like_visible": True,
+                },
+                "form_page_state": {
+                    "page_kind": "dialog_resolution",
+                    "breadcrumb_path": ["Devices", "Bluetooth", "Pair device", "Confirm Pairing"],
+                },
+                "observation": {"screen_hash": "settings_nested_chain_limit_confirm"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Confirm Pairing", "query": "Bluetooth"},
+            "message": "A deeper child confirmation dialog is active.",
+        }
+
+    router.surface_exploration_plan = _surface_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 3,
+            "max_nested_branch_steps": 1,
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "list_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                    "occurrences": 1,
+                }
+            ],
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert invoked_targets
+    assert invoked_targets[0] in {"dialog_pair", "Pair"}
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_nested_chain_limit_reached"
+    assert payload["exploration_mission"]["nested_chain_count"] == 2
+    assert payload["exploration_mission"]["child_window_chain_count"] == 2
+    assert payload["exploration_mission"]["max_nested_branch_steps"] == 1
+    assert payload["mission_record"]["recovery_profile"] == "resume_ready"
+    assert payload["mission_record"]["nested_chain_count"] == 2
 
 
 def test_desktop_action_router_builds_navigation_workflow_for_browser(tmp_path: Path) -> None:

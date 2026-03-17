@@ -1,9 +1,9 @@
 use serde_json::json;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowInfo, GetWindowRect,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowInfo, GetWindowRect,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    IsZoomed, WINDOWINFO,
+    IsZoomed, WINDOWINFO, GW_OWNER,
 };
 
 use std::ffi::OsString;
@@ -12,6 +12,27 @@ use std::os::windows::ffi::OsStringExt;
 pub struct WindowsControl;
 
 impl WindowsControl {
+    fn owner_chain_metrics(hwnd: HWND) -> (isize, u32) {
+        let mut owner = unsafe { GetWindow(hwnd, GW_OWNER) };
+        if owner.0 == 0 {
+            return (hwnd.0, 0);
+        }
+        let mut root_owner = owner;
+        let mut depth = 0_u32;
+        let mut guard = 0_u32;
+        while owner.0 != 0 && guard < 32 {
+            depth += 1;
+            root_owner = owner;
+            let next_owner = unsafe { GetWindow(owner, GW_OWNER) };
+            if next_owner.0 == owner.0 {
+                break;
+            }
+            owner = next_owner;
+            guard += 1;
+        }
+        (root_owner.0, depth)
+    }
+
     pub fn get_active_window() -> anyhow::Result<serde_json::Value> {
         unsafe {
             let hwnd = GetForegroundWindow();
@@ -225,6 +246,8 @@ impl WindowsControl {
         let minimized = unsafe { IsIconic(hwnd).as_bool() };
         let maximized = unsafe { IsZoomed(hwnd).as_bool() };
         let foreground_hwnd = unsafe { GetForegroundWindow() };
+        let owner_hwnd = unsafe { GetWindow(hwnd, GW_OWNER) };
+        let (root_owner_hwnd, owner_chain_depth) = Self::owner_chain_metrics(hwnd);
         let app_name = Self::infer_app_name(&title, &class_name);
         let surface_hints = Self::infer_surface_hints(&title, &class_name, &app_name);
         let window_signature =
@@ -232,6 +255,9 @@ impl WindowsControl {
 
         Ok(json!({
             "hwnd": hwnd.0,
+            "owner_hwnd": owner_hwnd.0,
+            "root_owner_hwnd": root_owner_hwnd,
+            "owner_chain_depth": owner_chain_depth,
             "title": title,
             "process_id": pid,
             "class_name": class_name,
