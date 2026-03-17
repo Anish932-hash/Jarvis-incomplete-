@@ -441,3 +441,73 @@ def test_evaluation_runner_lab_reports_replay_candidates_and_installed_app_cover
     assert "Clipchamp" in lab["installed_app_coverage"]["missing_apps"]
     assert lab["replay_candidates"][0]["scenario"] == "installer_resume_after_prompt"
     assert lab["replay_candidates"][0]["replay_query"]["scenario_name"] == "installer_resume_after_prompt"
+
+
+def test_evaluation_runner_native_control_targets_aggregates_app_tactics(monkeypatch) -> None:
+    installed_provider_payload = {
+        "status": "success",
+        "count": 3,
+        "total": 3,
+        "items": [
+            {"name": "Settings", "profile_id": "settings", "aliases": ["settings"], "category": "system"},
+            {"name": "Installer", "profile_id": "installer", "aliases": ["installer"], "category": "system"},
+            {"name": "Visual Studio Code", "profile_id": "vscode", "aliases": ["vscode"], "category": "developer"},
+        ],
+    }
+    runner = EvaluationRunner(installed_app_catalog_provider=lambda **_: installed_provider_payload)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        text = str(goal.request.text).lower()
+        if "installer" in text:
+            steps = [PlanStep(step_id="s1", action="time_now")]
+        else:
+            steps = [PlanStep(step_id="s1", action="desktop_interact")]
+        return ExecutionPlan(plan_id="plan-1", goal_id=goal.goal_id, intent="test", steps=steps)
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "settings_child_dialog_chain",
+            "Open settings and continue through the child dialog chain",
+            ["desktop_interact"],
+            required_actions=["desktop_interact"],
+            category="unsupported_app",
+            capabilities=["surface_exploration", "child_window_adoption", "recovery"],
+            pack="unsupported_and_recovery",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        ),
+        Scenario(
+            "installer_resume_after_prompt",
+            "Resume the blocked installer after approval is completed",
+            ["desktop_interact"],
+            required_actions=["desktop_interact"],
+            category="installer",
+            capabilities=["wizard_mission", "desktop_recovery", "governance"],
+            risk_level="high",
+            pack="installer_and_governance",
+            mission_family="recovery",
+            autonomy_tier="autonomous",
+            apps=["installer"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        ),
+    ]
+
+    payload = runner.run_with_summary(scenarios)
+    assert payload["status"] == "success"
+
+    native_targets = runner.native_control_targets(history_limit=4)
+    assert native_targets["status"] == "success"
+    assert native_targets["benchmark_ready"] is True
+    assert native_targets["target_apps"][0]["app_name"] == "installer"
+    assert native_targets["target_app_biases"]["installer"]["recovery_reacquire"] > 0.0
+    assert "Visual Studio Code" in native_targets["coverage_gap_apps"]

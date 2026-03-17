@@ -3429,6 +3429,7 @@ class DesktopActionRouter:
         if not isinstance(payload, dict):
             return {}
         control_biases = dict(payload.get("control_biases", {})) if isinstance(payload.get("control_biases", {}), dict) else {}
+        native_target_plan = dict(payload.get("native_target_plan", {})) if isinstance(payload.get("native_target_plan", {}), dict) else {}
         return {
             "benchmark_ready": bool(payload.get("benchmark_ready", False)),
             "generated_at": str(payload.get("generated_at", "") or "").strip(),
@@ -3450,6 +3451,118 @@ class DesktopActionRouter:
                 "loop_guard": max(0.0, min(float(control_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
                 "native_focus": max(0.0, min(float(control_biases.get("native_focus", 0.0) or 0.0), 1.0)),
             },
+            "native_target_plan": native_target_plan if native_target_plan.get("status") == "success" else {},
+        }
+
+    @staticmethod
+    def _benchmark_target_biases(target_row: Dict[str, Any]) -> Dict[str, float]:
+        control_biases = dict(target_row.get("control_biases", {})) if isinstance(target_row.get("control_biases", {}), dict) else {}
+        return {
+            "dialog_resolution": max(0.0, min(float(control_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
+            "descendant_focus": max(0.0, min(float(control_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
+            "navigation_branch": max(0.0, min(float(control_biases.get("navigation_branch", 0.0) or 0.0), 1.0)),
+            "recovery_reacquire": max(0.0, min(float(control_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0)),
+            "loop_guard": max(0.0, min(float(control_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
+            "native_focus": max(0.0, min(float(control_biases.get("native_focus", 0.0) or 0.0), 1.0)),
+        }
+
+    def _benchmark_native_target_context(
+        self,
+        *,
+        benchmark_guidance: Dict[str, Any],
+        args: Dict[str, Any],
+        state_summary: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        native_target_plan = (
+            dict(benchmark_guidance.get("native_target_plan", {}))
+            if isinstance(benchmark_guidance.get("native_target_plan", {}), dict)
+            else {}
+        )
+        target_rows = [
+            dict(item)
+            for item in native_target_plan.get("target_apps", [])
+            if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+        ] if isinstance(native_target_plan.get("target_apps", []), list) else []
+        if not target_rows:
+            return {
+                "benchmark_target_app_name": "",
+                "benchmark_target_app_matched": False,
+                "benchmark_target_app_match_score": 0.0,
+                "benchmark_target_query_hints": [],
+                "benchmark_target_priority": 0.0,
+                "benchmark_target_max_horizon_steps": 0,
+                "benchmark_target_dialog_pressure": 0.0,
+                "benchmark_target_descendant_focus_pressure": 0.0,
+                "benchmark_target_navigation_pressure": 0.0,
+                "benchmark_target_reacquire_pressure": 0.0,
+                "benchmark_target_loop_guard_pressure": 0.0,
+                "benchmark_target_native_focus_pressure": 0.0,
+            }
+        requested_app_name = self._normalize_probe_text(args.get("app_name", ""))
+        requested_query = self._normalize_probe_text(args.get("query", ""))
+        candidate_terms = self._dedupe_strings(
+            [
+                requested_app_name,
+                self._normalize_probe_text(state_summary.get("window_app_name", "")),
+                self._normalize_probe_text(state_summary.get("reacquired_candidate_app_name", "")),
+                self._normalize_probe_text(state_summary.get("window_title", "")),
+                self._normalize_probe_text(state_summary.get("reacquired_candidate_title", "")),
+                requested_query,
+            ]
+        )
+        best_row: Dict[str, Any] = {}
+        best_score = 0.0
+        for row in target_rows:
+            target_app_name = self._normalize_probe_text(row.get("app_name", ""))
+            if not target_app_name:
+                continue
+            row_score = 0.0
+            if any(term and term == target_app_name for term in candidate_terms):
+                row_score = 1.0
+            for term in candidate_terms:
+                if not term:
+                    continue
+                row_score = max(
+                    row_score,
+                    self._text_match_score(term, target_app_name),
+                    self._text_match_score(target_app_name, term),
+                )
+            if requested_query:
+                for hint in row.get("query_hints", []) if isinstance(row.get("query_hints", []), list) else []:
+                    clean_hint = self._normalize_probe_text(hint)
+                    if not clean_hint:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, clean_hint),
+                        self._text_match_score(clean_hint, requested_query),
+                    )
+            if row_score > best_score:
+                best_score = row_score
+                best_row = row
+        target_biases = self._benchmark_target_biases(best_row)
+        target_app_name = self._normalize_probe_text(best_row.get("app_name", ""))
+        matched = bool(target_app_name and (best_score >= 0.56 or (requested_app_name and self._text_match_score(target_app_name, requested_app_name) >= 0.72)))
+        target_query_hints = self._dedupe_strings(
+            [
+                str(item).strip()
+                for item in best_row.get("query_hints", [])
+                if str(item).strip()
+            ]
+        )[:8] if isinstance(best_row.get("query_hints", []), list) else []
+        return {
+            "benchmark_target_app_name": target_app_name,
+            "benchmark_target_app_matched": matched,
+            "benchmark_target_app_match_score": round(max(0.0, min(best_score, 1.0)), 4),
+            "benchmark_target_query_hints": target_query_hints,
+            "benchmark_target_priority": round(float(best_row.get("priority", 0.0) or 0.0), 6),
+            "benchmark_target_max_horizon_steps": max(0, int(best_row.get("max_horizon_steps", 0) or 0)),
+            "benchmark_target_dialog_pressure": target_biases["dialog_resolution"] if matched else 0.0,
+            "benchmark_target_descendant_focus_pressure": target_biases["descendant_focus"] if matched else 0.0,
+            "benchmark_target_navigation_pressure": target_biases["navigation_branch"] if matched else 0.0,
+            "benchmark_target_reacquire_pressure": target_biases["recovery_reacquire"] if matched else 0.0,
+            "benchmark_target_loop_guard_pressure": target_biases["loop_guard"] if matched else 0.0,
+            "benchmark_target_native_focus_pressure": target_biases["native_focus"] if matched else 0.0,
         }
 
     @staticmethod
@@ -9008,6 +9121,13 @@ class DesktopActionRouter:
             "surface_mode": str(plan.get("surface_mode", "") or "").strip(),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
             "window_title": str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "window_app_name": str(
+                target_window.get("app_name", "")
+                or target_window.get("process_name", "")
+                or active_window.get("app_name", "")
+                or active_window.get("process_name", "")
+                or ""
+            ).strip(),
             "window_hwnd": int(target_window.get("hwnd", 0) or active_window.get("hwnd", 0) or 0),
             "dialog_visible": bool(dialog_state.get("visible", False) or safety_signals.get("dialog_visible", False)),
             "dialog_kind": str(dialog_state.get("dialog_kind", "") or "").strip(),
@@ -9058,6 +9178,11 @@ class DesktopActionRouter:
             "reacquired_candidate_root_owner_hwnd": int(reacquired_candidate.get("root_owner_hwnd", 0) or 0),
             "reacquired_candidate_owner_chain_depth": int(reacquired_candidate.get("owner_chain_depth", 0) or 0),
             "reacquired_candidate_title": str(reacquired_candidate.get("title", "") or "").strip(),
+            "reacquired_candidate_app_name": str(
+                reacquired_candidate.get("app_name", "")
+                or reacquired_candidate.get("process_name", "")
+                or ""
+            ).strip(),
             "preferred_descendant_title": str(preferred_descendant.get("title", "") or "").strip(),
             "preferred_descendant_hwnd": int(preferred_descendant.get("hwnd", 0) or 0),
             "reacquisition_match_score": float(window_reacquisition.get("candidate", {}).get("match_score", 0.0) or 0.0)
@@ -9909,13 +10034,20 @@ class DesktopActionRouter:
         )
         branch_history = self._surface_exploration_branch_history(args=args)
         state_summary = self._surface_exploration_state_summary(exploration_plan=exploration_plan)
+        native_target_context = self._benchmark_native_target_context(
+            benchmark_guidance=benchmark_guidance,
+            args=args,
+            state_summary=state_summary,
+        )
         current_window_title = str(state_summary.get("window_title", "") or "").strip()
+        current_window_app_name = str(state_summary.get("window_app_name", "") or "").strip()
         current_surface_path = [
             str(item).strip()
             for item in state_summary.get("surface_path", [])
             if str(item).strip()
         ] if isinstance(state_summary.get("surface_path", []), list) else []
         current_reacquired_title = str(state_summary.get("reacquired_candidate_title", "") or "").strip()
+        current_reacquired_app_name = str(state_summary.get("reacquired_candidate_app_name", "") or "").strip()
         current_reacquired_hwnd = int(state_summary.get("reacquired_candidate_hwnd", 0) or 0)
         native_same_process_window_count = max(0, int(state_summary.get("native_same_process_window_count", 0) or 0))
         native_related_window_count = max(0, int(state_summary.get("native_related_window_count", 0) or 0))
@@ -9993,10 +10125,12 @@ class DesktopActionRouter:
                 )
             ),
             "current_window_title": current_window_title,
+            "current_window_app_name": current_window_app_name,
             "current_surface_path": current_surface_path,
             "current_surface_mode": str(state_summary.get("surface_mode", "") or "").strip().lower(),
             "current_dialog_visible": bool(state_summary.get("dialog_visible", False)),
             "current_reacquired_title": current_reacquired_title,
+            "current_reacquired_app_name": current_reacquired_app_name,
             "current_reacquired_hwnd": current_reacquired_hwnd,
             "native_same_process_window_count": native_same_process_window_count,
             "native_related_window_count": native_related_window_count,
@@ -10045,6 +10179,25 @@ class DesktopActionRouter:
             "benchmark_reacquire_pressure": max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0)),
             "benchmark_loop_guard_pressure": max(0.0, min(float(benchmark_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
             "benchmark_native_focus_pressure": max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0)),
+            "benchmark_target_app_name": str(native_target_context.get("benchmark_target_app_name", "") or "").strip(),
+            "benchmark_target_app_matched": bool(native_target_context.get("benchmark_target_app_matched", False)),
+            "benchmark_target_app_match_score": max(
+                0.0,
+                min(float(native_target_context.get("benchmark_target_app_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "benchmark_target_query_hints": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_query_hints", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_query_hints", []), list) else [],
+            "benchmark_target_priority": max(0.0, float(native_target_context.get("benchmark_target_priority", 0.0) or 0.0)),
+            "benchmark_target_max_horizon_steps": max(0, int(native_target_context.get("benchmark_target_max_horizon_steps", 0) or 0)),
+            "benchmark_target_dialog_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_dialog_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_descendant_focus_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_navigation_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_navigation_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_reacquire_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_reacquire_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_loop_guard_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_loop_guard_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_native_focus_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_native_focus_pressure", 0.0) or 0.0), 1.0)),
             "recent_selection_keys": {key for key in recent_selection_keys if key},
         }
 
@@ -10063,12 +10216,14 @@ class DesktopActionRouter:
         label = str(row.get("label", "") or "").strip()
         action_payload = dict(row.get("action_payload", {})) if isinstance(row.get("action_payload", {}), dict) else {}
         current_window_title = self._normalize_probe_text(branch_context.get("current_window_title", ""))
+        current_window_app_name = self._normalize_probe_text(branch_context.get("current_window_app_name", ""))
         current_surface_path = [
             self._normalize_probe_text(item)
             for item in branch_context.get("current_surface_path", [])
             if str(item).strip()
         ] if isinstance(branch_context.get("current_surface_path", []), list) else []
         current_reacquired_title = self._normalize_probe_text(branch_context.get("current_reacquired_title", ""))
+        current_reacquired_app_name = self._normalize_probe_text(branch_context.get("current_reacquired_app_name", ""))
         current_reacquired_hwnd = int(branch_context.get("current_reacquired_hwnd", 0) or 0)
         native_same_process_window_count = max(0, int(branch_context.get("native_same_process_window_count", 0) or 0))
         native_related_window_count = max(0, int(branch_context.get("native_related_window_count", 0) or 0))
@@ -10135,6 +10290,49 @@ class DesktopActionRouter:
             0.0,
             min(float(branch_context.get("benchmark_native_focus_pressure", 0.0) or 0.0), 1.0),
         )
+        benchmark_target_app_name = self._normalize_probe_text(branch_context.get("benchmark_target_app_name", ""))
+        benchmark_target_app_matched = bool(branch_context.get("benchmark_target_app_matched", False))
+        benchmark_target_app_match_score = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_app_match_score", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_query_hints = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("benchmark_target_query_hints", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("benchmark_target_query_hints", []), list) else []
+        benchmark_target_priority = max(
+            0.0,
+            float(branch_context.get("benchmark_target_priority", 0.0) or 0.0),
+        )
+        benchmark_target_max_horizon_steps = max(
+            0,
+            int(branch_context.get("benchmark_target_max_horizon_steps", 0) or 0),
+        )
+        benchmark_target_dialog_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_dialog_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_descendant_focus_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_navigation_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_navigation_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_reacquire_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_reacquire_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_loop_guard_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_loop_guard_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_native_focus_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_target_native_focus_pressure", 0.0) or 0.0), 1.0),
+        )
         recent_selection_keys = {
             str(item).strip()
             for item in branch_context.get("recent_selection_keys", set())
@@ -10159,6 +10357,26 @@ class DesktopActionRouter:
             score += 0.04
         if current_reacquired_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_reacquired_title:
             score += 0.05
+        if benchmark_target_app_matched and benchmark_target_app_name:
+            label_app_score = max(
+                self._text_match_score(label, benchmark_target_app_name),
+                self._text_match_score(action_payload.get("window_title", ""), benchmark_target_app_name),
+                self._text_match_score(current_window_app_name, benchmark_target_app_name),
+                self._text_match_score(current_reacquired_app_name, benchmark_target_app_name),
+            )
+            if label_app_score > 0.0:
+                score += min(0.12, 0.04 + (0.08 * label_app_score))
+        target_query_hint_overlap = 0.0
+        for hint in benchmark_target_query_hints:
+            target_query_hint_overlap = max(
+                target_query_hint_overlap,
+                self._text_match_score(label, hint),
+                self._text_match_score(action_payload.get("window_title", ""), hint),
+            )
+        if benchmark_target_app_matched and target_query_hint_overlap > 0.0:
+            score += min(0.14, 0.05 + (0.08 * target_query_hint_overlap))
+            if kind == "hypothesis":
+                score += 0.02
         if native_descendant_chain_titles and self._normalize_probe_text(label) in native_descendant_chain_titles:
             score += 0.06
         if native_descendant_chain_titles and self._normalize_probe_text(action_payload.get("window_title", "")) in native_descendant_chain_titles:
@@ -10205,6 +10423,24 @@ class DesktopActionRouter:
             score += 0.04 + (0.16 * benchmark_reacquire_pressure)
         if selected_action == "focus" and benchmark_native_focus_pressure > 0.0:
             score += 0.03 + (0.12 * benchmark_native_focus_pressure)
+        if benchmark_target_app_matched and selected_action == "press_dialog_button" and benchmark_target_dialog_pressure > 0.0:
+            score += 0.04 + (0.16 * benchmark_target_dialog_pressure)
+        if benchmark_target_app_matched and preferred_descendant_focus and benchmark_target_descendant_focus_pressure > 0.0:
+            score += 0.04 + (0.14 * benchmark_target_descendant_focus_pressure)
+        if benchmark_target_app_matched and selected_action in navigation_actions and benchmark_target_navigation_pressure > 0.0:
+            score += 0.03 + (0.14 * benchmark_target_navigation_pressure)
+        if benchmark_target_app_matched and selected_action == "focus" and benchmark_target_reacquire_pressure > 0.0:
+            score += 0.04 + (0.14 * benchmark_target_reacquire_pressure)
+        if benchmark_target_app_matched and selected_action == "focus" and benchmark_target_native_focus_pressure > 0.0:
+            score += 0.03 + (0.12 * benchmark_target_native_focus_pressure)
+        if benchmark_target_app_matched and kind == "branch_action" and not preferred_descendant_focus and benchmark_target_loop_guard_pressure > 0.0:
+            score -= 0.02 + (0.05 * benchmark_target_loop_guard_pressure)
+        if benchmark_target_app_matched and benchmark_target_max_horizon_steps >= 4 and kind == "hypothesis":
+            score += 0.02
+        if benchmark_target_app_matched and benchmark_target_priority > 0.0:
+            score += min(0.08, 0.01 + (0.01 * benchmark_target_priority))
+        if benchmark_target_app_match_score >= 0.95:
+            score += 0.03
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
         if kind == "hypothesis":
@@ -10407,6 +10643,7 @@ class DesktopActionRouter:
             "query": str(args.get("query", "") or "").strip(),
             "surface_mode": str(exploration_plan.get("surface_mode", "") or "").strip(),
             "current_window_title": str(branch_context.get("current_window_title", "") or "").strip(),
+            "current_window_app_name": str(branch_context.get("current_window_app_name", "") or "").strip(),
             "current_surface_path": [
                 str(item).strip()
                 for item in branch_context.get("current_surface_path", [])
@@ -10414,6 +10651,7 @@ class DesktopActionRouter:
             ] if isinstance(branch_context.get("current_surface_path", []), list) else [],
             "current_dialog_visible": bool(branch_context.get("current_dialog_visible", False)),
             "current_reacquired_title": str(branch_context.get("current_reacquired_title", "") or "").strip(),
+            "current_reacquired_app_name": str(branch_context.get("current_reacquired_app_name", "") or "").strip(),
             "current_reacquired_hwnd": int(branch_context.get("current_reacquired_hwnd", 0) or 0),
             "native_same_process_window_count": max(0, int(branch_context.get("native_same_process_window_count", 0) or 0)),
             "native_related_window_count": max(0, int(branch_context.get("native_related_window_count", 0) or 0)),
@@ -10460,6 +10698,22 @@ class DesktopActionRouter:
             "benchmark_reacquire_pressure": max(0.0, min(float(branch_context.get("benchmark_reacquire_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_loop_guard_pressure": max(0.0, min(float(branch_context.get("benchmark_loop_guard_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_native_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_native_focus_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_app_name": str(branch_context.get("benchmark_target_app_name", "") or "").strip(),
+            "benchmark_target_app_matched": bool(branch_context.get("benchmark_target_app_matched", False)),
+            "benchmark_target_app_match_score": max(0.0, min(float(branch_context.get("benchmark_target_app_match_score", 0.0) or 0.0), 1.0)),
+            "benchmark_target_query_hints": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_query_hints", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_query_hints", []), list) else [],
+            "benchmark_target_priority": max(0.0, float(branch_context.get("benchmark_target_priority", 0.0) or 0.0)),
+            "benchmark_target_max_horizon_steps": max(0, int(branch_context.get("benchmark_target_max_horizon_steps", 0) or 0)),
+            "benchmark_target_dialog_pressure": max(0.0, min(float(branch_context.get("benchmark_target_dialog_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_descendant_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_navigation_pressure": max(0.0, min(float(branch_context.get("benchmark_target_navigation_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_reacquire_pressure": max(0.0, min(float(branch_context.get("benchmark_target_reacquire_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_loop_guard_pressure": max(0.0, min(float(branch_context.get("benchmark_target_loop_guard_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_target_native_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_target_native_focus_pressure", 0.0) or 0.0), 1.0)),
             "selection_rows": [
                 {
                     "selection_key": str(row.get("selection_key", "") or "").strip(),

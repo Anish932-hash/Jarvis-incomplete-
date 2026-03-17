@@ -50,11 +50,15 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub current_window_title: String,
     #[serde(default)]
+    pub current_window_app_name: String,
+    #[serde(default)]
     pub current_surface_path: Vec<String>,
     #[serde(default)]
     pub current_dialog_visible: bool,
     #[serde(default)]
     pub current_reacquired_title: String,
+    #[serde(default)]
+    pub current_reacquired_app_name: String,
     #[serde(default)]
     pub current_reacquired_hwnd: u64,
     #[serde(default)]
@@ -131,6 +135,30 @@ pub struct SurfaceExplorationRouterInput {
     pub benchmark_loop_guard_pressure: f64,
     #[serde(default)]
     pub benchmark_native_focus_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_app_name: String,
+    #[serde(default)]
+    pub benchmark_target_app_matched: bool,
+    #[serde(default)]
+    pub benchmark_target_app_match_score: f64,
+    #[serde(default)]
+    pub benchmark_target_query_hints: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_priority: f64,
+    #[serde(default)]
+    pub benchmark_target_max_horizon_steps: u32,
+    #[serde(default)]
+    pub benchmark_target_dialog_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_descendant_focus_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_navigation_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_reacquire_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_loop_guard_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_native_focus_pressure: f64,
     #[serde(default)]
     pub selection_rows: Vec<SurfaceExplorationSelectionRow>,
     #[serde(default)]
@@ -399,7 +427,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         .unwrap_or("error");
     let query_tokens = tokenize(&input.query);
     let current_window_tokens = tokenize(&input.current_window_title);
+    let current_window_app_tokens = tokenize(&input.current_window_app_name);
     let current_reacquired_tokens = tokenize(&input.current_reacquired_title);
+    let current_reacquired_app_tokens = tokenize(&input.current_reacquired_app_name);
     let current_surface_tokens = input
         .current_surface_path
         .iter()
@@ -535,6 +565,29 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let benchmark_reacquire_pressure = input.benchmark_reacquire_pressure.clamp(0.0, 1.0);
     let benchmark_loop_guard_pressure = input.benchmark_loop_guard_pressure.clamp(0.0, 1.0);
     let benchmark_native_focus_pressure = input.benchmark_native_focus_pressure.clamp(0.0, 1.0);
+    let benchmark_target_app_name = normalize_text(&input.benchmark_target_app_name);
+    let benchmark_target_app_tokens = tokenize(&benchmark_target_app_name);
+    let benchmark_target_app_matched =
+        input.benchmark_target_app_matched && !benchmark_target_app_name.is_empty();
+    let benchmark_target_app_match_score = input.benchmark_target_app_match_score.clamp(0.0, 1.0);
+    let benchmark_target_query_hint_tokens = input
+        .benchmark_target_query_hints
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_priority = input.benchmark_target_priority.max(0.0);
+    let benchmark_target_max_horizon_steps = input.benchmark_target_max_horizon_steps;
+    let benchmark_target_dialog_pressure = input.benchmark_target_dialog_pressure.clamp(0.0, 1.0);
+    let benchmark_target_descendant_focus_pressure =
+        input.benchmark_target_descendant_focus_pressure.clamp(0.0, 1.0);
+    let benchmark_target_navigation_pressure =
+        input.benchmark_target_navigation_pressure.clamp(0.0, 1.0);
+    let benchmark_target_reacquire_pressure =
+        input.benchmark_target_reacquire_pressure.clamp(0.0, 1.0);
+    let benchmark_target_loop_guard_pressure =
+        input.benchmark_target_loop_guard_pressure.clamp(0.0, 1.0);
+    let benchmark_target_native_focus_pressure =
+        input.benchmark_target_native_focus_pressure.clamp(0.0, 1.0);
     let prefer_nested_branch = matches!(
         latest_transition.as_str(),
         "child_window" | "dialog_shift" | "drilldown" | "pane_shift"
@@ -594,11 +647,23 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         }
         let descendant_title_overlap =
             token_overlap(&native_descendant_title_tokens, &label_tokens);
+        let target_app_overlap = token_overlap(&benchmark_target_app_tokens, &label_tokens)
+            + token_overlap(&benchmark_target_app_tokens, &current_window_app_tokens)
+            + token_overlap(&benchmark_target_app_tokens, &current_reacquired_app_tokens);
+        let target_hint_overlap = token_overlap(&benchmark_target_query_hint_tokens, &label_tokens);
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
                 "descendant_chain_overlap:{descendant_title_overlap}"
             ));
+        }
+        if benchmark_target_app_matched && target_app_overlap > 0 {
+            rust_score += (target_app_overlap as f64 * 0.03).min(0.12);
+            reasons.push(format!("benchmark_target_app_overlap:{target_app_overlap}"));
+        }
+        if benchmark_target_app_matched && target_hint_overlap > 0 {
+            rust_score += (target_hint_overlap as f64 * 0.04).min(0.14);
+            reasons.push(format!("benchmark_target_query_hint:{target_hint_overlap}"));
         }
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
@@ -668,6 +733,91 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push(format!(
                 "benchmark_native_focus_pressure:{:.2}",
                 benchmark_native_focus_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_dialog_pressure > 0.0
+            && selected_action == "press_dialog_button"
+        {
+            let boost = 0.04 + (benchmark_target_dialog_pressure * 0.14);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_target_dialog_pressure:{:.2}",
+                benchmark_target_dialog_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_descendant_focus_pressure > 0.0
+            && preferred_descendant_focus
+        {
+            let boost = 0.04 + (benchmark_target_descendant_focus_pressure * 0.14);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_target_descendant_focus_pressure:{:.2}",
+                benchmark_target_descendant_focus_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_navigation_pressure > 0.0
+            && matches!(
+                selected_action.as_str(),
+                "select_sidebar_item"
+                    | "select_tab_page"
+                    | "select_list_item"
+                    | "select_tree_item"
+                    | "focus_input_field"
+                    | "open_dropdown"
+            )
+        {
+            let boost = 0.03 + (benchmark_target_navigation_pressure * 0.14);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_target_navigation_pressure:{:.2}",
+                benchmark_target_navigation_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_reacquire_pressure > 0.0
+            && selected_action == "focus"
+        {
+            let boost = 0.04 + (benchmark_target_reacquire_pressure * 0.14);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_target_reacquire_pressure:{:.2}",
+                benchmark_target_reacquire_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_native_focus_pressure > 0.0
+            && preferred_descendant_focus
+        {
+            let boost = 0.03 + (benchmark_target_native_focus_pressure * 0.12);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_target_native_focus_pressure:{:.2}",
+                benchmark_target_native_focus_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_loop_guard_pressure > 0.0
+            && kind == "branch_action"
+            && !preferred_descendant_focus
+        {
+            rust_score -= 0.02 + (benchmark_target_loop_guard_pressure * 0.05);
+        }
+        if benchmark_target_app_matched && benchmark_target_priority > 0.0 {
+            rust_score += (0.01 + (benchmark_target_priority * 0.01)).min(0.08);
+            reasons.push("benchmark_target_priority".to_string());
+        }
+        if benchmark_target_app_matched && benchmark_target_app_match_score >= 0.95 {
+            rust_score += 0.03;
+            reasons.push("benchmark_target_exact_app_match".to_string());
+        }
+        if benchmark_target_app_matched && benchmark_target_max_horizon_steps >= 4 && kind == "hypothesis" {
+            rust_score += 0.02;
+            reasons.push(format!(
+                "benchmark_target_horizon_steps:{}",
+                benchmark_target_max_horizon_steps
             ));
         }
 
@@ -1638,6 +1788,82 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("benchmark_dialog_pressure:0.95")));
+    }
+
+    #[test]
+    fn route_surface_exploration_uses_benchmark_target_app_pressure_for_descendant_focus() {
+        let payload = json!({
+            "query": "Pair device",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Pair device",
+            "current_reacquired_app_name": "settings",
+            "native_descendant_chain_depth": 1,
+            "native_descendant_dialog_chain_depth": 1,
+            "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
+            "preferred_descendant_title": "Pair device",
+            "preferred_descendant_hwnd": 5002,
+            "native_child_chain_signature": "5001|1|1|Pair device",
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_app_match_score": 1.0,
+            "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+            "benchmark_target_priority": 2.4,
+            "benchmark_target_max_horizon_steps": 5,
+            "benchmark_target_descendant_focus_pressure": 0.94,
+            "benchmark_target_native_focus_pressure": 0.91,
+            "benchmark_target_reacquire_pressure": 0.88,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5002|focus|adopt child surface: pair device",
+                    "kind": "branch_action",
+                    "candidate_id": "5002",
+                    "label": "Adopt child surface: Pair device",
+                    "selected_action": "focus",
+                    "confidence": 0.72
+                },
+                {
+                    "selection_key": "branch_action||click|open bluetooth settings",
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": "Open Bluetooth settings",
+                    "selected_action": "click",
+                    "confidence": 0.79
+                }
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_label": "Bluetooth",
+                    "topology_branch_family_signature": "5000|2|Pair device",
+                    "occurrences": 1
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus")
+        );
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_descendant_focus_pressure:0.94")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_exact_app_match")));
     }
 
     #[test]

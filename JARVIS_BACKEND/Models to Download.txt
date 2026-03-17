@@ -6,6 +6,7 @@ Name, the models according to your PC, and create these Folders, along with the 
 5)stt
 6)wakeword
 7)reasoning
+8)ocr
 8)JARVIS_BACKEND/models/all 3 vision and all models
 "E:\J.A.R.V.I.S\all_rounder\qwen\Qwen3.5-9B"
 "E:\J.A.R.V.I.S\all_rounder\qwen\Qwen3-14B"
@@ -24,6 +25,8 @@ Name, the models according to your PC, and create these Folders, along with the 
 "E:\J.A.R.V.I.S\tts\Orpheus-3B-TTS.f16.gguf"
 "E:\J.A.R.V.I.S\tts\Kokoro-82M"
 "E:\J.A.R.V.I.S\wakeword\Jarvis_en_windows_v4_0_0.ppn"
+"E:\J.A.R.V.I.S\ocr\olmOCR-2-7B-1025"
+"E:\J.A.R.V.I.S\ocr\PaddleOCR-VL"
 
 And these API keys:
 1)Groq

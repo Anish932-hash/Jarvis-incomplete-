@@ -8186,9 +8186,47 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_native_targets(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.native_control_targets(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app_name,
+                limit=limit,
+                history_limit=history_limit,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation native targets payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def _desktop_benchmark_control_guidance(self) -> Dict[str, Any]:
-        payload = self.desktop_evaluation_guidance()
-        return dict(payload) if isinstance(payload, dict) else {}
+        guidance_payload = self.desktop_evaluation_guidance()
+        native_targets_payload = self.desktop_evaluation_native_targets()
+        payload = dict(guidance_payload) if isinstance(guidance_payload, dict) else {}
+        if isinstance(native_targets_payload, dict) and native_targets_payload.get("status") == "success":
+            payload["native_target_plan"] = dict(native_targets_payload)
+        return payload
 
     def reset_desktop_workflow_memory(
         self,
@@ -41906,6 +41944,23 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 return
             if path == "/runtime/evaluations/desktop-benchmarks/guidance":
                 payload = self.server.service.desktop_evaluation_guidance()
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/native-targets":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
+                history_limit = self._parse_int(str(query.get("history_limit", ["8"])[0]), 8, minimum=1, maximum=64)
+                payload = self.server.service.desktop_evaluation_native_targets(
+                    scenario_name=str(query.get("scenario_name", [""])[0] or "").strip(),
+                    pack=str(query.get("pack", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    capability=str(query.get("capability", [""])[0] or "").strip(),
+                    risk_level=str(query.get("risk_level", [""])[0] or "").strip(),
+                    autonomy_tier=str(query.get("autonomy_tier", [""])[0] or "").strip(),
+                    mission_family=str(query.get("mission_family", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    limit=limit,
+                    history_limit=history_limit,
+                )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
             if path == "/runtime/desktop-missions":

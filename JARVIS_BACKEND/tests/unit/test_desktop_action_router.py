@@ -536,6 +536,92 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_dialog_pressure() -
     assert dialog_score > navigation_score
 
 
+def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context() -> None:
+    router = _build_router({})
+    branch_context = {
+        "active": True,
+        "current_window_title": "Bluetooth & devices",
+        "current_window_app_name": "settings",
+        "current_surface_path": ["Devices", "Bluetooth"],
+        "current_reacquired_title": "Pair device",
+        "current_reacquired_app_name": "settings",
+        "current_reacquired_hwnd": 5002,
+        "native_same_process_window_count": 2,
+        "native_related_window_count": 2,
+        "native_owner_link_count": 1,
+        "native_owner_chain_visible": True,
+        "native_same_root_owner_window_count": 2,
+        "native_same_root_owner_dialog_like_count": 1,
+        "native_direct_child_window_count": 1,
+        "native_direct_child_dialog_like_count": 1,
+        "native_active_owner_chain_depth": 1,
+        "native_max_owner_chain_depth": 2,
+        "native_descendant_chain_depth": 1,
+        "native_descendant_dialog_chain_depth": 1,
+        "native_descendant_query_match_count": 1,
+        "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
+        "preferred_descendant_title": "Pair device",
+        "preferred_descendant_hwnd": 5002,
+        "native_child_dialog_like_visible": True,
+        "native_modal_chain_signature": "5000|2|1|2",
+        "native_child_chain_signature": "5001|1|1|Pair device",
+        "native_branch_family_signature": "5000|2|Pair device",
+        "latest_branch_occurrences": 1,
+        "latest_branch_family_signature": "5000|2|Pair device",
+        "branch_family_repeat_count": 1,
+        "branch_family_switch_count": 0,
+        "branch_family_continuity": True,
+        "branch_cascade_count": 1,
+        "branch_cascade_kind_count": 1,
+        "branch_cascade_signature": "child_window_chain",
+        "benchmark_dialog_pressure": 0.3,
+        "benchmark_descendant_focus_pressure": 0.3,
+        "benchmark_navigation_pressure": 0.1,
+        "benchmark_reacquire_pressure": 0.2,
+        "benchmark_loop_guard_pressure": 0.1,
+        "benchmark_native_focus_pressure": 0.2,
+        "benchmark_target_app_name": "settings",
+        "benchmark_target_app_matched": True,
+        "benchmark_target_app_match_score": 1.0,
+        "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+        "benchmark_target_priority": 2.6,
+        "benchmark_target_max_horizon_steps": 5,
+        "benchmark_target_dialog_pressure": 0.85,
+        "benchmark_target_descendant_focus_pressure": 0.92,
+        "benchmark_target_navigation_pressure": 0.25,
+        "benchmark_target_reacquire_pressure": 0.86,
+        "benchmark_target_loop_guard_pressure": 0.35,
+        "benchmark_target_native_focus_pressure": 0.94,
+        "recent_selection_keys": set(),
+        "last_branch_kind": "child_window_chain",
+    }
+    focus_row = {
+        "kind": "branch_action",
+        "selected_action": "focus",
+        "candidate_id": "5002",
+        "label": "Adopt child surface: Pair device",
+        "action_payload": {"hwnd": 5002, "window_title": "Pair device"},
+    }
+    click_row = {
+        "kind": "branch_action",
+        "selected_action": "click",
+        "candidate_id": "",
+        "label": "Open Bluetooth settings",
+        "action_payload": {"window_title": "Bluetooth & devices"},
+    }
+
+    focus_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=focus_row,
+        branch_context=branch_context,
+    )
+    click_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=click_row,
+        branch_context=branch_context,
+    )
+
+    assert focus_score > click_score
+
+
 def test_desktop_action_router_select_surface_exploration_target_prefers_preferred_descendant_adoption() -> None:
     router = _build_router({})
     snapshot = {

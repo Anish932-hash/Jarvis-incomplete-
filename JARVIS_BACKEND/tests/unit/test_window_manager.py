@@ -445,7 +445,7 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     manager = WindowManager(native_runtime=_GuidedNativeRuntime())
 
     payload = manager.reacquire_window(
-        app_name="settings",
+        app_name="systemsettings",
         query="",
         pid=777,
         benchmark_guidance={
@@ -456,7 +456,25 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                 "recovery_reacquire": 0.95,
                 "loop_guard": 0.3,
                 "native_focus": 0.95,
-            }
+            },
+            "native_target_plan": {
+                "status": "success",
+                "target_apps": [
+                    {
+                        "app_name": "systemsettings",
+                        "priority": 2.5,
+                        "query_hints": ["pair device", "confirm pairing"],
+                        "control_biases": {
+                            "dialog_resolution": 0.92,
+                            "descendant_focus": 0.96,
+                            "navigation_branch": 0.2,
+                            "recovery_reacquire": 0.91,
+                            "loop_guard": 0.42,
+                            "native_focus": 0.94,
+                        },
+                    }
+                ],
+            },
         },
     )
 
@@ -464,6 +482,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["candidate"]["hwnd"] == 5002
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
+    assert "benchmark_target_app_match" in payload["candidate"]["match_reasons"]
+    assert "benchmark_target_query_hint" in payload["candidate"]["match_reasons"]
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:

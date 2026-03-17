@@ -65,6 +65,7 @@ import {
   type DesktopEvaluationGuidanceResponse,
   type DesktopEvaluationHistoryResponse,
   type DesktopEvaluationLabResponse,
+  type DesktopEvaluationNativeTargetsResponse,
   type DesktopEvaluationRunResponse,
   type DesktopExplorationMission,
   type DesktopInteractInput,
@@ -160,7 +161,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Activity, BrainCircuit, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, Sparkles, Target, TerminalSquare, Trash2, Workflow } from 'lucide-react';
+import { Activity, BrainCircuit, CalendarClock, Database, FileSearch, Loader2, Radar, RefreshCw, ShieldAlert, Sparkles, Target, TerminalSquare, Trash2, Workflow } from 'lucide-react';
 import { ARG_TEMPLATES, QUICK_ACTIONS } from './action-templates';
 import { validateActionArgs } from './action-arg-validation';
 import VoiceContinuousLifecyclePanel from './voice-continuous-lifecycle-panel';
@@ -1159,11 +1160,14 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationGuidanceResponse | null>(null);
   const [desktopEvaluationLabState, setDesktopEvaluationLabState] =
     useState<DesktopEvaluationLabResponse | null>(null);
+  const [desktopEvaluationNativeTargetsState, setDesktopEvaluationNativeTargetsState] =
+    useState<DesktopEvaluationNativeTargetsResponse | null>(null);
   const [desktopEvaluationCatalogBusy, setDesktopEvaluationCatalogBusy] = useState(false);
   const [desktopEvaluationRunBusy, setDesktopEvaluationRunBusy] = useState(false);
   const [desktopEvaluationHistoryBusy, setDesktopEvaluationHistoryBusy] = useState(false);
   const [desktopEvaluationGuidanceBusy, setDesktopEvaluationGuidanceBusy] = useState(false);
   const [desktopEvaluationLabBusy, setDesktopEvaluationLabBusy] = useState(false);
+  const [desktopEvaluationNativeTargetsBusy, setDesktopEvaluationNativeTargetsBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
   const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
   const [desktopEvaluationCapabilityFilter, setDesktopEvaluationCapabilityFilter] = useState('');
@@ -1892,6 +1896,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabState),
     [desktopEvaluationLabState]
   );
+  const desktopEvaluationNativeTargets = useMemo(
+    () => asObjectRecord(desktopEvaluationNativeTargetsState),
+    [desktopEvaluationNativeTargetsState]
+  );
   const desktopEvaluationImprovementCandidates = useMemo(
     () => asObjectRecord(desktopEvaluationRunSummary.improvement_candidates),
     [desktopEvaluationRunSummary]
@@ -1918,6 +1926,13 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         ? desktopEvaluationLab.replay_candidates.filter((item): item is Record<string, unknown> => isObjectRecord(item))
         : [],
     [desktopEvaluationLab]
+  );
+  const desktopEvaluationNativeTargetApps = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationNativeTargets.target_apps)
+        ? desktopEvaluationNativeTargets.target_apps.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopEvaluationNativeTargets]
   );
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
@@ -13298,6 +13313,40 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [buildDesktopEvaluationQueryInput, toast]
   );
 
+  const refreshDesktopEvaluationNativeTargets = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationNativeTargetsBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationNativeTargets({
+          ...buildDesktopEvaluationQueryInput(),
+          history_limit: 8,
+        });
+        setDesktopEvaluationNativeTargetsState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Native Targets Ready',
+            description:
+              `${Array.isArray(payload.target_apps) ? payload.target_apps.length : 0} target app(s)` +
+              ` • tactics:${Object.keys(asObjectRecord(payload.strongest_tactics)).length}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Native Targets Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationNativeTargetsBusy(false);
+      }
+    },
+    [buildDesktopEvaluationQueryInput, toast]
+  );
+
   const runDesktopEvaluationBenchmarks = useCallback(async () => {
     setDesktopEvaluationRunBusy(true);
     try {
@@ -13307,6 +13356,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       await refreshDesktopEvaluationHistory({ quiet: true });
       await refreshDesktopEvaluationGuidance({ quiet: true });
       await refreshDesktopEvaluationLab({ quiet: true });
+      await refreshDesktopEvaluationNativeTargets({ quiet: true });
       const summary = asObjectRecord(payload.summary);
       const candidates = asObjectRecord(summary.improvement_candidates);
       const weakestPacks = Array.isArray(candidates.packs)
@@ -13336,6 +13386,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
+    refreshDesktopEvaluationNativeTargets,
     toast,
   ]);
 
@@ -13367,6 +13418,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         await refreshDesktopEvaluationHistory({ quiet: true });
         await refreshDesktopEvaluationGuidance({ quiet: true });
         await refreshDesktopEvaluationLab({ quiet: true });
+        await refreshDesktopEvaluationNativeTargets({ quiet: true });
         toast({
           title: 'Benchmark Replay Ran',
           description: `${String(candidate.scenario ?? replayQuery.scenario_name ?? 'scenario')} replayed through the evaluation runner.`,
@@ -13383,7 +13435,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopEvaluationRunBusy(false);
       }
     },
-    [refreshDesktopEvaluationGuidance, refreshDesktopEvaluationHistory, refreshDesktopEvaluationLab, toast]
+    [
+      refreshDesktopEvaluationGuidance,
+      refreshDesktopEvaluationHistory,
+      refreshDesktopEvaluationLab,
+      refreshDesktopEvaluationNativeTargets,
+      toast,
+    ]
   );
 
   const previewSelectedDesktopMissionResume = useCallback(async () => {
@@ -13554,12 +13612,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopEvaluationHistory({ quiet: true });
     void refreshDesktopEvaluationGuidance({ quiet: true });
     void refreshDesktopEvaluationLab({ quiet: true });
+    void refreshDesktopEvaluationNativeTargets({ quiet: true });
   }, [
     open,
     refreshDesktopEvaluationCatalog,
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
+    refreshDesktopEvaluationNativeTargets,
     refreshDesktopMissions,
     refreshDesktopRecoveryDaemonStatus,
   ]);
@@ -17347,6 +17407,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             guidance:{String(desktopEvaluationGuidance.weakest_capability ?? 'ready')}
                                           </Badge>
                                         ) : null}
+                                        {desktopEvaluationNativeTargetsState ? (
+                                          <Badge variant="outline">
+                                            targets:{desktopEvaluationNativeTargetApps.length}
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                     </div>
                                     <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
@@ -17472,6 +17537,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           <BrainCircuit className="h-4 w-4" />
                                         )}
                                         Refresh Lab
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationNativeTargets()}
+                                        disabled={desktopEvaluationNativeTargetsBusy}
+                                      >
+                                        {desktopEvaluationNativeTargetsBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Radar className="h-4 w-4" />
+                                        )}
+                                        Native Targets
                                       </Button>
                                       <Button
                                         type="button"
@@ -17695,16 +17774,106 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     </Badge>
                                                   ))}
                                               </div>
-                                            </div>
-                                          ) : (
-                                            <p className="mt-2">
-                                              Load benchmark guidance to steer dialog, descendant, navigation, and reacquire upgrades from measured gaps.
-                                            </p>
-                                          )}
                                         </div>
-                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <p className="font-semibold uppercase tracking-wider text-primary/80">Benchmark Lab</p>
+                                      ) : (
+                                        <p className="mt-2">
+                                          Load benchmark guidance to steer dialog, descendant, navigation, and reacquire upgrades from measured gaps.
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Native Target Plan</p>
+                                        {desktopEvaluationNativeTargetsState ? (
+                                          <Badge variant="secondary">
+                                            {String(desktopEvaluationNativeTargets.status ?? 'success')}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline">idle</Badge>
+                                        )}
+                                      </div>
+                                      {Object.keys(desktopEvaluationNativeTargets).length > 0 ? (
+                                        <div className="mt-2 space-y-2">
+                                          <p>
+                                            target apps:{desktopEvaluationNativeTargetApps.length}
+                                            {' • '}gap apps:
+                                            {Array.isArray(desktopEvaluationNativeTargets.coverage_gap_apps)
+                                              ? desktopEvaluationNativeTargets.coverage_gap_apps.length
+                                              : 0}
+                                          </p>
+                                          {Object.keys(asObjectRecord(desktopEvaluationNativeTargets.strongest_tactics)).length > 0 ? (
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              {Object.entries(asObjectRecord(desktopEvaluationNativeTargets.strongest_tactics))
+                                                .slice(0, 6)
+                                                .map(([label, value]) => (
+                                                  <Badge key={`desktop-eval-native-tactic-${label}`} variant="outline">
+                                                    {label}:{Number(value ?? 0).toFixed(2)}
+                                                  </Badge>
+                                                ))}
+                                            </div>
+                                          ) : null}
+                                          <div className="rounded border border-primary/10 bg-black/10 p-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/70">Target Apps</p>
+                                            {desktopEvaluationNativeTargetApps.length > 0 ? (
+                                              <ScrollArea className="mt-2 h-[124px]">
+                                                <div className="space-y-2">
+                                                  {desktopEvaluationNativeTargetApps.slice(0, 4).map((item, index) => {
+                                                    const biases = asObjectRecord(item.control_biases);
+                                                    return (
+                                                      <div
+                                                        key={`desktop-eval-native-target-${String(item.app_name ?? index)}`}
+                                                        className="rounded border border-primary/10 bg-background/30 p-2"
+                                                      >
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                          <p className="text-[11px] text-primary/90">
+                                                            {String(item.app_name ?? 'app')}
+                                                          </p>
+                                                          <Badge variant="outline">
+                                                            p:{Number(item.priority ?? 0).toFixed(2)}
+                                                          </Badge>
+                                                        </div>
+                                                        <p className="mt-1">
+                                                          horizon:{String(item.max_horizon_steps ?? 0)}
+                                                          {' • '}missions:
+                                                          {Array.isArray(item.mission_families)
+                                                            ? item.mission_families.slice(0, 2).join(', ')
+                                                            : 'n/a'}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          {Array.isArray(item.query_hints) && item.query_hints.length > 0
+                                                            ? item.query_hints.slice(0, 3).join(' • ')
+                                                            : 'no query hints'}
+                                                        </p>
+                                                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                          {Object.entries(biases)
+                                                            .slice(0, 4)
+                                                            .map(([label, value]) => (
+                                                              <Badge key={`desktop-eval-native-bias-${String(item.app_name ?? index)}-${label}`} variant="secondary">
+                                                                {label}:{Number(value ?? 0).toFixed(2)}
+                                                              </Badge>
+                                                            ))}
+                                                        </div>
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </div>
+                                              </ScrollArea>
+                                            ) : (
+                                              <p className="mt-2">
+                                                Load native targets to see which installed apps should drive the next benchmark-guided control upgrades.
+                                              </p>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <p className="mt-2">
+                                          Load native targets to turn replay and coverage gaps into per-app control tactics for the live router.
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Benchmark Lab</p>
                                             {desktopEvaluationLabState ? (
                                               <Badge variant="secondary">
                                                 {String(desktopEvaluationLabTrend.direction ?? 'ready')}

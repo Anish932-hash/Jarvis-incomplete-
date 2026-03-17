@@ -190,6 +190,107 @@ class WindowManager:
             return 0.0
         return round(overlap / max(1, len(needle_tokens)), 4)
 
+    @classmethod
+    def _benchmark_native_target_context(
+        cls,
+        *,
+        benchmark_guidance: Dict[str, Any] | None = None,
+        requested_app_name: str = "",
+        candidate_app_name: str = "",
+        candidate_process_name: str = "",
+        candidate_title: str = "",
+        query: str = "",
+        window_title: str = "",
+    ) -> Dict[str, Any]:
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        target_plan = (
+            dict(guidance_payload.get("native_target_plan", {}))
+            if isinstance(guidance_payload.get("native_target_plan", {}), dict)
+            else {}
+        )
+        target_rows = [
+            dict(item)
+            for item in target_plan.get("target_apps", [])
+            if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+        ] if isinstance(target_plan.get("target_apps", []), list) else []
+        if not target_rows:
+            return {
+                "app_name": "",
+                "matched": False,
+                "match_score": 0.0,
+                "query_hints": [],
+                "priority": 0.0,
+                "control_biases": {
+                    "dialog_resolution": 0.0,
+                    "descendant_focus": 0.0,
+                    "navigation_branch": 0.0,
+                    "recovery_reacquire": 0.0,
+                    "loop_guard": 0.0,
+                    "native_focus": 0.0,
+                },
+            }
+        candidate_terms: List[str] = []
+        for value in (
+            requested_app_name,
+            candidate_app_name,
+            candidate_process_name,
+            candidate_title,
+            query,
+            window_title,
+        ):
+            clean = cls._normalize_text(value)
+            if clean and clean not in candidate_terms:
+                candidate_terms.append(clean)
+        best_row: Dict[str, Any] = {}
+        best_score = 0.0
+        for row in target_rows:
+            target_app_name = cls._normalize_text(row.get("app_name", ""))
+            if not target_app_name:
+                continue
+            row_score = 0.0
+            if any(term == target_app_name for term in candidate_terms):
+                row_score = 1.0
+            for term in candidate_terms:
+                row_score = max(
+                    row_score,
+                    cls._text_match_score(term, target_app_name),
+                    cls._text_match_score(target_app_name, term),
+                )
+            if cls._normalize_text(query):
+                for hint in row.get("query_hints", []) if isinstance(row.get("query_hints", []), list) else []:
+                    clean_hint = cls._normalize_text(hint)
+                    if not clean_hint:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, clean_hint),
+                        cls._text_match_score(clean_hint, query),
+                    )
+            if row_score > best_score:
+                best_score = row_score
+                best_row = row
+        control_biases = dict(best_row.get("control_biases", {})) if isinstance(best_row.get("control_biases", {}), dict) else {}
+        matched = bool(best_row and best_score >= 0.56)
+        return {
+            "app_name": cls._normalize_text(best_row.get("app_name", "")),
+            "matched": matched,
+            "match_score": round(max(0.0, min(best_score, 1.0)), 4),
+            "query_hints": [
+                str(item).strip()
+                for item in best_row.get("query_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("query_hints", []), list) else [],
+            "priority": round(float(best_row.get("priority", 0.0) or 0.0), 6),
+            "control_biases": {
+                "dialog_resolution": max(0.0, min(float(control_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
+                "descendant_focus": max(0.0, min(float(control_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
+                "navigation_branch": max(0.0, min(float(control_biases.get("navigation_branch", 0.0) or 0.0), 1.0)),
+                "recovery_reacquire": max(0.0, min(float(control_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0)),
+                "loop_guard": max(0.0, min(float(control_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
+                "native_focus": max(0.0, min(float(control_biases.get("native_focus", 0.0) or 0.0), 1.0)),
+            },
+        }
+
     def _compose_window_info(self, raw: Dict[str, Any], *, observation_backend: str) -> Dict[str, Any]:
         if not isinstance(raw, dict):
             return {}
@@ -627,10 +728,29 @@ class WindowManager:
             if isinstance(guidance_payload.get("control_biases", {}), dict)
             else {}
         )
+        target_app_context = self._benchmark_native_target_context(
+            benchmark_guidance=guidance_payload,
+            requested_app_name=app_name,
+            candidate_app_name=str(window.get("app_name", "") or ""),
+            candidate_process_name=str(window.get("process_name", "") or ""),
+            candidate_title=str(window.get("title", "") or ""),
+            query=query,
+            window_title=window_title,
+        )
+        target_biases = (
+            dict(target_app_context.get("control_biases", {}))
+            if isinstance(target_app_context.get("control_biases", {}), dict)
+            else {}
+        )
         dialog_pressure = max(0.0, min(float(benchmark_biases.get("dialog_resolution", 0.0) or 0.0), 1.0))
         descendant_pressure = max(0.0, min(float(benchmark_biases.get("descendant_focus", 0.0) or 0.0), 1.0))
         reacquire_pressure = max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0))
         native_focus_pressure = max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0))
+        if bool(target_app_context.get("matched", False)):
+            dialog_pressure = max(dialog_pressure, float(target_biases.get("dialog_resolution", 0.0) or 0.0))
+            descendant_pressure = max(descendant_pressure, float(target_biases.get("descendant_focus", 0.0) or 0.0))
+            reacquire_pressure = max(reacquire_pressure, float(target_biases.get("recovery_reacquire", 0.0) or 0.0))
+            native_focus_pressure = max(native_focus_pressure, float(target_biases.get("native_focus", 0.0) or 0.0))
         dialog_cluster_pressure = max(dialog_pressure, reacquire_pressure)
         descendant_cluster_pressure = max(descendant_pressure, native_focus_pressure)
         candidate_hwnd = int(window.get("hwnd", 0) or 0)
@@ -642,6 +762,23 @@ class WindowManager:
         candidate_process = str(window.get("process_name", "") or "").strip()
         candidate_app_name = str(window.get("app_name", "") or "").strip()
         candidate_signature = str(window.get("window_signature", "") or "").strip()
+        candidate_target_hint_score = 0.0
+        for hint in target_app_context.get("query_hints", []) if isinstance(target_app_context.get("query_hints", []), list) else []:
+            candidate_target_hint_score = max(
+                candidate_target_hint_score,
+                self._text_match_score(candidate_title, hint),
+                self._text_match_score(candidate_signature, hint),
+            )
+        if bool(target_app_context.get("matched", False)):
+            score += min(0.28, 0.08 + (0.2 * float(target_app_context.get("match_score", 0.0) or 0.0)))
+            reasons.append("benchmark_target_app_match")
+            if candidate_target_hint_score > 0.0:
+                score += min(0.18, 0.06 + (0.12 * candidate_target_hint_score))
+                reasons.append("benchmark_target_query_hint")
+            target_priority = max(0.0, float(target_app_context.get("priority", 0.0) or 0.0))
+            if target_priority > 0.0:
+                score += min(0.08, 0.01 + (0.01 * target_priority))
+                reasons.append("benchmark_target_priority")
         if hwnd and candidate_hwnd and candidate_hwnd == int(hwnd):
             score += 2.4
             reasons.append("exact_hwnd")

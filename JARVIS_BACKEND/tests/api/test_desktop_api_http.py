@@ -13529,6 +13529,88 @@ class FakeDesktopService:
             "history_size": len(self.desktop_evaluation_history_items),
         }
 
+    def desktop_evaluation_native_targets(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        del scenario_name, category, capability, risk_level, autonomy_tier, mission_family, history_limit
+        return {
+            "status": "success",
+            "benchmark_ready": True,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": {
+                "pack": pack,
+                "app": app_name,
+                "limit": max(1, int(limit)),
+            },
+            "focus_summary": ["unsupported_and_recovery", "surface_exploration"],
+            "target_apps": [
+                {
+                    "app_name": "settings",
+                    "priority": 2.4,
+                    "scenario_names": ["unsupported_child_dialog_chain"],
+                    "query_hints": ["pair device", "confirm pairing"],
+                    "mission_families": ["exploration"],
+                    "max_horizon_steps": 5,
+                    "control_biases": {
+                        "dialog_resolution": 0.82,
+                        "descendant_focus": 0.91,
+                        "navigation_branch": 0.35,
+                        "recovery_reacquire": 0.78,
+                        "loop_guard": 0.42,
+                        "native_focus": 0.88,
+                    },
+                }
+            ],
+            "target_app_biases": {
+                "settings": {
+                    "dialog_resolution": 0.82,
+                    "descendant_focus": 0.91,
+                    "navigation_branch": 0.35,
+                    "recovery_reacquire": 0.78,
+                    "loop_guard": 0.42,
+                    "native_focus": 0.88,
+                }
+            },
+            "replay_candidates": [
+                {
+                    "scenario": "unsupported_child_dialog_chain",
+                    "score": 0.74,
+                    "replay_query": {"scenario_name": "unsupported_child_dialog_chain", "limit": 1},
+                }
+            ],
+            "strongest_tactics": {
+                "dialog_resolution": 0.82,
+                "descendant_focus": 0.91,
+                "navigation_branch": 0.35,
+                "recovery_reacquire": 0.78,
+                "loop_guard": 0.42,
+                "native_focus": 0.88,
+            },
+            "coverage_gap_apps": ["Outlook"],
+            "installed_app_coverage": {
+                "status": "success",
+                "installed_profile_count": 4,
+                "benchmarked_installed_app_count": 3,
+                "benchmarked_ratio": 0.75,
+            },
+            "history_trend": {
+                "run_count": 2,
+                "direction": "improving",
+                "weighted_score_delta": 0.06,
+            },
+        }
+
     def _filter_desktop_evaluation_rows(
         self,
         *,
@@ -17862,6 +17944,24 @@ def test_desktop_evaluation_guidance_route(api_server: tuple[str, FakeDesktopSer
     assert payload["weakest_pack"] == "unsupported_and_recovery"
     assert payload["weakest_capability"] == "surface_exploration"
     assert payload["control_biases"]["dialog_resolution"] > 0.8
+
+
+def test_desktop_evaluation_native_targets_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        (
+            f"{base_url}/runtime/evaluations/desktop-benchmarks/native-targets"
+            "?pack=unsupported_and_recovery&app_name=settings&limit=4&history_limit=3"
+        ),
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["benchmark_ready"] is True
+    assert payload["target_apps"][0]["app_name"] == "settings"
+    assert payload["filters"]["pack"] == "unsupported_and_recovery"
+    assert payload["strongest_tactics"]["descendant_focus"] > 0.8
 
 
 def test_desktop_evaluation_lab_route(api_server: tuple[str, FakeDesktopService]) -> None:
