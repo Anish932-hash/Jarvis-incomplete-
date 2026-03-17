@@ -758,6 +758,87 @@ class FakeDesktopService:
                 "verify_hint": "new folder",
             },
         ]
+        self.desktop_evaluation_items: list[Dict[str, Any]] = [
+            {
+                "name": "settings_multi_control_apply",
+                "user_text": "Open settings and turn on bluetooth and set brightness slider to 80 and apply settings",
+                "expected_actions": ["open_app", "desktop_interact", "desktop_interact", "desktop_interact"],
+                "required_actions": ["desktop_interact"],
+                "weight": 1.6,
+                "strict_order": False,
+                "category": "settings",
+                "capabilities": ["settings_control", "form_mission", "switch_control", "value_control"],
+                "risk_level": "guarded",
+                "notes": "Covers multi-control settings flow completion.",
+                "pack": "settings_and_admin",
+                "platform": "windows",
+                "mission_family": "form",
+                "autonomy_tier": "autonomous",
+                "apps": ["settings"],
+                "recovery_expected": True,
+                "native_hybrid_focus": True,
+                "tags": ["settings", "multi_control", "apply"],
+            },
+            {
+                "name": "unsupported_child_dialog_chain",
+                "user_text": "Explore surface for add bluetooth device in settings and continue through the child dialog chain",
+                "expected_actions": ["desktop_interact"],
+                "required_actions": ["desktop_interact"],
+                "weight": 1.4,
+                "strict_order": False,
+                "category": "unsupported_app",
+                "capabilities": ["surface_exploration", "child_window_adoption", "recovery"],
+                "risk_level": "guarded",
+                "notes": "Measures unsupported-app child dialog recovery.",
+                "pack": "unsupported_and_recovery",
+                "platform": "windows",
+                "mission_family": "exploration",
+                "autonomy_tier": "autonomous",
+                "apps": ["settings"],
+                "recovery_expected": True,
+                "native_hybrid_focus": True,
+                "tags": ["exploration", "child_window", "dialog_chain"],
+            },
+            {
+                "name": "installer_resume_after_prompt",
+                "user_text": "Resume the blocked installer after approval is completed",
+                "expected_actions": ["desktop_interact"],
+                "required_actions": ["desktop_interact"],
+                "weight": 1.8,
+                "strict_order": False,
+                "category": "installer",
+                "capabilities": ["wizard_mission", "desktop_recovery", "governance"],
+                "risk_level": "high",
+                "notes": "Covers approval-gated installer recovery.",
+                "pack": "installer_and_governance",
+                "platform": "windows",
+                "mission_family": "recovery",
+                "autonomy_tier": "autonomous",
+                "apps": ["installer"],
+                "recovery_expected": True,
+                "native_hybrid_focus": True,
+                "tags": ["installer", "resume", "approval"],
+            },
+        ]
+        self.desktop_evaluation_last_run: Dict[str, Any] = {
+            "status": "success",
+            "executed_at": "2026-03-17T09:30:00+00:00",
+            "scenario_count": 2,
+            "summary": {
+                "weighted_pass_rate": 0.92,
+                "weighted_score": 0.9,
+            },
+            "regression": {
+                "status": "stable",
+                "weighted_pass_rate_delta": 0.0,
+                "weighted_score_delta": 0.0,
+                "scenario_regressions": [],
+                "pack_regressions": [],
+                "category_regressions": [],
+                "capability_regressions": [],
+            },
+        }
+        self.desktop_evaluation_history_items: list[Dict[str, Any]] = [dict(self.desktop_evaluation_last_run)]
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -13099,6 +13180,327 @@ class FakeDesktopService:
             },
         }
 
+    def desktop_evaluation_catalog(
+        self,
+        *,
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        rows = self._filter_desktop_evaluation_rows(
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+        )
+        selected = rows[: max(1, int(limit))]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "items": [dict(item) for item in selected],
+            "filters": {
+                "pack": pack,
+                "category": category,
+                "capability": capability,
+                "risk_level": risk_level,
+                "autonomy_tier": autonomy_tier,
+                "mission_family": mission_family,
+                "app": app_name,
+                "limit": max(1, int(limit)),
+            },
+            "summary": self._desktop_evaluation_catalog_summary(rows),
+            "latest_run": dict(self.desktop_evaluation_last_run),
+        }
+
+    def desktop_evaluation_run(
+        self,
+        *,
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        rows = self._filter_desktop_evaluation_rows(
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+        )[: max(1, int(limit))]
+        items: list[Dict[str, Any]] = []
+        total_weight = 0.0
+        total_pass_weight = 0.0
+        total_score_weight = 0.0
+        recovery_weight = 0.0
+        recovery_pass_weight = 0.0
+        recovery_score_weight = 0.0
+        hybrid_weight = 0.0
+        hybrid_pass_weight = 0.0
+        hybrid_score_weight = 0.0
+        pack_scores: Dict[str, Dict[str, float]] = {}
+        category_scores: Dict[str, Dict[str, float]] = {}
+        capability_scores: Dict[str, Dict[str, float]] = {}
+        risk_scores: Dict[str, Dict[str, float]] = {}
+        autonomy_scores: Dict[str, Dict[str, float]] = {}
+        mission_scores: Dict[str, Dict[str, float]] = {}
+        for row in rows:
+            weight = float(row.get("weight", 1.0) or 1.0)
+            score = 0.91 if row.get("risk_level") != "high" else 0.82
+            passed = score >= 0.8
+            total_weight += weight
+            total_score_weight += score * weight
+            if passed:
+                total_pass_weight += weight
+            self._accumulate_eval_bucket(pack_scores, str(row.get("pack", "")), weight, score, passed)
+            self._accumulate_eval_bucket(category_scores, str(row.get("category", "")), weight, score, passed)
+            self._accumulate_eval_bucket(risk_scores, str(row.get("risk_level", "")), weight, score, passed)
+            self._accumulate_eval_bucket(autonomy_scores, str(row.get("autonomy_tier", "")), weight, score, passed)
+            self._accumulate_eval_bucket(mission_scores, str(row.get("mission_family", "")), weight, score, passed)
+            for capability_name in row.get("capabilities", []):
+                self._accumulate_eval_bucket(capability_scores, str(capability_name), weight, score, passed)
+            if bool(row.get("recovery_expected", False)):
+                recovery_weight += weight
+                recovery_score_weight += score * weight
+                if passed:
+                    recovery_pass_weight += weight
+            if bool(row.get("native_hybrid_focus", False)):
+                hybrid_weight += weight
+                hybrid_score_weight += score * weight
+                if passed:
+                    hybrid_pass_weight += weight
+            items.append(
+                {
+                    "scenario": row.get("name"),
+                    "category": row.get("category"),
+                    "pack": row.get("pack"),
+                    "platform": row.get("platform"),
+                    "mission_family": row.get("mission_family"),
+                    "autonomy_tier": row.get("autonomy_tier"),
+                    "capabilities": list(row.get("capabilities", [])),
+                    "risk_level": row.get("risk_level"),
+                    "apps": list(row.get("apps", [])),
+                    "recovery_expected": bool(row.get("recovery_expected", False)),
+                    "native_hybrid_focus": bool(row.get("native_hybrid_focus", False)),
+                    "tags": list(row.get("tags", [])),
+                    "passed": passed,
+                    "expected": list(row.get("expected_actions", [])),
+                    "actual": list(row.get("expected_actions", [])),
+                    "score": round(score, 6),
+                    "precision": round(score, 6),
+                    "recall": 1.0,
+                    "order_score": 0.95,
+                    "required_coverage": 1.0,
+                    "missing_required": [],
+                    "missing_expected": [],
+                    "unexpected_actions": [],
+                    "weight": weight,
+                    "notes": row.get("notes", ""),
+                }
+            )
+        weighted_pass_rate = round(total_pass_weight / total_weight, 6) if total_weight else 0.0
+        weighted_score = round(total_score_weight / total_weight, 6) if total_weight else 0.0
+        summary = {
+            "count": len(items),
+            "weighted_pass_rate": weighted_pass_rate,
+            "weighted_score": weighted_score,
+            "top_unexpected_actions": [],
+            "pack_breakdown": self._desktop_evaluation_bucket_view(pack_scores),
+            "category_breakdown": self._desktop_evaluation_bucket_view(category_scores),
+            "capability_coverage": self._desktop_evaluation_bucket_view(capability_scores),
+            "risk_breakdown": self._desktop_evaluation_bucket_view(risk_scores),
+            "autonomy_tier_breakdown": self._desktop_evaluation_bucket_view(autonomy_scores),
+            "mission_family_breakdown": self._desktop_evaluation_bucket_view(mission_scores),
+            "recovery_readiness": {
+                "weighted_pass_rate": round(recovery_pass_weight / recovery_weight, 6) if recovery_weight else 0.0,
+                "weighted_score": round(recovery_score_weight / recovery_weight, 6) if recovery_weight else 0.0,
+                "weight": round(recovery_weight, 6),
+            },
+            "native_hybrid_coverage": {
+                "weighted_pass_rate": round(hybrid_pass_weight / hybrid_weight, 6) if hybrid_weight else 0.0,
+                "weighted_score": round(hybrid_score_weight / hybrid_weight, 6) if hybrid_weight else 0.0,
+                "weight": round(hybrid_weight, 6),
+            },
+        }
+        regression = {
+            "status": "stable",
+            "weighted_pass_rate_delta": round(weighted_pass_rate - 0.92, 6),
+            "weighted_score_delta": round(weighted_score - 0.9, 6),
+            "scenario_regressions": [],
+            "pack_regressions": [],
+            "category_regressions": [],
+            "capability_regressions": [],
+        }
+        self.desktop_evaluation_last_run = {
+            "status": "success",
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "scenario_count": len(items),
+            "summary": dict(summary),
+            "regression": dict(regression),
+        }
+        self.desktop_evaluation_history_items.insert(0, dict(self.desktop_evaluation_last_run))
+        self.desktop_evaluation_history_items = self.desktop_evaluation_history_items[:12]
+        return {
+            "status": "success",
+            "items": items,
+            "summary": summary,
+            "regression": regression,
+            "filters": {
+                "pack": pack,
+                "category": category,
+                "capability": capability,
+                "risk_level": risk_level,
+                "autonomy_tier": autonomy_tier,
+                "mission_family": mission_family,
+                "app": app_name,
+                "limit": max(1, int(limit)),
+            },
+            "history_size": len(self.desktop_evaluation_history_items),
+            "latest_run": dict(self.desktop_evaluation_last_run),
+        }
+
+    def desktop_evaluation_history(self, *, limit: int = 12) -> Dict[str, Any]:
+        selected = [dict(item) for item in self.desktop_evaluation_history_items[: max(1, int(limit))]]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "limit": max(1, int(limit)),
+            "items": selected,
+            "latest_run": dict(self.desktop_evaluation_last_run),
+        }
+
+    def _filter_desktop_evaluation_rows(
+        self,
+        *,
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+    ) -> list[Dict[str, Any]]:
+        rows = [dict(item) for item in self.desktop_evaluation_items]
+        if pack:
+            rows = [row for row in rows if str(row.get("pack", "")).strip().lower() == pack.lower()]
+        if category:
+            rows = [row for row in rows if str(row.get("category", "")).strip().lower() == category.lower()]
+        if capability:
+            rows = [
+                row
+                for row in rows
+                if capability.lower() in [str(value).strip().lower() for value in row.get("capabilities", [])]
+            ]
+        if risk_level:
+            rows = [row for row in rows if str(row.get("risk_level", "")).strip().lower() == risk_level.lower()]
+        if autonomy_tier:
+            rows = [
+                row for row in rows if str(row.get("autonomy_tier", "")).strip().lower() == autonomy_tier.lower()
+            ]
+        if mission_family:
+            rows = [
+                row for row in rows if str(row.get("mission_family", "")).strip().lower() == mission_family.lower()
+            ]
+        if app_name:
+            rows = [
+                row
+                for row in rows
+                if app_name.lower() in [str(value).strip().lower() for value in row.get("apps", [])]
+            ]
+        return rows
+
+    def _desktop_evaluation_catalog_summary(self, rows: list[Dict[str, Any]]) -> Dict[str, Any]:
+        pack_counts: Dict[str, int] = {}
+        category_counts: Dict[str, int] = {}
+        capability_counts: Dict[str, int] = {}
+        risk_counts: Dict[str, int] = {}
+        autonomy_counts: Dict[str, int] = {}
+        mission_counts: Dict[str, int] = {}
+        app_counts: Dict[str, int] = {}
+        recovery_expected_count = 0
+        native_hybrid_focus_count = 0
+        for row in rows:
+            self._increment_eval_count(pack_counts, str(row.get("pack", "")))
+            self._increment_eval_count(category_counts, str(row.get("category", "")))
+            self._increment_eval_count(risk_counts, str(row.get("risk_level", "")))
+            self._increment_eval_count(autonomy_counts, str(row.get("autonomy_tier", "")))
+            self._increment_eval_count(mission_counts, str(row.get("mission_family", "")))
+            if bool(row.get("recovery_expected", False)):
+                recovery_expected_count += 1
+            if bool(row.get("native_hybrid_focus", False)):
+                native_hybrid_focus_count += 1
+            for capability_name in row.get("capabilities", []):
+                self._increment_eval_count(capability_counts, str(capability_name))
+            for app in row.get("apps", []):
+                self._increment_eval_count(app_counts, str(app))
+        return {
+            "scenario_count": len(rows),
+            "pack_counts": dict(sorted(pack_counts.items())),
+            "category_counts": dict(sorted(category_counts.items())),
+            "capability_counts": dict(sorted(capability_counts.items())),
+            "risk_counts": dict(sorted(risk_counts.items())),
+            "autonomy_tier_counts": dict(sorted(autonomy_counts.items())),
+            "mission_family_counts": dict(sorted(mission_counts.items())),
+            "app_counts": dict(sorted(app_counts.items())),
+            "recovery_expected_count": recovery_expected_count,
+            "native_hybrid_focus_count": native_hybrid_focus_count,
+        }
+
+    @staticmethod
+    def _increment_eval_count(target: Dict[str, int], key: str) -> None:
+        clean = " ".join(str(key or "").strip().lower().split())
+        if not clean:
+            return
+        target[clean] = int(target.get(clean, 0)) + 1
+
+    @staticmethod
+    def _accumulate_eval_bucket(
+        target: Dict[str, Dict[str, float]],
+        key: str,
+        weight: float,
+        score: float,
+        passed: bool,
+    ) -> None:
+        clean = " ".join(str(key or "").strip().split())
+        if not clean:
+            return
+        bucket = target.setdefault(clean, {"weight": 0.0, "score_weight": 0.0, "pass_weight": 0.0})
+        bucket["weight"] += weight
+        bucket["score_weight"] += weight * score
+        if passed:
+            bucket["pass_weight"] += weight
+
+    @staticmethod
+    def _desktop_evaluation_bucket_view(source: Dict[str, Dict[str, float]]) -> list[Dict[str, Any]]:
+        ordered = sorted(source.items(), key=lambda item: (-float(item[1]["weight"]), item[0]))
+        rows: list[Dict[str, Any]] = []
+        for name, bucket in ordered:
+            weight = float(bucket.get("weight", 0.0) or 0.0)
+            if weight <= 0.0:
+                continue
+            rows.append(
+                {
+                    "name": name,
+                    "weighted_pass_rate": round(float(bucket.get("pass_weight", 0.0) or 0.0) / weight, 6),
+                    "weighted_score": round(float(bucket.get("score_weight", 0.0) or 0.0) / weight, 6),
+                    "weight": round(weight, 6),
+                }
+            )
+        return rows
+
     def desktop_mission_status(
         self,
         *,
@@ -17221,6 +17623,68 @@ def test_desktop_workflow_memory_routes_status_and_reset(api_server: tuple[str, 
     assert remaining["status"] == "success"
     assert remaining["count"] == 1
     assert remaining["items"][0]["profile_id"] == "powershell"
+
+
+def test_desktop_evaluation_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        (
+            f"{base_url}/runtime/evaluations/desktop-benchmarks"
+            "?pack=unsupported_and_recovery&mission_family=exploration&app_name=settings"
+        ),
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["count"] == 1
+    assert payload["items"][0]["name"] == "unsupported_child_dialog_chain"
+    assert payload["filters"]["pack"] == "unsupported_and_recovery"
+    assert payload["summary"]["mission_family_counts"]["exploration"] == 1
+    assert payload["summary"]["recovery_expected_count"] == 1
+    assert payload["summary"]["native_hybrid_focus_count"] == 1
+    assert payload["latest_run"]["status"] == "success"
+
+
+def test_desktop_evaluation_run_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/run",
+        payload={
+            "pack": "installer_and_governance",
+            "risk_level": "high",
+            "mission_family": "recovery",
+            "app_name": "installer",
+            "limit": 4,
+        },
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["scenario"] == "installer_resume_after_prompt"
+    assert payload["summary"]["count"] == 1
+    assert payload["summary"]["recovery_readiness"]["weight"] > 0
+    assert payload["summary"]["native_hybrid_coverage"]["weight"] > 0
+    assert payload["regression"]["status"] == "stable"
+    assert payload["filters"]["risk_level"] == "high"
+    assert payload["filters"]["mission_family"] == "recovery"
+
+
+def test_desktop_evaluation_history_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/history?limit=3",
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["count"] >= 1
+    assert payload["limit"] == 3
+    assert payload["latest_run"]["status"] == "success"
+    assert payload["items"][0]["scenario_count"] >= 1
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:
