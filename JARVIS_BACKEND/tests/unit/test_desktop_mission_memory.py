@@ -255,6 +255,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "topology_active_owner_chain_depth": 1,
             "topology_max_owner_chain_depth": 2,
             "topology_modal_chain_signature": "5000|2|2|1",
+            "topology_branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
             "transition_kind": "child_window",
             "nested_surface_progressed": True,
             "child_window_adopted": True,
@@ -264,6 +265,10 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "last_branch_kind": "child_window",
             "branch_transition_count": 1,
             "branch_repeat_count": 1,
+            "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            "branch_family_repeat_count": 1,
+            "branch_family_switch_count": 0,
+            "branch_family_continuity": True,
             "surface_path_depth": 2,
             "nested_chain_count": 1,
             "child_window_chain_count": 1,
@@ -279,6 +284,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
                     "selected_candidate_label": "Bluetooth",
                     "window_title": "Bluetooth & devices",
                     "surface_path_tail": ["Devices", "Bluetooth"],
+                    "topology_branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
                     "occurrences": 1,
                 }
             ],
@@ -313,6 +319,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["topology_active_owner_chain_depth"] == 1
     assert ready_mission["topology_max_owner_chain_depth"] == 2
     assert ready_mission["topology_modal_chain_signature"] == "5000|2|2|1"
+    assert ready_mission["topology_branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
     assert ready_mission["attempted_target_count"] == 1
     assert ready_mission["alternative_target_count"] == 1
     assert ready_mission["transition_kind"] == "child_window"
@@ -324,6 +331,10 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["last_branch_kind"] == "child_window"
     assert ready_mission["branch_transition_count"] == 1
     assert ready_mission["branch_repeat_count"] == 1
+    assert ready_mission["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
+    assert ready_mission["branch_family_repeat_count"] == 1
+    assert ready_mission["branch_family_switch_count"] == 0
+    assert ready_mission["branch_family_continuity"] is True
     assert ready_mission["surface_path_depth"] == 2
     assert ready_mission["nested_chain_count"] == 1
     assert ready_mission["child_window_chain_count"] == 1
@@ -405,6 +416,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
             "topology_active_owner_chain_depth": 2,
             "topology_max_owner_chain_depth": 2,
             "topology_modal_chain_signature": "5000|2|2|2",
+            "topology_branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
         },
         mission_payload={
             "status": "partial",
@@ -427,6 +439,11 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
             "topology_active_owner_chain_depth": 2,
             "topology_max_owner_chain_depth": 2,
             "topology_modal_chain_signature": "5000|2|2|2",
+            "topology_branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            "branch_family_repeat_count": 2,
+            "branch_family_switch_count": 0,
+            "branch_family_continuity": True,
         },
         message="JARVIS paused at the configured branch-cascade limit.",
     )
@@ -451,5 +468,10 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
     assert mission["topology_active_owner_chain_depth"] == 2
     assert mission["topology_max_owner_chain_depth"] == 2
     assert mission["topology_modal_chain_signature"] == "5000|2|2|2"
+    assert mission["topology_branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
+    assert mission["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
+    assert mission["branch_family_repeat_count"] == 2
+    assert mission["branch_family_switch_count"] == 0
+    assert mission["branch_family_continuity"] is True
     assert snapshot["recovery_profile_counts"] == {"resume_ready": 1}
     assert snapshot["stop_reason_counts"] == {"exploration_branch_cascade_limit_reached": 1}

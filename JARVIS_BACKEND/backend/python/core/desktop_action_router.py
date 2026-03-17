@@ -8868,6 +8868,11 @@ class DesktopActionRouter:
                 or window_reacquisition.get("modal_chain_signature", "")
                 or ""
             ).strip(),
+            "native_branch_family_signature": str(
+                native_window_topology.get("branch_family_signature", "")
+                or window_reacquisition.get("branch_family_signature", "")
+                or ""
+            ).strip(),
             "reacquired_candidate_hwnd": int(reacquired_candidate.get("hwnd", 0) or 0),
             "reacquired_candidate_owner_hwnd": int(reacquired_candidate.get("owner_hwnd", 0) or 0),
             "reacquired_candidate_root_owner_hwnd": int(reacquired_candidate.get("root_owner_hwnd", 0) or 0),
@@ -8954,6 +8959,18 @@ class DesktopActionRouter:
             modal_chain_signature_before
             and modal_chain_signature_after
             and modal_chain_signature_before != modal_chain_signature_after
+        )
+        branch_family_signature_before = str(before_state.get("native_branch_family_signature", "") or "").strip()
+        branch_family_signature_after = str(after_state.get("native_branch_family_signature", "") or "").strip()
+        branch_family_continuity = bool(
+            branch_family_signature_before
+            and branch_family_signature_after
+            and branch_family_signature_before == branch_family_signature_after
+        )
+        branch_family_changed = bool(
+            branch_family_signature_before
+            and branch_family_signature_after
+            and branch_family_signature_before != branch_family_signature_after
         )
         before_path = [
             str(item).strip()
@@ -9044,6 +9061,10 @@ class DesktopActionRouter:
             "modal_chain_signature_before": modal_chain_signature_before,
             "modal_chain_signature_after": modal_chain_signature_after,
             "modal_chain_changed": modal_chain_changed,
+            "branch_family_signature_before": branch_family_signature_before,
+            "branch_family_signature_after": branch_family_signature_after,
+            "branch_family_continuity": branch_family_continuity,
+            "branch_family_changed": branch_family_changed,
             "modal_dialog_cascade_progressed": modal_dialog_cascade_progressed,
             "surface_path_before": before_path,
             "surface_path_after": after_path,
@@ -9149,6 +9170,7 @@ class DesktopActionRouter:
                 topology={"max_owner_chain_depth": row.get("topology_max_owner_chain_depth", 0)}
             ).get("topology_max_owner_chain_depth", 0),
             "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": str(row.get("topology_branch_family_signature", "") or "").strip(),
         }
 
     def _surface_exploration_attempt_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -9195,6 +9217,7 @@ class DesktopActionRouter:
             "topology_active_owner_chain_depth": _clean_int(topology.get("active_owner_chain_depth", 0)),
             "topology_max_owner_chain_depth": _clean_int(topology.get("max_owner_chain_depth", 0)),
             "topology_modal_chain_signature": str(topology.get("modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": str(topology.get("branch_family_signature", "") or "").strip(),
         }
 
     def _normalize_surface_exploration_branch_entry(self, row: Any) -> Dict[str, Any]:
@@ -9226,6 +9249,7 @@ class DesktopActionRouter:
             or ""
         ).strip()
         surface_mode = str(row.get("surface_mode", "") or "").strip()
+        topology_branch_family_signature = str(row.get("topology_branch_family_signature", "") or "").strip()
         branch_key_parts = [
             transition_kind,
             selected_action,
@@ -9233,6 +9257,7 @@ class DesktopActionRouter:
             selected_candidate_label.lower(),
             window_title.lower(),
             "|".join(surface_path_tail).lower(),
+            topology_branch_family_signature.lower(),
         ]
         branch_key = hashlib.sha1("|".join(branch_key_parts).encode("utf-8")).hexdigest()[:16]
         return {
@@ -9278,6 +9303,7 @@ class DesktopActionRouter:
                 topology={"max_owner_chain_depth": row.get("topology_max_owner_chain_depth", 0)}
             ).get("topology_max_owner_chain_depth", 0),
             "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": topology_branch_family_signature,
         }
 
     def _surface_exploration_branch_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -9323,19 +9349,15 @@ class DesktopActionRouter:
         if not normalized:
             return rows[:16]
         branch_key = str(normalized.get("branch_key", "") or "").strip()
-        merged = False
         filtered: List[Dict[str, Any]] = []
         for row in rows:
             existing_row = dict(row)
             if str(existing_row.get("branch_key", "") or "").strip() == branch_key:
                 existing_occurrences = max(1, int(existing_row.get("occurrences", 1) or 1))
                 normalized["occurrences"] = existing_occurrences + 1
-                filtered.append(normalized)
-                merged = True
                 continue
             filtered.append(existing_row)
-        if not merged:
-            filtered.append(normalized)
+        filtered.append(normalized)
         return filtered[-16:]
 
     @staticmethod
@@ -9416,6 +9438,49 @@ class DesktopActionRouter:
                     continue
                 cascade_steps.append(transition_kind)
         return ">".join(cascade_steps[-6:])
+
+    @staticmethod
+    def _surface_exploration_branch_family_repeat_count(
+        *,
+        branch_history: List[Dict[str, Any]],
+        current_signature: str = "",
+    ) -> int:
+        clean_signature = str(current_signature or "").strip()
+        if not clean_signature and branch_history:
+            clean_signature = str(branch_history[-1].get("topology_branch_family_signature", "") or "").strip()
+        if not clean_signature:
+            return 0
+        repeats = 0
+        for row in reversed(branch_history):
+            if not isinstance(row, dict):
+                continue
+            row_signature = str(row.get("topology_branch_family_signature", "") or "").strip()
+            if not row_signature:
+                continue
+            if row_signature != clean_signature:
+                if repeats > 0:
+                    break
+                continue
+            repeats += max(1, int(row.get("occurrences", 1) or 1))
+        return repeats
+
+    @staticmethod
+    def _surface_exploration_branch_family_switch_count(
+        *,
+        branch_history: List[Dict[str, Any]],
+    ) -> int:
+        switches = 0
+        previous_signature = ""
+        for row in branch_history:
+            if not isinstance(row, dict):
+                continue
+            current_signature = str(row.get("topology_branch_family_signature", "") or "").strip()
+            if not current_signature:
+                continue
+            if previous_signature and current_signature != previous_signature:
+                switches += 1
+            previous_signature = current_signature
+        return switches
 
     @staticmethod
     def _surface_exploration_is_nested_branch_ready(
@@ -9577,10 +9642,22 @@ class DesktopActionRouter:
         native_max_owner_chain_depth = max(0, int(state_summary.get("native_max_owner_chain_depth", 0) or 0))
         native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(state_summary.get("native_modal_chain_signature", "") or "").strip()
+        native_branch_family_signature = str(state_summary.get("native_branch_family_signature", "") or "").strip()
         latest_branch = dict(branch_history[-1]) if branch_history else {}
         branch_cascade_count = self._surface_exploration_branch_cascade_count(branch_history=branch_history)
         branch_cascade_kind_count = self._surface_exploration_branch_cascade_kind_count(branch_history=branch_history)
         branch_cascade_signature = self._surface_exploration_branch_cascade_signature(branch_history=branch_history)
+        latest_branch_family_signature = str(latest_branch.get("topology_branch_family_signature", "") or "").strip()
+        branch_family_repeat_count = self._surface_exploration_branch_family_repeat_count(
+            branch_history=branch_history,
+            current_signature=native_branch_family_signature or latest_branch_family_signature,
+        )
+        branch_family_switch_count = self._surface_exploration_branch_family_switch_count(branch_history=branch_history)
+        branch_family_continuity = bool(
+            native_branch_family_signature
+            and latest_branch_family_signature
+            and native_branch_family_signature == latest_branch_family_signature
+        )
         recent_selection_keys = {
             self._surface_exploration_selection_key(
                 kind="hypothesis",
@@ -9621,11 +9698,16 @@ class DesktopActionRouter:
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": native_modal_chain_signature,
+            "native_branch_family_signature": native_branch_family_signature,
             "last_branch_kind": str(latest_branch.get("transition_kind", "") or "").strip().lower(),
             "latest_selected_action": str(latest_branch.get("selected_action", "") or "").strip().lower(),
             "latest_selected_candidate_id": str(latest_branch.get("selected_candidate_id", "") or "").strip(),
             "latest_selected_candidate_label": str(latest_branch.get("selected_candidate_label", "") or "").strip(),
             "latest_branch_occurrences": self._surface_exploration_branch_repeat_count(branch_history=branch_history),
+            "latest_branch_family_signature": latest_branch_family_signature,
+            "branch_family_repeat_count": branch_family_repeat_count,
+            "branch_family_switch_count": branch_family_switch_count,
+            "branch_family_continuity": branch_family_continuity,
             "branch_cascade_count": branch_cascade_count,
             "branch_cascade_kind_count": branch_cascade_kind_count,
             "branch_cascade_signature": branch_cascade_signature,
@@ -9667,7 +9749,12 @@ class DesktopActionRouter:
         native_max_owner_chain_depth = max(0, int(branch_context.get("native_max_owner_chain_depth", 0) or 0))
         native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(branch_context.get("native_modal_chain_signature", "") or "").strip()
+        native_branch_family_signature = str(branch_context.get("native_branch_family_signature", "") or "").strip()
         latest_occurrences = max(0, int(branch_context.get("latest_branch_occurrences", 0) or 0))
+        latest_branch_family_signature = str(branch_context.get("latest_branch_family_signature", "") or "").strip()
+        branch_family_repeat_count = max(0, int(branch_context.get("branch_family_repeat_count", 0) or 0))
+        branch_family_switch_count = max(0, int(branch_context.get("branch_family_switch_count", 0) or 0))
+        branch_family_continuity = bool(branch_context.get("branch_family_continuity", False))
         branch_cascade_count = max(0, int(branch_context.get("branch_cascade_count", 0) or 0))
         branch_cascade_kind_count = max(0, int(branch_context.get("branch_cascade_kind_count", 0) or 0))
         branch_cascade_signature = str(branch_context.get("branch_cascade_signature", "") or "").strip().lower()
@@ -9788,6 +9875,32 @@ class DesktopActionRouter:
                 score += 0.04
             elif kind == "branch_action":
                 score -= 0.02
+        if branch_family_continuity:
+            if last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+                if selected_action == "press_dialog_button":
+                    score += 0.08 if branch_family_repeat_count < 2 else 0.12
+                elif kind == "branch_action":
+                    score -= 0.03
+            elif last_branch_kind in {"drilldown", "pane_shift"} and selected_action in {
+                "select_tree_item",
+                "select_list_item",
+                "select_sidebar_item",
+                "select_tab_page",
+                "focus_input_field",
+                "open_dropdown",
+            }:
+                score += 0.06 if branch_family_repeat_count < 2 else 0.08
+        elif (
+            native_branch_family_signature
+            and latest_branch_family_signature
+            and native_branch_family_signature != latest_branch_family_signature
+        ):
+            if kind == "branch_action":
+                score -= 0.04
+            elif last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} and selected_action != "press_dialog_button":
+                score -= 0.03
+        if branch_family_switch_count >= 2 and kind == "branch_action":
+            score -= 0.03
         if bool(branch_context.get("current_dialog_visible", False)):
             if selected_action == "press_dialog_button":
                 score += 0.12
@@ -9830,6 +9943,10 @@ class DesktopActionRouter:
             "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
             "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(branch_context.get("native_modal_chain_signature", "") or "").strip(),
+            "native_branch_family_signature": str(branch_context.get("native_branch_family_signature", "") or "").strip(),
+            "branch_family_repeat_count": max(0, int(branch_context.get("branch_family_repeat_count", 0) or 0)),
+            "branch_family_switch_count": max(0, int(branch_context.get("branch_family_switch_count", 0) or 0)),
+            "branch_family_continuity": bool(branch_context.get("branch_family_continuity", False)),
             "branch_cascade_count": max(0, int(branch_context.get("branch_cascade_count", 0) or 0)),
             "branch_cascade_kind_count": max(0, int(branch_context.get("branch_cascade_kind_count", 0) or 0)),
             "branch_cascade_signature": str(branch_context.get("branch_cascade_signature", "") or "").strip(),
@@ -9857,6 +9974,7 @@ class DesktopActionRouter:
                         for item in row.get("surface_path_tail", [])
                         if str(item).strip()
                     ] if isinstance(row.get("surface_path_tail", []), list) else [],
+                    "topology_branch_family_signature": str(row.get("topology_branch_family_signature", "") or "").strip(),
                     "occurrences": max(1, int(row.get("occurrences", 1) or 1)),
                 }
                 for row in self._surface_exploration_branch_history(args=args)
@@ -10270,6 +10388,18 @@ class DesktopActionRouter:
         last_branch = dict(branch_rows[-1]) if branch_rows else {}
         branch_transition_count = self._surface_exploration_branch_transition_count(branch_history=branch_rows)
         branch_repeat_count = self._surface_exploration_branch_repeat_count(branch_history=branch_rows)
+        current_branch_family_signature = str(topology_summary.get("topology_branch_family_signature", "") or "").strip()
+        latest_branch_family_signature = str(last_branch.get("topology_branch_family_signature", "") or "").strip()
+        branch_family_repeat_count = self._surface_exploration_branch_family_repeat_count(
+            branch_history=branch_rows,
+            current_signature=current_branch_family_signature or latest_branch_family_signature,
+        )
+        branch_family_switch_count = self._surface_exploration_branch_family_switch_count(branch_history=branch_rows)
+        branch_family_continuity = bool(
+            current_branch_family_signature
+            and latest_branch_family_signature
+            and current_branch_family_signature == latest_branch_family_signature
+        )
         child_window_chain_count = self._surface_exploration_branch_kind_count(
             branch_history=branch_rows,
             transition_kinds={"child_window", "child_window_chain"},
@@ -10353,6 +10483,10 @@ class DesktopActionRouter:
             "last_branch_kind": str(last_branch.get("transition_kind", "") or "").strip(),
             "branch_transition_count": branch_transition_count,
             "branch_repeat_count": branch_repeat_count,
+            "branch_family_signature": current_branch_family_signature or latest_branch_family_signature,
+            "branch_family_repeat_count": branch_family_repeat_count,
+            "branch_family_switch_count": branch_family_switch_count,
+            "branch_family_continuity": branch_family_continuity,
             "surface_path_depth": len(surface_path_tail),
             "topology_owner_link_count": int(topology_summary.get("topology_owner_link_count", 0) or 0),
             "topology_owner_chain_visible": bool(topology_summary.get("topology_owner_chain_visible", False)),
@@ -10433,6 +10567,10 @@ class DesktopActionRouter:
             "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
             "branch_repeat_count": max(0, int(blocking_surface.get("branch_repeat_count", self._surface_exploration_branch_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_repeat_count(branch_history=branch_history))),
+            "branch_family_signature": str(blocking_surface.get("branch_family_signature", "") or "").strip(),
+            "branch_family_repeat_count": max(0, int(blocking_surface.get("branch_family_repeat_count", self._surface_exploration_branch_family_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_family_repeat_count(branch_history=branch_history))),
+            "branch_family_switch_count": max(0, int(blocking_surface.get("branch_family_switch_count", self._surface_exploration_branch_family_switch_count(branch_history=branch_history)) or self._surface_exploration_branch_family_switch_count(branch_history=branch_history))),
+            "branch_family_continuity": bool(blocking_surface.get("branch_family_continuity", False)),
             "surface_path_depth": max(0, int(blocking_surface.get("surface_path_depth", len(blocking_surface.get("surface_path_tail", [])) if isinstance(blocking_surface.get("surface_path_tail", []), list) else 0) or 0)),
             "nested_chain_count": max(0, int(blocking_surface.get("nested_chain_count", 0) or 0)),
             "child_window_chain_count": max(0, int(blocking_surface.get("child_window_chain_count", 0) or 0)),
@@ -10477,6 +10615,7 @@ class DesktopActionRouter:
             "exploration",
             str(blocking_surface.get("stop_reason_code", "") or "").strip().lower(),
             str(blocking_surface.get("surface_signature", "") or "").strip().lower(),
+            str(blocking_surface.get("branch_family_signature", "") or "").strip().lower(),
             clean_anchor_app.lower(),
             clean_anchor_title.lower(),
             blocking_window_title.lower(),
@@ -10518,6 +10657,10 @@ class DesktopActionRouter:
                 "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
                 "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
                 "branch_repeat_count": max(0, int(blocking_surface.get("branch_repeat_count", self._surface_exploration_branch_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_repeat_count(branch_history=branch_history))),
+                "branch_family_signature": str(blocking_surface.get("branch_family_signature", "") or "").strip(),
+                "branch_family_repeat_count": max(0, int(blocking_surface.get("branch_family_repeat_count", self._surface_exploration_branch_family_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_family_repeat_count(branch_history=branch_history))),
+                "branch_family_switch_count": max(0, int(blocking_surface.get("branch_family_switch_count", self._surface_exploration_branch_family_switch_count(branch_history=branch_history)) or self._surface_exploration_branch_family_switch_count(branch_history=branch_history))),
+                "branch_family_continuity": bool(blocking_surface.get("branch_family_continuity", False)),
                 "surface_path_depth": max(0, int(blocking_surface.get("surface_path_depth", len(blocking_surface.get("surface_path_tail", [])) if isinstance(blocking_surface.get("surface_path_tail", []), list) else 0) or 0)),
                 "nested_chain_count": max(0, int(blocking_surface.get("nested_chain_count", 0) or 0)),
                 "child_window_chain_count": max(0, int(blocking_surface.get("child_window_chain_count", 0) or 0)),
@@ -10535,6 +10678,7 @@ class DesktopActionRouter:
                 "topology_active_owner_chain_depth": max(0, int(blocking_surface.get("topology_active_owner_chain_depth", 0) or 0)),
                 "topology_max_owner_chain_depth": max(0, int(blocking_surface.get("topology_max_owner_chain_depth", 0) or 0)),
                 "topology_modal_chain_signature": str(blocking_surface.get("topology_modal_chain_signature", "") or "").strip(),
+                "topology_branch_family_signature": str(blocking_surface.get("topology_branch_family_signature", "") or "").strip(),
                 "branch_history_tail": [
                     dict(row)
                     for row in blocking_surface.get("branch_history_tail", [])[-6:]
@@ -11076,6 +11220,22 @@ class DesktopActionRouter:
         last_branch_kind = str(branch_history[-1].get("transition_kind", "") or "").strip() if branch_history else ""
         branch_transition_count = self._surface_exploration_branch_transition_count(branch_history=branch_history)
         branch_repeat_count = self._surface_exploration_branch_repeat_count(branch_history=branch_history)
+        branch_family_signature = str(
+            branch_history[-1].get("topology_branch_family_signature", "")
+            if branch_history
+            else runtime_topology_summary.get("topology_branch_family_signature", "")
+            or ""
+        ).strip()
+        branch_family_repeat_count = self._surface_exploration_branch_family_repeat_count(
+            branch_history=branch_history,
+            current_signature=branch_family_signature,
+        )
+        branch_family_switch_count = self._surface_exploration_branch_family_switch_count(branch_history=branch_history)
+        branch_family_continuity = bool(
+            branch_family_signature
+            and str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
+            and branch_family_signature == str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
+        )
         child_window_chain_count = self._surface_exploration_branch_kind_count(
             branch_history=branch_history,
             transition_kinds={"child_window", "child_window_chain"},
@@ -11139,6 +11299,10 @@ class DesktopActionRouter:
             "last_branch_kind": last_branch_kind,
             "branch_transition_count": branch_transition_count,
             "branch_repeat_count": branch_repeat_count,
+            "branch_family_signature": branch_family_signature,
+            "branch_family_repeat_count": branch_family_repeat_count,
+            "branch_family_switch_count": branch_family_switch_count,
+            "branch_family_continuity": branch_family_continuity,
             "surface_path_depth": surface_path_depth,
             "nested_chain_count": nested_chain_count,
             "child_window_chain_count": child_window_chain_count,
@@ -11194,6 +11358,10 @@ class DesktopActionRouter:
             "last_branch_kind": last_branch_kind,
             "branch_transition_count": branch_transition_count,
             "branch_repeat_count": branch_repeat_count,
+            "branch_family_signature": branch_family_signature,
+            "branch_family_repeat_count": branch_family_repeat_count,
+            "branch_family_switch_count": branch_family_switch_count,
+            "branch_family_continuity": branch_family_continuity,
             "surface_path_depth": surface_path_depth,
             "nested_chain_count": nested_chain_count,
             "child_window_chain_count": child_window_chain_count,
@@ -11223,6 +11391,10 @@ class DesktopActionRouter:
             resume_args["last_branch_kind"] = last_branch_kind
             resume_args["branch_transition_count"] = branch_transition_count
             resume_args["branch_repeat_count"] = branch_repeat_count
+            resume_args["branch_family_signature"] = branch_family_signature
+            resume_args["branch_family_repeat_count"] = branch_family_repeat_count
+            resume_args["branch_family_switch_count"] = branch_family_switch_count
+            resume_args["branch_family_continuity"] = branch_family_continuity
             resume_args["surface_path_depth"] = surface_path_depth
             resume_args["nested_chain_count"] = nested_chain_count
             resume_args["child_window_chain_count"] = child_window_chain_count
@@ -11267,6 +11439,10 @@ class DesktopActionRouter:
                 "last_branch_kind": last_branch_kind,
                 "branch_transition_count": branch_transition_count,
                 "branch_repeat_count": branch_repeat_count,
+                "branch_family_signature": branch_family_signature,
+                "branch_family_repeat_count": branch_family_repeat_count,
+                "branch_family_switch_count": branch_family_switch_count,
+                "branch_family_continuity": branch_family_continuity,
                 "surface_path_depth": surface_path_depth,
                 "nested_chain_count": nested_chain_count,
                 "child_window_chain_count": child_window_chain_count,
@@ -11339,12 +11515,19 @@ class DesktopActionRouter:
                 "last_branch_kind": last_branch_kind,
                 "branch_transition_count": branch_transition_count,
                 "branch_repeat_count": branch_repeat_count,
+                "branch_family_signature": branch_family_signature,
+                "branch_family_repeat_count": branch_family_repeat_count,
+                "branch_family_switch_count": branch_family_switch_count,
+                "branch_family_continuity": branch_family_continuity,
                 "surface_path_depth": surface_path_depth,
                 "nested_chain_count": nested_chain_count,
                 "child_window_chain_count": child_window_chain_count,
                 "dialog_cascade_count": dialog_cascade_count,
                 "pane_cascade_count": pane_cascade_count,
                 "drilldown_cascade_count": drilldown_cascade_count,
+                "branch_cascade_count": branch_cascade_count,
+                "branch_cascade_kind_count": branch_cascade_kind_count,
+                "branch_cascade_signature": branch_cascade_signature,
                 "branch_history": [dict(row) for row in branch_history],
                 "stop_reason_code": stop_reason_code,
                 "stop_reason": stop_reason,

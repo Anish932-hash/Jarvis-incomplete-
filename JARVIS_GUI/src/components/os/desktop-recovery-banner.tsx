@@ -93,6 +93,10 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const explorationBranchCascadeKindCount = Number(latestMission?.branch_cascade_kind_count ?? 0);
   const explorationBranchCascadeSignature = String(latestMission?.branch_cascade_signature ?? '').trim();
   const explorationMaxBranchCascadeSteps = Number(latestMission?.max_branch_cascade_steps ?? 0);
+  const explorationBranchFamilySignature = String(latestMission?.branch_family_signature ?? '').trim();
+  const explorationBranchFamilyRepeatCount = Number(latestMission?.branch_family_repeat_count ?? 0);
+  const explorationBranchFamilySwitchCount = Number(latestMission?.branch_family_switch_count ?? 0);
+  const explorationBranchFamilyContinuity = Boolean(latestMission?.branch_family_continuity ?? false);
   const explorationTopologyOwnerLinkCount = Number(latestMission?.topology_owner_link_count ?? 0);
   const explorationTopologyOwnerChainVisible = Boolean(latestMission?.topology_owner_chain_visible ?? false);
   const explorationTopologySameRootOwnerWindowCount = Number(
@@ -109,6 +113,9 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   );
   const explorationTopologyModalChainSignature = String(
     latestMission?.topology_modal_chain_signature ?? ''
+  ).trim();
+  const explorationTopologyBranchFamilySignature = String(
+    latestMission?.topology_branch_family_signature ?? ''
   ).trim();
   const explorationRustRouterHint = String(latestMission?.rust_router_hint ?? '').trim();
   const explorationTopologyVisibleWindowCount = Number(latestMission?.topology_visible_window_count ?? 0);
@@ -181,6 +188,14 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
                 {explorationBranchCascadeSignature ? `:${explorationBranchCascadeSignature}` : ''}
               </Badge>
             ) : null}
+            {isExplorationMission && (explorationBranchFamilySignature || explorationTopologyBranchFamilySignature) ? (
+              <Badge variant="outline">
+                family:{explorationBranchFamilySignature || explorationTopologyBranchFamilySignature}
+                {explorationBranchFamilyRepeatCount > 0 ? `:${explorationBranchFamilyRepeatCount}r` : ''}
+                {explorationBranchFamilySwitchCount > 0 ? `:${explorationBranchFamilySwitchCount}s` : ''}
+                {explorationBranchFamilyContinuity ? ':same' : ''}
+              </Badge>
+            ) : null}
             {isExplorationMission && explorationRustRouterHint ? (
               <Badge variant="outline">rust:{explorationRustRouterHint}</Badge>
             ) : null}
@@ -246,6 +261,9 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
             {missionKind === 'exploration' && (explorationBranchCascadeCount > 0 || Boolean(explorationBranchCascadeSignature))
               ? ` • cascade:${explorationBranchCascadeCount}${explorationBranchCascadeKindCount > 0 ? ` kinds:${explorationBranchCascadeKindCount}` : ''}${explorationMaxBranchCascadeSteps > 0 ? `/${explorationMaxBranchCascadeSteps}` : ''}${explorationBranchCascadeSignature ? `(${explorationBranchCascadeSignature})` : ''}`
               : ''}
+            {missionKind === 'exploration' && (explorationBranchFamilySignature || explorationTopologyBranchFamilySignature)
+              ? ` • family:${explorationBranchFamilySignature || explorationTopologyBranchFamilySignature}${explorationBranchFamilyRepeatCount > 0 ? ` repeat:${explorationBranchFamilyRepeatCount}` : ''}${explorationBranchFamilySwitchCount > 0 ? ` switches:${explorationBranchFamilySwitchCount}` : ''}${explorationBranchFamilyContinuity ? ' continuity' : ''}`
+              : ''}
             {missionKind === 'exploration' && explorationSurfaceDepth > 0
               ? ` • depth:${explorationSurfaceDepth}`
               : ''}
@@ -265,8 +283,9 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               explorationTopologySameRootOwnerDialogLikeCount > 0 ||
               explorationTopologyActiveOwnerChainDepth > 0 ||
               explorationTopologyMaxOwnerChainDepth > 0 ||
-              Boolean(explorationTopologyModalChainSignature))
-              ? ` • modal:${explorationTopologySameRootOwnerWindowCount}${explorationTopologySameRootOwnerDialogLikeCount > 0 ? ` dialogs:${explorationTopologySameRootOwnerDialogLikeCount}` : ''}${explorationTopologyActiveOwnerChainDepth > 0 || explorationTopologyMaxOwnerChainDepth > 0 ? ` depth:${explorationTopologyActiveOwnerChainDepth}/${explorationTopologyMaxOwnerChainDepth}` : ''}${explorationTopologyModalChainSignature ? ` sig:${explorationTopologyModalChainSignature}` : ''}`
+              Boolean(explorationTopologyModalChainSignature) ||
+              Boolean(explorationTopologyBranchFamilySignature))
+              ? ` • modal:${explorationTopologySameRootOwnerWindowCount}${explorationTopologySameRootOwnerDialogLikeCount > 0 ? ` dialogs:${explorationTopologySameRootOwnerDialogLikeCount}` : ''}${explorationTopologyActiveOwnerChainDepth > 0 || explorationTopologyMaxOwnerChainDepth > 0 ? ` depth:${explorationTopologyActiveOwnerChainDepth}/${explorationTopologyMaxOwnerChainDepth}` : ''}${explorationTopologyModalChainSignature ? ` sig:${explorationTopologyModalChainSignature}` : ''}${explorationTopologyBranchFamilySignature ? ` family:${explorationTopologyBranchFamilySignature}` : ''}`
               : ''}
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}

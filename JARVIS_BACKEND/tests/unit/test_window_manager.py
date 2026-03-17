@@ -214,6 +214,7 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
     assert topology["active_owner_chain_depth"] == 1
     assert topology["max_owner_chain_depth"] == 2
     assert topology["modal_chain_signature"] == "5000|2|1|Bluetooth & devices|Pair device"
+    assert topology["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
     assert "Settings" in topology["owner_window_titles"]
     assert "Pair device" in topology["owner_window_titles"]
     assert topology["owner_chain_titles"] == ["Settings", "Bluetooth & devices"]
@@ -232,6 +233,7 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
     assert reacquired["candidate_owner_chain_depth"] == 2
     assert reacquired["max_owner_chain_depth"] == 2
     assert reacquired["modal_chain_signature"] == "5000|2|2|Bluetooth & devices|Pair device"
+    assert reacquired["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
     assert "Settings" in reacquired["owner_chain_titles"]
 
 

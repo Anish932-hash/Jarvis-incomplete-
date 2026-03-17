@@ -36,6 +36,8 @@ pub struct SurfaceExplorationBranchEntry {
     #[serde(default)]
     pub surface_path_tail: Vec<String>,
     #[serde(default)]
+    pub topology_branch_family_signature: String,
+    #[serde(default)]
     pub occurrences: u32,
 }
 
@@ -77,6 +79,14 @@ pub struct SurfaceExplorationRouterInput {
     pub native_topology_signature: String,
     #[serde(default)]
     pub native_modal_chain_signature: String,
+    #[serde(default)]
+    pub native_branch_family_signature: String,
+    #[serde(default)]
+    pub branch_family_repeat_count: u32,
+    #[serde(default)]
+    pub branch_family_switch_count: u32,
+    #[serde(default)]
+    pub branch_family_continuity: bool,
     #[serde(default)]
     pub branch_cascade_count: u32,
     #[serde(default)]
@@ -163,6 +173,20 @@ fn build_topology_signature(rows: &[String], active_title: &str, visible_count: 
     }
     let digest = hasher.finalize();
     format!("{:x}", digest)[..16].to_string()
+}
+
+fn branch_family_signature_from_modal(signature: &str) -> String {
+    let parts = signature
+        .split('|')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return String::new();
+    }
+    let mut stable = vec![parts[0].to_string(), parts[1].to_string()];
+    stable.extend(parts.iter().skip(3).map(|part| part.to_string()));
+    stable.join("|")
 }
 
 #[cfg(target_os = "windows")]
@@ -412,9 +436,25 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             .trim()
             .to_string()
     };
+    let native_branch_family_signature = if !input.native_branch_family_signature.trim().is_empty() {
+        input.native_branch_family_signature.trim().to_string()
+    } else {
+        branch_family_signature_from_modal(&native_modal_chain_signature)
+    };
     let latest_branch = input.branch_history.last().cloned().unwrap_or_default();
     let latest_transition = normalize_text(&latest_branch.transition_kind);
+    let latest_branch_family_signature = if !latest_branch.topology_branch_family_signature.trim().is_empty() {
+        latest_branch.topology_branch_family_signature.trim().to_string()
+    } else {
+        String::new()
+    };
     let latest_occurrences = latest_branch.occurrences.max(1);
+    let branch_family_repeat_count = input.branch_family_repeat_count;
+    let branch_family_switch_count = input.branch_family_switch_count;
+    let branch_family_continuity = input.branch_family_continuity
+        || (!native_branch_family_signature.is_empty()
+            && !latest_branch_family_signature.is_empty()
+            && native_branch_family_signature == latest_branch_family_signature);
     let branch_cascade_count = input.branch_cascade_count;
     let branch_cascade_kind_count = input.branch_cascade_kind_count;
     let branch_cascade_signature = normalize_text(&input.branch_cascade_signature);
@@ -610,6 +650,51 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 rust_score -= 0.03;
             }
         }
+        if branch_family_continuity {
+            match latest_transition.as_str() {
+                "child_window" | "child_window_chain" | "dialog_shift" => {
+                    if selected_action == "press_dialog_button" {
+                        rust_score += if branch_family_repeat_count >= 2 { 0.12 } else { 0.08 };
+                        reasons.push(format!(
+                            "branch_family_dialog_continuity:{}",
+                            branch_family_repeat_count.max(1)
+                        ));
+                    } else if kind == "branch_action" {
+                        rust_score -= 0.03;
+                    }
+                }
+                "drilldown" | "pane_shift" => {
+                    if matches!(
+                        selected_action.as_str(),
+                        "select_sidebar_item" | "select_tab_page" | "select_list_item" | "select_tree_item" | "focus_input_field" | "open_dropdown"
+                    ) {
+                        rust_score += if branch_family_repeat_count >= 2 { 0.08 } else { 0.06 };
+                        reasons.push(format!(
+                            "branch_family_navigation_continuity:{}",
+                            branch_family_repeat_count.max(1)
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        } else if !native_branch_family_signature.is_empty()
+            && !latest_branch_family_signature.is_empty()
+            && native_branch_family_signature != latest_branch_family_signature
+        {
+            if kind == "branch_action" {
+                rust_score -= 0.04;
+                reasons.push("branch_family_switch_branch_action".to_string());
+            } else if matches!(latest_transition.as_str(), "child_window" | "child_window_chain" | "dialog_shift")
+                && selected_action != "press_dialog_button"
+            {
+                rust_score -= 0.03;
+                reasons.push("branch_family_switch_pressure".to_string());
+            }
+        }
+        if branch_family_switch_count >= 2 && kind == "branch_action" {
+            rust_score -= 0.03;
+            reasons.push(format!("branch_family_switch_count:{}", branch_family_switch_count));
+        }
 
         if latest_occurrences >= 2
             && !latest_branch.selected_action.is_empty()
@@ -637,7 +722,20 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push("same_process_child_window_bias".to_string());
         }
 
-        let router_hint = if (native_max_owner_chain_depth >= 2 || native_same_root_owner_dialog_like_count > 1)
+        let router_hint = if branch_family_continuity
+            && matches!(latest_transition.as_str(), "child_window" | "child_window_chain" | "dialog_shift")
+            && selected_action == "press_dialog_button"
+        {
+            "prefer_branch_family_dialog"
+        } else if branch_family_continuity
+            && matches!(latest_transition.as_str(), "drilldown" | "pane_shift")
+            && matches!(
+                selected_action.as_str(),
+                "select_sidebar_item" | "select_tab_page" | "select_list_item"
+            )
+        {
+            "prefer_branch_family_navigation"
+        } else if (native_max_owner_chain_depth >= 2 || native_same_root_owner_dialog_like_count > 1)
             && selected_action == "press_dialog_button"
         {
             "prefer_modal_chain_resolution"
@@ -714,6 +812,10 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "native_active_owner_chain_depth": native_active_owner_chain_depth,
         "native_max_owner_chain_depth": native_max_owner_chain_depth,
         "native_modal_chain_signature": native_modal_chain_signature,
+        "native_branch_family_signature": native_branch_family_signature,
+        "branch_family_repeat_count": branch_family_repeat_count,
+        "branch_family_switch_count": branch_family_switch_count,
+        "branch_family_continuity": branch_family_continuity,
         "topology": topology,
         "ranked_candidates": ranked_candidates,
     }))
@@ -950,5 +1052,83 @@ mod tests {
                 .and_then(Value::as_str),
             Some("5000|3|2|2")
         );
+    }
+
+    #[test]
+    fn route_surface_exploration_prefers_branch_family_dialog_continuity() {
+        let payload = json!({
+            "query": "OK",
+            "current_dialog_visible": true,
+            "native_owner_chain_visible": true,
+            "native_modal_chain_signature": "2410|2|2|Pair device|Confirm pairing",
+            "native_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+            "branch_family_repeat_count": 2,
+            "branch_family_switch_count": 0,
+            "branch_family_continuity": true,
+            "selection_rows": [
+                {
+                    "selection_key": "hypothesis|dialog_ok|press_dialog_button|ok",
+                    "kind": "hypothesis",
+                    "candidate_id": "dialog_ok",
+                    "label": "OK",
+                    "selected_action": "press_dialog_button",
+                    "confidence": 0.63
+                },
+                {
+                    "selection_key": "hypothesis|row_previous|select_list_item|previous_page",
+                    "kind": "hypothesis",
+                    "candidate_id": "row_previous",
+                    "label": "Previous page",
+                    "selected_action": "select_list_item",
+                    "confidence": 0.68
+                }
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": "child_window_chain",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_continue",
+                    "selected_candidate_label": "Continue",
+                    "window_title": "Add a device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Add a device"],
+                    "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                    "occurrences": 1
+                },
+                {
+                    "transition_kind": "dialog_shift",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_confirm",
+                    "selected_candidate_label": "Confirm",
+                    "window_title": "Pair device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                    "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                    "occurrences": 1
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("press_dialog_button")
+        );
+        assert_eq!(
+            result.get("router_hint").and_then(Value::as_str),
+            Some("prefer_branch_family_dialog")
+        );
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("branch_family_dialog_continuity:2")));
     }
 }

@@ -15914,6 +15914,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   explorationMission.topology_modal_chain_signature ??
                                                   ''
                                               ).trim();
+                                              const topologyBranchFamilySignature = String(
+                                                (surfaceTopology?.branch_family_signature as string | undefined) ??
+                                                  explorationMission.topology_branch_family_signature ??
+                                                  ''
+                                              ).trim();
+                                              const branchFamilySignature = String(
+                                                explorationMission.branch_family_signature ?? topologyBranchFamilySignature ?? ''
+                                              ).trim();
+                                              const branchFamilyRepeatCount = Number(
+                                                explorationMission.branch_family_repeat_count ?? 0
+                                              );
+                                              const branchFamilySwitchCount = Number(
+                                                explorationMission.branch_family_switch_count ?? 0
+                                              );
+                                              const branchFamilyContinuity = Boolean(
+                                                explorationMission.branch_family_continuity ?? false
+                                              );
                                               return (
                                                 <>
                                             <p>
@@ -15971,6 +15988,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {maxBranchCascadeSteps > 0 ? ` • limit ${maxBranchCascadeSteps}` : ''}
                                               </p>
                                             ) : null}
+                                            {branchFamilySignature ? (
+                                              <p>
+                                                family: {branchFamilySignature}
+                                                {branchFamilyRepeatCount > 0 ? ` • repeat ${branchFamilyRepeatCount}` : ''}
+                                                {branchFamilySwitchCount > 0 ? ` • switches ${branchFamilySwitchCount}` : ''}
+                                                {branchFamilyContinuity ? ' • continuity yes' : ''}
+                                              </p>
+                                            ) : null}
                                             {rustRouterHint || rustScore !== null || rustRank !== null ? (
                                               <p>
                                                 rust router: {rustRouterHint || 'ranked'}
@@ -15988,10 +16013,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             topologySameRootOwnerDialogLikeCount > 0 ||
                                             topologyActiveOwnerChainDepth > 0 ||
                                             topologyMaxOwnerChainDepth > 0 ||
-                                            Boolean(topologyModalChainSignature) ? (
+                                            Boolean(topologyModalChainSignature) ||
+                                            Boolean(topologyBranchFamilySignature) ? (
                                               <p>
                                                 topology: windows {topologyVisibleWindowCount}
                                                 {topologyModalChainSignature ? ` • modal ${topologyModalChainSignature}` : ''}
+                                                {topologyBranchFamilySignature ? ` • family ${topologyBranchFamilySignature}` : ''}
                                                 {topologySameRootOwnerDialogLikeCount > 0
                                                   ? ` • root-owner dialogs ${topologySameRootOwnerDialogLikeCount}`
                                                   : ''}

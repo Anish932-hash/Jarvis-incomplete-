@@ -99,6 +99,37 @@ class WindowManager:
         return f"{app_name}|{class_token or 'window'}|{size_token}|{title_fragment}"
 
     @classmethod
+    def _derive_branch_family_signature(
+        cls,
+        *,
+        modal_chain_signature: str = "",
+        root_owner_hwnd: int = 0,
+        app_name: str = "",
+        same_root_owner_titles: List[str] | None = None,
+        same_root_owner_dialog_titles: List[str] | None = None,
+        owner_chain_titles: List[str] | None = None,
+    ) -> str:
+        clean_modal_signature = str(modal_chain_signature or "").strip()
+        if clean_modal_signature:
+            parts = [str(part).strip() for part in clean_modal_signature.split("|")]
+            if len(parts) >= 2:
+                stable_parts = [parts[0], parts[1]]
+                title_parts = [part for part in parts[3:] if part]
+                if title_parts:
+                    return "|".join([*stable_parts, *title_parts[:4]])
+
+        title_source = (
+            [str(item).strip() for item in (same_root_owner_dialog_titles or []) if str(item).strip()]
+            or [str(item).strip() for item in (same_root_owner_titles or []) if str(item).strip()]
+            or [str(item).strip() for item in (owner_chain_titles or []) if str(item).strip()]
+        )
+        clean_root_owner = max(0, int(root_owner_hwnd or 0))
+        clean_app_name = cls._normalize_text(app_name).replace(" ", "_")
+        if not clean_root_owner and not clean_app_name and not title_source:
+            return ""
+        return "|".join([str(clean_root_owner), clean_app_name or "unknown", *title_source[:4]]).strip("|")
+
+    @classmethod
     def _infer_surface_hints(
         cls,
         *,
@@ -655,6 +686,14 @@ class WindowManager:
                 *same_root_owner_dialog_titles[:4],
             ]
         )
+        branch_family_signature = self._derive_branch_family_signature(
+            modal_chain_signature=modal_chain_signature,
+            root_owner_hwnd=candidate_root_owner_hwnd,
+            app_name=str(candidate.get("app_name", "") or "").strip(),
+            same_root_owner_titles=same_root_owner_titles,
+            same_root_owner_dialog_titles=same_root_owner_dialog_titles,
+            owner_chain_titles=owner_chain_titles,
+        )
         return {
             "status": "success",
             "backend": backend,
@@ -678,6 +717,7 @@ class WindowManager:
             "same_root_owner_titles": same_root_owner_titles[:6],
             "same_root_owner_dialog_titles": same_root_owner_dialog_titles[:6],
             "modal_chain_signature": modal_chain_signature,
+            "branch_family_signature": branch_family_signature,
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
 
@@ -827,6 +867,34 @@ class WindowManager:
                 str(len(query_matches)),
             ]
         )
+        modal_chain_signature = "|".join(
+            [
+                str(active_root_owner_hwnd or 0),
+                str(len(same_root_owner_dialog_windows)),
+                str(active_owner_chain_depth),
+                *[
+                    str(row.get("title", "") or "").strip()
+                    for row in same_root_owner_dialog_windows[:4]
+                    if str(row.get("title", "") or "").strip()
+                ],
+            ]
+        )
+        branch_family_signature = self._derive_branch_family_signature(
+            modal_chain_signature=modal_chain_signature,
+            root_owner_hwnd=active_root_owner_hwnd,
+            app_name=active_app_name,
+            same_root_owner_titles=[
+                str(row.get("title", "") or "").strip()
+                for row in same_root_owner_windows[:6]
+                if str(row.get("title", "") or "").strip()
+            ],
+            same_root_owner_dialog_titles=[
+                str(row.get("title", "") or "").strip()
+                for row in same_root_owner_dialog_windows[:6]
+                if str(row.get("title", "") or "").strip()
+            ],
+            owner_chain_titles=owner_chain_titles,
+        )
         payload = {
             "status": "success",
             "backend": topology_backend,
@@ -862,18 +930,8 @@ class WindowManager:
             "same_root_owner_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_windows[:6] if str(row.get("title", "") or "").strip()],
             "same_root_owner_dialog_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_dialog_windows[:6] if str(row.get("title", "") or "").strip()],
             "owner_chain_titles": owner_chain_titles[:8],
-            "modal_chain_signature": "|".join(
-                [
-                    str(active_root_owner_hwnd or 0),
-                    str(len(same_root_owner_dialog_windows)),
-                    str(active_owner_chain_depth),
-                    *[
-                        str(row.get("title", "") or "").strip()
-                        for row in same_root_owner_dialog_windows[:4]
-                        if str(row.get("title", "") or "").strip()
-                    ],
-                ]
-            ),
+            "modal_chain_signature": modal_chain_signature,
+            "branch_family_signature": branch_family_signature,
             "topology_signature": topology_signature,
         }
         if include_windows:
@@ -1060,6 +1118,22 @@ class WindowManager:
                 ]
             ),
         }
+        payload["branch_family_signature"] = self._derive_branch_family_signature(
+            modal_chain_signature=str(payload.get("modal_chain_signature", "") or "").strip(),
+            root_owner_hwnd=int(candidate.get("root_owner_hwnd", 0) or 0) if candidate else 0,
+            app_name=str(candidate.get("app_name", "") or "").strip() if candidate else "",
+            same_root_owner_titles=[
+                str(row.get("title", "") or "").strip()
+                for row in same_root_owner_windows[:6]
+                if str(row.get("title", "") or "").strip()
+            ],
+            same_root_owner_dialog_titles=[
+                str(row.get("title", "") or "").strip()
+                for row in same_root_owner_dialog_windows[:6]
+                if str(row.get("title", "") or "").strip()
+            ],
+            owner_chain_titles=owner_chain_titles,
+        )
         if include_candidates:
             payload["candidates"] = [dict(row) for row in candidates]
             payload["related_windows"] = [dict(row) for row in related_windows]

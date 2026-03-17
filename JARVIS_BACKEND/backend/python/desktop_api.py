@@ -7235,6 +7235,7 @@ class DesktopBackendService:
         max_strategy_attempts: Optional[int] = None,
         exploration_limit: Optional[int] = None,
         max_exploration_steps: Optional[int] = None,
+        max_branch_cascade_steps: Optional[int] = None,
         max_wizard_pages: Optional[int] = None,
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
@@ -7280,6 +7281,8 @@ class DesktopBackendService:
                 payload["exploration_limit"] = int(exploration_limit or 6)
             if max_exploration_steps is not None:
                 payload["max_exploration_steps"] = int(max_exploration_steps or 3)
+            if max_branch_cascade_steps is not None:
+                payload["max_branch_cascade_steps"] = int(max_branch_cascade_steps or 3)
             if max_wizard_pages is not None:
                 payload["max_wizard_pages"] = int(max_wizard_pages or 6)
             if allow_warning_pages is not None:
@@ -7330,6 +7333,7 @@ class DesktopBackendService:
         max_strategy_attempts: Optional[int] = None,
         exploration_limit: Optional[int] = None,
         max_exploration_steps: Optional[int] = None,
+        max_branch_cascade_steps: Optional[int] = None,
         max_wizard_pages: Optional[int] = None,
         allow_warning_pages: Optional[bool] = None,
         max_form_pages: Optional[int] = None,
@@ -7375,6 +7379,8 @@ class DesktopBackendService:
                 payload["exploration_limit"] = int(exploration_limit or 6)
             if max_exploration_steps is not None:
                 payload["max_exploration_steps"] = int(max_exploration_steps or 3)
+            if max_branch_cascade_steps is not None:
+                payload["max_branch_cascade_steps"] = int(max_branch_cascade_steps or 3)
             if max_wizard_pages is not None:
                 payload["max_wizard_pages"] = int(max_wizard_pages or 6)
             if allow_warning_pages is not None:
@@ -42916,6 +42922,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     "max_strategy_attempts": self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
                     "exploration_limit": self._parse_int(str(body.get("exploration_limit", 6)), 6, minimum=1, maximum=12) if "exploration_limit" in body else None,
                     "max_exploration_steps": self._parse_int(str(body.get("max_exploration_steps", 3)), 3, minimum=1, maximum=8) if "max_exploration_steps" in body else None,
+                    "max_branch_cascade_steps": self._parse_int(str(body.get("max_branch_cascade_steps", 3)), 3, minimum=1, maximum=8) if "max_branch_cascade_steps" in body else None,
                     "max_wizard_pages": self._parse_int(str(body.get("max_wizard_pages", 6)), 6, minimum=1, maximum=12) if "max_wizard_pages" in body else None,
                     "allow_warning_pages": bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
                     "max_form_pages": self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,

@@ -133,6 +133,7 @@ class DesktopMissionMemory:
                 "topology_active_owner_chain_depth": self._coerce_int(payload.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
                 "topology_max_owner_chain_depth": self._coerce_int(payload.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
                 "topology_modal_chain_signature": str(payload.get("topology_modal_chain_signature", "") or "").strip(),
+                "topology_branch_family_signature": str(payload.get("topology_branch_family_signature", "") or "").strip(),
                 "transition_kind": str(payload.get("transition_kind", "") or "").strip(),
                 "nested_surface_progressed": bool(payload.get("nested_surface_progressed", False)),
                 "child_window_adopted": bool(payload.get("child_window_adopted", False)),
@@ -164,6 +165,10 @@ class DesktopMissionMemory:
                     maximum=100_000,
                     default=0,
                 ),
+                "branch_family_signature": str(payload.get("branch_family_signature", "") or "").strip(),
+                "branch_family_repeat_count": self._coerce_int(payload.get("branch_family_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_family_switch_count": self._coerce_int(payload.get("branch_family_switch_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_family_continuity": bool(payload.get("branch_family_continuity", False)),
                 "surface_path_depth": self._coerce_int(
                     payload.get(
                         "surface_path_depth",
@@ -281,6 +286,8 @@ class DesktopMissionMemory:
                 "rust_router_hint",
                 "surface_topology_signature",
                 "topology_modal_chain_signature",
+                "topology_branch_family_signature",
+                "branch_family_signature",
             ):
                 if field_name in payload:
                     row[field_name] = str(payload.get(field_name, row.get(field_name, "")) or "").strip()
@@ -290,6 +297,7 @@ class DesktopMissionMemory:
                 "auto_continued",
                 "rust_loop_risk",
                 "topology_owner_chain_visible",
+                "branch_family_continuity",
             ):
                 if field_name in payload:
                     row[field_name] = bool(payload.get(field_name, row.get(field_name, False)))
@@ -310,6 +318,8 @@ class DesktopMissionMemory:
                 "branch_cascade_count",
                 "branch_cascade_kind_count",
                 "max_branch_cascade_steps",
+                "branch_family_repeat_count",
+                "branch_family_switch_count",
             ):
                 if field_name in payload:
                     row[field_name] = self._coerce_int(
@@ -702,6 +712,7 @@ class DesktopMissionMemory:
             "topology_active_owner_chain_depth": self._coerce_int(row.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
             "topology_max_owner_chain_depth": self._coerce_int(row.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
             "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": str(row.get("topology_branch_family_signature", "") or "").strip(),
             "transition_kind": str(row.get("transition_kind", "") or "").strip(),
             "nested_surface_progressed": bool(row.get("nested_surface_progressed", False)),
             "child_window_adopted": bool(row.get("child_window_adopted", False)),
@@ -710,6 +721,10 @@ class DesktopMissionMemory:
             "last_branch_kind": str(row.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": self._coerce_int(row.get("branch_transition_count", 0), minimum=0, maximum=100_000, default=0),
             "branch_repeat_count": self._coerce_int(row.get("branch_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_family_signature": str(row.get("branch_family_signature", "") or "").strip(),
+            "branch_family_repeat_count": self._coerce_int(row.get("branch_family_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_family_switch_count": self._coerce_int(row.get("branch_family_switch_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_family_continuity": bool(row.get("branch_family_continuity", False)),
             "surface_path_depth": self._coerce_int(row.get("surface_path_depth", 0), minimum=0, maximum=100_000, default=0),
             "nested_chain_count": self._coerce_int(row.get("nested_chain_count", 0), minimum=0, maximum=100_000, default=0),
             "child_window_chain_count": self._coerce_int(row.get("child_window_chain_count", 0), minimum=0, maximum=100_000, default=0),

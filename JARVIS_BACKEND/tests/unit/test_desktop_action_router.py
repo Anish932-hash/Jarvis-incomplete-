@@ -1243,6 +1243,225 @@ def test_desktop_action_router_advise_surface_exploration_forwards_branch_cascad
     assert "surface_exploration_router" in rust_calls
 
 
+def test_desktop_action_router_advise_surface_exploration_forwards_branch_family_context_to_rust(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    rust_calls: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": []},
+            "active_window": lambda _payload: {"status": "success", "window": {}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        rust_request_handler=lambda event, payload, _timeout_s: (
+            rust_calls.append(event)
+            or (
+                {
+                    "status": "success",
+                    "data": {
+                        "router_hint": "prefer_branch_family_dialog",
+                        "prefer_nested_branch": True,
+                        "loop_risk": False,
+                        "ranked_candidates": [
+                            {
+                                "selection_key": router._surface_exploration_selection_key(
+                                    kind="hypothesis",
+                                    candidate_id="dialog_ok",
+                                    selected_action="press_dialog_button",
+                                    label="OK",
+                                ),
+                                "rank": 1,
+                                "rust_score": 0.27,
+                                "router_hint": "prefer_branch_family_dialog",
+                                "reasons": ["branch_family_dialog_continuity:2"],
+                            }
+                        ],
+                    },
+                }
+                if event == "surface_exploration_router"
+                and payload.get("native_branch_family_signature") == "2410|2|Bluetooth & devices|Pair device"
+                and payload.get("branch_family_repeat_count") == 2
+                and payload.get("branch_family_switch_count") == 0
+                and payload.get("branch_family_continuity") is True
+                else {"status": "error", "message": "unexpected rust payload"}
+            )
+        ),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "dialog_resolution",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "hypothesis_count": 2,
+        "branch_action_count": 0,
+        "top_hypotheses": [
+            {
+                "candidate_id": "dialog_ok",
+                "label": "OK",
+                "suggested_action": "press_dialog_button",
+                "confidence": 0.72,
+                "reason": "OK resolves the active family dialog.",
+                "action_payload": {
+                    "action": "press_dialog_button",
+                    "app_name": "settings",
+                    "window_title": "Pair device",
+                    "query": "OK",
+                    "control_type": "Button",
+                    "element_id": "dialog_ok",
+                },
+            },
+            {
+                "candidate_id": "row_previous",
+                "label": "Previous page",
+                "suggested_action": "select_list_item",
+                "confidence": 0.75,
+                "reason": "Previous page is visible.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Pair device",
+                    "query": "Previous page",
+                    "control_type": "ListItem",
+                    "element_id": "row_previous",
+                },
+            },
+        ],
+        "branch_actions": [],
+        "surface_snapshot": {
+            "status": "success",
+            "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+            "target_window": {"hwnd": 2411, "title": "Pair device"},
+            "active_window": {"hwnd": 2411, "title": "Pair device"},
+            "candidate_windows": [{"hwnd": 2411, "title": "Pair device"}],
+            "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+            "safety_signals": {"dialog_visible": True},
+            "surface_flags": {"window_targeted": True, "dialog_visible": True},
+            "native_window_topology": {
+                "topology_signature": "settings|4|3|3",
+                "same_process_window_count": 4,
+                "related_window_count": 3,
+                "owner_link_count": 3,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "active_owner_chain_depth": 2,
+                "max_owner_chain_depth": 2,
+                "modal_chain_signature": "2410|2|2|Pair device|Confirm pairing",
+                "branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                "child_dialog_like_visible": True,
+            },
+            "window_reacquisition": {
+                "candidate": {"hwnd": 2411, "title": "Pair device", "match_score": 0.85},
+                "same_process_window_count": 4,
+                "related_window_count": 3,
+                "owner_link_count": 3,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "modal_chain_signature": "2410|2|2|Pair device|Confirm pairing",
+                "branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                "child_dialog_like_visible": True,
+            },
+            "observation": {"screen_hash": "pair_device_branch_family"},
+        },
+        "filters": {"app_name": "settings", "window_title": "Pair device", "query": "Bluetooth"},
+        "message": "A stable modal family is active in Bluetooth settings.",
+    }
+
+    payload = router.advise(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "window_title": "Pair device",
+            "query": "Bluetooth",
+            "branch_history": [
+                {
+                    "transition_kind": "child_window_chain",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_continue",
+                    "selected_candidate_label": "Continue",
+                    "window_title": "Add a device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Add a device"],
+                    "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                },
+                {
+                    "transition_kind": "dialog_shift",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_confirm",
+                    "selected_candidate_label": "Confirm",
+                    "window_title": "Pair device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                    "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                },
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["exploration_selection"]["selected_action"] == "press_dialog_button"
+    assert payload["exploration_selection"]["candidate_id"] == "dialog_ok"
+    assert payload["exploration_selection"]["rust_router_hint"] == "prefer_branch_family_dialog"
+    assert "surface_exploration_router" in rust_calls
+
+
+def test_desktop_action_router_branch_history_merge_keeps_latest_repeated_branch_last(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    router = DesktopActionRouter(
+        action_handlers={},
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+
+    merged = router._merge_surface_exploration_branch_history(  # noqa: SLF001
+        existing=[
+            {
+                "transition_kind": "child_window_chain",
+                "selected_action": "press_dialog_button",
+                "selected_candidate_id": "dialog_continue",
+                "selected_candidate_label": "Continue",
+                "window_title": "Add a device",
+                "surface_path_tail": ["Devices", "Bluetooth", "Add a device"],
+                "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                "occurrences": 1,
+            },
+            {
+                "transition_kind": "dialog_shift",
+                "selected_action": "press_dialog_button",
+                "selected_candidate_id": "dialog_confirm",
+                "selected_candidate_label": "Confirm",
+                "window_title": "Pair device",
+                "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+                "occurrences": 1,
+            },
+        ],
+        new_entry={
+            "transition_kind": "child_window_chain",
+            "selected_action": "press_dialog_button",
+            "selected_candidate_id": "dialog_continue",
+            "selected_candidate_label": "Continue",
+            "window_title": "Add a device",
+            "surface_path_tail": ["Devices", "Bluetooth", "Add a device"],
+            "topology_branch_family_signature": "2410|2|Bluetooth & devices|Pair device",
+        },
+    )
+
+    assert len(merged) == 2
+    assert merged[-1]["transition_kind"] == "child_window_chain"
+    assert merged[-1]["occurrences"] == 2
+    assert merged[-1]["topology_branch_family_signature"] == "2410|2|Bluetooth & devices|Pair device"
+
+
 def test_desktop_action_router_execute_surface_exploration_persists_followup_mission(tmp_path: Path) -> None:
     registry = _build_registry(
         tmp_path,
