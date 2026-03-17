@@ -11683,11 +11683,37 @@ class DesktopActionRouter:
             and str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
             and branch_family_signature == str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
         )
+        child_chain_signature = str(
+            branch_history[-1].get("topology_child_chain_signature", "")
+            if branch_history
+            else runtime_topology_summary.get("topology_child_chain_signature", "")
+            or ""
+        ).strip()
+        descendant_chain_repeat_count = self._surface_exploration_child_chain_repeat_count(
+            branch_history=branch_history,
+            current_signature=child_chain_signature,
+        )
+        descendant_chain_continuity = bool(
+            child_chain_signature
+            and str(runtime_topology_summary.get("topology_child_chain_signature", "") or "").strip()
+            and child_chain_signature
+            == str(runtime_topology_summary.get("topology_child_chain_signature", "") or "").strip()
+            and int(runtime_topology_summary.get("topology_descendant_chain_depth", 0) or 0) > 0
+        )
         stable_branch_family_continuation = bool(
             branch_family_continuity
             and branch_family_switch_count == 0
             and branch_family_repeat_count > 0
             and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
+        )
+        stable_descendant_chain_continuation = bool(
+            descendant_chain_continuity
+            and descendant_chain_repeat_count > 0
+            and int(runtime_topology_summary.get("topology_descendant_chain_depth", 0) or 0) > 0
+            and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
+        )
+        stable_nested_chain_continuation = bool(
+            stable_branch_family_continuation or stable_descendant_chain_continuation
         )
         child_window_chain_count = self._surface_exploration_branch_kind_count(
             branch_history=branch_history,
@@ -11716,7 +11742,7 @@ class DesktopActionRouter:
         if (
             stop_reason_code == "exploration_nested_branch_available"
             and branch_repeat_count >= 2
-            and not stable_branch_family_continuation
+            and not stable_nested_chain_continuation
         ):
             stop_reason_code = "exploration_nested_branch_loop_guard"
             stop_reason = (
@@ -11742,6 +11768,20 @@ class DesktopActionRouter:
             "automation_ready": followup_ready,
             "manual_attention_required": followup_manual,
             "step_index": step_index,
+            "max_descendant_chain_steps": max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "max_descendant_chain_steps",
+                            args.get("max_nested_branch_steps", 3),
+                        )
+                        or args.get("max_nested_branch_steps", 3)
+                        or 3
+                    ),
+                    8,
+                ),
+            ),
             "attempted_target_count": len(attempted_targets),
             "alternative_target_count": alternative_target_count,
             "alternative_hypothesis_count": alternative_hypothesis_count,
@@ -11760,6 +11800,8 @@ class DesktopActionRouter:
             "branch_family_repeat_count": branch_family_repeat_count,
             "branch_family_switch_count": branch_family_switch_count,
             "branch_family_continuity": branch_family_continuity,
+            "descendant_chain_repeat_count": descendant_chain_repeat_count,
+            "descendant_chain_continuity": descendant_chain_continuity,
             "surface_path_depth": surface_path_depth,
             "nested_chain_count": nested_chain_count,
             "child_window_chain_count": child_window_chain_count,
@@ -11819,6 +11861,8 @@ class DesktopActionRouter:
             "branch_family_repeat_count": branch_family_repeat_count,
             "branch_family_switch_count": branch_family_switch_count,
             "branch_family_continuity": branch_family_continuity,
+            "descendant_chain_repeat_count": descendant_chain_repeat_count,
+            "descendant_chain_continuity": descendant_chain_continuity,
             "surface_path_depth": surface_path_depth,
             "nested_chain_count": nested_chain_count,
             "child_window_chain_count": child_window_chain_count,
@@ -11840,6 +11884,20 @@ class DesktopActionRouter:
                 alternative_target_count=alternative_target_count,
                 alternative_hypothesis_count=alternative_hypothesis_count,
                 alternative_branch_action_count=alternative_branch_action_count,
+                max_descendant_chain_steps=max(
+                    1,
+                    min(
+                        int(
+                            args.get(
+                                "max_descendant_chain_steps",
+                                args.get("max_nested_branch_steps", 3),
+                            )
+                            or args.get("max_nested_branch_steps", 3)
+                            or 3
+                        ),
+                        8,
+                    ),
+                ),
             )
             resume_args = dict(args)
             resume_args["attempted_targets"] = [dict(row) for row in attempted_targets]
@@ -11852,6 +11910,8 @@ class DesktopActionRouter:
             resume_args["branch_family_repeat_count"] = branch_family_repeat_count
             resume_args["branch_family_switch_count"] = branch_family_switch_count
             resume_args["branch_family_continuity"] = branch_family_continuity
+            resume_args["descendant_chain_repeat_count"] = descendant_chain_repeat_count
+            resume_args["descendant_chain_continuity"] = descendant_chain_continuity
             resume_args["surface_path_depth"] = surface_path_depth
             resume_args["nested_chain_count"] = nested_chain_count
             resume_args["child_window_chain_count"] = child_window_chain_count
@@ -11879,6 +11939,7 @@ class DesktopActionRouter:
                 "requested_target_count": 1,
                 "resolved_target_count": 1 if nested_status in {"success", "partial"} else 0,
                 "remaining_target_count": alternative_target_count,
+                "max_descendant_chain_steps": int(exploration_mission.get("max_descendant_chain_steps", 0) or 0),
                 "surface_mode": str(exploration_mission.get("surface_mode", "") or "").strip(),
                 "exploration_query": str(args.get("query", "") or "").strip(),
                 "hypothesis_count": followup_hypothesis_count,
@@ -11900,6 +11961,8 @@ class DesktopActionRouter:
                 "branch_family_repeat_count": branch_family_repeat_count,
                 "branch_family_switch_count": branch_family_switch_count,
                 "branch_family_continuity": branch_family_continuity,
+                "descendant_chain_repeat_count": descendant_chain_repeat_count,
+                "descendant_chain_continuity": descendant_chain_continuity,
                 "surface_path_depth": surface_path_depth,
                 "nested_chain_count": nested_chain_count,
                 "child_window_chain_count": child_window_chain_count,
@@ -11976,6 +12039,8 @@ class DesktopActionRouter:
                 "branch_family_repeat_count": branch_family_repeat_count,
                 "branch_family_switch_count": branch_family_switch_count,
                 "branch_family_continuity": branch_family_continuity,
+                "descendant_chain_repeat_count": descendant_chain_repeat_count,
+                "descendant_chain_continuity": descendant_chain_continuity,
                 "surface_path_depth": surface_path_depth,
                 "nested_chain_count": nested_chain_count,
                 "child_window_chain_count": child_window_chain_count,
@@ -12037,6 +12102,20 @@ class DesktopActionRouter:
     ) -> Dict[str, Any]:
         max_exploration_steps = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
         max_nested_branch_steps = max(1, min(int(args.get("max_nested_branch_steps", 3) or 3), 8))
+        max_descendant_chain_steps = max(
+            1,
+            min(
+                int(
+                    args.get(
+                        "max_descendant_chain_steps",
+                        args.get("max_nested_branch_steps", 3),
+                    )
+                    or args.get("max_nested_branch_steps", 3)
+                    or 3
+                ),
+                8,
+            ),
+        )
         max_branch_cascade_steps = max(
             1,
             min(
@@ -12326,6 +12405,7 @@ class DesktopActionRouter:
             current_args["branch_cascade_signature"] = str(
                 latest_runtime.get("branch_cascade_signature", current_args.get("branch_cascade_signature", "")) or ""
             ).strip()
+            current_args["max_descendant_chain_steps"] = max_descendant_chain_steps
             current_args["max_branch_family_switches"] = max_branch_family_switches
             if bool(step_mission.get("completed", False)):
                 completed = True
@@ -12337,6 +12417,18 @@ class DesktopActionRouter:
             branch_family_switch_count = max(0, int(latest_runtime.get("branch_family_switch_count", 0) or 0))
             branch_family_continuity = bool(latest_runtime.get("branch_family_continuity", False))
             branch_family_signature = str(latest_runtime.get("branch_family_signature", "") or "").strip()
+            descendant_chain_repeat_count = max(
+                0,
+                int(latest_runtime.get("descendant_chain_repeat_count", 0) or 0),
+            )
+            descendant_chain_continuity = bool(latest_runtime.get("descendant_chain_continuity", False))
+            topology_descendant_chain_depth = max(
+                0,
+                int(latest_runtime.get("topology_descendant_chain_depth", 0) or 0),
+            )
+            topology_child_chain_signature = str(
+                latest_runtime.get("topology_child_chain_signature", "") or ""
+            ).strip()
             stable_branch_family_continuation = bool(
                 branch_family_continuity
                 and branch_family_switch_count == 0
@@ -12351,6 +12443,23 @@ class DesktopActionRouter:
                 ).strip()
                 in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
             )
+            stable_descendant_chain_continuation = bool(
+                descendant_chain_continuity
+                and descendant_chain_repeat_count > 0
+                and topology_descendant_chain_depth > 0
+                and str(latest_selected_action or "").strip()
+                and str(
+                    latest_runtime.get(
+                        "last_branch_kind",
+                        latest_runtime.get("transition_kind", ""),
+                    )
+                    or ""
+                ).strip()
+                in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
+            )
+            stable_nested_chain_continuation = bool(
+                stable_branch_family_continuation or stable_descendant_chain_continuation
+            )
             nested_chain_count = max(0, int(latest_runtime.get("nested_chain_count", 0) or 0))
             child_window_chain_count = max(0, int(latest_runtime.get("child_window_chain_count", 0) or 0))
             dialog_cascade_count = max(0, int(latest_runtime.get("dialog_cascade_count", 0) or 0))
@@ -12359,6 +12468,11 @@ class DesktopActionRouter:
             branch_cascade_count = max(0, int(latest_runtime.get("branch_cascade_count", 0) or 0))
             branch_cascade_kind_count = max(0, int(latest_runtime.get("branch_cascade_kind_count", 0) or 0))
             branch_cascade_signature = str(latest_runtime.get("branch_cascade_signature", "") or "").strip()
+            descendant_chain_pause_ready = bool(
+                topology_descendant_chain_depth > 0
+                and descendant_chain_repeat_count >= max_descendant_chain_steps
+                and str(latest_selected_action or "").strip()
+            )
             branch_family_switch_pause_ready = bool(
                 branch_family_switch_count > 0
                 and branch_family_switch_count >= max_branch_family_switches
@@ -12389,6 +12503,16 @@ class DesktopActionRouter:
                 )
                 message = stop_reason
                 break
+            if step_stop_reason_code == "exploration_no_progress" and descendant_chain_pause_ready:
+                stop_reason_code = "exploration_descendant_chain_limit_reached"
+                stop_reason = (
+                    f"JARVIS paused at the configured descendant-chain limit of {max_descendant_chain_steps} "
+                    f"after continuing through {descendant_chain_repeat_count} stable descendant child-chain step"
+                    f"{'' if descendant_chain_repeat_count == 1 else 's'}"
+                    f"{f' ({topology_child_chain_signature})' if topology_child_chain_signature else ''}."
+                )
+                message = stop_reason
+                break
             if step_stop_reason_code == "exploration_no_progress" and branch_cascade_pause_ready:
                 stop_reason_code = "exploration_branch_cascade_limit_reached"
                 stop_reason = (
@@ -12416,7 +12540,16 @@ class DesktopActionRouter:
                     )
                     message = stop_reason
                     break
-                if branch_cascade_pause_ready and not stable_branch_family_continuation:
+                if descendant_chain_pause_ready:
+                    stop_reason_code = "exploration_descendant_chain_limit_reached"
+                    stop_reason = (
+                        f"JARVIS advanced through {descendant_chain_repeat_count} stable descendant child-chain step"
+                        f"{'' if descendant_chain_repeat_count == 1 else 's'}"
+                        f"{f' ({topology_child_chain_signature})' if topology_child_chain_signature else ''} and paused at the configured descendant-chain limit of {max_descendant_chain_steps}."
+                    )
+                    message = stop_reason
+                    break
+                if branch_cascade_pause_ready and not stable_nested_chain_continuation:
                     stop_reason_code = "exploration_branch_cascade_limit_reached"
                     stop_reason = (
                         f"JARVIS advanced through {branch_cascade_count} branch-cascade step"
@@ -12428,7 +12561,7 @@ class DesktopActionRouter:
                 if (
                     step_stop_reason_code == "exploration_nested_branch_available"
                     and nested_chain_count >= max_nested_branch_steps
-                    and not stable_branch_family_continuation
+                    and not stable_nested_chain_continuation
                 ):
                     stop_reason_code = "exploration_nested_chain_limit_reached"
                     stop_reason = (
@@ -12664,6 +12797,7 @@ class DesktopActionRouter:
                 alternative_target_count=int(latest_runtime.get("alternative_target_count", 0) or 0),
                 alternative_hypothesis_count=int(latest_runtime.get("alternative_hypothesis_count", 0) or 0),
                 alternative_branch_action_count=int(latest_runtime.get("alternative_branch_action_count", 0) or 0),
+                max_descendant_chain_steps=max_descendant_chain_steps,
             )
         if isinstance(blocking_surface, dict) and blocking_surface:
             blocking_surface["stop_reason_code"] = stop_reason_code
@@ -12683,7 +12817,7 @@ class DesktopActionRouter:
             if isinstance(row, dict)
         )
         pause_payload = {
-            "status": "partial" if stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_branch_cascade_limit_reached"} and executed_recon_step else "blocked",
+            "status": "partial" if stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_descendant_chain_limit_reached", "exploration_branch_cascade_limit_reached"} and executed_recon_step else "blocked",
             "message": message,
             "stop_reason_code": stop_reason_code,
             "stop_reason": stop_reason,
@@ -12761,12 +12895,20 @@ class DesktopActionRouter:
             "topology_same_root_owner_dialog_like_count": int(latest_runtime.get("topology_same_root_owner_dialog_like_count", 0) or 0),
             "topology_active_owner_chain_depth": int(latest_runtime.get("topology_active_owner_chain_depth", 0) or 0),
             "topology_max_owner_chain_depth": int(latest_runtime.get("topology_max_owner_chain_depth", 0) or 0),
+            "topology_direct_child_window_count": int(latest_runtime.get("topology_direct_child_window_count", 0) or 0),
+            "topology_direct_child_dialog_like_count": int(latest_runtime.get("topology_direct_child_dialog_like_count", 0) or 0),
+            "topology_descendant_chain_depth": int(latest_runtime.get("topology_descendant_chain_depth", 0) or 0),
+            "topology_descendant_dialog_chain_depth": int(latest_runtime.get("topology_descendant_dialog_chain_depth", 0) or 0),
+            "topology_descendant_query_match_count": int(latest_runtime.get("topology_descendant_query_match_count", 0) or 0),
             "topology_modal_chain_signature": str(latest_runtime.get("topology_modal_chain_signature", "") or "").strip(),
             "topology_branch_family_signature": str(latest_runtime.get("topology_branch_family_signature", "") or "").strip(),
+            "topology_child_chain_signature": str(latest_runtime.get("topology_child_chain_signature", "") or "").strip(),
             "branch_family_signature": str(latest_runtime.get("branch_family_signature", "") or "").strip(),
             "branch_family_repeat_count": int(latest_runtime.get("branch_family_repeat_count", 0) or 0),
             "branch_family_switch_count": int(latest_runtime.get("branch_family_switch_count", 0) or 0),
             "branch_family_continuity": bool(latest_runtime.get("branch_family_continuity", False)),
+            "descendant_chain_repeat_count": int(latest_runtime.get("descendant_chain_repeat_count", 0) or 0),
+            "descendant_chain_continuity": bool(latest_runtime.get("descendant_chain_continuity", False)),
             "final_page": {
                 "window_title": str(
                     pause_snapshot.get("surface_snapshot", {}).get("target_window", {}).get("title", "")
@@ -12781,6 +12923,7 @@ class DesktopActionRouter:
             "steps_completed": sum(1 for row in step_history if bool(row.get("progressed", False))),
             "max_steps": max_exploration_steps,
             "max_nested_branch_steps": max_nested_branch_steps,
+            "max_descendant_chain_steps": max_descendant_chain_steps,
             "max_branch_cascade_steps": max_branch_cascade_steps,
             "max_branch_family_switches": max_branch_family_switches,
             "auto_continued": len(step_history) > 1,
@@ -12817,7 +12960,7 @@ class DesktopActionRouter:
                 },
             ],
         }
-        pause_status = "partial" if executed_recon_step and stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_branch_cascade_limit_reached", "exploration_branch_family_switch_limit_reached"} else "blocked"
+        pause_status = "partial" if executed_recon_step and stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_descendant_chain_limit_reached", "exploration_branch_cascade_limit_reached", "exploration_branch_family_switch_limit_reached"} else "blocked"
         exploration_mission = {
             "enabled": True,
             "completed": False,
@@ -12825,6 +12968,7 @@ class DesktopActionRouter:
             "steps_completed": sum(1 for row in step_history if bool(row.get("progressed", False))),
             "max_steps": max_exploration_steps,
             "max_nested_branch_steps": max_nested_branch_steps,
+            "max_descendant_chain_steps": max_descendant_chain_steps,
             "max_branch_cascade_steps": max_branch_cascade_steps,
             "max_branch_family_switches": max_branch_family_switches,
             "auto_continued": len(step_history) > 1,
@@ -12863,6 +13007,8 @@ class DesktopActionRouter:
             "branch_family_repeat_count": int(pause_payload.get("branch_family_repeat_count", 0) or 0),
             "branch_family_switch_count": int(pause_payload.get("branch_family_switch_count", 0) or 0),
             "branch_family_continuity": bool(pause_payload.get("branch_family_continuity", False)),
+            "descendant_chain_repeat_count": int(pause_payload.get("descendant_chain_repeat_count", 0) or 0),
+            "descendant_chain_continuity": bool(pause_payload.get("descendant_chain_continuity", False)),
             "surface_path_depth": int(pause_payload.get("surface_path_depth", 0) or 0),
             "nested_chain_count": int(pause_payload.get("nested_chain_count", 0) or 0),
             "child_window_chain_count": int(pause_payload.get("child_window_chain_count", 0) or 0),
@@ -12898,8 +13044,14 @@ class DesktopActionRouter:
             "topology_same_root_owner_dialog_like_count": int(pause_payload.get("topology_same_root_owner_dialog_like_count", 0) or 0),
             "topology_active_owner_chain_depth": int(pause_payload.get("topology_active_owner_chain_depth", 0) or 0),
             "topology_max_owner_chain_depth": int(pause_payload.get("topology_max_owner_chain_depth", 0) or 0),
+            "topology_direct_child_window_count": int(pause_payload.get("topology_direct_child_window_count", 0) or 0),
+            "topology_direct_child_dialog_like_count": int(pause_payload.get("topology_direct_child_dialog_like_count", 0) or 0),
+            "topology_descendant_chain_depth": int(pause_payload.get("topology_descendant_chain_depth", 0) or 0),
+            "topology_descendant_dialog_chain_depth": int(pause_payload.get("topology_descendant_dialog_chain_depth", 0) or 0),
+            "topology_descendant_query_match_count": int(pause_payload.get("topology_descendant_query_match_count", 0) or 0),
             "topology_modal_chain_signature": str(pause_payload.get("topology_modal_chain_signature", "") or "").strip(),
             "topology_branch_family_signature": str(pause_payload.get("topology_branch_family_signature", "") or "").strip(),
+            "topology_child_chain_signature": str(pause_payload.get("topology_child_chain_signature", "") or "").strip(),
             "automation_ready": bool(pause_snapshot.get("automation_ready", False)) if isinstance(pause_snapshot, dict) else False,
             "manual_attention_required": bool(pause_snapshot.get("manual_attention_required", False)) if isinstance(pause_snapshot, dict) else False,
             "next_actions": self._dedupe_strings(

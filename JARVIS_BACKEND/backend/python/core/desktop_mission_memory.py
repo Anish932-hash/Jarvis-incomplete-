@@ -115,6 +115,7 @@ class DesktopMissionMemory:
                 "step_count": self._coerce_int(payload.get("step_count", payload.get("page_count", 0)), minimum=0, maximum=100_000, default=0),
                 "steps_completed": self._coerce_int(payload.get("steps_completed", payload.get("pages_completed", 0)), minimum=0, maximum=100_000, default=0),
                 "max_steps": self._coerce_int(payload.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+                "max_descendant_chain_steps": self._coerce_int(payload.get("max_descendant_chain_steps", 0), minimum=0, maximum=100_000, default=0),
                 "max_branch_cascade_steps": self._coerce_int(payload.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
                 "max_branch_family_switches": self._coerce_int(payload.get("max_branch_family_switches", 0), minimum=0, maximum=100_000, default=0),
                 "auto_continued": bool(payload.get("auto_continued", False)),
@@ -133,8 +134,14 @@ class DesktopMissionMemory:
                 "topology_same_root_owner_dialog_like_count": self._coerce_int(payload.get("topology_same_root_owner_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
                 "topology_active_owner_chain_depth": self._coerce_int(payload.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
                 "topology_max_owner_chain_depth": self._coerce_int(payload.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+                "topology_direct_child_window_count": self._coerce_int(payload.get("topology_direct_child_window_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_direct_child_dialog_like_count": self._coerce_int(payload.get("topology_direct_child_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_descendant_chain_depth": self._coerce_int(payload.get("topology_descendant_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+                "topology_descendant_dialog_chain_depth": self._coerce_int(payload.get("topology_descendant_dialog_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+                "topology_descendant_query_match_count": self._coerce_int(payload.get("topology_descendant_query_match_count", 0), minimum=0, maximum=100_000, default=0),
                 "topology_modal_chain_signature": str(payload.get("topology_modal_chain_signature", "") or "").strip(),
                 "topology_branch_family_signature": str(payload.get("topology_branch_family_signature", "") or "").strip(),
+                "topology_child_chain_signature": str(payload.get("topology_child_chain_signature", "") or "").strip(),
                 "transition_kind": str(payload.get("transition_kind", "") or "").strip(),
                 "nested_surface_progressed": bool(payload.get("nested_surface_progressed", False)),
                 "child_window_adopted": bool(payload.get("child_window_adopted", False)),
@@ -170,6 +177,8 @@ class DesktopMissionMemory:
                 "branch_family_repeat_count": self._coerce_int(payload.get("branch_family_repeat_count", 0), minimum=0, maximum=100_000, default=0),
                 "branch_family_switch_count": self._coerce_int(payload.get("branch_family_switch_count", 0), minimum=0, maximum=100_000, default=0),
                 "branch_family_continuity": bool(payload.get("branch_family_continuity", False)),
+                "descendant_chain_repeat_count": self._coerce_int(payload.get("descendant_chain_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+                "descendant_chain_continuity": bool(payload.get("descendant_chain_continuity", False)),
                 "surface_path_depth": self._coerce_int(
                     payload.get(
                         "surface_path_depth",
@@ -697,6 +706,7 @@ class DesktopMissionMemory:
             "step_count": self._coerce_int(row.get("step_count", 0), minimum=0, maximum=100_000, default=0),
             "steps_completed": self._coerce_int(row.get("steps_completed", 0), minimum=0, maximum=100_000, default=0),
             "max_steps": self._coerce_int(row.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+            "max_descendant_chain_steps": self._coerce_int(row.get("max_descendant_chain_steps", 0), minimum=0, maximum=100_000, default=0),
             "max_branch_cascade_steps": self._coerce_int(row.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
             "max_branch_family_switches": self._coerce_int(row.get("max_branch_family_switches", 0), minimum=0, maximum=100_000, default=0),
             "auto_continued": bool(row.get("auto_continued", False)),
@@ -715,8 +725,14 @@ class DesktopMissionMemory:
             "topology_same_root_owner_dialog_like_count": self._coerce_int(row.get("topology_same_root_owner_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
             "topology_active_owner_chain_depth": self._coerce_int(row.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
             "topology_max_owner_chain_depth": self._coerce_int(row.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+            "topology_direct_child_window_count": self._coerce_int(row.get("topology_direct_child_window_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_direct_child_dialog_like_count": self._coerce_int(row.get("topology_direct_child_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_descendant_chain_depth": self._coerce_int(row.get("topology_descendant_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+            "topology_descendant_dialog_chain_depth": self._coerce_int(row.get("topology_descendant_dialog_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+            "topology_descendant_query_match_count": self._coerce_int(row.get("topology_descendant_query_match_count", 0), minimum=0, maximum=100_000, default=0),
             "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
             "topology_branch_family_signature": str(row.get("topology_branch_family_signature", "") or "").strip(),
+            "topology_child_chain_signature": str(row.get("topology_child_chain_signature", "") or "").strip(),
             "transition_kind": str(row.get("transition_kind", "") or "").strip(),
             "nested_surface_progressed": bool(row.get("nested_surface_progressed", False)),
             "child_window_adopted": bool(row.get("child_window_adopted", False)),
@@ -729,6 +745,8 @@ class DesktopMissionMemory:
             "branch_family_repeat_count": self._coerce_int(row.get("branch_family_repeat_count", 0), minimum=0, maximum=100_000, default=0),
             "branch_family_switch_count": self._coerce_int(row.get("branch_family_switch_count", 0), minimum=0, maximum=100_000, default=0),
             "branch_family_continuity": bool(row.get("branch_family_continuity", False)),
+            "descendant_chain_repeat_count": self._coerce_int(row.get("descendant_chain_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+            "descendant_chain_continuity": bool(row.get("descendant_chain_continuity", False)),
             "surface_path_depth": self._coerce_int(row.get("surface_path_depth", 0), minimum=0, maximum=100_000, default=0),
             "nested_chain_count": self._coerce_int(row.get("nested_chain_count", 0), minimum=0, maximum=100_000, default=0),
             "child_window_chain_count": self._coerce_int(row.get("child_window_chain_count", 0), minimum=0, maximum=100_000, default=0),
@@ -829,6 +847,7 @@ class DesktopMissionMemory:
             "exploration_step_limit_reached",
             "exploration_nested_branch_limit_reached",
             "exploration_nested_chain_limit_reached",
+            "exploration_descendant_chain_limit_reached",
             "exploration_branch_cascade_limit_reached",
             "exploration_branch_family_switch_limit_reached",
         }:
@@ -846,12 +865,16 @@ class DesktopMissionMemory:
                             "JARVIS paused at the configured recon step limit after advancing into a deeper nested branch."
                             if stop_reason_code == "exploration_nested_branch_limit_reached"
                             else (
-                                "JARVIS paused after a deeper nested window chain and is ready to continue in another bounded wave."
-                                if stop_reason_code == "exploration_nested_chain_limit_reached"
-                                else (
-                                    "JARVIS paused after a deeper branch cascade and is ready to continue that unsupported-app recovery path."
-                                    if stop_reason_code == "exploration_branch_cascade_limit_reached"
-                                    else "JARVIS paused after switching across sibling branch families and is ready to continue from the latest stable anchor."
+                            "JARVIS paused after a deeper nested window chain and is ready to continue in another bounded wave."
+                            if stop_reason_code == "exploration_nested_chain_limit_reached"
+                            else (
+                                    "JARVIS paused after a stable descendant child-window chain and is ready to continue that deeper modal path."
+                                    if stop_reason_code == "exploration_descendant_chain_limit_reached"
+                                    else (
+                                        "JARVIS paused after a deeper branch cascade and is ready to continue that unsupported-app recovery path."
+                                        if stop_reason_code == "exploration_branch_cascade_limit_reached"
+                                        else "JARVIS paused after switching across sibling branch families and is ready to continue from the latest stable anchor."
+                                    )
                                 )
                             )
                         )
@@ -864,6 +887,7 @@ class DesktopMissionMemory:
                 "exploration_step_limit_reached": 86,
                 "exploration_nested_branch_limit_reached": 87,
                 "exploration_nested_chain_limit_reached": 90,
+                "exploration_descendant_chain_limit_reached": 93,
                 "exploration_branch_cascade_limit_reached": 91,
                 "exploration_branch_family_switch_limit_reached": 92,
             }.get(stop_reason_code, 86)
