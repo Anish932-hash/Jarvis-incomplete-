@@ -29,11 +29,13 @@ def _build_router(
     action_handlers: Dict[str, Any],
     *,
     rust_request_handler: Any | None = None,
+    benchmark_guidance_provider: Any | None = None,
 ) -> DesktopActionRouter:
     return DesktopActionRouter(
         action_handlers=action_handlers,
         workflow_memory=_isolated_workflow_memory(),
         rust_request_handler=rust_request_handler,
+        benchmark_guidance_provider=benchmark_guidance_provider,
         settle_delay_s=0.0,
     )
 
@@ -444,6 +446,94 @@ def test_desktop_action_router_surface_exploration_adds_preferred_descendant_ado
     assert payload["branch_actions"][0]["action_payload"]["window_title"] == "Pair device"
     assert payload["branch_actions"][0]["action_payload"]["hwnd"] == 5002
     assert "deeper child surface" in payload["branch_actions"][0]["reason"].lower()
+
+
+def test_desktop_action_router_branch_scoring_uses_benchmark_dialog_pressure() -> None:
+    router = _build_router(
+        {},
+        benchmark_guidance_provider=lambda: {
+            "status": "success",
+            "benchmark_ready": True,
+            "weakest_pack": "unsupported_and_recovery",
+            "weakest_capability": "surface_exploration",
+            "focus_summary": ["unsupported_and_recovery", "surface_exploration"],
+            "control_biases": {
+                "dialog_resolution": 0.95,
+                "descendant_focus": 0.25,
+                "navigation_branch": 0.1,
+                "recovery_reacquire": 0.35,
+                "loop_guard": 0.1,
+                "native_focus": 0.2,
+            },
+        },
+    )
+    branch_context = {
+        "active": True,
+        "current_window_title": "Confirm setup",
+        "current_surface_path": [],
+        "current_reacquired_title": "",
+        "current_reacquired_hwnd": 0,
+        "native_same_process_window_count": 0,
+        "native_related_window_count": 0,
+        "native_owner_link_count": 0,
+        "native_owner_chain_visible": False,
+        "native_same_root_owner_window_count": 0,
+        "native_same_root_owner_dialog_like_count": 0,
+        "native_direct_child_window_count": 0,
+        "native_direct_child_dialog_like_count": 0,
+        "native_active_owner_chain_depth": 0,
+        "native_max_owner_chain_depth": 0,
+        "native_descendant_chain_depth": 0,
+        "native_descendant_dialog_chain_depth": 0,
+        "native_descendant_query_match_count": 0,
+        "native_descendant_chain_titles": [],
+        "preferred_descendant_title": "",
+        "preferred_descendant_hwnd": 0,
+        "native_child_dialog_like_visible": False,
+        "native_modal_chain_signature": "",
+        "native_child_chain_signature": "",
+        "native_branch_family_signature": "",
+        "latest_branch_occurrences": 0,
+        "latest_branch_family_signature": "",
+        "branch_family_repeat_count": 0,
+        "branch_family_switch_count": 0,
+        "branch_family_continuity": False,
+        "branch_cascade_count": 0,
+        "branch_cascade_kind_count": 0,
+        "branch_cascade_signature": "",
+        "benchmark_dialog_pressure": 0.95,
+        "benchmark_descendant_focus_pressure": 0.25,
+        "benchmark_navigation_pressure": 0.1,
+        "benchmark_reacquire_pressure": 0.35,
+        "benchmark_loop_guard_pressure": 0.1,
+        "benchmark_native_focus_pressure": 0.2,
+        "recent_selection_keys": set(),
+    }
+    dialog_row = {
+        "kind": "branch_action",
+        "selected_action": "press_dialog_button",
+        "candidate_id": "",
+        "label": "Continue",
+        "action_payload": {},
+    }
+    navigation_row = {
+        "kind": "hypothesis",
+        "selected_action": "select_sidebar_item",
+        "candidate_id": "settings_sidebar",
+        "label": "Settings",
+        "action_payload": {},
+    }
+
+    dialog_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=dialog_row,
+        branch_context=branch_context,
+    )
+    navigation_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=navigation_row,
+        branch_context=branch_context,
+    )
+
+    assert dialog_score > navigation_score
 
 
 def test_desktop_action_router_select_surface_exploration_target_prefers_preferred_descendant_adoption() -> None:

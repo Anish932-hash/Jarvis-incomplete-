@@ -62,7 +62,9 @@ import {
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
   type DesktopEvaluationCatalogResponse,
+  type DesktopEvaluationGuidanceResponse,
   type DesktopEvaluationHistoryResponse,
+  type DesktopEvaluationLabResponse,
   type DesktopEvaluationRunResponse,
   type DesktopExplorationMission,
   type DesktopInteractInput,
@@ -158,7 +160,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Activity, BrainCircuit, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, Sparkles, TerminalSquare, Trash2, Workflow } from 'lucide-react';
+import { Activity, BrainCircuit, CalendarClock, Database, FileSearch, Loader2, RefreshCw, ShieldAlert, Sparkles, Target, TerminalSquare, Trash2, Workflow } from 'lucide-react';
 import { ARG_TEMPLATES, QUICK_ACTIONS } from './action-templates';
 import { validateActionArgs } from './action-arg-validation';
 import VoiceContinuousLifecyclePanel from './voice-continuous-lifecycle-panel';
@@ -1153,9 +1155,15 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationRunResponse | null>(null);
   const [desktopEvaluationHistoryState, setDesktopEvaluationHistoryState] =
     useState<DesktopEvaluationHistoryResponse | null>(null);
+  const [desktopEvaluationGuidanceState, setDesktopEvaluationGuidanceState] =
+    useState<DesktopEvaluationGuidanceResponse | null>(null);
+  const [desktopEvaluationLabState, setDesktopEvaluationLabState] =
+    useState<DesktopEvaluationLabResponse | null>(null);
   const [desktopEvaluationCatalogBusy, setDesktopEvaluationCatalogBusy] = useState(false);
   const [desktopEvaluationRunBusy, setDesktopEvaluationRunBusy] = useState(false);
   const [desktopEvaluationHistoryBusy, setDesktopEvaluationHistoryBusy] = useState(false);
+  const [desktopEvaluationGuidanceBusy, setDesktopEvaluationGuidanceBusy] = useState(false);
+  const [desktopEvaluationLabBusy, setDesktopEvaluationLabBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
   const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
   const [desktopEvaluationCapabilityFilter, setDesktopEvaluationCapabilityFilter] = useState('');
@@ -1876,9 +1884,40 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         : [],
     [desktopEvaluationHistoryState]
   );
+  const desktopEvaluationGuidance = useMemo(
+    () => asObjectRecord(desktopEvaluationGuidanceState),
+    [desktopEvaluationGuidanceState]
+  );
+  const desktopEvaluationLab = useMemo(
+    () => asObjectRecord(desktopEvaluationLabState),
+    [desktopEvaluationLabState]
+  );
   const desktopEvaluationImprovementCandidates = useMemo(
     () => asObjectRecord(desktopEvaluationRunSummary.improvement_candidates),
     [desktopEvaluationRunSummary]
+  );
+  const desktopEvaluationGuidanceBiases = useMemo(
+    () => asObjectRecord(desktopEvaluationGuidance.control_biases),
+    [desktopEvaluationGuidance]
+  );
+  const desktopEvaluationLabCoverage = useMemo(
+    () => asObjectRecord(desktopEvaluationLab.coverage),
+    [desktopEvaluationLab]
+  );
+  const desktopEvaluationLabTrend = useMemo(
+    () => asObjectRecord(desktopEvaluationLab.history_trend),
+    [desktopEvaluationLab]
+  );
+  const desktopEvaluationInstalledAppCoverage = useMemo(
+    () => asObjectRecord(desktopEvaluationLab.installed_app_coverage),
+    [desktopEvaluationLab]
+  );
+  const desktopEvaluationReplayCandidates = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLab.replay_candidates)
+        ? desktopEvaluationLab.replay_candidates.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopEvaluationLab]
   );
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
@@ -13196,6 +13235,69 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [toast]
   );
 
+  const refreshDesktopEvaluationGuidance = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationGuidanceBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationGuidance();
+        setDesktopEvaluationGuidanceState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Benchmark Guidance Ready',
+            description:
+              `${String(payload.weakest_pack ?? 'general')} • ${String(payload.weakest_capability ?? 'control')}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Benchmark Guidance Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationGuidanceBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const refreshDesktopEvaluationLab = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationLabBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationLab({
+          ...buildDesktopEvaluationQueryInput(),
+          history_limit: 8,
+        });
+        setDesktopEvaluationLabState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Benchmark Lab Ready',
+            description:
+              `${String(asObjectRecord(payload.history_trend).direction ?? 'stable')} • replay:${Array.isArray(payload.replay_candidates) ? payload.replay_candidates.length : 0}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Benchmark Lab Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationLabBusy(false);
+      }
+    },
+    [buildDesktopEvaluationQueryInput, toast]
+  );
+
   const runDesktopEvaluationBenchmarks = useCallback(async () => {
     setDesktopEvaluationRunBusy(true);
     try {
@@ -13203,6 +13305,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       setDesktopEvaluationRunState(payload);
       await refreshDesktopEvaluationCatalog({ quiet: true });
       await refreshDesktopEvaluationHistory({ quiet: true });
+      await refreshDesktopEvaluationGuidance({ quiet: true });
+      await refreshDesktopEvaluationLab({ quiet: true });
       const summary = asObjectRecord(payload.summary);
       const candidates = asObjectRecord(summary.improvement_candidates);
       const weakestPacks = Array.isArray(candidates.packs)
@@ -13226,7 +13330,61 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopEvaluationRunBusy(false);
     }
-  }, [buildDesktopEvaluationQueryInput, refreshDesktopEvaluationCatalog, refreshDesktopEvaluationHistory, toast]);
+  }, [
+    buildDesktopEvaluationQueryInput,
+    refreshDesktopEvaluationCatalog,
+    refreshDesktopEvaluationGuidance,
+    refreshDesktopEvaluationHistory,
+    refreshDesktopEvaluationLab,
+    toast,
+  ]);
+
+  const replayDesktopEvaluationCandidate = useCallback(
+    async (candidate: Record<string, unknown>) => {
+      const replayQuery = asObjectRecord(candidate.replay_query);
+      if (!replayQuery.scenario_name) {
+        toast({
+          variant: 'destructive',
+          title: 'Replay Unavailable',
+          description: 'This benchmark candidate does not include a replay query yet.',
+        });
+        return null;
+      }
+      setDesktopEvaluationRunBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationRun({
+          scenario_name: String(replayQuery.scenario_name ?? ''),
+          pack: String(replayQuery.pack ?? '') || undefined,
+          category: String(replayQuery.category ?? '') || undefined,
+          capability: String(replayQuery.capability ?? '') || undefined,
+          risk_level: String(replayQuery.risk_level ?? '') || undefined,
+          autonomy_tier: String(replayQuery.autonomy_tier ?? '') || undefined,
+          mission_family: String(replayQuery.mission_family ?? '') || undefined,
+          app_name: String(replayQuery.app ?? replayQuery.app_name ?? '') || undefined,
+          limit: Number(replayQuery.limit ?? 1) || 1,
+        });
+        setDesktopEvaluationRunState(payload);
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationGuidance({ quiet: true });
+        await refreshDesktopEvaluationLab({ quiet: true });
+        toast({
+          title: 'Benchmark Replay Ran',
+          description: `${String(candidate.scenario ?? replayQuery.scenario_name ?? 'scenario')} replayed through the evaluation runner.`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Benchmark Replay Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationRunBusy(false);
+      }
+    },
+    [refreshDesktopEvaluationGuidance, refreshDesktopEvaluationHistory, refreshDesktopEvaluationLab, toast]
+  );
 
   const previewSelectedDesktopMissionResume = useCallback(async () => {
     const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
@@ -13394,10 +13552,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopRecoveryDaemonStatus({ quiet: true });
     void refreshDesktopEvaluationCatalog({ quiet: true });
     void refreshDesktopEvaluationHistory({ quiet: true });
+    void refreshDesktopEvaluationGuidance({ quiet: true });
+    void refreshDesktopEvaluationLab({ quiet: true });
   }, [
     open,
     refreshDesktopEvaluationCatalog,
+    refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
+    refreshDesktopEvaluationLab,
     refreshDesktopMissions,
     refreshDesktopRecoveryDaemonStatus,
   ]);
@@ -17175,6 +17337,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             history:{Number(desktopEvaluationHistoryState.count ?? 0)}
                                           </Badge>
                                         ) : null}
+                                        {desktopEvaluationLabState ? (
+                                          <Badge variant="outline">
+                                            lab:{String(desktopEvaluationLabTrend.direction ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
+                                        {desktopEvaluationGuidanceState ? (
+                                          <Badge variant="outline">
+                                            guidance:{String(desktopEvaluationGuidance.weakest_capability ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                     </div>
                                     <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
@@ -17192,6 +17364,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           <option value="communication_and_productivity">communication_and_productivity</option>
                                           <option value="unsupported_and_recovery">unsupported_and_recovery</option>
                                           <option value="installer_and_governance">installer_and_governance</option>
+                                          <option value="long_horizon_and_replay">long_horizon_and_replay</option>
                                         </select>
                                       </div>
                                       <div className="space-y-1">
@@ -17290,6 +17463,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         type="button"
                                         variant="outline"
                                         className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationLab()}
+                                        disabled={desktopEvaluationLabBusy}
+                                      >
+                                        {desktopEvaluationLabBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <BrainCircuit className="h-4 w-4" />
+                                        )}
+                                        Refresh Lab
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
                                         onClick={() => void refreshDesktopEvaluationCatalog()}
                                         disabled={desktopEvaluationCatalogBusy}
                                       >
@@ -17326,6 +17513,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           <Workflow className="h-4 w-4" />
                                         )}
                                         Refresh History
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationGuidance()}
+                                        disabled={desktopEvaluationGuidanceBusy}
+                                      >
+                                        {desktopEvaluationGuidanceBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Target className="h-4 w-4" />
+                                        )}
+                                        Refresh Guidance
                                       </Button>
                                     </div>
                                     <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1.15fr_1fr]">
@@ -17456,6 +17657,132 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             </div>
                                           ) : (
                                             <p className="mt-2">Run the benchmark packs to surface the weakest Windows coworker areas automatically.</p>
+                                          )}
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/80">Control Guidance</p>
+                                            {desktopEvaluationGuidanceState ? (
+                                              <Badge variant="secondary">
+                                                {String(desktopEvaluationGuidance.status ?? 'success')}
+                                              </Badge>
+                                            ) : (
+                                              <Badge variant="outline">idle</Badge>
+                                            )}
+                                          </div>
+                                          {Object.keys(desktopEvaluationGuidance).length > 0 ? (
+                                            <div className="mt-2 space-y-1">
+                                              <p>
+                                                weakest pack: {String(desktopEvaluationGuidance.weakest_pack ?? 'n/a')}
+                                                {' • '}capability: {String(desktopEvaluationGuidance.weakest_capability ?? 'n/a')}
+                                              </p>
+                                              <p>
+                                                mission: {String(desktopEvaluationGuidance.weakest_mission_family ?? 'n/a')}
+                                                {' • '}ready:{String(Boolean(desktopEvaluationGuidance.benchmark_ready))}
+                                              </p>
+                                              {Array.isArray(desktopEvaluationGuidance.focus_summary) &&
+                                              desktopEvaluationGuidance.focus_summary.length > 0 ? (
+                                                <p>
+                                                  focus: {desktopEvaluationGuidance.focus_summary.slice(0, 4).join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                                {Object.entries(desktopEvaluationGuidanceBiases)
+                                                  .slice(0, 6)
+                                                  .map(([label, value]) => (
+                                                    <Badge key={`desktop-eval-guidance-${label}`} variant="outline">
+                                                      {label}:{Number(value ?? 0).toFixed(2)}
+                                                    </Badge>
+                                                  ))}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <p className="mt-2">
+                                              Load benchmark guidance to steer dialog, descendant, navigation, and reacquire upgrades from measured gaps.
+                                            </p>
+                                          )}
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/80">Benchmark Lab</p>
+                                            {desktopEvaluationLabState ? (
+                                              <Badge variant="secondary">
+                                                {String(desktopEvaluationLabTrend.direction ?? 'ready')}
+                                              </Badge>
+                                            ) : (
+                                              <Badge variant="outline">idle</Badge>
+                                            )}
+                                          </div>
+                                          {Object.keys(desktopEvaluationLab).length > 0 ? (
+                                            <div className="mt-2 space-y-2">
+                                              <p>
+                                                replayable:{String(asObjectRecord(desktopEvaluationLabCoverage.replayable).count ?? 0)}
+                                                {' • '}long horizon:{String(asObjectRecord(desktopEvaluationLabCoverage.long_horizon).count ?? 0)}
+                                                {' • '}trend Δ:{Number(desktopEvaluationLabTrend.weighted_score_delta ?? 0).toFixed(2)}
+                                              </p>
+                                              <p>
+                                                regressions:{String(desktopEvaluationLabTrend.regression_run_count ?? 0)}
+                                                {' • '}installed covered:{String(desktopEvaluationInstalledAppCoverage.benchmarked_installed_app_count ?? 0)}
+                                                /{String(desktopEvaluationInstalledAppCoverage.installed_profile_count ?? 0)}
+                                              </p>
+                                              {Object.keys(asObjectRecord(desktopEvaluationInstalledAppCoverage.missing_category_counts)).length > 0 ? (
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  {Object.entries(asObjectRecord(desktopEvaluationInstalledAppCoverage.missing_category_counts))
+                                                    .slice(0, 4)
+                                                    .map(([label, value]) => (
+                                                      <Badge key={`desktop-eval-missing-category-${label}`} variant="outline">
+                                                        {label}:{String(value)}
+                                                      </Badge>
+                                                    ))}
+                                                </div>
+                                              ) : null}
+                                              <div className="rounded border border-primary/10 bg-black/10 p-2">
+                                                <p className="font-semibold uppercase tracking-wider text-primary/70">Replay Queue</p>
+                                                {desktopEvaluationReplayCandidates.length > 0 ? (
+                                                  <ScrollArea className="mt-2 h-[126px]">
+                                                    <div className="space-y-2">
+                                                      {desktopEvaluationReplayCandidates.slice(0, 4).map((candidate, index) => (
+                                                        <div
+                                                          key={`desktop-eval-replay-${String(candidate.scenario ?? index)}`}
+                                                          className="rounded border border-primary/10 bg-background/30 p-2"
+                                                        >
+                                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <p className="text-[11px] text-primary/90">
+                                                              {String(candidate.scenario ?? 'scenario')}
+                                                            </p>
+                                                            <Button
+                                                              type="button"
+                                                              variant="outline"
+                                                              className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                              onClick={() => void replayDesktopEvaluationCandidate(candidate)}
+                                                              disabled={desktopEvaluationRunBusy}
+                                                            >
+                                                              Replay
+                                                            </Button>
+                                                          </div>
+                                                          <p className="mt-1">
+                                                            score:{Number(candidate.score ?? 0).toFixed(2)}
+                                                            {' • '}horizon:{String(candidate.horizon_steps ?? 1)}
+                                                            {' • '}pack:{String(candidate.pack ?? 'n/a')}
+                                                          </p>
+                                                          {Array.isArray(candidate.reasons) && candidate.reasons.length > 0 ? (
+                                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                                              {candidate.reasons.slice(0, 3).join(' • ')}
+                                                            </p>
+                                                          ) : null}
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </ScrollArea>
+                                                ) : (
+                                                  <p className="mt-2">Run benchmark packs to build a replay queue from weak or regressed scenarios.</p>
+                                                )}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <p className="mt-2">
+                                              Load the benchmark lab to inspect replayable scenarios, long-horizon depth, installed-app coverage gaps, and trend drift.
+                                            </p>
                                           )}
                                         </div>
                                         <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">

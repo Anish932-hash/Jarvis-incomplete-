@@ -23,6 +23,8 @@ class Scenario:
     apps: List[str] = field(default_factory=list)
     recovery_expected: bool = False
     native_hybrid_focus: bool = False
+    replayable: bool = True
+    horizon_steps: int = 1
     tags: List[str] = field(default_factory=list)
 
 
@@ -114,6 +116,7 @@ def default_scenarios() -> List[Scenario]:
             apps=["settings"],
             recovery_expected=True,
             native_hybrid_focus=True,
+            horizon_steps=3,
             tags=["settings", "multi_control", "apply"],
         ),
         Scenario(
@@ -235,6 +238,7 @@ def default_scenarios() -> List[Scenario]:
             apps=["settings"],
             recovery_expected=True,
             native_hybrid_focus=True,
+            horizon_steps=5,
             tags=["exploration", "child_window", "dialog_chain"],
         ),
         Scenario(
@@ -252,6 +256,7 @@ def default_scenarios() -> List[Scenario]:
             apps=["installer"],
             recovery_expected=True,
             native_hybrid_focus=True,
+            horizon_steps=4,
             tags=["installer", "recovery"],
         ),
         Scenario(
@@ -269,7 +274,78 @@ def default_scenarios() -> List[Scenario]:
             apps=["installer"],
             recovery_expected=True,
             native_hybrid_focus=True,
+            horizon_steps=5,
             tags=["installer", "resume", "approval"],
+        ),
+        Scenario(
+            "vscode_long_horizon_debug_loop",
+            "Open vscode, run npm test in the terminal, inspect failures, and reopen the failing file with quick open",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="editor_workflow",
+            capabilities=["editor", "terminal", "quick_open", "desktop_workflow", "command_execution"],
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["vscode"],
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=6,
+            tags=["editor", "long_horizon", "terminal", "replayable"],
+        ),
+        Scenario(
+            "explorer_long_horizon_organize_flow",
+            "Open explorer, create a releases folder, rename the selected file to report-final.txt, and move it into the new folder",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="file_manager",
+            capabilities=["file_manager", "creation", "rename", "desktop_workflow"],
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["explorer"],
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+            tags=["file_manager", "long_horizon", "replayable"],
+        ),
+        Scenario(
+            "outlook_long_horizon_followup_flow",
+            "Open outlook, create a calendar follow-up event, then reply all to the selected thread with the meeting details",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="communication",
+            capabilities=["calendar", "mail", "desktop_workflow"],
+            risk_level="guarded",
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="guardrailed",
+            apps=["outlook"],
+            replayable=True,
+            horizon_steps=6,
+            tags=["communication", "long_horizon", "replayable"],
+        ),
+        Scenario(
+            "settings_long_horizon_privacy_review",
+            "Open settings, navigate to camera privacy controls, review the current permission state, and apply the requested change",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="settings",
+            capabilities=["settings_control", "form_mission", "recovery", "desktop_workflow"],
+            risk_level="guarded",
+            pack="long_horizon_and_replay",
+            mission_family="form",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=6,
+            tags=["settings", "long_horizon", "replayable", "review"],
         ),
         Scenario(
             "security_status",
@@ -355,6 +431,7 @@ def default_scenarios() -> List[Scenario]:
 def scenario_catalog(
     *,
     scenarios: List[Scenario] | None = None,
+    scenario_name: str = "",
     pack: str = "",
     category: str = "",
     capability: str = "",
@@ -365,6 +442,7 @@ def scenario_catalog(
     limit: int = 200,
 ) -> List[Scenario]:
     rows = list(scenarios or default_scenarios())
+    clean_scenario_name = " ".join(str(scenario_name or "").strip().lower().split())
     clean_pack = " ".join(str(pack or "").strip().lower().split())
     clean_category = " ".join(str(category or "").strip().lower().split())
     clean_capability = " ".join(str(capability or "").strip().lower().split())
@@ -372,6 +450,8 @@ def scenario_catalog(
     clean_autonomy = " ".join(str(autonomy_tier or "").strip().lower().split())
     clean_mission = " ".join(str(mission_family or "").strip().lower().split())
     clean_app = " ".join(str(app or "").strip().lower().split())
+    if clean_scenario_name:
+        rows = [row for row in rows if " ".join(str(row.name or "").strip().lower().split()) == clean_scenario_name]
     if clean_pack:
         rows = [row for row in rows if " ".join(str(row.pack or "").strip().lower().split()) == clean_pack]
     if clean_category:

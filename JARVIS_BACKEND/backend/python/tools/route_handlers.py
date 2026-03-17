@@ -249,6 +249,11 @@ def _reacquire_window(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     limit = _to_int(payload.get("limit", 80), 80)
     include_candidates = _to_bool(payload.get("include_candidates", True), True)
+    benchmark_guidance = (
+        dict(payload.get("benchmark_guidance", {}))
+        if isinstance(payload.get("benchmark_guidance", {}), dict)
+        else {}
+    )
     hwnd_raw = payload.get("hwnd")
     pid_raw = payload.get("pid")
     parent_hwnd_raw = payload.get("parent_hwnd")
@@ -262,6 +267,7 @@ def _reacquire_window(payload: Dict[str, Any]) -> Dict[str, Any]:
         pid=None if pid_raw in {None, ""} else _to_int(pid_raw, 0),
         parent_hwnd=None if parent_hwnd_raw in {None, ""} else _to_int(parent_hwnd_raw, 0),
         parent_pid=None if parent_pid_raw in {None, ""} else _to_int(parent_pid_raw, 0),
+        benchmark_guidance=benchmark_guidance,
         include_candidates=include_candidates,
         limit=limit,
     )

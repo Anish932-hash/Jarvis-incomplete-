@@ -615,11 +615,24 @@ class WindowManager:
         pid: int = 0,
         parent_hwnd: int = 0,
         parent_pid: int = 0,
+        benchmark_guidance: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         if not isinstance(window, dict):
             return {"score": 0.0, "reasons": []}
         score = 0.0
         reasons: List[str] = []
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        benchmark_biases = (
+            dict(guidance_payload.get("control_biases", {}))
+            if isinstance(guidance_payload.get("control_biases", {}), dict)
+            else {}
+        )
+        dialog_pressure = max(0.0, min(float(benchmark_biases.get("dialog_resolution", 0.0) or 0.0), 1.0))
+        descendant_pressure = max(0.0, min(float(benchmark_biases.get("descendant_focus", 0.0) or 0.0), 1.0))
+        reacquire_pressure = max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0))
+        native_focus_pressure = max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0))
+        dialog_cluster_pressure = max(dialog_pressure, reacquire_pressure)
+        descendant_cluster_pressure = max(descendant_pressure, native_focus_pressure)
         candidate_hwnd = int(window.get("hwnd", 0) or 0)
         candidate_owner_hwnd = int(window.get("owner_hwnd", 0) or 0)
         candidate_root_owner_hwnd = int(window.get("root_owner_hwnd", candidate_hwnd or 0) or candidate_hwnd or 0)
@@ -644,15 +657,27 @@ class WindowManager:
         if root_owner_hwnd and candidate_root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
             score += 0.68
             reasons.append("same_root_owner_hwnd")
+            if dialog_cluster_pressure > 0.0:
+                score += 0.18 * dialog_cluster_pressure
+                reasons.append("benchmark_same_root_owner_pressure")
         if hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
             score += 1.05
             reasons.append("owned_by_hwnd")
+            if dialog_cluster_pressure > 0.0:
+                score += 0.24 * dialog_cluster_pressure
+                reasons.append("benchmark_owned_child_pressure")
         elif owner_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(owner_hwnd):
             score += 0.95
             reasons.append("owned_by_owner_hwnd")
+            if dialog_cluster_pressure > 0.0:
+                score += 0.2 * dialog_cluster_pressure
+                reasons.append("benchmark_owned_chain_pressure")
         elif parent_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(parent_hwnd):
             score += 0.82
             reasons.append("owned_by_parent_hwnd")
+            if dialog_cluster_pressure > 0.0:
+                score += 0.18 * dialog_cluster_pressure
+                reasons.append("benchmark_parent_owned_pressure")
         if parent_pid and candidate_pid and candidate_pid == int(parent_pid):
             score += 0.7
             reasons.append("same_parent_pid")
@@ -691,18 +716,33 @@ class WindowManager:
             if hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
                 score += 1.25
                 reasons.append("query_owned_child")
+                if dialog_cluster_pressure > 0.0:
+                    score += 0.22 * dialog_cluster_pressure
+                    reasons.append("benchmark_query_owned_child")
             elif root_owner_hwnd and candidate_root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
                 score += 0.72
                 reasons.append("query_same_root_owner")
+                if dialog_cluster_pressure > 0.0:
+                    score += 0.15 * dialog_cluster_pressure
+                    reasons.append("benchmark_query_root_owner")
             elif parent_hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(parent_hwnd):
                 score += 1.05
                 reasons.append("query_parent_owned_child")
+                if dialog_cluster_pressure > 0.0:
+                    score += 0.18 * dialog_cluster_pressure
+                    reasons.append("benchmark_query_parent_child")
             elif pid and candidate_pid and candidate_pid == int(pid):
                 score += 0.55
                 reasons.append("query_same_pid_exact")
         if candidate_owner_chain_depth > owner_chain_depth and candidate_root_owner_hwnd and root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
             score += min(0.22, 0.08 * max(1, candidate_owner_chain_depth - owner_chain_depth))
             reasons.append("deeper_owner_chain")
+            if descendant_cluster_pressure > 0.0:
+                score += min(
+                    0.22,
+                    0.12 * descendant_cluster_pressure * max(1, candidate_owner_chain_depth - owner_chain_depth),
+                )
+                reasons.append("benchmark_deeper_owner_chain")
 
         if bool(window.get("is_foreground", False)):
             score += 0.08
@@ -713,6 +753,12 @@ class WindowManager:
             if query_score > 0 or title_score > 0 or parent_pid:
                 score += 0.05
                 reasons.append("dialog_related")
+            if dialog_cluster_pressure > 0.0:
+                score += 0.18 * dialog_cluster_pressure
+                reasons.append("benchmark_dialog_related")
+        if descendant_cluster_pressure > 0.0 and candidate_owner_chain_depth > 0:
+            score += min(0.14, 0.04 * candidate_owner_chain_depth * descendant_cluster_pressure)
+            reasons.append("benchmark_native_descendant_pressure")
         return {
             "score": round(score, 4),
             "reasons": reasons,
@@ -726,6 +772,7 @@ class WindowManager:
         app_name: str = "",
         window_title: str = "",
         query: str = "",
+        benchmark_guidance: Dict[str, Any] | None = None,
     ) -> List[Dict[str, Any]]:
         seed = dict(seed_window) if isinstance(seed_window, dict) else {}
         seed_pid = int(seed.get("pid", 0) or 0)
@@ -748,6 +795,7 @@ class WindowManager:
                 hwnd=seed_hwnd,
                 parent_pid=seed_pid,
                 parent_hwnd=seed_hwnd,
+                benchmark_guidance=benchmark_guidance,
             )
             relation_score = float(relation.get("score", 0.0) or 0.0)
             if relation_score <= 0:
@@ -873,9 +921,14 @@ class WindowManager:
         self,
         *,
         query: str = "",
+        app_name: str = "",
         window_title: str = "",
+        window_signature: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
+        parent_hwnd: int | None = None,
+        parent_pid: int | None = None,
+        benchmark_guidance: Dict[str, Any] | None = None,
         limit: int = 80,
     ) -> Dict[str, Any] | None:
         if self._native_runtime is None:
@@ -908,12 +961,112 @@ class WindowManager:
         if not any(int(row.get("hwnd", 0) or 0) == int(candidate.get("hwnd", 0) or 0) for row in candidates):
             candidates.insert(0, candidate)
         candidates = self._enrich_owner_chain_metrics(candidates)
+        initial_child_chain_trace = self._native_trace_related_window_chain(
+            query=query,
+            window_title=window_title,
+            hwnd=int(candidate.get("hwnd", 0) or 0),
+            pid=int(candidate.get("pid", 0) or 0),
+            limit=limit,
+        ) or {}
+        initial_preferred_descendant = (
+            dict(initial_child_chain_trace.get("preferred_descendant", {}))
+            if isinstance(initial_child_chain_trace.get("preferred_descendant", {}), dict)
+            else {}
+        )
+        preferred_descendant_hwnd = int(initial_preferred_descendant.get("hwnd", 0) or 0)
+        preferred_descendant_title = str(initial_preferred_descendant.get("title", "") or "").strip()
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        benchmark_biases = (
+            dict(guidance_payload.get("control_biases", {}))
+            if isinstance(guidance_payload.get("control_biases", {}), dict)
+            else {}
+        )
+        descendant_focus_pressure = max(
+            0.0,
+            min(float(benchmark_biases.get("descendant_focus", 0.0) or 0.0), 1.0),
+        )
+        dialog_resolution_pressure = max(
+            0.0,
+            min(float(benchmark_biases.get("dialog_resolution", 0.0) or 0.0), 1.0),
+        )
+        native_focus_pressure = max(
+            0.0,
+            min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0),
+        )
+        descendant_rerank_pressure = max(
+            descendant_focus_pressure,
+            dialog_resolution_pressure,
+            native_focus_pressure,
+        )
+        anchor_window = next(
+            (
+                dict(row)
+                for row in candidates
+                if hwnd and int(row.get("hwnd", 0) or 0) == int(hwnd or 0)
+            ),
+            dict(candidate),
+        )
+        anchor_owner_hwnd = int(anchor_window.get("owner_hwnd", 0) or 0)
+        anchor_root_owner_hwnd = int(anchor_window.get("root_owner_hwnd", hwnd or 0) or hwnd or 0)
+        anchor_owner_chain_depth = max(0, int(anchor_window.get("owner_chain_depth", 0) or 0))
+        reranked: List[tuple[float, Dict[str, Any]]] = []
+        for row in candidates:
+            relation = self._window_relation_score(
+                window=row,
+                query=query,
+                app_name=app_name or str(candidate.get("app_name", "") or "").strip(),
+                window_title=window_title,
+                window_signature=window_signature,
+                hwnd=int(hwnd or 0),
+                owner_hwnd=anchor_owner_hwnd,
+                root_owner_hwnd=anchor_root_owner_hwnd,
+                owner_chain_depth=anchor_owner_chain_depth,
+                pid=int(pid or 0),
+                parent_hwnd=int(parent_hwnd or 0),
+                parent_pid=int(parent_pid or 0),
+                benchmark_guidance=benchmark_guidance,
+            )
+            relation_score = float(relation.get("score", 0.0) or 0.0)
+            native_match_score = float(row.get("match_score", 0.0) or row.get("native_match_score", 0.0) or 0.0)
+            enriched = dict(row)
+            relation_reasons = list(relation.get("reasons", []))
+            if descendant_rerank_pressure > 0.0:
+                row_hwnd = int(row.get("hwnd", 0) or 0)
+                row_title = str(row.get("title", "") or "").strip()
+                if preferred_descendant_hwnd and row_hwnd and row_hwnd == preferred_descendant_hwnd:
+                    relation_score += 0.95 * descendant_rerank_pressure
+                    relation_reasons.append("benchmark_preferred_descendant_focus")
+                elif (
+                    preferred_descendant_title
+                    and row_title
+                    and self._text_match_score(row_title, preferred_descendant_title) >= 0.95
+                ):
+                    relation_score += 0.62 * descendant_rerank_pressure
+                    relation_reasons.append("benchmark_preferred_descendant_title")
+            if native_match_score > 0.0:
+                enriched["native_match_score"] = round(native_match_score, 4)
+            enriched["match_score"] = round(relation_score, 4)
+            enriched["match_reasons"] = relation_reasons
+            reranked.append((relation_score, enriched))
+        reranked.sort(
+            key=lambda item: (
+                -item[0],
+                -float(item[1].get("native_match_score", 0.0) or 0.0),
+                not bool(item[1].get("is_foreground", False)),
+                -int(item[1].get("area", 0) or 0),
+                str(item[1].get("title", "") or "").lower(),
+            )
+        )
+        candidates = [row for _score, row in reranked[:8]]
+        if candidates:
+            candidate = dict(candidates[0])
         related_windows = self._related_window_cluster(
             windows=candidates,
             seed_window=candidate,
             query=query,
             window_title=window_title,
-            app_name=str(candidate.get("app_name", "") or "").strip(),
+            app_name=app_name or str(candidate.get("app_name", "") or "").strip(),
+            benchmark_guidance=benchmark_guidance,
         )
         candidate_hwnd = int(candidate.get("hwnd", 0) or 0)
         candidate_root_owner_hwnd = int(candidate.get("root_owner_hwnd", 0) or candidate_hwnd or 0)
@@ -1307,15 +1460,21 @@ class WindowManager:
         pid: int | None = None,
         parent_hwnd: int | None = None,
         parent_pid: int | None = None,
+        benchmark_guidance: Dict[str, Any] | None = None,
         include_candidates: bool = True,
         limit: int = 80,
     ) -> Dict[str, Any]:
         bounded = max(1, min(int(limit), 300))
         native_payload = self._native_reacquire_window(
             query=query,
+            app_name=app_name,
             window_title=window_title,
+            window_signature=window_signature,
             hwnd=hwnd,
             pid=pid,
+            parent_hwnd=parent_hwnd,
+            parent_pid=parent_pid,
+            benchmark_guidance=benchmark_guidance,
             limit=bounded,
         )
         if native_payload is not None:
@@ -1345,6 +1504,7 @@ class WindowManager:
                 pid=int(pid or 0),
                 parent_hwnd=int(parent_hwnd or 0),
                 parent_pid=int(parent_pid or 0),
+                benchmark_guidance=benchmark_guidance,
             )
             relation_score = float(relation.get("score", 0.0) or 0.0)
             if relation_score <= 0.0:
@@ -1370,6 +1530,7 @@ class WindowManager:
             app_name=app_name,
             window_title=window_title,
             query=query,
+            benchmark_guidance=benchmark_guidance,
         ) if candidate else []
         candidate_hwnd = int(candidate.get("hwnd", 0) or 0) if candidate else 0
         candidate_owner_hwnd = int(candidate.get("owner_hwnd", 0) or 0) if candidate else 0

@@ -777,6 +777,8 @@ class FakeDesktopService:
                 "apps": ["settings"],
                 "recovery_expected": True,
                 "native_hybrid_focus": True,
+                "replayable": True,
+                "horizon_steps": 3,
                 "tags": ["settings", "multi_control", "apply"],
             },
             {
@@ -797,6 +799,8 @@ class FakeDesktopService:
                 "apps": ["settings"],
                 "recovery_expected": True,
                 "native_hybrid_focus": True,
+                "replayable": True,
+                "horizon_steps": 5,
                 "tags": ["exploration", "child_window", "dialog_chain"],
             },
             {
@@ -817,7 +821,31 @@ class FakeDesktopService:
                 "apps": ["installer"],
                 "recovery_expected": True,
                 "native_hybrid_focus": True,
+                "replayable": True,
+                "horizon_steps": 5,
                 "tags": ["installer", "resume", "approval"],
+            },
+            {
+                "name": "vscode_long_horizon_debug_loop",
+                "user_text": "Open vscode, run npm test in the terminal, inspect failures, and reopen the failing file with quick open",
+                "expected_actions": ["desktop_interact"],
+                "required_actions": ["desktop_interact"],
+                "weight": 1.7,
+                "strict_order": False,
+                "category": "editor_workflow",
+                "capabilities": ["editor", "terminal", "quick_open", "desktop_workflow", "command_execution"],
+                "risk_level": "standard",
+                "notes": "Covers long-horizon IDE replay loops.",
+                "pack": "long_horizon_and_replay",
+                "platform": "windows",
+                "mission_family": "workflow",
+                "autonomy_tier": "autonomous",
+                "apps": ["vscode"],
+                "recovery_expected": False,
+                "native_hybrid_focus": True,
+                "replayable": True,
+                "horizon_steps": 6,
+                "tags": ["editor", "long_horizon", "replayable"],
             },
         ]
         self.desktop_evaluation_last_run: Dict[str, Any] = {
@@ -13183,6 +13211,7 @@ class FakeDesktopService:
     def desktop_evaluation_catalog(
         self,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -13193,6 +13222,7 @@ class FakeDesktopService:
         limit: int = 200,
     ) -> Dict[str, Any]:
         rows = self._filter_desktop_evaluation_rows(
+            scenario_name=scenario_name,
             pack=pack,
             category=category,
             capability=capability,
@@ -13207,6 +13237,7 @@ class FakeDesktopService:
             "count": len(selected),
             "items": [dict(item) for item in selected],
             "filters": {
+                "scenario_name": scenario_name,
                 "pack": pack,
                 "category": category,
                 "capability": capability,
@@ -13223,6 +13254,7 @@ class FakeDesktopService:
     def desktop_evaluation_run(
         self,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -13233,6 +13265,7 @@ class FakeDesktopService:
         limit: int = 200,
     ) -> Dict[str, Any]:
         rows = self._filter_desktop_evaluation_rows(
+            scenario_name=scenario_name,
             pack=pack,
             category=category,
             capability=capability,
@@ -13295,6 +13328,8 @@ class FakeDesktopService:
                     "apps": list(row.get("apps", [])),
                     "recovery_expected": bool(row.get("recovery_expected", False)),
                     "native_hybrid_focus": bool(row.get("native_hybrid_focus", False)),
+                    "replayable": bool(row.get("replayable", False)),
+                    "horizon_steps": int(row.get("horizon_steps", 1) or 1),
                     "tags": list(row.get("tags", [])),
                     "passed": passed,
                     "expected": list(row.get("expected_actions", [])),
@@ -13359,6 +13394,7 @@ class FakeDesktopService:
             "summary": summary,
             "regression": regression,
             "filters": {
+                "scenario_name": scenario_name,
                 "pack": pack,
                 "category": category,
                 "capability": capability,
@@ -13382,9 +13418,121 @@ class FakeDesktopService:
             "latest_run": dict(self.desktop_evaluation_last_run),
         }
 
+    def desktop_evaluation_lab(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        rows = self._filter_desktop_evaluation_rows(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+        )[: max(1, int(limit))]
+        long_horizon = [row for row in rows if int(row.get("horizon_steps", 1) or 1) >= 4]
+        replay_candidates = [
+            {
+                "scenario": str(row.get("name", "") or ""),
+                "pack": str(row.get("pack", "") or ""),
+                "score": 0.82 if str(row.get("risk_level", "") or "").lower() == "high" else 0.91,
+                "horizon_steps": int(row.get("horizon_steps", 1) or 1),
+                "reasons": ["long_horizon"] if int(row.get("horizon_steps", 1) or 1) >= 4 else ["standard"],
+                "replay_query": {"scenario_name": str(row.get("name", "") or ""), "limit": 1},
+            }
+            for row in long_horizon[:4]
+        ]
+        return {
+            "status": "success",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": {
+                "scenario_name": scenario_name,
+                "pack": pack,
+                "category": category,
+                "capability": capability,
+                "risk_level": risk_level,
+                "autonomy_tier": autonomy_tier,
+                "mission_family": mission_family,
+                "app": app_name,
+                "limit": max(1, int(limit)),
+            },
+            "catalog_summary": self._desktop_evaluation_catalog_summary(rows),
+            "coverage": {
+                "scenario_count": len(rows),
+                "replayable": {"count": sum(1 for row in rows if bool(row.get("replayable", False)))},
+                "long_horizon": {
+                    "count": len(long_horizon),
+                    "max_horizon_steps": max((int(row.get("horizon_steps", 1) or 1) for row in rows), default=0),
+                },
+            },
+            "history_trend": {
+                "run_count": min(len(self.desktop_evaluation_history_items), max(1, int(history_limit))),
+                "direction": "improving",
+                "weighted_score_delta": 0.07,
+                "weighted_pass_rate_delta": 0.05,
+                "regression_run_count": 1,
+            },
+            "latest_run": dict(self.desktop_evaluation_last_run),
+            "latest_summary": dict(self.desktop_evaluation_last_run.get("summary", {})),
+            "latest_regression": dict(self.desktop_evaluation_last_run.get("regression", {})),
+            "replay_candidates": replay_candidates,
+            "installed_app_coverage": {
+                "status": "success",
+                "installed_profile_count": 4,
+                "benchmarked_installed_app_count": 3,
+                "benchmarked_ratio": 0.75,
+                "covered_apps": ["Settings", "Installer", "Visual Studio Code"],
+                "missing_apps": ["Outlook"],
+                "missing_category_counts": {"communication": 1},
+            },
+            "history_size": len(self.desktop_evaluation_history_items),
+        }
+
+    def desktop_evaluation_guidance(self) -> Dict[str, Any]:
+        return {
+            "status": "success",
+            "benchmark_ready": True,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "latest_run_executed_at": str(self.desktop_evaluation_last_run.get("executed_at", "") or ""),
+            "latest_weighted_pass_rate": 0.78,
+            "latest_weighted_score": 0.76,
+            "weakest_pack": "unsupported_and_recovery",
+            "weakest_category": "unsupported_app",
+            "weakest_capability": "surface_exploration",
+            "weakest_mission_family": "exploration",
+            "focus_summary": ["unsupported_and_recovery", "surface_exploration", "exploration"],
+            "control_biases": {
+                "dialog_resolution": 0.82,
+                "descendant_focus": 0.74,
+                "navigation_branch": 0.41,
+                "recovery_reacquire": 0.79,
+                "loop_guard": 0.52,
+                "native_focus": 0.77,
+            },
+            "recovery_focus": {"target": "recovery_readiness", "weighted_score": 0.74},
+            "native_hybrid_focus": {"target": "native_hybrid_coverage", "weighted_score": 0.71},
+            "improvement_candidates": {
+                "packs": [{"name": "unsupported_and_recovery", "weighted_score": 0.74}],
+            },
+            "history_size": len(self.desktop_evaluation_history_items),
+        }
+
     def _filter_desktop_evaluation_rows(
         self,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -13394,6 +13542,8 @@ class FakeDesktopService:
         app_name: str = "",
     ) -> list[Dict[str, Any]]:
         rows = [dict(item) for item in self.desktop_evaluation_items]
+        if scenario_name:
+            rows = [row for row in rows if str(row.get("name", "")).strip().lower() == scenario_name.lower()]
         if pack:
             rows = [row for row in rows if str(row.get("pack", "")).strip().lower() == pack.lower()]
         if category:
@@ -13432,6 +13582,9 @@ class FakeDesktopService:
         app_counts: Dict[str, int] = {}
         recovery_expected_count = 0
         native_hybrid_focus_count = 0
+        replayable_count = 0
+        long_horizon_count = 0
+        max_horizon_steps = 0
         for row in rows:
             self._increment_eval_count(pack_counts, str(row.get("pack", "")))
             self._increment_eval_count(category_counts, str(row.get("category", "")))
@@ -13442,6 +13595,12 @@ class FakeDesktopService:
                 recovery_expected_count += 1
             if bool(row.get("native_hybrid_focus", False)):
                 native_hybrid_focus_count += 1
+            if bool(row.get("replayable", False)):
+                replayable_count += 1
+            horizon_steps = int(row.get("horizon_steps", 1) or 1)
+            max_horizon_steps = max(max_horizon_steps, horizon_steps)
+            if horizon_steps >= 4:
+                long_horizon_count += 1
             for capability_name in row.get("capabilities", []):
                 self._increment_eval_count(capability_counts, str(capability_name))
             for app in row.get("apps", []):
@@ -13457,6 +13616,9 @@ class FakeDesktopService:
             "app_counts": dict(sorted(app_counts.items())),
             "recovery_expected_count": recovery_expected_count,
             "native_hybrid_focus_count": native_hybrid_focus_count,
+            "replayable_count": replayable_count,
+            "long_horizon_count": long_horizon_count,
+            "max_horizon_steps": max_horizon_steps,
         }
 
     @staticmethod
@@ -17685,6 +17847,40 @@ def test_desktop_evaluation_history_route(api_server: tuple[str, FakeDesktopServ
     assert payload["limit"] == 3
     assert payload["latest_run"]["status"] == "success"
     assert payload["items"][0]["scenario_count"] >= 1
+
+
+def test_desktop_evaluation_guidance_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/guidance",
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["benchmark_ready"] is True
+    assert payload["weakest_pack"] == "unsupported_and_recovery"
+    assert payload["weakest_capability"] == "surface_exploration"
+    assert payload["control_biases"]["dialog_resolution"] > 0.8
+
+
+def test_desktop_evaluation_lab_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "GET",
+        (
+            f"{base_url}/runtime/evaluations/desktop-benchmarks/lab"
+            "?pack=long_horizon_and_replay&history_limit=4"
+        ),
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["filters"]["pack"] == "long_horizon_and_replay"
+    assert payload["coverage"]["long_horizon"]["count"] >= 1
+    assert payload["history_trend"]["run_count"] >= 1
+    assert payload["replay_candidates"][0]["replay_query"]["scenario_name"] == "vscode_long_horizon_debug_loop"
+    assert payload["installed_app_coverage"]["benchmarked_installed_app_count"] >= 1
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:

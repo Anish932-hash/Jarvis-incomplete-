@@ -345,6 +345,127 @@ def test_native_window_runtime_reports_missing_extension_build_hint(monkeypatch)
     assert "build_native_windows_bridge.ps1" in payload["build_hint"]
 
 
+def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dialog_rerank() -> None:
+    class _GuidedNativeRuntime:
+        def reacquire_related_window(
+            self,
+            *,
+            query: str = "",
+            window_title: str = "",
+            hwnd: int | None = None,
+            pid: int | None = None,
+            limit: int = 80,
+        ) -> dict:
+            del query, window_title, hwnd, pid, limit
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "candidate": {
+                    "hwnd": 5001,
+                    "title": "Bluetooth & devices",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "ApplicationFrameWindow",
+                    "visible": True,
+                    "enabled": True,
+                    "owner_hwnd": 5000,
+                    "root_owner_hwnd": 5000,
+                    "owner_chain_depth": 1,
+                },
+                "candidates": [
+                    {
+                        "hwnd": 5001,
+                        "title": "Bluetooth & devices",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "ApplicationFrameWindow",
+                        "visible": True,
+                        "enabled": True,
+                        "owner_hwnd": 5000,
+                        "root_owner_hwnd": 5000,
+                        "owner_chain_depth": 1,
+                        "match_score": 0.95,
+                    },
+                    {
+                        "hwnd": 5002,
+                        "title": "Pair device",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "owner_hwnd": 5001,
+                        "root_owner_hwnd": 5000,
+                        "owner_chain_depth": 2,
+                        "match_score": 0.7,
+                    },
+                ],
+                "same_process_window_count": 2,
+                "related_window_count": 2,
+                "owner_link_count": 2,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 2,
+                "same_root_owner_dialog_like_count": 1,
+                "candidate_root_owner_hwnd": 5000,
+                "candidate_owner_chain_depth": 1,
+                "max_owner_chain_depth": 2,
+                "child_dialog_like_visible": True,
+                "owner_chain_titles": ["Settings", "Bluetooth & devices"],
+                "same_root_owner_titles": ["Bluetooth & devices", "Pair device"],
+                "same_root_owner_dialog_titles": ["Pair device"],
+            }
+
+        def trace_related_window_chain(
+            self,
+            *,
+            query: str = "",
+            window_title: str = "",
+            hwnd: int | None = None,
+            pid: int | None = None,
+            limit: int = 80,
+        ) -> dict:
+            del query, window_title, hwnd, pid, limit
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "direct_child_window_count": 1,
+                "direct_child_dialog_like_count": 1,
+                "direct_child_titles": ["Pair device"],
+                "descendant_chain_depth": 1,
+                "descendant_dialog_chain_depth": 1,
+                "descendant_query_match_count": 0,
+                "descendant_chain_titles": ["Pair device"],
+                "child_chain_signature": "5001|1|1|Pair device",
+                "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
+            }
+
+    manager = WindowManager(native_runtime=_GuidedNativeRuntime())
+
+    payload = manager.reacquire_window(
+        app_name="settings",
+        query="",
+        pid=777,
+        benchmark_guidance={
+            "control_biases": {
+                "dialog_resolution": 0.95,
+                "descendant_focus": 0.95,
+                "navigation_branch": 0.2,
+                "recovery_reacquire": 0.95,
+                "loop_guard": 0.3,
+                "native_focus": 0.95,
+            }
+        },
+    )
+
+    assert payload["status"] == "success"
+    assert payload["candidate"]["hwnd"] == 5002
+    assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
+    assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
+
+
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:
     class _FakeModule:
         @staticmethod

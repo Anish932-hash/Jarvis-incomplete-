@@ -168,10 +168,11 @@ class DesktopBackendService:
         self.provider_credentials = ProviderCredentialManager()
         self.provider_credentials.refresh(overwrite_env=False)
         self.provider_verifier = ProviderCredentialVerifier(self.provider_credentials)
+        self.desktop_evaluation_runner = EvaluationRunner(installed_app_catalog_provider=self.desktop_app_profiles)
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
+            benchmark_guidance_provider=self._desktop_benchmark_control_guidance,
         )
-        self.desktop_evaluation_runner = EvaluationRunner()
         self.desktop_governance_policy = DesktopGovernancePolicyManager(
             policy_profile=str(os.getenv("JARVIS_DESKTOP_GOVERNANCE_PROFILE", "balanced") or "balanced").strip(),
             allow_high_risk=(
@@ -8070,6 +8071,7 @@ class DesktopBackendService:
     def desktop_evaluation_catalog(
         self,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -8084,6 +8086,7 @@ class DesktopBackendService:
             return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
         try:
             payload = runner.catalog(
+                scenario_name=scenario_name,
                 pack=pack,
                 category=category,
                 capability=capability,
@@ -8100,6 +8103,7 @@ class DesktopBackendService:
     def desktop_evaluation_run(
         self,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -8114,6 +8118,7 @@ class DesktopBackendService:
             return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
         try:
             payload = runner.run_with_summary(
+                scenario_name=scenario_name,
                 pack=pack,
                 category=category,
                 capability=capability,
@@ -8136,6 +8141,54 @@ class DesktopBackendService:
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation history payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_lab(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.lab(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app_name,
+                limit=limit,
+                history_limit=history_limit,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_guidance(self) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.control_guidance()
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation guidance payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def _desktop_benchmark_control_guidance(self) -> Dict[str, Any]:
+        payload = self.desktop_evaluation_guidance()
+        return dict(payload) if isinstance(payload, dict) else {}
 
     def reset_desktop_workflow_memory(
         self,
@@ -41817,6 +41870,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
             if path == "/runtime/evaluations/desktop-benchmarks":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
                 payload = self.server.service.desktop_evaluation_catalog(
+                    scenario_name=str(query.get("scenario_name", [""])[0] or "").strip(),
                     pack=str(query.get("pack", [""])[0] or "").strip(),
                     category=str(query.get("category", [""])[0] or "").strip(),
                     capability=str(query.get("capability", [""])[0] or "").strip(),
@@ -41828,9 +41882,30 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
+                history_limit = self._parse_int(str(query.get("history_limit", ["8"])[0]), 8, minimum=1, maximum=64)
+                payload = self.server.service.desktop_evaluation_lab(
+                    scenario_name=str(query.get("scenario_name", [""])[0] or "").strip(),
+                    pack=str(query.get("pack", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    capability=str(query.get("capability", [""])[0] or "").strip(),
+                    risk_level=str(query.get("risk_level", [""])[0] or "").strip(),
+                    autonomy_tier=str(query.get("autonomy_tier", [""])[0] or "").strip(),
+                    mission_family=str(query.get("mission_family", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    limit=limit,
+                    history_limit=history_limit,
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/history":
                 limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
                 payload = self.server.service.desktop_evaluation_history(limit=limit)
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/guidance":
+                payload = self.server.service.desktop_evaluation_guidance()
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
             if path == "/runtime/desktop-missions":
@@ -43953,6 +44028,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 return
             if path == "/runtime/evaluations/desktop-benchmarks/run":
                 payload = self.server.service.desktop_evaluation_run(
+                    scenario_name=str(body.get("scenario_name", "") or "").strip(),
                     pack=str(body.get("pack", "") or "").strip(),
                     category=str(body.get("category", "") or "").strip(),
                     capability=str(body.get("capability", "") or "").strip(),

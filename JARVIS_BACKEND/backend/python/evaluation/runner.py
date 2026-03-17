@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 from backend.python.core.contracts import GoalRecord, GoalRequest
 from backend.python.core.planner import Planner
@@ -11,9 +11,15 @@ from .scenarios import Scenario, default_scenarios, scenario_catalog
 
 
 class EvaluationRunner:
-    def __init__(self, *, history_limit: int = 12) -> None:
+    def __init__(
+        self,
+        *,
+        history_limit: int = 12,
+        installed_app_catalog_provider: Callable[..., Dict[str, object]] | None = None,
+    ) -> None:
         self.planner = Planner()
         self.history_limit = max(1, min(int(history_limit), 128))
+        self.installed_app_catalog_provider = installed_app_catalog_provider
         self.last_summary: Dict[str, object] = {}
         self.last_items: List[Dict[str, object]] = []
         self.last_run: Dict[str, object] = {}
@@ -23,6 +29,7 @@ class EvaluationRunner:
         self,
         scenarios: List[Scenario] | None = None,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -34,6 +41,7 @@ class EvaluationRunner:
     ) -> Dict[str, object]:
         selected = self._select_scenarios(
             scenarios,
+            scenario_name=scenario_name,
             pack=pack,
             category=category,
             capability=capability,
@@ -49,6 +57,7 @@ class EvaluationRunner:
             "count": len(items),
             "items": items,
             "filters": self._filters_payload(
+                scenario_name=scenario_name,
                 pack=pack,
                 category=category,
                 capability=capability,
@@ -75,6 +84,129 @@ class EvaluationRunner:
             "latest_run": dict(self.last_run) if isinstance(self.last_run, dict) else {},
         }
 
+    def lab(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+    ) -> Dict[str, object]:
+        filters = self._filters_payload(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+        )
+        selected = self._select_scenarios(
+            None,
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+        )
+        latest_run = dict(self.last_run) if isinstance(self.last_run, dict) else {}
+        latest_summary = (
+            dict(latest_run.get("summary", {}))
+            if isinstance(latest_run.get("summary", {}), dict)
+            else dict(self.last_summary)
+        )
+        latest_regression = (
+            dict(latest_run.get("regression", {}))
+            if isinstance(latest_run.get("regression", {}), dict)
+            else self._last_run_regression_payload()
+        )
+        filtered_latest_items = self._filter_item_rows(self.last_items, filters=filters)
+        filtered_history = self._filtered_history(filters=filters, limit=history_limit)
+        return {
+            "status": "success",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": filters,
+            "catalog_summary": self._catalog_summary(selected),
+            "coverage": self._lab_coverage(selected),
+            "history_trend": self._history_trend(filtered_history),
+            "latest_run": latest_run,
+            "latest_summary": latest_summary,
+            "latest_regression": latest_regression,
+            "replay_candidates": self._replay_candidates(filtered_latest_items, filters=filters),
+            "installed_app_coverage": self._installed_app_coverage(selected),
+            "history_size": len(self.run_history),
+        }
+
+    def control_guidance(self) -> Dict[str, object]:
+        latest_run = dict(self.last_run) if isinstance(self.last_run, dict) else {}
+        latest_summary = (
+            dict(latest_run.get("summary", {}))
+            if isinstance(latest_run.get("summary", {}), dict)
+            else dict(self.last_summary)
+        )
+        improvement_candidates = (
+            dict(latest_summary.get("improvement_candidates", {}))
+            if isinstance(latest_summary.get("improvement_candidates", {}), dict)
+            else {}
+        )
+        weakest_pack = self._first_candidate_name(improvement_candidates.get("packs", []))
+        weakest_category = self._first_candidate_name(improvement_candidates.get("categories", []))
+        weakest_capability = self._first_candidate_name(improvement_candidates.get("capabilities", []))
+        weakest_mission_family = self._first_candidate_name(improvement_candidates.get("mission_families", []))
+        recovery_focus = (
+            dict(improvement_candidates.get("recovery_focus", {}))
+            if isinstance(improvement_candidates.get("recovery_focus", {}), dict)
+            else {}
+        )
+        native_hybrid_focus = (
+            dict(improvement_candidates.get("native_hybrid_focus", {}))
+            if isinstance(improvement_candidates.get("native_hybrid_focus", {}), dict)
+            else {}
+        )
+        biases = self._control_biases_from_summary(
+            weakest_pack=weakest_pack,
+            weakest_category=weakest_category,
+            weakest_capability=weakest_capability,
+            weakest_mission_family=weakest_mission_family,
+            recovery_focus=recovery_focus,
+            native_hybrid_focus=native_hybrid_focus,
+        )
+        focus_summary = [
+            value
+            for value in [weakest_pack, weakest_category, weakest_capability, weakest_mission_family]
+            if value
+        ][:6]
+        return {
+            "status": "success",
+            "benchmark_ready": bool(latest_summary),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "latest_run_executed_at": str(latest_run.get("executed_at", "") or "").strip(),
+            "latest_weighted_pass_rate": round(float(latest_summary.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "latest_weighted_score": round(float(latest_summary.get("weighted_score", 0.0) or 0.0), 6),
+            "weakest_pack": weakest_pack,
+            "weakest_category": weakest_category,
+            "weakest_capability": weakest_capability,
+            "weakest_mission_family": weakest_mission_family,
+            "focus_summary": focus_summary,
+            "control_biases": biases,
+            "recovery_focus": recovery_focus,
+            "native_hybrid_focus": native_hybrid_focus,
+            "improvement_candidates": improvement_candidates,
+            "history_size": len(self.run_history),
+        }
+
     def run(self, scenarios: List[Scenario] | None = None) -> List[Dict[str, object]]:
         try:
             return asyncio.run(self.run_async(scenarios))
@@ -89,6 +221,7 @@ class EvaluationRunner:
         self,
         scenarios: List[Scenario] | None = None,
         *,
+        scenario_name: str = "",
         pack: str = "",
         category: str = "",
         capability: str = "",
@@ -101,6 +234,7 @@ class EvaluationRunner:
         items = self.run(
             self._select_scenarios(
                 scenarios,
+                scenario_name=scenario_name,
                 pack=pack,
                 category=category,
                 capability=capability,
@@ -112,6 +246,7 @@ class EvaluationRunner:
             )
         )
         filters = self._filters_payload(
+            scenario_name=scenario_name,
             pack=pack,
             category=category,
             capability=capability,
@@ -121,6 +256,10 @@ class EvaluationRunner:
             app=app,
             limit=limit,
         )
+        if isinstance(self.last_run, dict):
+            self.last_run["filters"] = dict(filters)
+        if self.run_history:
+            self.run_history[-1]["filters"] = dict(filters)
         return {
             "status": "success",
             "items": items,
@@ -167,12 +306,15 @@ class EvaluationRunner:
                     "risk_level": str(scenario.risk_level or "standard"),
                     "recovery_expected": bool(scenario.recovery_expected),
                     "native_hybrid_focus": bool(scenario.native_hybrid_focus),
+                    "replayable": bool(scenario.replayable),
+                    "horizon_steps": max(1, int(scenario.horizon_steps or 1)),
                     "apps": list(scenario.apps),
                 }
             )
             report.append(
                 {
                     "scenario": scenario.name,
+                    "user_text": scenario.user_text,
                     "category": scenario.category,
                     "pack": scenario.pack,
                     "platform": scenario.platform,
@@ -183,6 +325,8 @@ class EvaluationRunner:
                     "apps": list(scenario.apps),
                     "recovery_expected": bool(scenario.recovery_expected),
                     "native_hybrid_focus": bool(scenario.native_hybrid_focus),
+                    "replayable": bool(scenario.replayable),
+                    "horizon_steps": max(1, int(scenario.horizon_steps or 1)),
                     "tags": list(scenario.tags),
                     "passed": passed,
                     "expected": scenario.expected_actions,
@@ -279,6 +423,7 @@ class EvaluationRunner:
         self,
         scenarios: List[Scenario] | None,
         *,
+        scenario_name: str,
         pack: str,
         category: str,
         capability: str,
@@ -290,6 +435,7 @@ class EvaluationRunner:
     ) -> List[Scenario]:
         return scenario_catalog(
             scenarios=scenarios,
+            scenario_name=scenario_name,
             pack=pack,
             category=category,
             capability=capability,
@@ -303,6 +449,7 @@ class EvaluationRunner:
     @staticmethod
     def _filters_payload(
         *,
+        scenario_name: str,
         pack: str,
         category: str,
         capability: str,
@@ -313,6 +460,7 @@ class EvaluationRunner:
         limit: int,
     ) -> Dict[str, object]:
         return {
+            "scenario_name": str(scenario_name or "").strip().lower(),
             "pack": str(pack or "").strip().lower(),
             "category": str(category or "").strip().lower(),
             "capability": str(capability or "").strip().lower(),
@@ -343,6 +491,8 @@ class EvaluationRunner:
             "apps": list(scenario.apps),
             "recovery_expected": bool(scenario.recovery_expected),
             "native_hybrid_focus": bool(scenario.native_hybrid_focus),
+            "replayable": bool(scenario.replayable),
+            "horizon_steps": max(1, int(scenario.horizon_steps or 1)),
             "tags": list(scenario.tags),
         }
 
@@ -356,6 +506,10 @@ class EvaluationRunner:
         app_counts: Dict[str, int] = {}
         recovery_expected_count = 0
         native_hybrid_focus_count = 0
+        replayable_count = 0
+        long_horizon_count = 0
+        total_horizon_steps = 0
+        max_horizon_steps = 0
         for row in scenarios:
             self._increment_count(pack_counts, row.pack)
             self._increment_count(category_counts, row.category)
@@ -366,6 +520,13 @@ class EvaluationRunner:
                 recovery_expected_count += 1
             if row.native_hybrid_focus:
                 native_hybrid_focus_count += 1
+            if row.replayable:
+                replayable_count += 1
+            horizon_steps = max(1, int(row.horizon_steps or 1))
+            total_horizon_steps += horizon_steps
+            max_horizon_steps = max(max_horizon_steps, horizon_steps)
+            if horizon_steps >= 4:
+                long_horizon_count += 1
             for capability in row.capabilities:
                 self._increment_count(capability_counts, capability)
             for app in row.apps:
@@ -381,6 +542,268 @@ class EvaluationRunner:
             "app_counts": self._sorted_count_map(app_counts),
             "recovery_expected_count": recovery_expected_count,
             "native_hybrid_focus_count": native_hybrid_focus_count,
+            "replayable_count": replayable_count,
+            "long_horizon_count": long_horizon_count,
+            "avg_horizon_steps": round(total_horizon_steps / max(1, len(scenarios)), 6),
+            "max_horizon_steps": max_horizon_steps,
+        }
+
+    def _lab_coverage(self, scenarios: List[Scenario]) -> Dict[str, object]:
+        total = len(scenarios)
+        replayable = [row for row in scenarios if bool(row.replayable)]
+        long_horizon = [row for row in scenarios if max(1, int(row.horizon_steps or 1)) >= 4]
+        return {
+            "scenario_count": total,
+            "replayable": {
+                "count": len(replayable),
+                "ratio": round(len(replayable) / max(1, total), 6),
+                "sample_scenarios": [row.name for row in replayable[:6]],
+            },
+            "long_horizon": {
+                "count": len(long_horizon),
+                "ratio": round(len(long_horizon) / max(1, total), 6),
+                "avg_horizon_steps": round(
+                    sum(max(1, int(row.horizon_steps or 1)) for row in scenarios) / max(1, total),
+                    6,
+                ),
+                "max_horizon_steps": max((max(1, int(row.horizon_steps or 1)) for row in scenarios), default=0),
+                "sample_scenarios": [row.name for row in sorted(long_horizon, key=lambda row: (-max(1, int(row.horizon_steps or 1)), row.name))[:6]],
+            },
+            "real_app_focus": {
+                "count": sum(1 for row in scenarios if any(str(app or "").strip() and str(app or "").strip().lower() not in {"system", "speech", "browser"} for app in row.apps)),
+                "app_counts": self._sorted_count_map(
+                    {
+                        str(app or "").strip().lower(): sum(
+                            1
+                            for row in scenarios
+                            if any(str(item or "").strip().lower() == str(app or "").strip().lower() for item in row.apps)
+                        )
+                        for app in {
+                            str(item or "").strip().lower()
+                            for row in scenarios
+                            for item in row.apps
+                            if str(item or "").strip()
+                        }
+                    },
+                    limit=16,
+                ),
+            },
+        }
+
+    def _filtered_history(self, *, filters: Dict[str, object], limit: int) -> List[Dict[str, object]]:
+        bounded = max(1, min(int(limit or 8), self.history_limit))
+        rows: List[Dict[str, object]] = []
+        for item in self.run_history[-bounded:]:
+            if not isinstance(item, dict):
+                continue
+            item_filters = dict(item.get("filters", {})) if isinstance(item.get("filters", {}), dict) else {}
+            if self._filters_match(item_filters, filters):
+                rows.append(dict(item))
+        return rows
+
+    @staticmethod
+    def _filters_match(left: Dict[str, object], right: Dict[str, object]) -> bool:
+        for key, value in right.items():
+            clean_value = str(value or "").strip().lower()
+            if key == "limit" or not clean_value:
+                continue
+            if str(left.get(key, "") or "").strip().lower() != clean_value:
+                return False
+        return True
+
+    def _filter_item_rows(self, rows: List[Dict[str, object]], *, filters: Dict[str, object]) -> List[Dict[str, object]]:
+        selected: List[Dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if filters.get("scenario_name") and str(row.get("scenario", "") or "").strip().lower() != str(filters.get("scenario_name", "") or "").strip().lower():
+                continue
+            if filters.get("pack") and str(row.get("pack", "") or "").strip().lower() != str(filters.get("pack", "") or "").strip().lower():
+                continue
+            if filters.get("category") and str(row.get("category", "") or "").strip().lower() != str(filters.get("category", "") or "").strip().lower():
+                continue
+            if filters.get("risk_level") and str(row.get("risk_level", "") or "").strip().lower() != str(filters.get("risk_level", "") or "").strip().lower():
+                continue
+            if filters.get("autonomy_tier") and str(row.get("autonomy_tier", "") or "").strip().lower() != str(filters.get("autonomy_tier", "") or "").strip().lower():
+                continue
+            if filters.get("mission_family") and str(row.get("mission_family", "") or "").strip().lower() != str(filters.get("mission_family", "") or "").strip().lower():
+                continue
+            if filters.get("capability"):
+                capability = str(filters.get("capability", "") or "").strip().lower()
+                if not any(str(item or "").strip().lower() == capability for item in row.get("capabilities", [])):
+                    continue
+            if filters.get("app"):
+                app_name = str(filters.get("app", "") or "").strip().lower()
+                if not any(str(item or "").strip().lower() == app_name for item in row.get("apps", [])):
+                    continue
+            selected.append(dict(row))
+        return selected
+
+    def _history_trend(self, rows: List[Dict[str, object]]) -> Dict[str, object]:
+        if not rows:
+            return {
+                "run_count": 0,
+                "direction": "insufficient_history",
+                "weighted_score_delta": 0.0,
+                "weighted_pass_rate_delta": 0.0,
+                "regression_run_count": 0,
+                "recent_regression_count": 0,
+            }
+        first = rows[0]
+        last = rows[-1]
+        first_summary = dict(first.get("summary", {})) if isinstance(first.get("summary", {}), dict) else {}
+        last_summary = dict(last.get("summary", {})) if isinstance(last.get("summary", {}), dict) else {}
+        score_delta = round(
+            float(last_summary.get("weighted_score", 0.0) or 0.0)
+            - float(first_summary.get("weighted_score", 0.0) or 0.0),
+            6,
+        )
+        pass_delta = round(
+            float(last_summary.get("weighted_pass_rate", 0.0) or 0.0)
+            - float(first_summary.get("weighted_pass_rate", 0.0) or 0.0),
+            6,
+        )
+        regression_run_count = sum(
+            1
+            for item in rows
+            if str(dict(item.get("regression", {})).get("status", "") or "").strip().lower() == "regression"
+        )
+        recurring_pack_counts: Dict[str, int] = {}
+        recurring_capability_counts: Dict[str, int] = {}
+        for item in rows:
+            regression = dict(item.get("regression", {})) if isinstance(item.get("regression", {}), dict) else {}
+            for pack_row in regression.get("pack_regressions", []) if isinstance(regression.get("pack_regressions", []), list) else []:
+                if isinstance(pack_row, dict):
+                    self._increment_count(recurring_pack_counts, str(pack_row.get("name", "") or ""))
+            for capability_row in regression.get("capability_regressions", []) if isinstance(regression.get("capability_regressions", []), list) else []:
+                if isinstance(capability_row, dict):
+                    self._increment_count(recurring_capability_counts, str(capability_row.get("name", "") or ""))
+        direction = "stable"
+        if score_delta > 0.04 or pass_delta > 0.05:
+            direction = "improving"
+        elif score_delta < -0.04 or pass_delta < -0.05:
+            direction = "regressing"
+        return {
+            "run_count": len(rows),
+            "direction": direction,
+            "weighted_score_delta": score_delta,
+            "weighted_pass_rate_delta": pass_delta,
+            "regression_run_count": regression_run_count,
+            "recent_regression_count": len(
+                dict(last.get("regression", {})).get("scenario_regressions", [])
+                if isinstance(last.get("regression", {}), dict)
+                and isinstance(dict(last.get("regression", {})).get("scenario_regressions", []), list)
+                else []
+            ),
+            "recurring_pack_regressions": self._sorted_count_map(recurring_pack_counts, limit=6),
+            "recurring_capability_regressions": self._sorted_count_map(recurring_capability_counts, limit=6),
+        }
+
+    def _replay_candidates(self, rows: List[Dict[str, object]], *, filters: Dict[str, object]) -> List[Dict[str, object]]:
+        ranked: List[Dict[str, object]] = []
+        for row in rows:
+            score = float(row.get("score", 0.0) or 0.0)
+            replayable = bool(row.get("replayable", False))
+            priority = (
+                (0 if replayable else 1),
+                score,
+                -float(row.get("weight", 0.0) or 0.0),
+                -max(1, int(row.get("horizon_steps", 1) or 1)),
+                str(row.get("scenario", "") or ""),
+            )
+            reasons: List[str] = []
+            if not bool(row.get("passed", False)):
+                reasons.append("failed_latest_run")
+            if bool(row.get("recovery_expected", False)):
+                reasons.append("recovery_expected")
+            if bool(row.get("native_hybrid_focus", False)):
+                reasons.append("native_hybrid_focus")
+            if max(1, int(row.get("horizon_steps", 1) or 1)) >= 4:
+                reasons.append("long_horizon")
+            ranked.append(
+                {
+                    "priority_key": priority,
+                    "scenario": str(row.get("scenario", "") or "").strip(),
+                    "user_text": str(row.get("user_text", "") or "").strip(),
+                    "pack": str(row.get("pack", "") or "").strip(),
+                    "category": str(row.get("category", "") or "").strip(),
+                    "mission_family": str(row.get("mission_family", "") or "").strip(),
+                    "risk_level": str(row.get("risk_level", "") or "").strip(),
+                    "apps": list(row.get("apps", [])) if isinstance(row.get("apps", []), list) else [],
+                    "score": round(score, 6),
+                    "weight": round(float(row.get("weight", 0.0) or 0.0), 6),
+                    "replayable": replayable,
+                    "horizon_steps": max(1, int(row.get("horizon_steps", 1) or 1)),
+                    "reasons": reasons,
+                    "replay_query": {
+                        **{key: value for key, value in filters.items() if key != "scenario_name" and key != "limit" and str(value or "").strip()},
+                        "scenario_name": str(row.get("scenario", "") or "").strip(),
+                        "limit": 1,
+                    },
+                }
+            )
+        ranked.sort(key=lambda item: item["priority_key"])
+        return [
+            {key: value for key, value in item.items() if key != "priority_key"}
+            for item in ranked[:6]
+        ]
+
+    def _installed_app_coverage(self, scenarios: List[Scenario]) -> Dict[str, object]:
+        provider = self.installed_app_catalog_provider
+        if provider is None:
+            return {"status": "unavailable", "message": "installed app catalog unavailable"}
+        try:
+            payload = provider(limit=800)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+        if not isinstance(payload, dict) or str(payload.get("status", "") or "").strip().lower() not in {"success"}:
+            return {
+                "status": "error",
+                "message": str(payload.get("message", "") if isinstance(payload, dict) else "").strip() or "invalid installed app catalog payload",
+            }
+        items = payload.get("items", []) if isinstance(payload.get("items", []), list) else []
+        installed_aliases: Dict[str, Dict[str, object]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            app_names = {
+                " ".join(str(item.get("name", "") or "").strip().lower().split()),
+                " ".join(str(item.get("profile_id", "") or "").strip().lower().split()),
+            }
+            aliases = item.get("aliases", []) if isinstance(item.get("aliases", []), list) else []
+            app_names.update(" ".join(str(alias or "").strip().lower().split()) for alias in aliases if str(alias or "").strip())
+            app_names = {name for name in app_names if name}
+            for name in app_names:
+                installed_aliases[name] = dict(item)
+        benchmarked_apps = {
+            " ".join(str(app or "").strip().lower().split())
+            for row in scenarios
+            for app in row.apps
+            if str(app or "").strip()
+        }
+        covered_profiles: Dict[str, Dict[str, object]] = {}
+        missing_profiles: Dict[str, Dict[str, object]] = {}
+        for key, item in installed_aliases.items():
+            profile_id = str(item.get("profile_id", item.get("name", key)) or key).strip().lower()
+            if key in benchmarked_apps:
+                covered_profiles[profile_id] = dict(item)
+            else:
+                missing_profiles[profile_id] = dict(item)
+        missing_category_counts: Dict[str, int] = {}
+        for item in missing_profiles.values():
+            self._increment_count(missing_category_counts, str(item.get("category", "general_desktop") or "general_desktop"))
+        return {
+            "status": "success",
+            "installed_profile_count": int(payload.get("total", payload.get("count", len(items))) or len(items)),
+            "benchmarked_installed_app_count": len(covered_profiles),
+            "benchmarked_ratio": round(len(covered_profiles) / max(1, len(covered_profiles) + len(missing_profiles)), 6),
+            "covered_apps": sorted(
+                [str(item.get("name", item.get("profile_id", "")) or "").strip() for item in covered_profiles.values() if str(item.get("name", item.get("profile_id", "")) or "").strip()]
+            )[:12],
+            "missing_apps": sorted(
+                [str(item.get("name", item.get("profile_id", "")) or "").strip() for item in missing_profiles.values() if str(item.get("name", item.get("profile_id", "")) or "").strip()]
+            )[:12],
+            "missing_category_counts": self._sorted_count_map(missing_category_counts, limit=8),
         }
 
     @staticmethod
@@ -435,6 +858,13 @@ class EvaluationRunner:
         hybrid_weight = 0.0
         hybrid_pass_weight = 0.0
         hybrid_score_weight = 0.0
+        replayable_weight = 0.0
+        replayable_pass_weight = 0.0
+        replayable_score_weight = 0.0
+        long_horizon_weight = 0.0
+        long_horizon_pass_weight = 0.0
+        long_horizon_score_weight = 0.0
+        max_horizon_steps = 0
         for row in rows:
             weight = max(0.1, float(row.get("weight", 1.0) or 1.0))
             total_weight += weight
@@ -464,6 +894,18 @@ class EvaluationRunner:
                 hybrid_score_weight += weight * float(row.get("score", 0.0) or 0.0)
                 if bool(row.get("passed", False)):
                     hybrid_pass_weight += weight
+            if bool(row.get("replayable", False)):
+                replayable_weight += weight
+                replayable_score_weight += weight * float(row.get("score", 0.0) or 0.0)
+                if bool(row.get("passed", False)):
+                    replayable_pass_weight += weight
+            horizon_steps = max(1, int(row.get("horizon_steps", 1) or 1))
+            max_horizon_steps = max(max_horizon_steps, horizon_steps)
+            if horizon_steps >= 4:
+                long_horizon_weight += weight
+                long_horizon_score_weight += weight * float(row.get("score", 0.0) or 0.0)
+                if bool(row.get("passed", False)):
+                    long_horizon_pass_weight += weight
         top_unexpected = sorted(unexpected_counts.items(), key=lambda item: (-int(item[1]), item[0]))[:8]
         return {
             "count": len(rows),
@@ -485,6 +927,17 @@ class EvaluationRunner:
                 "weighted_pass_rate": round(hybrid_pass_weight / max(1e-9, hybrid_weight), 6) if hybrid_weight else 0.0,
                 "weighted_score": round(hybrid_score_weight / max(1e-9, hybrid_weight), 6) if hybrid_weight else 0.0,
                 "weight": round(hybrid_weight, 6),
+            },
+            "replayability_coverage": {
+                "weighted_pass_rate": round(replayable_pass_weight / max(1e-9, replayable_weight), 6) if replayable_weight else 0.0,
+                "weighted_score": round(replayable_score_weight / max(1e-9, replayable_weight), 6) if replayable_weight else 0.0,
+                "weight": round(replayable_weight, 6),
+            },
+            "long_horizon_coverage": {
+                "weighted_pass_rate": round(long_horizon_pass_weight / max(1e-9, long_horizon_weight), 6) if long_horizon_weight else 0.0,
+                "weighted_score": round(long_horizon_score_weight / max(1e-9, long_horizon_weight), 6) if long_horizon_weight else 0.0,
+                "weight": round(long_horizon_weight, 6),
+                "max_horizon_steps": max_horizon_steps,
             },
             "improvement_candidates": self._improvement_candidates(
                 pack_rows=pack_rows,
@@ -669,6 +1122,78 @@ class EvaluationRunner:
             )
         rows.sort(key=lambda item: (item["weighted_score"], item["weighted_pass_rate"], -float(item["weight"]), item["name"]))
         return rows[: max(1, limit)]
+
+    @staticmethod
+    def _first_candidate_name(rows: object) -> str:
+        if not isinstance(rows, list):
+            return ""
+        for row in rows:
+            if isinstance(row, dict):
+                clean = str(row.get("name", "") or "").strip()
+                if clean:
+                    return clean
+        return ""
+
+    @staticmethod
+    def _control_biases_from_summary(
+        *,
+        weakest_pack: str,
+        weakest_category: str,
+        weakest_capability: str,
+        weakest_mission_family: str,
+        recovery_focus: Dict[str, object],
+        native_hybrid_focus: Dict[str, object],
+    ) -> Dict[str, float]:
+        biases = {
+            "dialog_resolution": 0.12,
+            "descendant_focus": 0.12,
+            "navigation_branch": 0.1,
+            "recovery_reacquire": 0.1,
+            "loop_guard": 0.12,
+            "native_focus": 0.1,
+        }
+        normalized_pack = str(weakest_pack or "").strip().lower()
+        normalized_category = str(weakest_category or "").strip().lower()
+        normalized_capability = str(weakest_capability or "").strip().lower()
+        normalized_mission_family = str(weakest_mission_family or "").strip().lower()
+
+        if normalized_pack == "unsupported_and_recovery":
+            biases["dialog_resolution"] += 0.22
+            biases["descendant_focus"] += 0.22
+            biases["recovery_reacquire"] += 0.18
+            biases["loop_guard"] += 0.2
+            biases["native_focus"] += 0.2
+        if normalized_pack == "installer_and_governance":
+            biases["dialog_resolution"] += 0.18
+            biases["recovery_reacquire"] += 0.18
+            biases["descendant_focus"] += 0.12
+        if normalized_category in {"unsupported_app", "installer", "settings"}:
+            biases["dialog_resolution"] += 0.08
+            biases["descendant_focus"] += 0.08
+        if normalized_capability in {"surface_exploration", "child_window_adoption"}:
+            biases["descendant_focus"] += 0.18
+            biases["navigation_branch"] += 0.12
+            biases["native_focus"] += 0.12
+        if normalized_capability in {"desktop_recovery", "wizard_mission", "form_mission"}:
+            biases["dialog_resolution"] += 0.14
+            biases["recovery_reacquire"] += 0.2
+            biases["loop_guard"] += 0.08
+        if normalized_mission_family in {"exploration", "recovery", "wizard", "form"}:
+            biases["recovery_reacquire"] += 0.08
+            biases["loop_guard"] += 0.08
+        recovery_score = float(recovery_focus.get("weighted_score", 1.0) or 1.0) if recovery_focus else 1.0
+        native_score = float(native_hybrid_focus.get("weighted_score", 1.0) or 1.0) if native_hybrid_focus else 1.0
+        if recovery_focus and recovery_score < 0.9:
+            pressure = min(0.22, (0.9 - recovery_score) * 0.45)
+            biases["dialog_resolution"] += pressure
+            biases["recovery_reacquire"] += pressure
+            biases["loop_guard"] += pressure * 0.75
+        if native_hybrid_focus and native_score < 0.9:
+            pressure = min(0.22, (0.9 - native_score) * 0.45)
+            biases["native_focus"] += pressure
+            biases["descendant_focus"] += pressure
+            biases["recovery_reacquire"] += pressure * 0.75
+        return {key: round(max(0.0, min(value, 1.0)), 6) for key, value in biases.items()}
 
     def _last_run_regression_payload(self) -> Dict[str, object]:
         return dict(self.last_run.get("regression", {})) if isinstance(self.last_run, dict) else {}

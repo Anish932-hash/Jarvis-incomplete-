@@ -112,6 +112,26 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub branch_cascade_signature: String,
     #[serde(default)]
+    pub benchmark_ready: bool,
+    #[serde(default)]
+    pub benchmark_focus_summary: Vec<String>,
+    #[serde(default)]
+    pub benchmark_weakest_pack: String,
+    #[serde(default)]
+    pub benchmark_weakest_capability: String,
+    #[serde(default)]
+    pub benchmark_dialog_pressure: f64,
+    #[serde(default)]
+    pub benchmark_descendant_focus_pressure: f64,
+    #[serde(default)]
+    pub benchmark_navigation_pressure: f64,
+    #[serde(default)]
+    pub benchmark_reacquire_pressure: f64,
+    #[serde(default)]
+    pub benchmark_loop_guard_pressure: f64,
+    #[serde(default)]
+    pub benchmark_native_focus_pressure: f64,
+    #[serde(default)]
     pub selection_rows: Vec<SurfaceExplorationSelectionRow>,
     #[serde(default)]
     pub branch_history: Vec<SurfaceExplorationBranchEntry>,
@@ -508,6 +528,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let branch_cascade_count = input.branch_cascade_count;
     let branch_cascade_kind_count = input.branch_cascade_kind_count;
     let branch_cascade_signature = normalize_text(&input.branch_cascade_signature);
+    let benchmark_dialog_pressure = input.benchmark_dialog_pressure.clamp(0.0, 1.0);
+    let benchmark_descendant_focus_pressure =
+        input.benchmark_descendant_focus_pressure.clamp(0.0, 1.0);
+    let benchmark_navigation_pressure = input.benchmark_navigation_pressure.clamp(0.0, 1.0);
+    let benchmark_reacquire_pressure = input.benchmark_reacquire_pressure.clamp(0.0, 1.0);
+    let benchmark_loop_guard_pressure = input.benchmark_loop_guard_pressure.clamp(0.0, 1.0);
+    let benchmark_native_focus_pressure = input.benchmark_native_focus_pressure.clamp(0.0, 1.0);
     let prefer_nested_branch = matches!(
         latest_transition.as_str(),
         "child_window" | "dialog_shift" | "drilldown" | "pane_shift"
@@ -590,6 +617,58 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     preferred_descendant_overlap
                 ));
             }
+        }
+        if benchmark_dialog_pressure > 0.0 && selected_action == "press_dialog_button" {
+            let boost = 0.05 + (benchmark_dialog_pressure * 0.16);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_dialog_pressure:{:.2}",
+                benchmark_dialog_pressure
+            ));
+        } else if benchmark_dialog_pressure >= 0.6 && kind == "branch_action" {
+            rust_score -= benchmark_dialog_pressure * 0.04;
+        }
+        if benchmark_descendant_focus_pressure > 0.0 && preferred_descendant_focus {
+            let boost = 0.04 + (benchmark_descendant_focus_pressure * 0.16);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_descendant_focus_pressure:{:.2}",
+                benchmark_descendant_focus_pressure
+            ));
+        }
+        if benchmark_navigation_pressure > 0.0
+            && matches!(
+                selected_action.as_str(),
+                "select_sidebar_item"
+                    | "select_tab_page"
+                    | "select_list_item"
+                    | "select_tree_item"
+                    | "focus_input_field"
+                    | "open_dropdown"
+            )
+        {
+            let boost = 0.04 + (benchmark_navigation_pressure * 0.14);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_navigation_pressure:{:.2}",
+                benchmark_navigation_pressure
+            ));
+        }
+        if benchmark_reacquire_pressure > 0.0 && selected_action == "focus" {
+            let boost = 0.04 + (benchmark_reacquire_pressure * 0.16);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_reacquire_pressure:{:.2}",
+                benchmark_reacquire_pressure
+            ));
+        }
+        if benchmark_native_focus_pressure > 0.0 && preferred_descendant_focus {
+            let boost = 0.03 + (benchmark_native_focus_pressure * 0.12);
+            rust_score += boost;
+            reasons.push(format!(
+                "benchmark_native_focus_pressure:{:.2}",
+                benchmark_native_focus_pressure
+            ));
         }
 
         if input.current_dialog_visible || active_dialog_visible || native_child_dialog_visible {
@@ -961,8 +1040,19 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             rust_score -= 0.24;
             reasons.push(format!("repeat_branch_penalty:{latest_occurrences}"));
         } else if latest_occurrences >= 2 && kind == "branch_action" {
-            rust_score -= 0.08;
+            rust_score -= 0.08 + (benchmark_loop_guard_pressure * 0.08);
             reasons.push("branch_repeat_pressure".to_string());
+        }
+        if benchmark_loop_guard_pressure > 0.0
+            && kind == "branch_action"
+            && branch_family_switch_count >= 1
+            && !preferred_descendant_focus
+        {
+            rust_score -= benchmark_loop_guard_pressure * 0.06;
+            reasons.push(format!(
+                "benchmark_loop_guard_pressure:{:.2}",
+                benchmark_loop_guard_pressure
+            ));
         }
 
         if active_window_title.eq_ignore_ascii_case(&input.current_window_title)
@@ -1492,6 +1582,62 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("preferred_descendant_child_chain")));
+    }
+
+    #[test]
+    fn route_surface_exploration_uses_benchmark_dialog_pressure_to_break_ties() {
+        let payload = json!({
+            "query": "Continue",
+            "benchmark_ready": true,
+            "benchmark_weakest_pack": "unsupported_and_recovery",
+            "benchmark_dialog_pressure": 0.95,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action||press_dialog_button|continue",
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": "Continue",
+                    "selected_action": "press_dialog_button",
+                    "confidence": 0.44
+                },
+                {
+                    "selection_key": "hypothesis|settings_sidebar|select_sidebar_item|settings",
+                    "kind": "hypothesis",
+                    "candidate_id": "settings_sidebar",
+                    "label": "Settings",
+                    "selected_action": "select_sidebar_item",
+                    "confidence": 0.53
+                }
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": "dialog_shift",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_label": "Continue",
+                    "occurrences": 1
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("press_dialog_button")
+        );
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_dialog_pressure:0.95")));
     }
 
     #[test]

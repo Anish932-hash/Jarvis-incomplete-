@@ -242,3 +242,68 @@ def test_evaluation_runner_history_and_improvement_candidates(monkeypatch) -> No
     assert history["status"] == "success"
     assert history["count"] == 1
     assert history["items"][0]["scenario_count"] == 2
+
+
+def test_evaluation_runner_control_guidance_uses_latest_summary(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        text = str(goal.request.text).lower()
+        if "installer" in text:
+            steps = [PlanStep(step_id="s1", action="time_now")]
+        else:
+            steps = [PlanStep(step_id="s1", action="desktop_interact")]
+        return ExecutionPlan(plan_id="plan-1", goal_id=goal.goal_id, intent="test", steps=steps)
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "unsupported_child_dialog_chain",
+            "Recover the unsupported child dialog chain",
+            ["desktop_interact"],
+            required_actions=["desktop_interact"],
+            category="unsupported_app",
+            capabilities=["surface_exploration", "child_window_adoption"],
+            risk_level="guarded",
+            pack="unsupported_and_recovery",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+        ),
+        Scenario(
+            "installer_resume_after_prompt",
+            "Resume blocked installer after approval",
+            ["time_now"],
+            required_actions=["desktop_interact"],
+            category="installer",
+            capabilities=["wizard_mission", "desktop_recovery"],
+            risk_level="high",
+            pack="installer_and_governance",
+            mission_family="recovery",
+            autonomy_tier="autonomous",
+            apps=["installer"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+        ),
+    ]
+
+    runner.run_with_summary(scenarios)
+    guidance = runner.control_guidance()
+
+    assert guidance["status"] == "success"
+    assert guidance["benchmark_ready"] is True
+    assert guidance["weakest_pack"] in {"unsupported_and_recovery", "installer_and_governance"}
+    assert guidance["weakest_capability"] in {
+        "surface_exploration",
+        "child_window_adoption",
+        "wizard_mission",
+        "desktop_recovery",
+    }
+    assert isinstance(guidance["focus_summary"], list)
+    assert guidance["history_size"] == 1
+    control_biases = guidance["control_biases"]
+    assert float(control_biases["dialog_resolution"]) > 0.12
+    assert float(control_biases["recovery_reacquire"]) > 0.1

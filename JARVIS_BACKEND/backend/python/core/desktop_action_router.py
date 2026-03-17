@@ -14,6 +14,7 @@ from backend.python.perception.surface_intelligence import SurfaceIntelligenceAn
 
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
 RustRequestHandler = Callable[[str, Dict[str, Any], float], Dict[str, Any]]
+BenchmarkGuidanceProvider = Callable[[], Dict[str, Any]]
 EXPLORATION_ADVANCE_ACTION = "advance_surface_exploration"
 EXPLORATION_FLOW_ACTION = "complete_surface_exploration_flow"
 RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow", EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION}
@@ -2719,6 +2720,7 @@ class DesktopActionRouter:
         workflow_memory: Optional[DesktopWorkflowMemory] = None,
         mission_memory: Optional[DesktopMissionMemory] = None,
         rust_request_handler: Optional[RustRequestHandler] = None,
+        benchmark_guidance_provider: Optional[BenchmarkGuidanceProvider] = None,
         settle_delay_s: float = 0.35,
     ) -> None:
         self._handlers = self._default_handlers()
@@ -2729,6 +2731,7 @@ class DesktopActionRouter:
         self._mission_memory = mission_memory or DesktopMissionMemory.default()
         self._surface_intelligence = SurfaceIntelligenceAnalyzer()
         self._rust_request_handler = rust_request_handler if callable(rust_request_handler) else None
+        self._benchmark_guidance_provider = benchmark_guidance_provider if callable(benchmark_guidance_provider) else None
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -3345,6 +3348,7 @@ class DesktopActionRouter:
         include_candidates: bool = True,
         limit: int = 80,
     ) -> Dict[str, Any]:
+        benchmark_guidance = self._benchmark_control_guidance()
         payload = self._call(
             "reacquire_window",
             {
@@ -3358,6 +3362,7 @@ class DesktopActionRouter:
                 "parent_pid": int(parent_pid or 0),
                 "include_candidates": bool(include_candidates),
                 "limit": max(1, min(int(limit), 300)),
+                "benchmark_guidance": benchmark_guidance,
             },
         )
         return dict(payload) if isinstance(payload, dict) else {}
@@ -3413,6 +3418,39 @@ class DesktopActionRouter:
             return {}
         data = result.get("data")
         return dict(data) if isinstance(data, dict) else {}
+
+    def _benchmark_control_guidance(self) -> Dict[str, Any]:
+        if not callable(self._benchmark_guidance_provider):
+            return {}
+        try:
+            payload = self._benchmark_guidance_provider()
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        control_biases = dict(payload.get("control_biases", {})) if isinstance(payload.get("control_biases", {}), dict) else {}
+        return {
+            "benchmark_ready": bool(payload.get("benchmark_ready", False)),
+            "generated_at": str(payload.get("generated_at", "") or "").strip(),
+            "latest_run_executed_at": str(payload.get("latest_run_executed_at", "") or "").strip(),
+            "weakest_pack": str(payload.get("weakest_pack", "") or "").strip(),
+            "weakest_category": str(payload.get("weakest_category", "") or "").strip(),
+            "weakest_capability": str(payload.get("weakest_capability", "") or "").strip(),
+            "weakest_mission_family": str(payload.get("weakest_mission_family", "") or "").strip(),
+            "focus_summary": [
+                str(item).strip()
+                for item in payload.get("focus_summary", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("focus_summary", []), list) else [],
+            "control_biases": {
+                "dialog_resolution": max(0.0, min(float(control_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
+                "descendant_focus": max(0.0, min(float(control_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
+                "navigation_branch": max(0.0, min(float(control_biases.get("navigation_branch", 0.0) or 0.0), 1.0)),
+                "recovery_reacquire": max(0.0, min(float(control_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0)),
+                "loop_guard": max(0.0, min(float(control_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
+                "native_focus": max(0.0, min(float(control_biases.get("native_focus", 0.0) or 0.0), 1.0)),
+            },
+        }
 
     @staticmethod
     def _plan_step(*, action: str, args: Dict[str, Any], phase: str, optional: bool, reason: str) -> Dict[str, Any]:
@@ -9863,6 +9901,12 @@ class DesktopActionRouter:
         args: Dict[str, Any],
         exploration_plan: Dict[str, Any],
     ) -> Dict[str, Any]:
+        benchmark_guidance = self._benchmark_control_guidance()
+        benchmark_biases = (
+            dict(benchmark_guidance.get("control_biases", {}))
+            if isinstance(benchmark_guidance.get("control_biases", {}), dict)
+            else {}
+        )
         branch_history = self._surface_exploration_branch_history(args=args)
         state_summary = self._surface_exploration_state_summary(exploration_plan=exploration_plan)
         current_window_title = str(state_summary.get("window_title", "") or "").strip()
@@ -9987,6 +10031,20 @@ class DesktopActionRouter:
             "branch_cascade_count": branch_cascade_count,
             "branch_cascade_kind_count": branch_cascade_kind_count,
             "branch_cascade_signature": branch_cascade_signature,
+            "benchmark_ready": bool(benchmark_guidance.get("benchmark_ready", False)),
+            "benchmark_focus_summary": [
+                str(item).strip()
+                for item in benchmark_guidance.get("focus_summary", [])
+                if str(item).strip()
+            ] if isinstance(benchmark_guidance.get("focus_summary", []), list) else [],
+            "benchmark_weakest_pack": str(benchmark_guidance.get("weakest_pack", "") or "").strip(),
+            "benchmark_weakest_capability": str(benchmark_guidance.get("weakest_capability", "") or "").strip(),
+            "benchmark_dialog_pressure": max(0.0, min(float(benchmark_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
+            "benchmark_descendant_focus_pressure": max(0.0, min(float(benchmark_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
+            "benchmark_navigation_pressure": max(0.0, min(float(benchmark_biases.get("navigation_branch", 0.0) or 0.0), 1.0)),
+            "benchmark_reacquire_pressure": max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0)),
+            "benchmark_loop_guard_pressure": max(0.0, min(float(benchmark_biases.get("loop_guard", 0.0) or 0.0), 1.0)),
+            "benchmark_native_focus_pressure": max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0)),
             "recent_selection_keys": {key for key in recent_selection_keys if key},
         }
 
@@ -10056,6 +10114,27 @@ class DesktopActionRouter:
         branch_cascade_count = max(0, int(branch_context.get("branch_cascade_count", 0) or 0))
         branch_cascade_kind_count = max(0, int(branch_context.get("branch_cascade_kind_count", 0) or 0))
         branch_cascade_signature = str(branch_context.get("branch_cascade_signature", "") or "").strip().lower()
+        benchmark_dialog_pressure = max(0.0, min(float(branch_context.get("benchmark_dialog_pressure", 0.0) or 0.0), 1.0))
+        benchmark_descendant_focus_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_descendant_focus_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_navigation_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_navigation_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_reacquire_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_reacquire_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_loop_guard_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_loop_guard_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_native_focus_pressure = max(
+            0.0,
+            min(float(branch_context.get("benchmark_native_focus_pressure", 0.0) or 0.0), 1.0),
+        )
         recent_selection_keys = {
             str(item).strip()
             for item in branch_context.get("recent_selection_keys", set())
@@ -10068,7 +10147,9 @@ class DesktopActionRouter:
             label=label,
         )
         if selection_key in recent_selection_keys:
-            score -= 0.16 if latest_occurrences < 2 else 0.24
+            repeat_penalty = 0.16 if latest_occurrences < 2 else 0.24
+            repeat_penalty += 0.12 * benchmark_loop_guard_pressure
+            score -= repeat_penalty
 
         if current_window_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_window_title:
             score += 0.04
@@ -10104,6 +10185,26 @@ class DesktopActionRouter:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
                 score += 0.04
+        navigation_actions = {
+            "select_tree_item",
+            "select_list_item",
+            "select_sidebar_item",
+            "select_tab_page",
+            "focus_input_field",
+            "open_dropdown",
+        }
+        if selected_action == "press_dialog_button" and benchmark_dialog_pressure > 0.0:
+            score += 0.06 + (0.18 * benchmark_dialog_pressure)
+        elif kind == "branch_action" and benchmark_dialog_pressure >= 0.6:
+            score -= 0.04 * benchmark_dialog_pressure
+        if preferred_descendant_focus and benchmark_descendant_focus_pressure > 0.0:
+            score += 0.05 + (0.16 * benchmark_descendant_focus_pressure)
+        if selected_action in navigation_actions and benchmark_navigation_pressure > 0.0:
+            score += 0.04 + (0.14 * benchmark_navigation_pressure)
+        if selected_action == "focus" and benchmark_reacquire_pressure > 0.0:
+            score += 0.04 + (0.16 * benchmark_reacquire_pressure)
+        if selected_action == "focus" and benchmark_native_focus_pressure > 0.0:
+            score += 0.03 + (0.12 * benchmark_native_focus_pressure)
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
         if kind == "hypothesis":
@@ -10137,7 +10238,7 @@ class DesktopActionRouter:
             elif kind == "branch_action":
                 score -= 0.01 if preferred_descendant_focus else 0.04
         elif last_branch_kind == "drilldown":
-            if selected_action in {"select_tree_item", "select_list_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
+            if selected_action in navigation_actions:
                 score += 0.08
         elif last_branch_kind == "pane_shift":
             if selected_action in {"select_tab_page", "select_sidebar_item", "select_list_item", "focus_input_field", "press_dialog_button"}:
@@ -10145,14 +10246,7 @@ class DesktopActionRouter:
         if branch_cascade_count > 0:
             if last_branch_kind in {"child_window_chain", "dialog_shift"} and selected_action == "press_dialog_button":
                 score += 0.05 if branch_cascade_kind_count > 1 else 0.03
-            elif last_branch_kind in {"drilldown", "pane_shift"} and selected_action in {
-                "select_tree_item",
-                "select_list_item",
-                "select_sidebar_item",
-                "select_tab_page",
-                "focus_input_field",
-                "open_dropdown",
-            }:
+            elif last_branch_kind in {"drilldown", "pane_shift"} and selected_action in navigation_actions:
                 score += 0.05 if branch_cascade_kind_count > 1 else 0.03
             elif preferred_descendant_focus and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score += 0.04 if branch_cascade_kind_count > 1 else 0.02
@@ -10225,7 +10319,7 @@ class DesktopActionRouter:
                 score += min(0.12, native_descendant_chain_depth * 0.03)
             elif preferred_descendant_focus:
                 score += min(0.1, native_descendant_chain_depth * 0.03)
-            elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
+            elif kind == "hypothesis" and selected_action in navigation_actions:
                 score += 0.03
         if native_descendant_dialog_chain_depth > 0 and selected_action == "press_dialog_button":
             score += min(0.1, native_descendant_dialog_chain_depth * 0.03)
@@ -10287,7 +10381,7 @@ class DesktopActionRouter:
             elif last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} and selected_action != "press_dialog_button":
                 score -= 0.03
         if branch_family_switch_count >= 2 and kind == "branch_action" and not preferred_descendant_focus:
-            score -= 0.03
+            score -= 0.03 + (0.06 * benchmark_loop_guard_pressure)
         if bool(branch_context.get("current_dialog_visible", False)):
             if selected_action == "press_dialog_button":
                 score += 0.12
@@ -10296,7 +10390,7 @@ class DesktopActionRouter:
             else:
                 score -= 0.08
         if latest_occurrences >= 2 and kind == "branch_action" and not preferred_descendant_focus:
-            score -= 0.06
+            score -= 0.06 + (0.08 * benchmark_loop_guard_pressure)
         return round(score, 4)
 
     def _surface_exploration_rust_router(
@@ -10352,6 +10446,20 @@ class DesktopActionRouter:
             "branch_cascade_count": max(0, int(branch_context.get("branch_cascade_count", 0) or 0)),
             "branch_cascade_kind_count": max(0, int(branch_context.get("branch_cascade_kind_count", 0) or 0)),
             "branch_cascade_signature": str(branch_context.get("branch_cascade_signature", "") or "").strip(),
+            "benchmark_ready": bool(branch_context.get("benchmark_ready", False)),
+            "benchmark_focus_summary": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_focus_summary", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_focus_summary", []), list) else [],
+            "benchmark_weakest_pack": str(branch_context.get("benchmark_weakest_pack", "") or "").strip(),
+            "benchmark_weakest_capability": str(branch_context.get("benchmark_weakest_capability", "") or "").strip(),
+            "benchmark_dialog_pressure": max(0.0, min(float(branch_context.get("benchmark_dialog_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_descendant_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_descendant_focus_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_navigation_pressure": max(0.0, min(float(branch_context.get("benchmark_navigation_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_reacquire_pressure": max(0.0, min(float(branch_context.get("benchmark_reacquire_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_loop_guard_pressure": max(0.0, min(float(branch_context.get("benchmark_loop_guard_pressure", 0.0) or 0.0), 1.0)),
+            "benchmark_native_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_native_focus_pressure", 0.0) or 0.0), 1.0)),
             "selection_rows": [
                 {
                     "selection_key": str(row.get("selection_key", "") or "").strip(),
