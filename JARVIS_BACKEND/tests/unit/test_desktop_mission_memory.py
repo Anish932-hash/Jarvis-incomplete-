@@ -28,6 +28,7 @@ def test_desktop_mission_memory_saves_and_resolves_paused_mission(tmp_path: Path
             "message": "Installer paused on administrator approval.",
             "stop_reason_code": "elevation_consent_required",
             "stop_reason": "Administrator approval is required.",
+            "risk_level": "high",
             "page_count": 2,
             "pages_completed": 1,
             "page_history": [{"page_index": 1, "status": "blocked"}],
@@ -61,16 +62,25 @@ def test_desktop_mission_memory_saves_and_resolves_paused_mission(tmp_path: Path
     assert snapshot["status_counts"] == {"paused": 1}
     assert snapshot["mission_kind_counts"] == {"wizard": 1}
     assert snapshot["approval_kind_counts"] == {"elevation_consent": 1}
+    assert snapshot["approval_state_counts"] == {"admin_blocked": 1}
+    assert snapshot["approval_scope_counts"] == {"admin": 1}
     assert snapshot["recovery_profile_counts"] == {"admin_review": 1}
+    assert snapshot["risk_level_counts"] == {"high": 1}
     assert snapshot["app_counts"] == {"installer": 1}
     assert snapshot["stop_reason_counts"] == {"elevation_consent_required": 1}
     assert snapshot["resume_ready_count"] == 0
     assert snapshot["manual_attention_count"] == 1
+    assert snapshot["admin_approval_count"] == 1
+    assert snapshot["destructive_approval_count"] == 0
+    assert snapshot["critical_risk_count"] == 0
     assert snapshot["latest_paused"]["mission_id"] == mission_id
     assert snapshot["items"][0]["recovery_profile"] == "admin_review"
     assert snapshot["items"][0]["approval_blocked"] is True
     assert snapshot["items"][0]["manual_attention_required"] is True
     assert snapshot["items"][0]["resume_ready"] is False
+    assert snapshot["items"][0]["approval_state"] == "admin_blocked"
+    assert snapshot["items"][0]["admin_clearance_required"] is True
+    assert snapshot["items"][0]["approval_summary"]
 
 
 def test_desktop_mission_memory_marks_resume_and_resets_entries(tmp_path: Path) -> None:
@@ -128,8 +138,14 @@ def test_desktop_mission_memory_marks_resume_and_resets_entries(tmp_path: Path) 
     assert remaining["recovery_profile_counts"] == {}
     assert remaining["app_counts"] == {}
     assert remaining["stop_reason_counts"] == {}
+    assert remaining["approval_state_counts"] == {}
+    assert remaining["approval_scope_counts"] == {}
+    assert remaining["risk_level_counts"] == {}
     assert remaining["resume_ready_count"] == 0
     assert remaining["manual_attention_count"] == 0
+    assert remaining["admin_approval_count"] == 0
+    assert remaining["destructive_approval_count"] == 0
+    assert remaining["critical_risk_count"] == 0
     assert remaining["latest_paused"] is None
 
 
@@ -162,9 +178,52 @@ def test_desktop_mission_memory_marks_resume_ready_profiles_for_non_blocked_paus
     assert mission["recovery_profile"] == "resume_ready"
     assert mission["resume_ready"] is True
     assert mission["manual_attention_required"] is False
+    assert mission["approval_state"] == "resume_ready"
     assert snapshot["recovery_profile_counts"] == {"resume_ready": 1}
+    assert snapshot["approval_state_counts"] == {"resume_ready": 1}
+    assert snapshot["approval_scope_counts"] == {"resume": 1}
     assert snapshot["resume_ready_count"] == 1
     assert snapshot["manual_attention_count"] == 0
+
+
+def test_desktop_mission_memory_tracks_destructive_review_policy_state(tmp_path: Path) -> None:
+    memory = DesktopMissionMemory(store_path=str(tmp_path / "desktop_mission_memory.json"))
+
+    saved = memory.save_paused_mission(
+        mission_kind="form",
+        args={"app_name": "settings"},
+        resume_contract={
+            "resume_action": "complete_form_flow",
+            "resume_signature": "destructive-review-1",
+            "anchor_app_name": "settings",
+        },
+        blocking_surface={
+            "window_title": "Delete Confirmation",
+            "dialog_kind": "destructive_warning",
+            "destructive_dialog_buttons": ["Delete"],
+            "surface_signature": "surface-delete-confirmation",
+        },
+        mission_payload={
+            "status": "partial",
+            "message": "Settings flow paused on a destructive confirmation.",
+            "stop_reason_code": "destructive_confirmation_required",
+            "risk_level": "critical",
+        },
+        message="Settings flow paused on a destructive confirmation.",
+    )
+
+    mission = saved["mission"]
+    snapshot = memory.snapshot(status="paused", app_name="settings")
+
+    assert mission["approval_state"] == "destructive_review"
+    assert mission["approval_scope"] == "destructive"
+    assert mission["destructive_confirmation"] is True
+    assert mission["critical_risk"] is True
+    assert mission["recovery_profile"] == "destructive_review"
+    assert snapshot["approval_state_counts"] == {"destructive_review": 1}
+    assert snapshot["approval_scope_counts"] == {"destructive": 1}
+    assert snapshot["destructive_approval_count"] == 1
+    assert snapshot["critical_risk_count"] == 1
 
 
 def test_desktop_mission_memory_matches_anchor_and_blocking_window_titles_for_app_filters(tmp_path: Path) -> None:

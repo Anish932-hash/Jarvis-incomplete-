@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
+from backend.python.core.desktop_governance_policy import desktop_governance_profile_defaults
+from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
 from backend.python.database.local_store import LocalStore
 
 
@@ -32,6 +34,11 @@ class DesktopRecoverySupervisor:
         interval_s: float = 45.0,
         limit: int = 12,
         max_auto_resumes: int = 2,
+        policy_profile: str = "balanced",
+        allow_high_risk: bool | None = None,
+        allow_critical_risk: bool | None = None,
+        allow_admin_clearance: bool | None = None,
+        allow_destructive: bool | None = None,
         mission_status: str = "paused",
         mission_kind: str = "",
         app_name: str = "",
@@ -49,6 +56,11 @@ class DesktopRecoverySupervisor:
             interval_s=interval_s,
             limit=limit,
             max_auto_resumes=max_auto_resumes,
+            policy_profile=policy_profile,
+            allow_high_risk=allow_high_risk,
+            allow_critical_risk=allow_critical_risk,
+            allow_admin_clearance=allow_admin_clearance,
+            allow_destructive=allow_destructive,
             mission_status=mission_status,
             mission_kind=mission_kind,
             app_name=app_name,
@@ -94,6 +106,11 @@ class DesktopRecoverySupervisor:
         interval_s: Optional[float] = None,
         limit: Optional[int] = None,
         max_auto_resumes: Optional[int] = None,
+        policy_profile: Optional[str] = None,
+        allow_high_risk: Optional[bool] = None,
+        allow_critical_risk: Optional[bool] = None,
+        allow_admin_clearance: Optional[bool] = None,
+        allow_destructive: Optional[bool] = None,
         mission_status: Optional[str] = None,
         mission_kind: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -110,6 +127,21 @@ class DesktopRecoverySupervisor:
                 self._config["limit"] = self._coerce_int(limit, minimum=1, maximum=200, default=12)
             if max_auto_resumes is not None:
                 self._config["max_auto_resumes"] = self._coerce_int(max_auto_resumes, minimum=0, maximum=32, default=2)
+            if policy_profile is not None:
+                self._config["policy_profile"] = self._normalize_policy_profile(policy_profile)
+                self._apply_policy_profile_defaults_locked(force=True)
+            if allow_high_risk is not None:
+                self._config["allow_high_risk"] = bool(allow_high_risk)
+                self._config["policy_profile"] = "custom"
+            if allow_critical_risk is not None:
+                self._config["allow_critical_risk"] = bool(allow_critical_risk)
+                self._config["policy_profile"] = "custom"
+            if allow_admin_clearance is not None:
+                self._config["allow_admin_clearance"] = bool(allow_admin_clearance)
+                self._config["policy_profile"] = "custom"
+            if allow_destructive is not None:
+                self._config["allow_destructive"] = bool(allow_destructive)
+                self._config["policy_profile"] = "custom"
             if mission_status is not None:
                 self._config["mission_status"] = str(mission_status or "").strip()
             if mission_kind is not None:
@@ -133,6 +165,11 @@ class DesktopRecoverySupervisor:
         source: str = "manual",
         limit: Optional[int] = None,
         max_auto_resumes: Optional[int] = None,
+        policy_profile: Optional[str] = None,
+        allow_high_risk: Optional[bool] = None,
+        allow_critical_risk: Optional[bool] = None,
+        allow_admin_clearance: Optional[bool] = None,
+        allow_destructive: Optional[bool] = None,
         mission_status: Optional[str] = None,
         mission_kind: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -142,6 +179,11 @@ class DesktopRecoverySupervisor:
         overrides = {
             "limit": limit,
             "max_auto_resumes": max_auto_resumes,
+            "policy_profile": policy_profile,
+            "allow_high_risk": allow_high_risk,
+            "allow_critical_risk": allow_critical_risk,
+            "allow_admin_clearance": allow_admin_clearance,
+            "allow_destructive": allow_destructive,
             "mission_status": mission_status,
             "mission_kind": mission_kind,
             "app_name": app_name,
@@ -200,6 +242,11 @@ class DesktopRecoverySupervisor:
             result = callback(
                 limit=self._coerce_int(effective.get("limit", 12), minimum=1, maximum=200, default=12),
                 max_auto_resumes=self._coerce_int(effective.get("max_auto_resumes", 2), minimum=0, maximum=32, default=2),
+                policy_profile=str(effective.get("policy_profile", "") or "").strip(),
+                allow_high_risk=bool(effective.get("allow_high_risk", False)),
+                allow_critical_risk=bool(effective.get("allow_critical_risk", False)),
+                allow_admin_clearance=bool(effective.get("allow_admin_clearance", False)),
+                allow_destructive=bool(effective.get("allow_destructive", False)),
                 mission_status=str(effective.get("mission_status", "") or "").strip(),
                 mission_kind=str(effective.get("mission_kind", "") or "").strip(),
                 app_name=str(effective.get("app_name", "") or "").strip(),
@@ -258,6 +305,11 @@ class DesktopRecoverySupervisor:
             "interval_s": interval_s,
             "limit": self._coerce_int(self._config.get("limit", 12), minimum=1, maximum=200, default=12),
             "max_auto_resumes": self._coerce_int(self._config.get("max_auto_resumes", 2), minimum=0, maximum=32, default=2),
+            "policy_profile": str(self._config.get("policy_profile", "balanced") or "balanced").strip(),
+            "allow_high_risk": bool(self._config.get("allow_high_risk", False)),
+            "allow_critical_risk": bool(self._config.get("allow_critical_risk", False)),
+            "allow_admin_clearance": bool(self._config.get("allow_admin_clearance", False)),
+            "allow_destructive": bool(self._config.get("allow_destructive", False)),
             "mission_status": str(self._config.get("mission_status", "") or "").strip(),
             "mission_kind": str(self._config.get("mission_kind", "") or "").strip(),
             "app_name": str(self._config.get("app_name", "") or "").strip(),
@@ -288,6 +340,7 @@ class DesktopRecoverySupervisor:
         runtime = self._store.get("runtime", {})
         if isinstance(config, dict):
             self._config.update(self._apply_overrides(self._config, config))
+            self._apply_policy_profile_defaults_locked(force=False)
         if isinstance(runtime, dict):
             self._runtime.update(runtime)
 
@@ -319,6 +372,9 @@ class DesktopRecoverySupervisor:
             "blocked_count": DesktopRecoverySupervisor._coerce_int(
                 payload.get("blocked_count", 0), minimum=0, maximum=100_000, default=0
             ),
+            "policy_blocked_count": DesktopRecoverySupervisor._coerce_int(
+                payload.get("policy_blocked_count", 0), minimum=0, maximum=100_000, default=0
+            ),
             "idle_count": DesktopRecoverySupervisor._coerce_int(
                 payload.get("idle_count", 0), minimum=0, maximum=100_000, default=0
             ),
@@ -335,23 +391,63 @@ class DesktopRecoverySupervisor:
         interval_s: float,
         limit: int,
         max_auto_resumes: int,
+        policy_profile: str,
+        allow_high_risk: bool | None,
+        allow_critical_risk: bool | None,
+        allow_admin_clearance: bool | None,
+        allow_destructive: bool | None,
         mission_status: str,
         mission_kind: str,
         app_name: str,
         stop_reason_code: str,
         resume_force: bool,
     ) -> Dict[str, Any]:
-        return {
+        normalized_profile = DesktopRecoverySupervisor._normalize_policy_profile(policy_profile)
+        config = {
             "enabled": bool(enabled),
             "interval_s": DesktopRecoverySupervisor._coerce_float(interval_s, minimum=5.0, maximum=3600.0, default=45.0),
             "limit": DesktopRecoverySupervisor._coerce_int(limit, minimum=1, maximum=200, default=12),
             "max_auto_resumes": DesktopRecoverySupervisor._coerce_int(max_auto_resumes, minimum=0, maximum=32, default=2),
+            "policy_profile": normalized_profile,
             "mission_status": str(mission_status or "paused").strip() or "paused",
             "mission_kind": str(mission_kind or "").strip(),
             "app_name": str(app_name or "").strip(),
             "stop_reason_code": str(stop_reason_code or "").strip(),
             "resume_force": bool(resume_force),
         }
+        profile_defaults = DesktopRecoverySupervisor._policy_profile_defaults(normalized_profile)
+        config["allow_high_risk"] = bool(profile_defaults["allow_high_risk"] if allow_high_risk is None else allow_high_risk)
+        config["allow_critical_risk"] = bool(profile_defaults["allow_critical_risk"] if allow_critical_risk is None else allow_critical_risk)
+        config["allow_admin_clearance"] = bool(profile_defaults["allow_admin_clearance"] if allow_admin_clearance is None else allow_admin_clearance)
+        config["allow_destructive"] = bool(profile_defaults["allow_destructive"] if allow_destructive is None else allow_destructive)
+        if any(value is not None for value in (allow_high_risk, allow_critical_risk, allow_admin_clearance, allow_destructive)):
+            config["policy_profile"] = "custom"
+        return config
+
+    @staticmethod
+    def _normalize_policy_profile(value: object) -> str:
+        return normalize_desktop_governance_profile(value)
+
+    @staticmethod
+    def _policy_profile_defaults(profile: str) -> Dict[str, bool]:
+        defaults = desktop_governance_profile_defaults(profile)
+        return {
+            "allow_high_risk": bool(defaults.get("allow_high_risk", False)),
+            "allow_critical_risk": bool(defaults.get("allow_critical_risk", False)),
+            "allow_admin_clearance": bool(defaults.get("allow_admin_clearance", False)),
+            "allow_destructive": bool(defaults.get("allow_destructive", False)),
+        }
+
+    def _apply_policy_profile_defaults_locked(self, *, force: bool = False) -> None:
+        profile = self._normalize_policy_profile(self._config.get("policy_profile", "balanced"))
+        self._config["policy_profile"] = profile
+        if profile == "custom" and not force:
+            return
+        defaults = self._policy_profile_defaults(profile)
+        self._config["allow_high_risk"] = bool(defaults["allow_high_risk"])
+        self._config["allow_critical_risk"] = bool(defaults["allow_critical_risk"])
+        self._config["allow_admin_clearance"] = bool(defaults["allow_admin_clearance"])
+        self._config["allow_destructive"] = bool(defaults["allow_destructive"])
 
     @staticmethod
     def _default_runtime() -> Dict[str, Any]:
@@ -380,11 +476,23 @@ class DesktopRecoverySupervisor:
         payload = dict(base)
         if not isinstance(overrides, dict):
             return payload
+        explicit_policy_profile = overrides.get("policy_profile") if overrides.get("policy_profile") is not None else None
+        normalized_policy_profile = (
+            DesktopRecoverySupervisor._normalize_policy_profile(explicit_policy_profile)
+            if explicit_policy_profile is not None
+            else ""
+        )
+        explicit_policy_override = False
         for key in (
             "enabled",
             "interval_s",
             "limit",
             "max_auto_resumes",
+            "policy_profile",
+            "allow_high_risk",
+            "allow_critical_risk",
+            "allow_admin_clearance",
+            "allow_destructive",
             "mission_status",
             "mission_kind",
             "app_name",
@@ -393,6 +501,32 @@ class DesktopRecoverySupervisor:
         ):
             if key in overrides and overrides[key] is not None:
                 payload[key] = overrides[key]
+                if key in {
+                    "allow_high_risk",
+                    "allow_critical_risk",
+                    "allow_admin_clearance",
+                    "allow_destructive",
+                }:
+                    explicit_policy_override = True
+        if explicit_policy_profile is not None:
+            payload["policy_profile"] = normalized_policy_profile
+            if payload["policy_profile"] != "custom":
+                defaults = DesktopRecoverySupervisor._policy_profile_defaults(payload["policy_profile"])
+                for key, value in defaults.items():
+                    if overrides.get(key) is None:
+                        payload[key] = bool(value)
+        if explicit_policy_override:
+            if not normalized_policy_profile:
+                payload["policy_profile"] = "custom"
+            elif normalized_policy_profile == "custom":
+                payload["policy_profile"] = "custom"
+            else:
+                defaults = DesktopRecoverySupervisor._policy_profile_defaults(normalized_policy_profile)
+                if any(
+                    overrides.get(key) is not None and bool(overrides.get(key)) != bool(defaults[key])
+                    for key in defaults
+                ):
+                    payload["policy_profile"] = "custom"
         return payload
 
     @staticmethod

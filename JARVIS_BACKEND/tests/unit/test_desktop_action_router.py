@@ -4076,6 +4076,76 @@ def test_desktop_action_router_promotes_learned_workflow_strategy_on_followup(tm
     assert advice["strategy_variants"][0]["strategy_id"] == "workflow_retry_2"
 
 
+def test_desktop_action_router_applies_learned_workflow_defaults(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Microsoft Visual Studio Code             Microsoft.VisualStudioCode   1.105                winget"],
+    )
+    memory_path = tmp_path / "desktop_workflow_memory.json"
+    memory = DesktopWorkflowMemory(store_path=str(memory_path))
+    for _ in range(2):
+        memory.record_outcome(
+            action="command",
+            args={
+                "action": "command",
+                "app_name": "vscode",
+                "text": "Preferences: Open Settings (JSON)",
+                "focus_first": False,
+                "ensure_app_launch": True,
+                "target_mode": "ocr",
+                "verify_mode": "ocr",
+                "retry_on_verification_failure": True,
+                "max_strategy_attempts": 3,
+            },
+            app_profile={"profile_id": "microsoft-visual-studio-code", "category": "editor"},
+            strategy={"strategy_id": "workflow_retry_2", "payload_overrides": {"keys": ["f1"]}},
+            attempt={"status": "success", "attempt": 2, "verification": {"enabled": True, "verified": True}},
+            advice={
+                "route_mode": "workflow_command",
+                "surface_snapshot": {
+                    "surface_intelligence": {
+                        "surface_role": "command_palette",
+                        "interaction_mode": "keyboard",
+                    }
+                },
+            },
+        )
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 701, "title": "main.py - Visual Studio Code", "exe": r"C:\Users\thecy\AppData\Local\Programs\Microsoft VS Code\Code.exe"}],
+            },
+            "active_window": lambda _payload: {"status": "success", "window": {"hwnd": 701, "title": "main.py - Visual Studio Code", "exe": r"C:\Users\thecy\AppData\Local\Programs\Microsoft VS Code\Code.exe"}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+        },
+        app_profile_registry=registry,
+        workflow_memory=DesktopWorkflowMemory(store_path=str(memory_path)),
+        settle_delay_s=0.0,
+    )
+
+    advice = router.advise(
+        {
+            "action": "command",
+            "app_name": "vscode",
+            "text": "Preferences: Open Settings (JSON)",
+        }
+    )
+
+    assert advice["status"] == "success"
+    assert advice["adaptive_skill"]["status"] == "learned"
+    assert advice["adaptive_skill"]["scope"] == "intent"
+    assert advice["adaptive_skill"]["applied"] is True
+    assert advice["adaptive_skill"]["applied_overrides"]["focus_first"] is False
+    assert advice["adaptive_skill"]["applied_overrides"]["target_mode"] == "ocr"
+    assert advice["adaptive_skill"]["recommended_overrides"]["ensure_app_launch"] is True
+    assert advice["autonomy"]["focus_first"] is False
+    assert advice["autonomy"]["ensure_app_launch"] is True
+    assert advice["adaptive_strategy"]["skill_profile"]["recommended_overrides"]["target_mode"] == "ocr"
+
+
 def test_desktop_action_router_builds_quick_open_workflow_for_editor(tmp_path: Path) -> None:
     registry = _build_registry(
         tmp_path,

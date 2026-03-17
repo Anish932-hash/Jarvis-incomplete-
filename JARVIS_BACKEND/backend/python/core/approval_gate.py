@@ -34,6 +34,9 @@ class ApprovalRecord:
     approved_at: Optional[str] = None
     consumed_at: Optional[str] = None
     note: str = ""
+    reuse_count: int = 0
+    last_reused_at: Optional[str] = None
+    last_reuse_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -124,6 +127,50 @@ class ApprovalGate:
             record.consumed_at = _utc_now_iso()
             return True, "Approval token consumed.", record
 
+    def auto_reuse(
+        self,
+        *,
+        action: str,
+        args: Dict[str, Any],
+        source: str,
+        allow_approved: bool = True,
+        allow_consumed: bool = False,
+        consumed_max_age_s: int = 0,
+        reason: str = "",
+    ) -> Tuple[bool, str, Optional[ApprovalRecord], str]:
+        with self._lock:
+            self._cleanup()
+            args_hash = self._hash_args(args)
+            now_iso = _utc_now_iso()
+            consumed_limit_s = max(0, int(consumed_max_age_s or 0))
+            candidates: List[ApprovalRecord] = []
+            for record in self._records.values():
+                if record.action != action or record.args_hash != args_hash or record.source != source:
+                    continue
+                if record.status == "approved" and allow_approved and not self._is_expired(record):
+                    candidates.append(record)
+                elif record.status == "consumed" and allow_consumed and consumed_limit_s > 0:
+                    consumed_age_s = self._age_s(record.consumed_at)
+                    if consumed_age_s is not None and consumed_age_s <= float(consumed_limit_s):
+                        candidates.append(record)
+            if not candidates:
+                return False, "No reusable approval matched the requested action.", None, ""
+
+            candidates.sort(key=self._reuse_sort_key, reverse=True)
+            record = candidates[0]
+            if record.status == "approved":
+                record.status = "consumed"
+                record.consumed_at = now_iso
+                record.reuse_count += 1
+                record.last_reused_at = now_iso
+                record.last_reuse_reason = reason or "auto_reuse_approved"
+                return True, "Reused previously approved exact-match approval.", record, "approved"
+
+            record.reuse_count += 1
+            record.last_reused_at = now_iso
+            record.last_reuse_reason = reason or "auto_reuse_consumed"
+            return True, "Reused recent exact-match approval memory.", record, "consumed"
+
     def get(self, approval_id: str) -> Optional[ApprovalRecord]:
         with self._lock:
             self._cleanup()
@@ -209,3 +256,28 @@ class ApprovalGate:
             else:
                 preview[skey] = value
         return preview
+
+    @staticmethod
+    def _reuse_sort_key(record: ApprovalRecord) -> float:
+        for value in (record.last_reused_at, record.consumed_at, record.approved_at, record.created_at):
+            timestamp = ApprovalGate._iso_ts(value)
+            if timestamp is not None:
+                return timestamp
+        return 0.0
+
+    @staticmethod
+    def _age_s(value: Optional[str]) -> Optional[float]:
+        timestamp = ApprovalGate._iso_ts(value)
+        if timestamp is None:
+            return None
+        return max(0.0, time.time() - timestamp)
+
+    @staticmethod
+    def _iso_ts(value: Optional[str]) -> Optional[float]:
+        clean = str(value or "").strip()
+        if not clean:
+            return None
+        try:
+            return datetime.fromisoformat(clean).timestamp()
+        except Exception:
+            return None

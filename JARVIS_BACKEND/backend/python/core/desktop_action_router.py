@@ -2769,6 +2769,9 @@ class DesktopActionRouter:
             )
             primary_candidate = candidates[0] if candidates else {}
 
+        args, adaptive_skill = self._apply_workflow_memory_defaults(args=args, app_profile=app_profile)
+        workflow_profile = self._workflow_profile(requested_action=requested_action, args=args, app_profile=app_profile)
+
         blockers: List[str] = []
         warnings: List[str] = []
         plan: List[Dict[str, Any]] = []
@@ -3070,9 +3073,12 @@ class DesktopActionRouter:
             args=args,
             app_profile=app_profile,
             variants=strategy_variants,
+            skill_profile=adaptive_skill,
         )
         if isinstance(adaptive_strategy, dict) and isinstance(adaptive_strategy.get("variants", []), list) and adaptive_strategy.get("variants"):
             strategy_variants = [row for row in adaptive_strategy.get("variants", []) if isinstance(row, dict)]
+        if not adaptive_skill and isinstance(adaptive_strategy.get("skill_profile", {}), dict):
+            adaptive_skill = dict(adaptive_strategy.get("skill_profile", {}))
         exploration_plan: Dict[str, Any] = {}
         if requested_action == "observe" or bool(blockers):
             exploration_snapshot = surface_snapshot if isinstance(surface_snapshot, dict) and surface_snapshot else self.surface_snapshot(
@@ -3136,6 +3142,7 @@ class DesktopActionRouter:
                 capabilities=capabilities,
                 app_profile=app_profile,
             ),
+            "adaptive_skill": adaptive_skill,
             "adaptive_strategy": adaptive_strategy,
             "strategy_variants": strategy_variants,
             "exploration_plan": exploration_plan,
@@ -3158,6 +3165,8 @@ class DesktopActionRouter:
                 "safety_signals": advice.get("safety_signals", {}),
                 "form_target_state": advice.get("form_target_state", {}),
                 "surface_branch": advice.get("surface_branch", {}),
+                "adaptive_skill": advice.get("adaptive_skill", {}),
+                "adaptive_strategy": advice.get("adaptive_strategy", {}),
                 "resume_action": advice.get("resume_action", ""),
                 "resume_payload": advice.get("resume_payload", {}),
                 "resume_contract": advice.get("resume_contract", {}),
@@ -4959,6 +4968,7 @@ class DesktopActionRouter:
                 "form_target_state": {},
                 "surface_branch": {},
                 "verification_plan": {},
+                "adaptive_skill": {},
                 "adaptive_strategy": {},
                 "strategy_variants": [],
                 "message": message,
@@ -5005,6 +5015,7 @@ class DesktopActionRouter:
                 "form_target_state": resume_context.get("form_target_state", {}) if isinstance(resume_context.get("form_target_state", {}), dict) else {},
                 "surface_branch": {},
                 "verification_plan": {},
+                "adaptive_skill": {},
                 "adaptive_strategy": {},
                 "strategy_variants": [],
                 "message": str(resume_context.get("message", "") or ""),
@@ -7683,6 +7694,8 @@ class DesktopActionRouter:
             "surface_branch": advice.get("surface_branch", base_advice.get("surface_branch", {})),
             "exploration_plan": advice.get("exploration_plan", base_advice.get("exploration_plan", {})),
             "exploration_selection": advice.get("exploration_selection", base_advice.get("exploration_selection", {})),
+            "adaptive_skill": advice.get("adaptive_skill", base_advice.get("adaptive_skill", {})),
+            "adaptive_strategy": advice.get("adaptive_strategy", base_advice.get("adaptive_strategy", {})),
             "resume_action": advice.get("resume_action", base_advice.get("resume_action", "")),
             "resume_payload": advice.get("resume_payload", base_advice.get("resume_payload", {})),
             "resume_contract": advice.get("resume_contract", base_advice.get("resume_contract", {})),
@@ -7721,6 +7734,7 @@ class DesktopActionRouter:
                 app_profile=advice.get("app_profile", {}) if isinstance(advice.get("app_profile", {}), dict) else {},
                 strategy=strategy,
                 attempt=attempt_payload,
+                advice=advice,
             )
         except Exception:  # noqa: BLE001
             return
@@ -9555,7 +9569,7 @@ class DesktopActionRouter:
         branch_key = str(normalized.get("branch_key", "") or "").strip()
         filtered: List[Dict[str, Any]] = []
         for row in rows:
-            existing_row = dict(row)
+            existing_row = self._normalize_surface_exploration_branch_entry(row) or dict(row)
             if str(existing_row.get("branch_key", "") or "").strip() == branch_key:
                 existing_occurrences = max(1, int(existing_row.get("occurrences", 1) or 1))
                 normalized["occurrences"] = existing_occurrences + 1
@@ -11240,6 +11254,7 @@ class DesktopActionRouter:
             "form_target_state": {},
             "surface_branch": {},
             "verification_plan": {},
+            "adaptive_skill": {},
             "adaptive_strategy": {},
             "strategy_variants": [{"strategy_id": "primary", "title": "Primary Recon Step", "reason": "Use the strongest supported recon target.", "payload_overrides": {}}],
             "exploration_plan": exploration_plan if isinstance(exploration_plan, dict) else {},
@@ -11331,6 +11346,7 @@ class DesktopActionRouter:
             "form_target_state": nested_advice.get("form_target_state", {}),
             "surface_branch": nested_advice.get("surface_branch", {}),
             "verification_plan": nested_advice.get("verification_plan", {}),
+            "adaptive_skill": nested_advice.get("adaptive_skill", {}),
             "adaptive_strategy": nested_advice.get("adaptive_strategy", {}),
             "strategy_variants": nested_advice.get("strategy_variants", [{"strategy_id": "primary", "title": "Primary Recon Step", "reason": route_message, "payload_overrides": {}}]),
             "exploration_plan": exploration_plan,
@@ -16580,6 +16596,36 @@ class DesktopActionRouter:
             exe_name=str(candidate_exe or active_exe).strip(),
         )
 
+    def _apply_workflow_memory_defaults(self, *, args: Dict[str, Any], app_profile: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        skill_profile = self._workflow_memory.skill_profile(
+            action=str(args.get("action", "") or ""),
+            args=args,
+            app_profile=app_profile,
+        )
+        if not isinstance(skill_profile, dict) or not skill_profile:
+            return args, {}
+        next_args = dict(args)
+        provided_fields = {str(item).strip() for item in next_args.get("_provided_fields", []) if str(item).strip()}
+        recommended_overrides = (
+            dict(skill_profile.get("recommended_overrides", {}))
+            if isinstance(skill_profile.get("recommended_overrides", {}), dict)
+            else {}
+        )
+        applied_overrides: Dict[str, Any] = {}
+        if bool(skill_profile.get("should_apply", False)):
+            for field_name, value in recommended_overrides.items():
+                if field_name in provided_fields:
+                    continue
+                if self._payload_values_equal(next_args.get(field_name), value):
+                    continue
+                next_args[field_name] = value
+                applied_overrides[field_name] = value
+        enriched_skill = dict(skill_profile)
+        enriched_skill["applied"] = bool(applied_overrides)
+        enriched_skill["applied_overrides"] = applied_overrides
+        enriched_skill["applied_fields"] = list(applied_overrides.keys())
+        return next_args, enriched_skill
+
     def _apply_profile_defaults(self, *, args: Dict[str, Any], app_profile: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         if app_profile.get("status") != "success":
             return args, {}
@@ -16609,6 +16655,12 @@ class DesktopActionRouter:
                 next_args["verify_text"] = derived_verify_text
                 defaults_applied["verify_text"] = derived_verify_text
         return next_args, defaults_applied
+
+    @staticmethod
+    def _payload_values_equal(left: Any, right: Any) -> bool:
+        if isinstance(left, str) and isinstance(right, str):
+            return " ".join(left.strip().lower().split()) == " ".join(right.strip().lower().split())
+        return left == right
 
     def _derive_verify_text(self, *, args: Dict[str, Any], app_profile: Dict[str, Any]) -> str:
         explicit = str(args.get("verify_text", "") or "").strip()

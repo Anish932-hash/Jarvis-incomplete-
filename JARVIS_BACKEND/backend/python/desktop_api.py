@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import difflib
+import hashlib
 import html
 import json
 import os
@@ -27,6 +28,9 @@ from backend.python.core.oauth_flow import OAuthFlowManager
 from backend.python.core.oauth_token_store import OAuthTokenStore
 from backend.python.core.provider_credentials import ProviderCredentialManager
 from backend.python.core.desktop_action_router import DesktopActionRouter
+from backend.python.core.desktop_governance_policy import DesktopGovernancePolicyManager
+from backend.python.core.desktop_governance_policy import desktop_governance_profile_catalog
+from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
 from backend.python.core.desktop_recovery_watchdog_memory import DesktopRecoveryWatchdogMemory
 from backend.python.core.desktop_recovery_supervisor import DesktopRecoverySupervisor
 from backend.python.core.provider_verifier import ProviderCredentialVerifier
@@ -166,11 +170,80 @@ class DesktopBackendService:
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
         )
+        self.desktop_governance_policy = DesktopGovernancePolicyManager(
+            policy_profile=str(os.getenv("JARVIS_DESKTOP_GOVERNANCE_PROFILE", "balanced") or "balanced").strip(),
+            allow_high_risk=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_HIGH_RISK", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_HIGH_RISK") is not None
+                else None
+            ),
+            allow_critical_risk=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_CRITICAL_RISK", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_CRITICAL_RISK") is not None
+                else None
+            ),
+            allow_admin_clearance=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_ADMIN", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_ADMIN") is not None
+                else None
+            ),
+            allow_destructive=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_DESTRUCTIVE", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_DESTRUCTIVE") is not None
+                else None
+            ),
+            allow_desktop_approval_reuse=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_DESKTOP_APPROVAL_REUSE", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_DESKTOP_APPROVAL_REUSE") is not None
+                else None
+            ),
+            allow_action_confirmation_reuse=(
+                self._env_bool("JARVIS_DESKTOP_GOVERNANCE_ALLOW_ACTION_CONFIRMATION_REUSE", False)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ALLOW_ACTION_CONFIRMATION_REUSE") is not None
+                else None
+            ),
+            desktop_approval_reuse_window_s=(
+                self._env_int("JARVIS_DESKTOP_GOVERNANCE_DESKTOP_APPROVAL_REUSE_WINDOW_S", 90, minimum=0, maximum=3600)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_DESKTOP_APPROVAL_REUSE_WINDOW_S") is not None
+                else None
+            ),
+            action_confirmation_reuse_window_s=(
+                self._env_int("JARVIS_DESKTOP_GOVERNANCE_ACTION_CONFIRMATION_REUSE_WINDOW_S", 45, minimum=0, maximum=3600)
+                if os.getenv("JARVIS_DESKTOP_GOVERNANCE_ACTION_CONFIRMATION_REUSE_WINDOW_S") is not None
+                else None
+            ),
+        )
+        desktop_governance = self.desktop_governance_policy.status()
+        desktop_governance_profile = str(desktop_governance.get("policy_profile", "balanced") or "balanced").strip()
+        desktop_governance_custom = desktop_governance_profile == "custom"
         self.desktop_recovery_supervisor = DesktopRecoverySupervisor(
             enabled=self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ENABLED", False),
             interval_s=self._env_float("JARVIS_DESKTOP_RECOVERY_DAEMON_INTERVAL_S", 45.0, minimum=5.0, maximum=3600.0),
             limit=self._env_int("JARVIS_DESKTOP_RECOVERY_DAEMON_LIMIT", 12, minimum=1, maximum=200),
             max_auto_resumes=self._env_int("JARVIS_DESKTOP_RECOVERY_DAEMON_MAX_AUTO_RESUMES", 2, minimum=0, maximum=32),
+            policy_profile=str(
+                os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_POLICY_PROFILE", desktop_governance_profile) or desktop_governance_profile
+            ).strip(),
+            allow_high_risk=(
+                self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_HIGH_RISK", False)
+                if os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_HIGH_RISK") is not None
+                else (bool(desktop_governance.get("allow_high_risk", False)) if desktop_governance_custom else None)
+            ),
+            allow_critical_risk=(
+                self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_CRITICAL_RISK", False)
+                if os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_CRITICAL_RISK") is not None
+                else (bool(desktop_governance.get("allow_critical_risk", False)) if desktop_governance_custom else None)
+            ),
+            allow_admin_clearance=(
+                self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_ADMIN", False)
+                if os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_ADMIN") is not None
+                else (bool(desktop_governance.get("allow_admin_clearance", False)) if desktop_governance_custom else None)
+            ),
+            allow_destructive=(
+                self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_DESTRUCTIVE", False)
+                if os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_ALLOW_DESTRUCTIVE") is not None
+                else (bool(desktop_governance.get("allow_destructive", False)) if desktop_governance_custom else None)
+            ),
             mission_status=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_STATUS", "paused") or "paused").strip() or "paused",
             mission_kind=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_KIND", "") or "").strip(),
             app_name=str(os.getenv("JARVIS_DESKTOP_RECOVERY_DAEMON_APP", "") or "").strip(),
@@ -7213,6 +7286,424 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def _build_desktop_router_payload(
+        self,
+        *,
+        action: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        text: str = "",
+        mission_id: str = "",
+        mission_kind: str = "",
+        candidate_id: str = "",
+        branch_action: str = "",
+        keys: Optional[List[str]] = None,
+        ensure_app_launch: Optional[bool] = None,
+        focus_first: Optional[bool] = None,
+        press_enter: Optional[bool] = None,
+        verify_after_action: Optional[bool] = None,
+        verify_text: str = "",
+        retry_on_verification_failure: Optional[bool] = None,
+        max_strategy_attempts: Optional[int] = None,
+        exploration_limit: Optional[int] = None,
+        max_exploration_steps: Optional[int] = None,
+        max_descendant_chain_steps: Optional[int] = None,
+        max_branch_family_switches: Optional[int] = None,
+        max_branch_cascade_steps: Optional[int] = None,
+        max_wizard_pages: Optional[int] = None,
+        allow_warning_pages: Optional[bool] = None,
+        max_form_pages: Optional[int] = None,
+        allow_destructive_forms: Optional[bool] = None,
+        attempted_targets: Optional[List[Dict[str, Any]]] = None,
+        surface_signature_history: Optional[List[str]] = None,
+        branch_history: Optional[List[Dict[str, Any]]] = None,
+        resume_contract: Optional[Dict[str, Any]] = None,
+        blocking_surface: Optional[Dict[str, Any]] = None,
+        resume_force: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "action": action,
+            "app_name": app_name,
+            "window_title": window_title,
+            "query": query,
+            "text": text,
+            "mission_id": mission_id,
+            "mission_kind": mission_kind,
+            "candidate_id": candidate_id,
+            "branch_action": branch_action,
+            "keys": list(keys or []),
+        }
+        if ensure_app_launch is not None:
+            payload["ensure_app_launch"] = bool(ensure_app_launch)
+        if focus_first is not None:
+            payload["focus_first"] = bool(focus_first)
+        if press_enter is not None:
+            payload["press_enter"] = bool(press_enter)
+        if verify_after_action is not None:
+            payload["verify_after_action"] = bool(verify_after_action)
+        if verify_text:
+            payload["verify_text"] = verify_text
+        if retry_on_verification_failure is not None:
+            payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
+        if max_strategy_attempts is not None:
+            payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
+        if exploration_limit is not None:
+            payload["exploration_limit"] = int(exploration_limit or 6)
+        if max_exploration_steps is not None:
+            payload["max_exploration_steps"] = int(max_exploration_steps or 3)
+        if max_descendant_chain_steps is not None:
+            payload["max_descendant_chain_steps"] = int(max_descendant_chain_steps or 3)
+        if max_branch_family_switches is not None:
+            payload["max_branch_family_switches"] = int(max_branch_family_switches or 2)
+        if max_branch_cascade_steps is not None:
+            payload["max_branch_cascade_steps"] = int(max_branch_cascade_steps or 3)
+        if max_wizard_pages is not None:
+            payload["max_wizard_pages"] = int(max_wizard_pages or 6)
+        if allow_warning_pages is not None:
+            payload["allow_warning_pages"] = bool(allow_warning_pages)
+        if max_form_pages is not None:
+            payload["max_form_pages"] = int(max_form_pages or 5)
+        if allow_destructive_forms is not None:
+            payload["allow_destructive_forms"] = bool(allow_destructive_forms)
+        if isinstance(attempted_targets, list) and attempted_targets:
+            payload["attempted_targets"] = [dict(row) for row in attempted_targets if isinstance(row, dict)]
+        if isinstance(surface_signature_history, list) and surface_signature_history:
+            payload["surface_signature_history"] = [
+                str(item).strip()
+                for item in surface_signature_history
+                if str(item).strip()
+            ]
+        if isinstance(branch_history, list) and branch_history:
+            payload["branch_history"] = [dict(row) for row in branch_history if isinstance(row, dict)]
+        if isinstance(resume_contract, dict) and resume_contract:
+            payload["resume_contract"] = dict(resume_contract)
+        if isinstance(blocking_surface, dict) and blocking_surface:
+            payload["blocking_surface"] = dict(blocking_surface)
+        if resume_force is not None:
+            payload["resume_force"] = bool(resume_force)
+        return payload
+
+    def _action_confirmation_memory_policy(self, *, request: ActionRequest, definition: Any = None) -> Dict[str, Any]:
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        governance_manager = getattr(self, "desktop_governance_policy", None)
+        if governance_manager is not None and callable(getattr(governance_manager, "resolve", None)):
+            policy = governance_manager.resolve(
+                policy_profile=str(metadata.get("policy_profile", "") or "").strip(),
+            )
+        else:
+            profile = normalize_desktop_governance_profile(metadata.get("policy_profile", "balanced"))
+            defaults = desktop_governance_profile_catalog().get(profile, desktop_governance_profile_catalog()["balanced"])
+            policy = {
+                "policy_profile": profile,
+                "allow_high_risk": bool(defaults.get("allow_high_risk", False)),
+                "allow_critical_risk": bool(defaults.get("allow_critical_risk", False)),
+                "allow_admin_clearance": bool(defaults.get("allow_admin_clearance", False)),
+                "allow_destructive": bool(defaults.get("allow_destructive", False)),
+                "allow_action_confirmation_reuse": bool(defaults.get("allow_action_confirmation_reuse", False)),
+                "action_confirmation_reuse_window_s": int(defaults.get("action_confirmation_reuse_window_s", 45) or 45),
+            }
+        effective_profile = normalize_desktop_governance_profile(policy.get("policy_profile", "balanced"))
+        risk_level = str(metadata.get("risk_level", "") or metadata.get("risk", "") or "").strip().lower()
+        high_risk = bool(metadata.get("high_risk", False) or risk_level == "high")
+        critical_risk = bool(metadata.get("critical_risk", False) or risk_level == "critical")
+        admin_required = bool(metadata.get("admin_clearance_required", False))
+        destructive_confirmation = bool(metadata.get("destructive_confirmation", False))
+        requires_manual_review = bool(metadata.get("requires_manual_review", False))
+        if (
+            critical_risk
+            or admin_required
+            or destructive_confirmation
+            or requires_manual_review
+        ):
+            return {
+                "profile": "conservative",
+                "requested_profile": effective_profile,
+                "effective_profile": "conservative",
+                "reusable": False,
+                "auto_consume_approved": False,
+                "auto_reuse_consumed": False,
+                "reuse_window_s": 0,
+                "reason": "Fresh explicit approval is required for critical, admin, destructive, or manual-review actions.",
+            }
+        if high_risk and not bool(policy.get("allow_high_risk", False)):
+            return {
+                "profile": effective_profile,
+                "requested_profile": effective_profile,
+                "effective_profile": effective_profile,
+                "reusable": False,
+                "auto_consume_approved": False,
+                "auto_reuse_consumed": False,
+                "reuse_window_s": 0,
+                "reason": "This governance profile does not allow approval-memory reuse for high-risk actions.",
+            }
+        reusable = bool(policy.get("allow_action_confirmation_reuse", False))
+        return {
+            "profile": effective_profile,
+            "requested_profile": effective_profile,
+            "effective_profile": effective_profile,
+            "reusable": reusable,
+            "auto_consume_approved": reusable,
+            "auto_reuse_consumed": reusable,
+            "reuse_window_s": max(0, int(policy.get("action_confirmation_reuse_window_s", 45) or 0)) if reusable else 0,
+            "reason": "Recent exact-match approvals can be reused for repeat confirmation-gated actions when the governance profile allows it.",
+        }
+
+    def _desktop_approval_required(self, *, payload: Dict[str, Any], advice: Dict[str, Any]) -> bool:
+        action_name = str(advice.get("action", "") or payload.get("action", "") or "").strip().lower()
+        risk_level = str(advice.get("risk_level", "") or "").strip().lower()
+        safety_signals = advice.get("safety_signals", {}) if isinstance(advice.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        blocking_surface = advice.get("blocking_surface", {}) if isinstance(advice.get("blocking_surface", {}), dict) else {}
+        approval_kind = str(blocking_surface.get("approval_kind", "") or dialog_state.get("approval_kind", "") or "").strip().lower()
+        risky_actions = {
+            "confirm_dialog",
+            "press_dialog_button",
+            "next_wizard_step",
+            "finish_wizard",
+            "complete_wizard_page",
+            "complete_wizard_flow",
+            "complete_form_page",
+            "complete_form_flow",
+        }
+        approval_signals = any(
+            bool(safety_signals.get(key, False))
+            for key in (
+                "warning_surface_visible",
+                "destructive_warning_visible",
+                "elevation_prompt_visible",
+                "permission_review_visible",
+                "requires_confirmation",
+                "admin_approval_required",
+                "secure_desktop_likely",
+            )
+        )
+        if action_name in risky_actions and risk_level in {"high", "critical"}:
+            return True
+        if action_name == "resume_mission" and bool(payload.get("resume_force", False)) and (
+            approval_signals or approval_kind in {"elevation_consent", "elevation_credentials", "permission_review", "credential_input"}
+        ):
+            return True
+        if approval_signals:
+            return True
+        return approval_kind in {"elevation_consent", "elevation_credentials", "permission_review", "credential_input"}
+
+    def _desktop_approval_memory_policy(self, *, approval_contract: Dict[str, Any]) -> Dict[str, Any]:
+        governance_manager = getattr(self, "desktop_governance_policy", None)
+        base_policy = (
+            governance_manager.status()
+            if governance_manager is not None and callable(getattr(governance_manager, "status", None))
+            else {
+                "policy_profile": "balanced",
+                "allow_high_risk": True,
+                "allow_critical_risk": False,
+                "allow_admin_clearance": False,
+                "allow_destructive": False,
+                "allow_desktop_approval_reuse": True,
+                "allow_action_confirmation_reuse": True,
+                "desktop_approval_reuse_window_s": 90,
+                "action_confirmation_reuse_window_s": 45,
+            }
+        )
+        requested_profile = normalize_desktop_governance_profile(base_policy.get("policy_profile", "balanced"))
+        risk_level = str(approval_contract.get("risk_level", "") or "").strip().lower()
+        approval_kind = str(approval_contract.get("approval_kind", "") or "").strip().lower()
+        requires_admin = bool(approval_contract.get("requires_admin_clearance", False))
+        requires_permission_review = bool(approval_contract.get("requires_permission_review", False))
+        destructive_confirmation = bool(approval_contract.get("destructive_confirmation", False))
+        secure_desktop_likely = bool(approval_contract.get("secure_desktop_likely", False))
+        requires_manual_review = bool(approval_contract.get("requires_manual_review", False))
+        resume_force = bool(approval_contract.get("resume_force", False))
+
+        if (
+            risk_level == "critical"
+            or requires_admin
+            or destructive_confirmation
+            or secure_desktop_likely
+            or resume_force
+            or approval_kind in {"elevation_consent", "elevation_credentials", "credential_input"}
+        ):
+            return {
+                "profile": "conservative",
+                "requested_profile": requested_profile,
+                "effective_profile": "conservative",
+                "exact_match_required": True,
+                "reusable": False,
+                "auto_consume_approved": False,
+                "auto_reuse_consumed": False,
+                "reuse_window_s": 0,
+                "reason": "Fresh explicit approval is required for admin, destructive, credential, secure-desktop, or critical desktop actions.",
+            }
+        if requires_permission_review or requires_manual_review:
+            reusable = bool(base_policy.get("allow_desktop_approval_reuse", True))
+            return {
+                "profile": requested_profile,
+                "requested_profile": requested_profile,
+                "effective_profile": requested_profile,
+                "exact_match_required": True,
+                "reusable": reusable,
+                "auto_consume_approved": reusable,
+                "auto_reuse_consumed": reusable,
+                "reuse_window_s": min(
+                    max(0, int(base_policy.get("desktop_approval_reuse_window_s", 90) or 0)),
+                    120,
+                ) if reusable else 0,
+                "reason": "Recent exact-match approvals can be reused briefly for repeat permission-review desktop actions.",
+            }
+        reusable = bool(base_policy.get("allow_desktop_approval_reuse", True))
+        return {
+            "profile": requested_profile,
+            "requested_profile": requested_profile,
+            "effective_profile": requested_profile,
+            "exact_match_required": True,
+            "reusable": reusable,
+            "auto_consume_approved": reusable,
+            "auto_reuse_consumed": reusable,
+            "reuse_window_s": max(0, int(base_policy.get("desktop_approval_reuse_window_s", 90) or 0)) if reusable else 0,
+            "reason": "Recent exact-match approvals can be reused for repeat high-risk desktop actions on the same surface.",
+        }
+
+    def _desktop_approval_contract(self, *, payload: Dict[str, Any], advice: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._desktop_approval_required(payload=payload, advice=advice):
+            return {}
+        safety_signals = advice.get("safety_signals", {}) if isinstance(advice.get("safety_signals", {}), dict) else {}
+        dialog_state = safety_signals.get("dialog_state", {}) if isinstance(safety_signals.get("dialog_state", {}), dict) else {}
+        blocking_surface = advice.get("blocking_surface", {}) if isinstance(advice.get("blocking_surface", {}), dict) else {}
+        resume_contract = advice.get("resume_contract", {}) if isinstance(advice.get("resume_contract", {}), dict) else {}
+        surface_snapshot = advice.get("surface_snapshot", {}) if isinstance(advice.get("surface_snapshot", {}), dict) else {}
+        action_name = str(advice.get("action", "") or payload.get("action", "") or "").strip().lower()
+        risk_level = str(advice.get("risk_level", "") or "").strip().lower()
+        app_name = str(payload.get("app_name", "") or "").strip()
+        window_title = str(payload.get("window_title", "") or "").strip()
+        query = str(payload.get("query", "") or "").strip()
+        approval_kind = str(blocking_surface.get("approval_kind", "") or dialog_state.get("approval_kind", "") or "").strip().lower()
+        dialog_kind = str(blocking_surface.get("dialog_kind", "") or dialog_state.get("dialog_kind", "") or "").strip().lower()
+        surface_signature = str(
+            blocking_surface.get("surface_signature", "")
+            or surface_snapshot.get("surface_signature", "")
+            or ""
+        ).strip()
+        target_window = advice.get("target_window", {}) if isinstance(advice.get("target_window", {}), dict) else {}
+        summary_target = app_name or window_title or "the active Windows surface"
+        seed = {
+            "approval_scope": "desktop_interact",
+            "approval_action": action_name,
+            "requested_action": str(payload.get("action", "") or "").strip().lower(),
+            "risk_level": risk_level,
+            "app_name": app_name,
+            "window_title": window_title,
+            "query": query,
+            "mission_id": str(payload.get("mission_id", "") or "").strip(),
+            "mission_kind": str(payload.get("mission_kind", "") or "").strip().lower(),
+            "resume_action": str(advice.get("resume_action", "") or "").strip().lower(),
+            "resume_signature": str(resume_contract.get("resume_signature", "") or "").strip(),
+            "approval_kind": approval_kind,
+            "dialog_kind": dialog_kind,
+            "stop_reason_code": str(blocking_surface.get("stop_reason_code", "") or advice.get("stop_reason_code", "") or "").strip().lower(),
+            "target_window_title": str(target_window.get("title", "") or "").strip(),
+            "blocking_window_title": str(blocking_surface.get("window_title", "") or "").strip(),
+            "surface_signature": surface_signature,
+            "requires_admin_clearance": bool(safety_signals.get("admin_approval_required", False) or approval_kind.startswith("elevation")),
+            "requires_permission_review": bool(safety_signals.get("permission_review_visible", False) or approval_kind == "permission_review"),
+            "destructive_confirmation": bool(safety_signals.get("destructive_warning_visible", False)),
+            "secure_desktop_likely": bool(safety_signals.get("secure_desktop_likely", False) or blocking_surface.get("secure_desktop_likely", False)),
+            "requires_manual_review": bool(
+                blocking_surface.get("review_required", False)
+                or safety_signals.get("requires_confirmation", False)
+                or approval_kind in {"permission_review", "credential_input"}
+            ),
+            "resume_force": bool(payload.get("resume_force", False)),
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(seed, sort_keys=True, ensure_ascii=True, default=str, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        warnings = advice.get("warnings", []) if isinstance(advice.get("warnings", []), list) else []
+        reason_parts = [
+            "Desktop approval required for a high-risk Windows action.",
+            str(warnings[0] or "").strip() if warnings else "",
+            str(blocking_surface.get("summary", "") or "").strip(),
+        ]
+        contract = {
+            **seed,
+            "contract_id": f"desktop-approval-{fingerprint[:12]}",
+            "fingerprint": fingerprint,
+            "reason": " ".join(part for part in reason_parts if part) or "Desktop approval required before executing this Windows operation.",
+            "summary": f"{action_name or 'desktop action'} on {summary_target} requires explicit approval.",
+        }
+        contract["approval_memory"] = self._desktop_approval_memory_policy(approval_contract=contract)
+        return contract
+
+    def _desktop_action_advice_with_approval(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        advice = router.advise(payload)
+        if not isinstance(advice, dict):
+            return {"status": "error", "message": "desktop action router returned an invalid advice payload"}
+        enriched = dict(advice)
+        approval_contract = self._desktop_approval_contract(payload=payload, advice=enriched)
+        if approval_contract:
+            enriched["approval_required"] = True
+            enriched["approval_contract"] = approval_contract
+            approval_memory = approval_contract.get("approval_memory", {})
+            if isinstance(approval_memory, dict) and approval_memory:
+                enriched["approval_memory"] = approval_memory
+        return enriched
+
+    def _desktop_blocked_response(
+        self,
+        *,
+        payload: Dict[str, Any],
+        advice: Dict[str, Any],
+        message: str,
+        approval_required: bool = False,
+        approval_id: str = "",
+        approval: Optional[Dict[str, Any]] = None,
+        approval_contract: Optional[Dict[str, Any]] = None,
+        approval_memory: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        response = {
+            "status": "blocked",
+            "action": advice.get("action", payload.get("action", "")),
+            "route_mode": advice.get("route_mode", ""),
+            "confidence": advice.get("confidence", 0.0),
+            "risk_level": advice.get("risk_level", ""),
+            "app_profile": advice.get("app_profile", {}),
+            "target_window": advice.get("target_window", {}),
+            "surface_snapshot": advice.get("surface_snapshot", {}),
+            "safety_signals": advice.get("safety_signals", {}),
+            "form_target_state": advice.get("form_target_state", {}),
+            "surface_branch": advice.get("surface_branch", {}),
+            "resume_action": advice.get("resume_action", ""),
+            "resume_payload": advice.get("resume_payload", {}),
+            "resume_contract": advice.get("resume_contract", {}),
+            "blocking_surface": advice.get("blocking_surface", {}),
+            "mission_record": advice.get("mission_record", {}),
+            "resume_context": advice.get("resume_context", {}),
+            "exploration_plan": advice.get("exploration_plan", {}),
+            "exploration_selection": advice.get("exploration_selection", {}),
+            "message": message,
+            "advice": advice,
+            "results": [],
+            "verification": {
+                "enabled": bool(payload.get("verify_after_action", True)),
+                "status": "skipped",
+                "verified": False,
+                "message": "execution skipped because approval is still required",
+            },
+        }
+        if approval_required:
+            response["approval_required"] = True
+        if approval_id:
+            response["approval_id"] = approval_id
+        if isinstance(approval, dict) and approval:
+            response["approval"] = approval
+        if isinstance(approval_contract, dict) and approval_contract:
+            response["approval_contract"] = approval_contract
+        if isinstance(approval_memory, dict) and approval_memory:
+            response["approval_memory"] = approval_memory
+        return response
+
     def desktop_action_advice(
         self,
         *,
@@ -7249,71 +7740,42 @@ class DesktopBackendService:
         blocking_surface: Optional[Dict[str, Any]] = None,
         resume_force: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        router = getattr(self, "desktop_action_router", None)
-        if router is None:
-            return {"status": "unavailable", "message": "desktop action router unavailable"}
         try:
-            payload: Dict[str, Any] = {
-                "action": action,
-                "app_name": app_name,
-                "window_title": window_title,
-                "query": query,
-                "text": text,
-                "mission_id": mission_id,
-                "mission_kind": mission_kind,
-                "candidate_id": candidate_id,
-                "branch_action": branch_action,
-                "keys": list(keys or []),
-            }
-            if ensure_app_launch is not None:
-                payload["ensure_app_launch"] = bool(ensure_app_launch)
-            if focus_first is not None:
-                payload["focus_first"] = bool(focus_first)
-            if press_enter is not None:
-                payload["press_enter"] = bool(press_enter)
-            if verify_after_action is not None:
-                payload["verify_after_action"] = bool(verify_after_action)
-            if verify_text:
-                payload["verify_text"] = verify_text
-            if retry_on_verification_failure is not None:
-                payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
-            if max_strategy_attempts is not None:
-                payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
-            if exploration_limit is not None:
-                payload["exploration_limit"] = int(exploration_limit or 6)
-            if max_exploration_steps is not None:
-                payload["max_exploration_steps"] = int(max_exploration_steps or 3)
-            if max_descendant_chain_steps is not None:
-                payload["max_descendant_chain_steps"] = int(max_descendant_chain_steps or 3)
-            if max_branch_family_switches is not None:
-                payload["max_branch_family_switches"] = int(max_branch_family_switches or 2)
-            if max_branch_cascade_steps is not None:
-                payload["max_branch_cascade_steps"] = int(max_branch_cascade_steps or 3)
-            if max_wizard_pages is not None:
-                payload["max_wizard_pages"] = int(max_wizard_pages or 6)
-            if allow_warning_pages is not None:
-                payload["allow_warning_pages"] = bool(allow_warning_pages)
-            if max_form_pages is not None:
-                payload["max_form_pages"] = int(max_form_pages or 5)
-            if allow_destructive_forms is not None:
-                payload["allow_destructive_forms"] = bool(allow_destructive_forms)
-            if isinstance(attempted_targets, list) and attempted_targets:
-                payload["attempted_targets"] = [dict(row) for row in attempted_targets if isinstance(row, dict)]
-            if isinstance(surface_signature_history, list) and surface_signature_history:
-                payload["surface_signature_history"] = [
-                    str(item).strip()
-                    for item in surface_signature_history
-                    if str(item).strip()
-                ]
-            if isinstance(branch_history, list) and branch_history:
-                payload["branch_history"] = [dict(row) for row in branch_history if isinstance(row, dict)]
-            if isinstance(resume_contract, dict) and resume_contract:
-                payload["resume_contract"] = dict(resume_contract)
-            if isinstance(blocking_surface, dict) and blocking_surface:
-                payload["blocking_surface"] = dict(blocking_surface)
-            if resume_force is not None:
-                payload["resume_force"] = bool(resume_force)
-            return router.advise(payload)
+            payload = self._build_desktop_router_payload(
+                action=action,
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                text=text,
+                mission_id=mission_id,
+                mission_kind=mission_kind,
+                candidate_id=candidate_id,
+                branch_action=branch_action,
+                keys=keys,
+                ensure_app_launch=ensure_app_launch,
+                focus_first=focus_first,
+                press_enter=press_enter,
+                verify_after_action=verify_after_action,
+                verify_text=verify_text,
+                retry_on_verification_failure=retry_on_verification_failure,
+                max_strategy_attempts=max_strategy_attempts,
+                exploration_limit=exploration_limit,
+                max_exploration_steps=max_exploration_steps,
+                max_descendant_chain_steps=max_descendant_chain_steps,
+                max_branch_family_switches=max_branch_family_switches,
+                max_branch_cascade_steps=max_branch_cascade_steps,
+                max_wizard_pages=max_wizard_pages,
+                allow_warning_pages=allow_warning_pages,
+                max_form_pages=max_form_pages,
+                allow_destructive_forms=allow_destructive_forms,
+                attempted_targets=attempted_targets,
+                surface_signature_history=surface_signature_history,
+                branch_history=branch_history,
+                resume_contract=resume_contract,
+                blocking_surface=blocking_surface,
+                resume_force=resume_force,
+            )
+            return self._desktop_action_advice_with_approval(payload)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -7352,72 +7814,140 @@ class DesktopBackendService:
         resume_contract: Optional[Dict[str, Any]] = None,
         blocking_surface: Optional[Dict[str, Any]] = None,
         resume_force: Optional[bool] = None,
+        approval_id: str = "",
     ) -> Dict[str, Any]:
-        router = getattr(self, "desktop_action_router", None)
-        if router is None:
-            return {"status": "unavailable", "message": "desktop action router unavailable"}
         try:
-            payload: Dict[str, Any] = {
-                "action": action,
-                "app_name": app_name,
-                "window_title": window_title,
-                "query": query,
-                "text": text,
-                "mission_id": mission_id,
-                "mission_kind": mission_kind,
-                "candidate_id": candidate_id,
-                "branch_action": branch_action,
-                "keys": list(keys or []),
-            }
-            if ensure_app_launch is not None:
-                payload["ensure_app_launch"] = bool(ensure_app_launch)
-            if focus_first is not None:
-                payload["focus_first"] = bool(focus_first)
-            if press_enter is not None:
-                payload["press_enter"] = bool(press_enter)
-            if verify_after_action is not None:
-                payload["verify_after_action"] = bool(verify_after_action)
-            if verify_text:
-                payload["verify_text"] = verify_text
-            if retry_on_verification_failure is not None:
-                payload["retry_on_verification_failure"] = bool(retry_on_verification_failure)
-            if max_strategy_attempts is not None:
-                payload["max_strategy_attempts"] = int(max_strategy_attempts or 2)
-            if exploration_limit is not None:
-                payload["exploration_limit"] = int(exploration_limit or 6)
-            if max_exploration_steps is not None:
-                payload["max_exploration_steps"] = int(max_exploration_steps or 3)
-            if max_descendant_chain_steps is not None:
-                payload["max_descendant_chain_steps"] = int(max_descendant_chain_steps or 3)
-            if max_branch_family_switches is not None:
-                payload["max_branch_family_switches"] = int(max_branch_family_switches or 2)
-            if max_branch_cascade_steps is not None:
-                payload["max_branch_cascade_steps"] = int(max_branch_cascade_steps or 3)
-            if max_wizard_pages is not None:
-                payload["max_wizard_pages"] = int(max_wizard_pages or 6)
-            if allow_warning_pages is not None:
-                payload["allow_warning_pages"] = bool(allow_warning_pages)
-            if max_form_pages is not None:
-                payload["max_form_pages"] = int(max_form_pages or 5)
-            if allow_destructive_forms is not None:
-                payload["allow_destructive_forms"] = bool(allow_destructive_forms)
-            if isinstance(attempted_targets, list) and attempted_targets:
-                payload["attempted_targets"] = [dict(row) for row in attempted_targets if isinstance(row, dict)]
-            if isinstance(surface_signature_history, list) and surface_signature_history:
-                payload["surface_signature_history"] = [
-                    str(item).strip()
-                    for item in surface_signature_history
-                    if str(item).strip()
-                ]
-            if isinstance(branch_history, list) and branch_history:
-                payload["branch_history"] = [dict(row) for row in branch_history if isinstance(row, dict)]
-            if isinstance(resume_contract, dict) and resume_contract:
-                payload["resume_contract"] = dict(resume_contract)
-            if isinstance(blocking_surface, dict) and blocking_surface:
-                payload["blocking_surface"] = dict(blocking_surface)
-            if resume_force is not None:
-                payload["resume_force"] = bool(resume_force)
-            return router.execute(payload)
+            router = getattr(self, "desktop_action_router", None)
+            if router is None:
+                return {"status": "unavailable", "message": "desktop action router unavailable"}
+            payload = self._build_desktop_router_payload(
+                action=action,
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                text=text,
+                mission_id=mission_id,
+                mission_kind=mission_kind,
+                candidate_id=candidate_id,
+                branch_action=branch_action,
+                keys=keys,
+                ensure_app_launch=ensure_app_launch,
+                focus_first=focus_first,
+                press_enter=press_enter,
+                verify_after_action=verify_after_action,
+                verify_text=verify_text,
+                retry_on_verification_failure=retry_on_verification_failure,
+                max_strategy_attempts=max_strategy_attempts,
+                exploration_limit=exploration_limit,
+                max_exploration_steps=max_exploration_steps,
+                max_descendant_chain_steps=max_descendant_chain_steps,
+                max_branch_family_switches=max_branch_family_switches,
+                max_branch_cascade_steps=max_branch_cascade_steps,
+                max_wizard_pages=max_wizard_pages,
+                allow_warning_pages=allow_warning_pages,
+                max_form_pages=max_form_pages,
+                allow_destructive_forms=allow_destructive_forms,
+                attempted_targets=attempted_targets,
+                surface_signature_history=surface_signature_history,
+                branch_history=branch_history,
+                resume_contract=resume_contract,
+                blocking_surface=blocking_surface,
+                resume_force=resume_force,
+            )
+            advice = self._desktop_action_advice_with_approval(payload)
+            approval_contract = advice.get("approval_contract", {}) if isinstance(advice.get("approval_contract", {}), dict) else {}
+            approval_memory = (
+                approval_contract.get("approval_memory", {})
+                if isinstance(approval_contract.get("approval_memory", {}), dict)
+                else {}
+            )
+            approval_reused = False
+            approval_reuse_source = ""
+            approval_reuse_record = None
+            if advice.get("status") == "success" and approval_contract:
+                approval_gate = getattr(getattr(self, "kernel", None), "approval_gate", None)
+                if approval_gate is None:
+                    return self._desktop_blocked_response(
+                        payload=payload,
+                        advice=advice,
+                        message="Desktop approval is required, but the approval gate is unavailable.",
+                        approval_required=True,
+                        approval_contract=approval_contract,
+                        approval_memory=approval_memory,
+                    )
+                approval_args = {"desktop_approval_contract": approval_contract}
+                approval_action = str(approval_contract.get("approval_action", "") or advice.get("action", "") or payload.get("action", "")).strip().lower()
+                clean_approval_id = str(approval_id or "").strip()
+                if clean_approval_id:
+                    ok, reason, record = approval_gate.consume(
+                        clean_approval_id,
+                        action=approval_action,
+                        args=approval_args,
+                        source="desktop-ui",
+                    )
+                    if not ok:
+                        return self._desktop_blocked_response(
+                            payload=payload,
+                            advice=advice,
+                            message=reason,
+                            approval_required=True,
+                            approval_id=clean_approval_id,
+                            approval=record.to_dict() if record else None,
+                            approval_contract=approval_contract,
+                            approval_memory=approval_memory,
+                        )
+                else:
+                    if bool(approval_memory.get("reusable", False)):
+                        reused, _, reuse_record, reuse_mode = approval_gate.auto_reuse(
+                            action=approval_action,
+                            args=approval_args,
+                            source="desktop-ui",
+                            allow_approved=bool(approval_memory.get("auto_consume_approved", False)),
+                            allow_consumed=bool(approval_memory.get("auto_reuse_consumed", False)),
+                            consumed_max_age_s=int(approval_memory.get("reuse_window_s", 0) or 0),
+                            reason=f"desktop_{str(approval_memory.get('profile', '') or 'balanced').strip().lower()}_exact_contract",
+                        )
+                        if reused and reuse_record is not None:
+                            approval_reused = True
+                            approval_reuse_source = reuse_mode
+                            approval_reuse_record = reuse_record
+                    if not approval_reused:
+                        record = approval_gate.request(
+                            action=approval_action,
+                            args=approval_args,
+                            source="desktop-ui",
+                            reason=str(approval_contract.get("reason", "") or "Desktop approval required."),
+                        )
+                        message = (
+                            f"Approval required for desktop action '{approval_action}'. "
+                            f"Approve ticket {record.approval_id} and retry /desktop/interact with approval_id."
+                        )
+                        return self._desktop_blocked_response(
+                            payload=payload,
+                            advice=advice,
+                            message=message,
+                            approval_required=True,
+                            approval_id=record.approval_id,
+                            approval=record.to_dict(),
+                            approval_contract=approval_contract,
+                            approval_memory=approval_memory,
+                        )
+            result = router.execute(payload)
+            if isinstance(result, dict):
+                enriched = dict(result)
+                if approval_contract:
+                    enriched["approval_required"] = False
+                    enriched["approval_contract"] = approval_contract
+                if approval_memory:
+                    enriched["approval_memory"] = approval_memory
+                if approval_reused:
+                    enriched["approval_reused"] = True
+                    enriched["approval_reuse_source"] = approval_reuse_source
+                    if approval_reuse_record is not None:
+                        enriched["approval_id"] = approval_reuse_record.approval_id
+                        enriched["approval"] = approval_reuse_record.to_dict()
+                return enriched
+            return result
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -7610,6 +8140,11 @@ class DesktopBackendService:
         *,
         limit: int = 12,
         max_auto_resumes: int = 2,
+        policy_profile: str = "balanced",
+        allow_high_risk: bool = False,
+        allow_critical_risk: bool = False,
+        allow_admin_clearance: bool = False,
+        allow_destructive: bool = False,
         mission_status: str = "paused",
         mission_kind: str = "",
         app_name: str = "",
@@ -7623,6 +8158,7 @@ class DesktopBackendService:
         clean_app_name = str(app_name or "").strip()
         clean_stop_reason_code = str(stop_reason_code or "").strip()
         clean_trigger_source = str(trigger_source or "manual").strip().lower() or "manual"
+        clean_policy_profile = str(policy_profile or "balanced").strip().lower() or "balanced"
         snapshot = self.desktop_mission_status(
             limit=bounded_limit,
             status=clean_mission_status,
@@ -7638,6 +8174,11 @@ class DesktopBackendService:
                 "results": [],
                 "limit": bounded_limit,
                 "max_auto_resumes": max(0, min(int(max_auto_resumes), 32)),
+                "policy_profile": clean_policy_profile,
+                "allow_high_risk": bool(allow_high_risk),
+                "allow_critical_risk": bool(allow_critical_risk),
+                "allow_admin_clearance": bool(allow_admin_clearance),
+                "allow_destructive": bool(allow_destructive),
                 "mission_status": clean_mission_status,
                 "mission_kind": clean_mission_kind,
                 "app_name": clean_app_name,
@@ -7687,8 +8228,10 @@ class DesktopBackendService:
         resume_ready_count = 0
         manual_attention_count = 0
         blocked_count = 0
+        policy_blocked_count = 0
         idle_count = 0
         error_count = 0
+        policy_deferred_mission_ids: List[str] = []
 
         for row in rows:
             mission_id = str(row.get("mission_id", "") or "").strip()
@@ -7711,8 +8254,32 @@ class DesktopBackendService:
                 "auto_resume_triggered": False,
                 "status": str(row.get("status", "") or "").strip().lower(),
                 "message": str(row.get("recovery_hint", row.get("stop_reason", "")) or "").strip(),
+                "policy_profile": clean_policy_profile,
             }
-            if classification_before == "ready" and auto_resume_triggered_count < bounded_auto_resumes:
+            policy_block_reason = ""
+            if classification_before == "ready":
+                if bool(row.get("admin_clearance_required", False)) and not bool(allow_admin_clearance):
+                    policy_block_reason = "admin_clearance_required"
+                elif bool(row.get("destructive_confirmation", False)) and not bool(allow_destructive):
+                    policy_block_reason = "destructive_confirmation_requires_review"
+                elif bool(row.get("critical_risk", False)) and not bool(allow_critical_risk):
+                    policy_block_reason = "critical_risk_blocked_by_policy"
+                elif bool(row.get("high_risk", False)) and not bool(allow_high_risk):
+                    policy_block_reason = "high_risk_blocked_by_policy"
+            if classification_before == "ready" and policy_block_reason:
+                resume_ready_count += 1
+                policy_blocked_count += 1
+                blocked_count += 1
+                entry["classification_after"] = "policy_blocked"
+                entry["policy_blocked"] = True
+                entry["policy_block_reason"] = policy_block_reason
+                entry["message"] = (
+                    f"Recovery policy '{clean_policy_profile}' deferred this mission because {policy_block_reason.replace('_', ' ')}."
+                )
+                if mission_id:
+                    ready_mission_ids.append(mission_id)
+                    policy_deferred_mission_ids.append(mission_id)
+            elif classification_before == "ready" and auto_resume_triggered_count < bounded_auto_resumes:
                 auto_resume_attempted_count += 1
                 auto_resume_triggered = False
                 try:
@@ -7743,6 +8310,7 @@ class DesktopBackendService:
                         "status": str(response_payload.get("status", "") or "").strip().lower(),
                         "result": _to_jsonable(response_payload),
                         "result_message": str(response_payload.get("message", response_payload.get("final_action", "")) or "").strip(),
+                        "policy_blocked": False,
                     }
                 )
             elif classification_before == "ready":
@@ -7773,6 +8341,23 @@ class DesktopBackendService:
                 f"Desktop recovery daemon resumed {auto_resume_triggered_count} paused mission"
                 f"{'' if auto_resume_triggered_count == 1 else 's'}."
             )
+        elif policy_blocked_count > 0:
+            status_name = "blocked"
+            message = (
+                f"Desktop recovery daemon deferred {policy_blocked_count} mission"
+                f"{'' if policy_blocked_count == 1 else 's'} because the current recovery policy is stricter than their risk level."
+            )
+            remaining_ready = max(0, resume_ready_count - policy_blocked_count)
+            if remaining_ready > 0:
+                message += (
+                    f" {remaining_ready} additional resume-ready mission"
+                    f"{'' if remaining_ready == 1 else 's'} remained queued."
+                )
+            if manual_attention_count > 0:
+                message += (
+                    f" {manual_attention_count} mission"
+                    f"{'' if manual_attention_count == 1 else 's'} still require manual review."
+                )
         elif resume_ready_count > 0:
             status_name = "ready"
             message = (
@@ -7791,6 +8376,8 @@ class DesktopBackendService:
         stop_reason = "desktop_recovery_idle"
         if auto_resume_triggered_count > 0:
             stop_reason = "auto_resume_triggered"
+        elif policy_blocked_count > 0:
+            stop_reason = "policy_blocked"
         elif resume_ready_count > 0:
             stop_reason = "ready_backlog"
         elif blocked_count > 0:
@@ -7805,6 +8392,11 @@ class DesktopBackendService:
             "results": [_to_jsonable(item) for item in results],
             "limit": bounded_limit,
             "max_auto_resumes": bounded_auto_resumes,
+            "policy_profile": clean_policy_profile,
+            "allow_high_risk": bool(allow_high_risk),
+            "allow_critical_risk": bool(allow_critical_risk),
+            "allow_admin_clearance": bool(allow_admin_clearance),
+            "allow_destructive": bool(allow_destructive),
             "mission_status": clean_mission_status,
             "mission_kind": clean_mission_kind,
             "app_name": clean_app_name,
@@ -7823,11 +8415,13 @@ class DesktopBackendService:
             "resume_ready_count": resume_ready_count,
             "manual_attention_count": manual_attention_count,
             "blocked_count": blocked_count,
+            "policy_blocked_count": policy_blocked_count,
             "idle_count": idle_count,
             "error_count": error_count,
             "triggered_mission_ids": triggered_mission_ids,
             "ready_mission_ids": ready_mission_ids,
             "blocked_mission_ids": blocked_mission_ids,
+            "policy_deferred_mission_ids": policy_deferred_mission_ids,
             "stop_reason": stop_reason,
         }
         return self._record_desktop_recovery_watchdog_run(payload, source=clean_trigger_source)
@@ -7934,6 +8528,11 @@ class DesktopBackendService:
         interval_s: Optional[float] = None,
         limit: Optional[int] = None,
         max_auto_resumes: Optional[int] = None,
+        policy_profile: Optional[str] = None,
+        allow_high_risk: Optional[bool] = None,
+        allow_critical_risk: Optional[bool] = None,
+        allow_admin_clearance: Optional[bool] = None,
+        allow_destructive: Optional[bool] = None,
         mission_status: Optional[str] = None,
         mission_kind: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -7949,6 +8548,11 @@ class DesktopBackendService:
             interval_s=interval_s,
             limit=limit,
             max_auto_resumes=max_auto_resumes,
+            policy_profile=policy_profile,
+            allow_high_risk=allow_high_risk,
+            allow_critical_risk=allow_critical_risk,
+            allow_admin_clearance=allow_admin_clearance,
+            allow_destructive=allow_destructive,
             mission_status=mission_status,
             mission_kind=mission_kind,
             app_name=app_name,
@@ -7963,6 +8567,11 @@ class DesktopBackendService:
         *,
         limit: Optional[int] = None,
         max_auto_resumes: Optional[int] = None,
+        policy_profile: Optional[str] = None,
+        allow_high_risk: Optional[bool] = None,
+        allow_critical_risk: Optional[bool] = None,
+        allow_admin_clearance: Optional[bool] = None,
+        allow_destructive: Optional[bool] = None,
         mission_status: Optional[str] = None,
         mission_kind: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -7977,6 +8586,11 @@ class DesktopBackendService:
             source="manual_api",
             limit=limit,
             max_auto_resumes=max_auto_resumes,
+            policy_profile=policy_profile,
+            allow_high_risk=allow_high_risk,
+            allow_critical_risk=allow_critical_risk,
+            allow_admin_clearance=allow_admin_clearance,
+            allow_destructive=allow_destructive,
             mission_status=mission_status,
             mission_kind=mission_kind,
             app_name=app_name,
@@ -16812,6 +17426,66 @@ class DesktopBackendService:
     def list_policy_profiles(self) -> Dict[str, Any]:
         return self.kernel.policy.list_profiles()
 
+    def desktop_governance_status(self) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_governance_policy", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop governance policy unavailable"}
+        payload = manager.status()
+        payload["desktop_recovery_daemon"] = _to_jsonable(self.desktop_recovery_supervisor_status(history_limit=4))
+        return _to_jsonable(payload)
+
+    def configure_desktop_governance(
+        self,
+        *,
+        policy_profile: Optional[str] = None,
+        allow_high_risk: Optional[bool] = None,
+        allow_critical_risk: Optional[bool] = None,
+        allow_admin_clearance: Optional[bool] = None,
+        allow_destructive: Optional[bool] = None,
+        allow_desktop_approval_reuse: Optional[bool] = None,
+        allow_action_confirmation_reuse: Optional[bool] = None,
+        desktop_approval_reuse_window_s: Optional[int] = None,
+        action_confirmation_reuse_window_s: Optional[int] = None,
+        sync_desktop_recovery_daemon: bool = True,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_governance_policy", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop governance policy unavailable"}
+        payload = manager.configure(
+            policy_profile=policy_profile,
+            allow_high_risk=allow_high_risk,
+            allow_critical_risk=allow_critical_risk,
+            allow_admin_clearance=allow_admin_clearance,
+            allow_destructive=allow_destructive,
+            allow_desktop_approval_reuse=allow_desktop_approval_reuse,
+            allow_action_confirmation_reuse=allow_action_confirmation_reuse,
+            desktop_approval_reuse_window_s=desktop_approval_reuse_window_s,
+            action_confirmation_reuse_window_s=action_confirmation_reuse_window_s,
+            source="api",
+        )
+        if bool(sync_desktop_recovery_daemon):
+            daemon_kwargs: Dict[str, Any] = {
+                "policy_profile": payload.get("policy_profile"),
+            }
+            if str(payload.get("policy_profile", "") or "").strip().lower() == "custom":
+                daemon_kwargs.update(
+                    {
+                        "allow_high_risk": bool(payload.get("allow_high_risk", False)),
+                        "allow_critical_risk": bool(payload.get("allow_critical_risk", False)),
+                        "allow_admin_clearance": bool(payload.get("allow_admin_clearance", False)),
+                        "allow_destructive": bool(payload.get("allow_destructive", False)),
+                    }
+                )
+            payload["desktop_recovery_daemon"] = _to_jsonable(
+                self.configure_desktop_recovery_supervisor(
+                    history_limit=4,
+                    **daemon_kwargs,
+                )
+            )
+        else:
+            payload["desktop_recovery_daemon"] = _to_jsonable(self.desktop_recovery_supervisor_status(history_limit=4))
+        return _to_jsonable(payload)
+
     def policy_bandit_status(self, *, task_class: str = "", limit: int = 200) -> Dict[str, Any]:
         return _to_jsonable(self.kernel.policy_bandit_status(task_class=task_class, limit=limit))
 
@@ -24948,6 +25622,8 @@ class DesktopBackendService:
         return result
 
     async def _execute_action_async(self, request: ActionRequest) -> ActionResult:
+        request_metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        approval_memory: Dict[str, Any] = {}
         self.kernel.telemetry.emit(
             "action.requested",
             {
@@ -24957,8 +25633,8 @@ class DesktopBackendService:
         )
         definition = self.kernel.registry.get(request.action)
         if definition and definition.requires_confirmation:
-            metadata = request.metadata if isinstance(request.metadata, dict) else {}
-            approval_id = self.kernel.approval_gate.extract_approval_id(metadata, request.action)
+            approval_memory = self._action_confirmation_memory_policy(request=request, definition=definition)
+            approval_id = self.kernel.approval_gate.extract_approval_id(request_metadata, request.action)
             if approval_id:
                 ok, reason, record = self.kernel.approval_gate.consume(
                     approval_id,
@@ -24981,6 +25657,7 @@ class DesktopBackendService:
                         "approval_required": True,
                         "approval_id": approval_id,
                         "message": reason,
+                        "approval_memory": approval_memory,
                     }
                     if record:
                         output["approval"] = record.to_dict()
@@ -24997,39 +25674,82 @@ class DesktopBackendService:
                     },
                 )
             else:
-                record = self.kernel.approval_gate.request(
+                approval_reused = False
+                approval_reuse_source = ""
+                approval_reuse_record = None
+                if bool(approval_memory.get("reusable", False)):
+                    reused, _, reuse_record, reuse_mode = self.kernel.approval_gate.auto_reuse(
+                        action=request.action,
+                        args=request.args,
+                        source=request.source,
+                        allow_approved=bool(approval_memory.get("auto_consume_approved", False)),
+                        allow_consumed=bool(approval_memory.get("auto_reuse_consumed", False)),
+                        consumed_max_age_s=int(approval_memory.get("reuse_window_s", 0) or 0),
+                        reason=f"action_confirmation_{str(approval_memory.get('profile', 'balanced') or 'balanced').strip().lower()}",
+                    )
+                    if reused and reuse_record is not None:
+                        approval_reused = True
+                        approval_reuse_source = reuse_mode
+                        approval_reuse_record = reuse_record
+                        self.kernel.telemetry.emit(
+                            "approval.auto_reused",
+                            {
+                                "approval_id": reuse_record.approval_id,
+                                "action": request.action,
+                                "source": request.source,
+                                "reuse_mode": reuse_mode,
+                                "profile": approval_memory.get("profile", ""),
+                            },
+                        )
+                if not approval_reused:
+                    record = self.kernel.approval_gate.request(
+                        action=request.action,
+                        args=request.args,
+                        source=request.source,
+                        reason=f"Action '{request.action}' requires explicit user approval.",
+                    )
+                    reason = (
+                        f"Approval required for '{request.action}'. "
+                        f"Approve ticket {record.approval_id} and retry with metadata.approval_id."
+                    )
+                    self.kernel.telemetry.emit(
+                        "approval.requested",
+                        {
+                            "approval_id": record.approval_id,
+                            "action": request.action,
+                            "source": request.source,
+                            "reason": reason,
+                        },
+                    )
+                    blocked_result = ActionResult(
+                        action=request.action,
+                        status="blocked",
+                        error=reason,
+                        output={
+                            "status": "error",
+                            "approval_required": True,
+                            "message": reason,
+                            "approval": record.to_dict(),
+                            "approval_memory": approval_memory,
+                        },
+                    )
+                    self._record_policy_outcome(request, blocked_result)
+                    self._mission_autonomy_record_outcome(request=request, result=blocked_result, risk_level="")
+                    return blocked_result
+                request_metadata = dict(request_metadata)
+                request_metadata["__approval_reused"] = True
+                request_metadata["__approval_reuse_source"] = approval_reuse_source
+                request = ActionRequest(
                     action=request.action,
                     args=request.args,
                     source=request.source,
-                    reason=f"Action '{request.action}' requires explicit user approval.",
+                    correlation_id=request.correlation_id,
+                    requested_at=request.requested_at,
+                    metadata=request_metadata,
+                    idempotency_key=request.idempotency_key,
+                    deadline_at=request.deadline_at,
+                    trace=request.trace,
                 )
-                reason = (
-                    f"Approval required for '{request.action}'. "
-                    f"Approve ticket {record.approval_id} and retry with metadata.approval_id."
-                )
-                self.kernel.telemetry.emit(
-                    "approval.requested",
-                    {
-                        "approval_id": record.approval_id,
-                        "action": request.action,
-                        "source": request.source,
-                        "reason": reason,
-                    },
-                )
-                blocked_result = ActionResult(
-                    action=request.action,
-                    status="blocked",
-                    error=reason,
-                    output={
-                        "status": "error",
-                        "approval_required": True,
-                        "message": reason,
-                        "approval": record.to_dict(),
-                    },
-                )
-                self._record_policy_outcome(request, blocked_result)
-                self._mission_autonomy_record_outcome(request=request, result=blocked_result, risk_level="")
-                return blocked_result
 
         risk = self.kernel.policy.risk_engine.rate(
             request.action,
@@ -25144,6 +25864,13 @@ class DesktopBackendService:
         result = await self.kernel.registry.execute(request, timeout_s=30)
         if not isinstance(result.evidence, dict):
             result.evidence = {}
+        request_metadata = request.metadata if isinstance(request.metadata, dict) else request_metadata
+        if bool(request_metadata.get("__approval_reused", False)):
+            result.output = result.output if isinstance(result.output, dict) else {"status": result.status}
+            if isinstance(result.output, dict):
+                result.output["approval_reused"] = True
+                result.output["approval_reuse_source"] = str(request_metadata.get("__approval_reuse_source", "") or "")
+                result.output["approval_memory"] = approval_memory
         if result.status == "success":
             try:
                 request_metadata = request.metadata if isinstance(request.metadata, dict) else {}
@@ -41358,6 +42085,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
             if path == "/policy/profiles":
                 self._send_json(200, self.server.service.list_policy_profiles())
                 return
+            if path == "/runtime/desktop-governance":
+                payload = self.server.service.desktop_governance_status()
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/policy/bandit":
                 task_class = str(query.get("task_class", [""])[0] or "").strip()
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
@@ -42899,6 +43630,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 typed_text = str(body.get("text", "") or "").strip()
                 mission_id = str(body.get("mission_id", "") or "").strip()
                 mission_kind = str(body.get("mission_kind", "") or "").strip().lower()
+                approval_id = str(body.get("approval_id", "") or "").strip()
                 candidate_id = str(body.get("candidate_id", "") or "").strip()
                 branch_action = str(body.get("branch_action", "") or "").strip()
                 attempted_targets = [
@@ -42956,6 +43688,7 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     "resume_contract": dict(body.get("resume_contract", {})) if isinstance(body.get("resume_contract", {}), dict) else None,
                     "blocking_surface": dict(body.get("blocking_surface", {})) if isinstance(body.get("blocking_surface", {}), dict) else None,
                     "resume_force": bool(body.get("resume_force")) if "resume_force" in body else None,
+                    "approval_id": approval_id,
                 }
                 if attempted_targets:
                     interact_kwargs["attempted_targets"] = attempted_targets
@@ -43136,6 +43869,54 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-governance":
+                payload = self.server.service.configure_desktop_governance(
+                    policy_profile=(
+                        str(body.get("policy_profile", "") or "").strip()
+                        if body.get("policy_profile") is not None
+                        else None
+                    ),
+                    allow_high_risk=(bool(body.get("allow_high_risk")) if body.get("allow_high_risk") is not None else None),
+                    allow_critical_risk=(bool(body.get("allow_critical_risk")) if body.get("allow_critical_risk") is not None else None),
+                    allow_admin_clearance=(bool(body.get("allow_admin_clearance")) if body.get("allow_admin_clearance") is not None else None),
+                    allow_destructive=(bool(body.get("allow_destructive")) if body.get("allow_destructive") is not None else None),
+                    allow_desktop_approval_reuse=(
+                        bool(body.get("allow_desktop_approval_reuse"))
+                        if body.get("allow_desktop_approval_reuse") is not None
+                        else None
+                    ),
+                    allow_action_confirmation_reuse=(
+                        bool(body.get("allow_action_confirmation_reuse"))
+                        if body.get("allow_action_confirmation_reuse") is not None
+                        else None
+                    ),
+                    desktop_approval_reuse_window_s=(
+                        self._parse_int(
+                            str(body.get("desktop_approval_reuse_window_s", "90") or "90"),
+                            90,
+                            minimum=0,
+                            maximum=3600,
+                        )
+                        if body.get("desktop_approval_reuse_window_s") is not None
+                        else None
+                    ),
+                    action_confirmation_reuse_window_s=(
+                        self._parse_int(
+                            str(body.get("action_confirmation_reuse_window_s", "45") or "45"),
+                            45,
+                            minimum=0,
+                            maximum=3600,
+                        )
+                        if body.get("action_confirmation_reuse_window_s") is not None
+                        else None
+                    ),
+                    sync_desktop_recovery_daemon=self._parse_bool(
+                        str(body.get("sync_desktop_recovery_daemon", "1") or "1"),
+                        default=True,
+                    ),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/desktop-missions/recovery-daemon":
                 payload = self.server.service.configure_desktop_recovery_supervisor(
                     enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
@@ -43154,6 +43935,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if body.get("max_auto_resumes") is not None
                         else None
                     ),
+                    policy_profile=(
+                        str(body.get("policy_profile", "") or "").strip()
+                        if body.get("policy_profile") is not None
+                        else None
+                    ),
+                    allow_high_risk=(bool(body.get("allow_high_risk")) if body.get("allow_high_risk") is not None else None),
+                    allow_critical_risk=(bool(body.get("allow_critical_risk")) if body.get("allow_critical_risk") is not None else None),
+                    allow_admin_clearance=(bool(body.get("allow_admin_clearance")) if body.get("allow_admin_clearance") is not None else None),
+                    allow_destructive=(bool(body.get("allow_destructive")) if body.get("allow_destructive") is not None else None),
                     mission_status=(
                         str(body.get("mission_status", "") or "").strip()
                         if body.get("mission_status") is not None
@@ -43196,6 +43986,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if body.get("max_auto_resumes") is not None
                         else None
                     ),
+                    policy_profile=(
+                        str(body.get("policy_profile", "") or "").strip()
+                        if body.get("policy_profile") is not None
+                        else None
+                    ),
+                    allow_high_risk=(bool(body.get("allow_high_risk")) if body.get("allow_high_risk") is not None else None),
+                    allow_critical_risk=(bool(body.get("allow_critical_risk")) if body.get("allow_critical_risk") is not None else None),
+                    allow_admin_clearance=(bool(body.get("allow_admin_clearance")) if body.get("allow_admin_clearance") is not None else None),
+                    allow_destructive=(bool(body.get("allow_destructive")) if body.get("allow_destructive") is not None else None),
                     mission_status=(
                         str(body.get("mission_status", "") or "").strip()
                         if body.get("mission_status") is not None

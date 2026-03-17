@@ -42,6 +42,9 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
     explorationMissionCount,
     explorationResumeReadyCount,
     manualAttentionCount,
+    adminApprovalCount,
+    destructiveApprovalCount,
+    criticalRiskCount,
     loading,
     resuming,
     configuringDaemon,
@@ -74,7 +77,12 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const isExplorationMission = missionKind === 'exploration';
   const missionApp = String(latestMission?.app_name ?? latestMission?.anchor_window_title ?? 'desktop').trim() || 'desktop';
   const approvalKind = String(latestMission?.approval_kind ?? '').trim();
+  const approvalState = String(latestMission?.approval_state ?? '').trim();
   const recoveryProfile = String(latestMission?.recovery_profile ?? '').trim();
+  const approvalSummary = String(latestMission?.approval_summary ?? '').trim();
+  const latestMissionCriticalRisk = Boolean(latestMission?.critical_risk ?? false);
+  const latestMissionDestructive = Boolean(latestMission?.destructive_confirmation ?? false);
+  const latestMissionAdminReview = Boolean(latestMission?.admin_clearance_required ?? false);
   const explorationStepCount = Number(latestMission?.step_count ?? 0);
   const explorationMaxSteps = Number(latestMission?.max_steps ?? 0);
   const explorationAttemptedCount = Number(latestMission?.attempted_target_count ?? 0);
@@ -125,6 +133,12 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const updatedAt = formatMissionTimestamp(String(latestMission?.updated_at ?? latestMission?.created_at ?? ''));
   const daemonLastTick = formatMissionTimestamp(String(supervisorStatus?.last_tick_at ?? ''));
   const daemonIntervalS = Number(supervisorStatus?.interval_s ?? 0);
+  const daemonPolicyProfile = String(supervisorStatus?.policy_profile ?? 'balanced').trim() || 'balanced';
+  const daemonAllowsHighRisk = Boolean(supervisorStatus?.allow_high_risk);
+  const daemonAllowsCriticalRisk = Boolean(supervisorStatus?.allow_critical_risk);
+  const daemonAllowsAdminClearance = Boolean(supervisorStatus?.allow_admin_clearance);
+  const daemonAllowsDestructive = Boolean(supervisorStatus?.allow_destructive);
+  const latestWatchdogPolicyBlockedCount = Number(latestWatchdogRun?.policy_blocked_count ?? 0);
   const watchdogUpdatedAt = formatMissionTimestamp(
     String(latestWatchdogRun?.updated_at ?? latestWatchdogRun?.created_at ?? '')
   );
@@ -151,7 +165,11 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               daemon:{backendSupervisorEnabled ? 'on' : 'off'}
             </Badge>
             {recoveryProfile ? <Badge variant="outline">{recoveryProfile}</Badge> : null}
+            {approvalState ? <Badge variant="outline">state:{approvalState}</Badge> : null}
             {approvalKind ? <Badge variant="outline">approval:{approvalKind}</Badge> : null}
+            {latestMissionAdminReview ? <Badge variant="destructive">admin</Badge> : null}
+            {latestMissionDestructive ? <Badge variant="destructive">destructive</Badge> : null}
+            {latestMissionCriticalRisk ? <Badge variant="destructive">critical</Badge> : null}
             {resumeReadyCount > 0 ? <Badge variant="secondary">ready:{resumeReadyCount}</Badge> : null}
             {explorationMissionCount > 0 ? <Badge variant="outline">recon:{explorationMissionCount}</Badge> : null}
             {explorationResumeReadyCount > 0 ? <Badge variant="secondary">recon-ready:{explorationResumeReadyCount}</Badge> : null}
@@ -231,11 +249,15 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               </Badge>
             ) : null}
             {manualAttentionCount > 0 ? <Badge variant="outline">review:{manualAttentionCount}</Badge> : null}
+            {adminApprovalCount > 0 ? <Badge variant="outline">admin:{adminApprovalCount}</Badge> : null}
+            {destructiveApprovalCount > 0 ? <Badge variant="outline">destructive:{destructiveApprovalCount}</Badge> : null}
+            {criticalRiskCount > 0 ? <Badge variant="outline">critical:{criticalRiskCount}</Badge> : null}
             {additionalMissionCount > 0 ? <Badge variant="outline">+{additionalMissionCount} more</Badge> : null}
           </div>
           <p className="text-sm text-primary/90">
             {missionApp} :: {summaryText}
           </p>
+          {approvalSummary ? <p className="text-[11px] text-amber-100/85">{approvalSummary}</p> : null}
           <p className="text-[11px] text-muted-foreground">
             mission: {missionId} {' • '}updated: {updatedAt}
             {missionKind === 'exploration' && explorationStepCount > 0
@@ -290,13 +312,24 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}
             {backendSupervisorEnabled && daemonIntervalS > 0 ? ` • interval:${Math.round(daemonIntervalS)}s` : ''}
+            {supervisorStatus ? ` • profile:${daemonPolicyProfile}` : ''}
             {latestWatchdogRun ? ` • watchdog:${watchdogUpdatedAt}` : ''}
           </p>
+          {supervisorStatus ? (
+            <p className="text-[11px] text-muted-foreground">
+              daemon policy:
+              {` high=${daemonAllowsHighRisk ? 'on' : 'off'}`}
+              {` • critical=${daemonAllowsCriticalRisk ? 'on' : 'off'}`}
+              {` • admin=${daemonAllowsAdminClearance ? 'on' : 'off'}`}
+              {` • destructive=${daemonAllowsDestructive ? 'on' : 'off'}`}
+            </p>
+          ) : null}
           {latestWatchdogRun ? (
             <p className="text-[11px] text-muted-foreground">
               watchdog: {String(latestWatchdogRun.status ?? 'idle').trim() || 'idle'}
               {` • triggered:${Number(latestWatchdogRun.auto_resume_triggered_count ?? 0)}`}
               {` • blocked:${Number(latestWatchdogRun.blocked_count ?? 0)}`}
+              {latestWatchdogPolicyBlockedCount > 0 ? ` • policy:${latestWatchdogPolicyBlockedCount}` : ''}
               {` • errors:${Number(latestWatchdogRun.error_count ?? 0)}`}
               {String(latestWatchdogRun.message ?? '').trim()
                 ? ` • ${String(latestWatchdogRun.message ?? '').trim()}`

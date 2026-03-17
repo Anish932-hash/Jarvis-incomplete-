@@ -38,6 +38,21 @@ class FakeDesktopService:
             "error_count": 0,
         }
         self.recovery_default_profile = "balanced"
+        self.desktop_governance_state: Dict[str, Any] = {
+            "status": "success",
+            "policy_profile": "balanced",
+            "allow_high_risk": True,
+            "allow_critical_risk": False,
+            "allow_admin_clearance": False,
+            "allow_destructive": False,
+            "allow_desktop_approval_reuse": True,
+            "allow_action_confirmation_reuse": True,
+            "desktop_approval_reuse_window_s": 90,
+            "action_confirmation_reuse_window_s": 45,
+            "updated_at": "2026-03-15T10:00:00+00:00",
+            "source": "defaults",
+            "profiles": {},
+        }
         self.recovery_profiles = [
             {
                 "name": "safe",
@@ -643,6 +658,11 @@ class FakeDesktopService:
             "interval_s": 45.0,
             "limit": 12,
             "max_auto_resumes": 2,
+            "policy_profile": "balanced",
+            "allow_high_risk": True,
+            "allow_critical_risk": False,
+            "allow_admin_clearance": False,
+            "allow_destructive": False,
             "mission_status": "paused",
             "mission_kind": "",
             "app_name": "",
@@ -6649,6 +6669,103 @@ class FakeDesktopService:
             "default_profile": "interactive",
             "source_defaults": {"desktop-trigger": "automation_safe"},
         }
+
+    @staticmethod
+    def _desktop_governance_defaults(profile: str) -> Dict[str, Any]:
+        clean = str(profile or "").strip().lower()
+        if clean == "conservative":
+            return {
+                "allow_high_risk": False,
+                "allow_critical_risk": False,
+                "allow_admin_clearance": False,
+                "allow_destructive": False,
+                "allow_desktop_approval_reuse": False,
+                "allow_action_confirmation_reuse": False,
+                "desktop_approval_reuse_window_s": 0,
+                "action_confirmation_reuse_window_s": 0,
+            }
+        if clean == "power":
+            return {
+                "allow_high_risk": True,
+                "allow_critical_risk": True,
+                "allow_admin_clearance": False,
+                "allow_destructive": False,
+                "allow_desktop_approval_reuse": True,
+                "allow_action_confirmation_reuse": True,
+                "desktop_approval_reuse_window_s": 240,
+                "action_confirmation_reuse_window_s": 120,
+            }
+        return {
+            "allow_high_risk": True,
+            "allow_critical_risk": False,
+            "allow_admin_clearance": False,
+            "allow_destructive": False,
+            "allow_desktop_approval_reuse": True,
+            "allow_action_confirmation_reuse": True,
+            "desktop_approval_reuse_window_s": 90,
+            "action_confirmation_reuse_window_s": 45,
+        }
+
+    def desktop_governance_status(self) -> Dict[str, Any]:
+        payload = dict(self.desktop_governance_state)
+        payload["desktop_recovery_daemon"] = self.desktop_recovery_supervisor_status(history_limit=4)
+        return payload
+
+    def configure_desktop_governance(
+        self,
+        *,
+        policy_profile: str | None = None,
+        allow_high_risk: bool | None = None,
+        allow_critical_risk: bool | None = None,
+        allow_admin_clearance: bool | None = None,
+        allow_destructive: bool | None = None,
+        allow_desktop_approval_reuse: bool | None = None,
+        allow_action_confirmation_reuse: bool | None = None,
+        desktop_approval_reuse_window_s: int | None = None,
+        action_confirmation_reuse_window_s: int | None = None,
+        sync_desktop_recovery_daemon: bool = True,
+    ) -> Dict[str, Any]:
+        state = self.desktop_governance_state
+        if policy_profile is not None:
+            clean_profile = str(policy_profile or "").strip().lower() or "balanced"
+            if clean_profile not in {"conservative", "balanced", "power", "custom"}:
+                clean_profile = "balanced"
+            state["policy_profile"] = clean_profile
+            if clean_profile != "custom":
+                state.update(self._desktop_governance_defaults(clean_profile))
+        for key, value in {
+            "allow_high_risk": allow_high_risk,
+            "allow_critical_risk": allow_critical_risk,
+            "allow_admin_clearance": allow_admin_clearance,
+            "allow_destructive": allow_destructive,
+            "allow_desktop_approval_reuse": allow_desktop_approval_reuse,
+            "allow_action_confirmation_reuse": allow_action_confirmation_reuse,
+        }.items():
+            if value is not None:
+                state[key] = bool(value)
+                state["policy_profile"] = "custom"
+        if desktop_approval_reuse_window_s is not None:
+            state["desktop_approval_reuse_window_s"] = int(desktop_approval_reuse_window_s)
+            state["policy_profile"] = "custom"
+        if action_confirmation_reuse_window_s is not None:
+            state["action_confirmation_reuse_window_s"] = int(action_confirmation_reuse_window_s)
+            state["policy_profile"] = "custom"
+        state["updated_at"] = "2026-03-15T10:35:00+00:00"
+        state["source"] = "api"
+        payload = self.desktop_governance_status()
+        if sync_desktop_recovery_daemon:
+            daemon_payload: Dict[str, Any] = {"policy_profile": state["policy_profile"], "history_limit": 4}
+            if str(state.get("policy_profile", "")).strip().lower() == "custom":
+                daemon_payload.update(
+                    {
+                        "allow_high_risk": bool(state.get("allow_high_risk", False)),
+                        "allow_critical_risk": bool(state.get("allow_critical_risk", False)),
+                        "allow_admin_clearance": bool(state.get("allow_admin_clearance", False)),
+                        "allow_destructive": bool(state.get("allow_destructive", False)),
+                    }
+                )
+            payload["desktop_recovery_daemon"] = self.configure_desktop_recovery_supervisor(**daemon_payload)
+        return payload
 
     def list_recovery_profiles(self) -> Dict[str, Any]:
         items = []
@@ -12935,6 +13052,7 @@ class FakeDesktopService:
             "count": len(selected),
             "total": len(rows),
             "items": selected,
+            "summary": {"entry_count": len(rows)},
             "filters": {
                 "action": action,
                 "app_name": app_name,
@@ -13342,6 +13460,30 @@ class FakeDesktopService:
         )
         return payload
 
+    @staticmethod
+    def _desktop_recovery_policy_defaults(profile: str) -> Dict[str, bool]:
+        clean = str(profile or "").strip().lower()
+        if clean == "conservative":
+            return {
+                "allow_high_risk": False,
+                "allow_critical_risk": False,
+                "allow_admin_clearance": False,
+                "allow_destructive": False,
+            }
+        if clean == "power":
+            return {
+                "allow_high_risk": True,
+                "allow_critical_risk": True,
+                "allow_admin_clearance": False,
+                "allow_destructive": False,
+            }
+        return {
+            "allow_high_risk": True,
+            "allow_critical_risk": False,
+            "allow_admin_clearance": False,
+            "allow_destructive": False,
+        }
+
     def configure_desktop_recovery_supervisor(
         self,
         *,
@@ -13349,6 +13491,11 @@ class FakeDesktopService:
         interval_s: float | None = None,
         limit: int | None = None,
         max_auto_resumes: int | None = None,
+        policy_profile: str | None = None,
+        allow_high_risk: bool | None = None,
+        allow_critical_risk: bool | None = None,
+        allow_admin_clearance: bool | None = None,
+        allow_destructive: bool | None = None,
         mission_status: str | None = None,
         mission_kind: str | None = None,
         app_name: str | None = None,
@@ -13365,6 +13512,25 @@ class FakeDesktopService:
             state["limit"] = int(limit)
         if max_auto_resumes is not None:
             state["max_auto_resumes"] = int(max_auto_resumes)
+        if policy_profile is not None:
+            clean_profile = str(policy_profile or "").strip().lower() or "balanced"
+            if clean_profile not in {"conservative", "balanced", "power", "custom"}:
+                clean_profile = "balanced"
+            state["policy_profile"] = clean_profile
+            if clean_profile != "custom":
+                state.update(self._desktop_recovery_policy_defaults(clean_profile))
+        if allow_high_risk is not None:
+            state["allow_high_risk"] = bool(allow_high_risk)
+            state["policy_profile"] = "custom"
+        if allow_critical_risk is not None:
+            state["allow_critical_risk"] = bool(allow_critical_risk)
+            state["policy_profile"] = "custom"
+        if allow_admin_clearance is not None:
+            state["allow_admin_clearance"] = bool(allow_admin_clearance)
+            state["policy_profile"] = "custom"
+        if allow_destructive is not None:
+            state["allow_destructive"] = bool(allow_destructive)
+            state["policy_profile"] = "custom"
         if mission_status is not None:
             state["mission_status"] = str(mission_status or "").strip()
         if mission_kind is not None:
@@ -13384,6 +13550,11 @@ class FakeDesktopService:
         *,
         limit: int | None = None,
         max_auto_resumes: int | None = None,
+        policy_profile: str | None = None,
+        allow_high_risk: bool | None = None,
+        allow_critical_risk: bool | None = None,
+        allow_admin_clearance: bool | None = None,
+        allow_destructive: bool | None = None,
         mission_status: str | None = None,
         mission_kind: str | None = None,
         app_name: str | None = None,
@@ -13392,6 +13563,24 @@ class FakeDesktopService:
         history_limit: int = 6,
     ) -> Dict[str, Any]:
         state = self.desktop_recovery_supervisor_state
+        effective_policy_profile = str(
+            policy_profile if policy_profile is not None else state.get("policy_profile", "") or "balanced"
+        ).strip().lower() or "balanced"
+        if effective_policy_profile not in {"conservative", "balanced", "power", "custom"}:
+            effective_policy_profile = "balanced"
+        defaults = self._desktop_recovery_policy_defaults(effective_policy_profile)
+        effective_allow_high_risk = bool(defaults["allow_high_risk"] if allow_high_risk is None else allow_high_risk)
+        effective_allow_critical_risk = bool(
+            defaults["allow_critical_risk"] if allow_critical_risk is None else allow_critical_risk
+        )
+        effective_allow_admin_clearance = bool(
+            defaults["allow_admin_clearance"] if allow_admin_clearance is None else allow_admin_clearance
+        )
+        effective_allow_destructive = bool(
+            defaults["allow_destructive"] if allow_destructive is None else allow_destructive
+        )
+        if any(value is not None for value in (allow_high_risk, allow_critical_risk, allow_admin_clearance, allow_destructive)):
+            effective_policy_profile = "custom"
         snapshot = self.desktop_mission_status(
             limit=int(limit or state.get("limit", 12) or 12),
             status=str(mission_status if mission_status is not None else state.get("mission_status", "") or "").strip(),
@@ -13437,6 +13626,7 @@ class FakeDesktopService:
             "auto_resume_triggered_count": len(triggered_items),
             "resume_ready_count": len(ready_items),
             "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+            "policy_blocked_count": 0,
             "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
         }
         state["updated_at"] = "2026-03-15T10:32:00+00:00"
@@ -13450,6 +13640,11 @@ class FakeDesktopService:
                 "trigger_source": "manual_api",
                 "limit": int(limit or state.get("limit", 12) or 12),
                 "max_auto_resumes": bounded_limit,
+                "policy_profile": effective_policy_profile,
+                "allow_high_risk": effective_allow_high_risk,
+                "allow_critical_risk": effective_allow_critical_risk,
+                "allow_admin_clearance": effective_allow_admin_clearance,
+                "allow_destructive": effective_allow_destructive,
                 "mission_status": str(mission_status if mission_status is not None else state.get("mission_status", "") or "").strip(),
                 "mission_kind": str(mission_kind if mission_kind is not None else state.get("mission_kind", "") or "").strip(),
                 "app_name": str(app_name if app_name is not None else state.get("app_name", "") or "").strip(),
@@ -13463,6 +13658,7 @@ class FakeDesktopService:
                 "resume_ready_count": max(0, len(ready_items) - len(triggered_items)),
                 "manual_attention_count": int(snapshot.get("manual_attention_count", 0) or 0),
                 "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+                "policy_blocked_count": 0,
                 "idle_count": 0,
                 "error_count": 0,
                 "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
@@ -13497,6 +13693,8 @@ class FakeDesktopService:
                 "auto_resume_triggered_count": len(triggered_items),
                 "resume_ready_count": len(ready_items),
                 "blocked_count": int(snapshot.get("manual_attention_count", 0) or 0),
+                "policy_profile": effective_policy_profile,
+                "policy_blocked_count": 0,
                 "evaluated_count": int(snapshot.get("count", 0) or 0),
                 "triggered_mission_ids": [str(item.get("mission_id", "") or "").strip() for item in triggered_items],
                 "stop_reason": "auto_resume_triggered" if triggered_items else "desktop_recovery_idle",
@@ -13611,6 +13809,7 @@ class FakeDesktopService:
         resume_contract: Dict[str, Any] | None = None,
         blocking_surface: Dict[str, Any] | None = None,
         resume_force: bool | None = None,
+        approval_id: str = "",
     ) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -13646,6 +13845,7 @@ class FakeDesktopService:
             "resume_contract": dict(resume_contract or {}),
             "blocking_surface": dict(blocking_surface or {}),
             "resume_force": resume_force,
+            "approval_id": approval_id,
         }
 
     def desktop_workflows(
@@ -17002,6 +17202,7 @@ def test_desktop_workflow_memory_routes_status_and_reset(api_server: tuple[str, 
     assert workflows["status"] == "success"
     assert workflows["count"] == 1
     assert workflows["items"][0]["profile_id"] == "microsoft-visual-studio-code"
+    assert isinstance(workflows.get("summary", {}), dict)
 
     status, cleared = request_json(
         "POST",
@@ -17085,6 +17286,7 @@ def test_desktop_recovery_daemon_routes_status_update_and_trigger(
             "interval_s": 30,
             "limit": 6,
             "max_auto_resumes": 1,
+            "policy_profile": "power",
             "mission_status": "paused",
             "mission_kind": "wizard",
             "app_name": "installer",
@@ -17097,6 +17299,9 @@ def test_desktop_recovery_daemon_routes_status_update_and_trigger(
     assert updated["interval_s"] == 30.0
     assert updated["limit"] == 6
     assert updated["max_auto_resumes"] == 1
+    assert updated["policy_profile"] == "power"
+    assert updated["allow_high_risk"] is True
+    assert updated["allow_critical_risk"] is True
     assert updated["mission_kind"] == "wizard"
     assert updated["app_name"] == "installer"
     assert updated["resume_force"] is True
@@ -17107,6 +17312,7 @@ def test_desktop_recovery_daemon_routes_status_update_and_trigger(
         payload={
             "limit": 4,
             "max_auto_resumes": 1,
+            "policy_profile": "conservative",
             "mission_status": "paused",
             "mission_kind": "wizard",
             "app_name": "installer",
@@ -17119,6 +17325,7 @@ def test_desktop_recovery_daemon_routes_status_update_and_trigger(
     assert triggered["supervisor"]["manual_trigger_count"] == 1
     assert triggered["supervisor"]["snapshot"]["status"] == "success"
     assert triggered["supervisor"]["watchdog_history"]["count"] == 1
+    assert triggered["result"]["policy_profile"] == "conservative"
 
 
 def test_desktop_recovery_daemon_history_routes(
@@ -17164,6 +17371,37 @@ def test_desktop_recovery_daemon_history_routes(
     )
     assert status == 200
     assert empty_history["count"] == 0
+
+
+def test_desktop_governance_routes_status_and_update(
+    api_server: tuple[str, FakeDesktopService]
+) -> None:
+    base_url, _ = api_server
+
+    status, initial = request_json("GET", f"{base_url}/runtime/desktop-governance")
+    assert status == 200
+    assert initial["status"] == "success"
+    assert initial["policy_profile"] == "balanced"
+    assert initial["allow_desktop_approval_reuse"] is True
+    assert initial["desktop_recovery_daemon"]["policy_profile"] == "balanced"
+
+    status, updated = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-governance",
+        payload={
+            "policy_profile": "power",
+            "desktop_approval_reuse_window_s": 180,
+            "sync_desktop_recovery_daemon": True,
+        },
+    )
+    assert status == 200
+    assert updated["status"] == "success"
+    assert updated["policy_profile"] == "custom"
+    assert updated["allow_high_risk"] is True
+    assert updated["allow_critical_risk"] is True
+    assert updated["desktop_approval_reuse_window_s"] == 180
+    assert updated["desktop_recovery_daemon"]["policy_profile"] == "custom"
+    assert updated["desktop_recovery_daemon"]["allow_critical_risk"] is True
 
 
 def test_desktop_workflow_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
@@ -17307,6 +17545,24 @@ def test_desktop_interact_route_forwards_resume_mission_payload(api_server: tupl
     assert payload["resume_contract"]["resume_payload"]["app_name"] == "installer"
     assert payload["blocking_surface"]["approval_kind"] == "elevation_consent"
     assert payload["resume_force"] is True
+
+
+def test_desktop_interact_route_forwards_approval_id(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "complete_form_flow",
+            "app_name": "settings",
+            "approval_id": "approval-ticket-123",
+        },
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["action"] == "complete_form_flow"
+    assert payload["approval_id"] == "approval-ticket-123"
 
 
 def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_server: tuple[str, FakeDesktopService]) -> None:

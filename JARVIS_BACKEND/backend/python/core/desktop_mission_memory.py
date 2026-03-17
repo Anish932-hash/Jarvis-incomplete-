@@ -246,6 +246,7 @@ class DesktopMissionMemory:
                 "created_at": str(existing.get("created_at", "") or now),
                 "updated_at": now,
             }
+            row.update(self._approval_policy_details(row))
             self._missions[mission_id] = row
             self._trim_locked()
             self._updates_since_save += 1
@@ -491,11 +492,17 @@ class DesktopMissionMemory:
         status_counts: Dict[str, int] = {}
         mission_kind_counts: Dict[str, int] = {}
         approval_kind_counts: Dict[str, int] = {}
+        approval_state_counts: Dict[str, int] = {}
+        approval_scope_counts: Dict[str, int] = {}
         recovery_profile_counts: Dict[str, int] = {}
+        risk_level_counts: Dict[str, int] = {}
         app_counts: Dict[str, int] = {}
         stop_reason_counts: Dict[str, int] = {}
         resume_ready_count = 0
         manual_attention_count = 0
+        admin_approval_count = 0
+        destructive_approval_count = 0
+        critical_risk_count = 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -508,6 +515,22 @@ class DesktopMissionMemory:
             approval_kind_key = self._normalize_text(row.get("approval_kind", ""))
             if approval_kind_key:
                 approval_kind_counts[approval_kind_key] = int(approval_kind_counts.get(approval_kind_key, 0)) + 1
+            approval_policy = self._approval_policy_details(row)
+            approval_state_key = str(approval_policy.get("approval_state", "") or "").strip().lower()
+            if approval_state_key:
+                approval_state_counts[approval_state_key] = int(approval_state_counts.get(approval_state_key, 0)) + 1
+            approval_scope_key = str(approval_policy.get("approval_scope", "") or "").strip().lower()
+            if approval_scope_key:
+                approval_scope_counts[approval_scope_key] = int(approval_scope_counts.get(approval_scope_key, 0)) + 1
+            risk_level_key = self._normalize_text(row.get("risk_level", ""))
+            if risk_level_key:
+                risk_level_counts[risk_level_key] = int(risk_level_counts.get(risk_level_key, 0)) + 1
+            if bool(approval_policy.get("admin_clearance_required", False)):
+                admin_approval_count += 1
+            if bool(approval_policy.get("destructive_confirmation", False)):
+                destructive_approval_count += 1
+            if bool(approval_policy.get("critical_risk", False)):
+                critical_risk_count += 1
             recovery_details = self._recovery_profile_details(row)
             recovery_profile_key = str(recovery_details.get("recovery_profile", "") or "").strip().lower()
             if recovery_profile_key:
@@ -538,11 +561,17 @@ class DesktopMissionMemory:
             "status_counts": status_counts,
             "mission_kind_counts": mission_kind_counts,
             "approval_kind_counts": approval_kind_counts,
+            "approval_state_counts": approval_state_counts,
+            "approval_scope_counts": approval_scope_counts,
             "recovery_profile_counts": recovery_profile_counts,
+            "risk_level_counts": risk_level_counts,
             "app_counts": app_counts,
             "stop_reason_counts": stop_reason_counts,
             "resume_ready_count": resume_ready_count,
             "manual_attention_count": manual_attention_count,
+            "admin_approval_count": admin_approval_count,
+            "destructive_approval_count": destructive_approval_count,
+            "critical_risk_count": critical_risk_count,
             "latest_paused": latest_paused,
             "filters": {
                 "mission_id": clean_id,
@@ -675,6 +704,7 @@ class DesktopMissionMemory:
         if not isinstance(row, dict):
             return {}
         recovery_details = self._recovery_profile_details(row)
+        approval_policy = self._approval_policy_details(row)
         return {
             "mission_id": str(row.get("mission_id", "") or "").strip(),
             "status": str(row.get("status", "") or "").strip(),
@@ -777,6 +807,17 @@ class DesktopMissionMemory:
             "resume_ready": bool(recovery_details.get("resume_ready", False)),
             "manual_attention_required": bool(recovery_details.get("manual_attention_required", False)),
             "approval_blocked": bool(recovery_details.get("approval_blocked", False)),
+            "approval_state": str(approval_policy.get("approval_state", "") or "").strip(),
+            "approval_scope": str(approval_policy.get("approval_scope", "") or "").strip(),
+            "approval_summary": str(approval_policy.get("approval_summary", "") or "").strip(),
+            "admin_clearance_required": bool(approval_policy.get("admin_clearance_required", False)),
+            "permission_review_required": bool(approval_policy.get("permission_review_required", False)),
+            "credential_review_required": bool(approval_policy.get("credential_review_required", False)),
+            "destructive_confirmation": bool(approval_policy.get("destructive_confirmation", False)),
+            "secure_desktop_likely": bool(approval_policy.get("secure_desktop_likely", False)),
+            "requires_manual_review": bool(approval_policy.get("requires_manual_review", False)),
+            "high_risk": bool(approval_policy.get("high_risk", False)),
+            "critical_risk": bool(approval_policy.get("critical_risk", False)),
             "resume_contract": dict(row.get("resume_contract", {})) if isinstance(row.get("resume_contract", {}), dict) else {},
             "blocking_surface": dict(row.get("blocking_surface", {})) if isinstance(row.get("blocking_surface", {}), dict) else {},
             "final_page": dict(row.get("final_page", {})) if isinstance(row.get("final_page", {}), dict) else {},
@@ -785,6 +826,90 @@ class DesktopMissionMemory:
             "updated_at": str(row.get("updated_at", "") or "").strip(),
             "last_resume_at": str(row.get("last_resume_at", "") or "").strip(),
             "completed_at": str(row.get("completed_at", "") or "").strip(),
+        }
+
+    def _approval_policy_details(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(row, dict):
+            return {}
+        risk_level = self._normalize_text(row.get("risk_level", ""))
+        approval_kind = self._normalize_text(row.get("approval_kind", ""))
+        dialog_kind = self._normalize_text(row.get("dialog_kind", ""))
+        stop_reason_code = self._normalize_text(row.get("stop_reason_code", ""))
+        blocking_surface = (
+            dict(row.get("blocking_surface", {}))
+            if isinstance(row.get("blocking_surface", {}), dict)
+            else {}
+        )
+        secure_desktop_likely = bool(
+            row.get("secure_desktop_likely", False) or blocking_surface.get("secure_desktop_likely", False)
+        )
+        destructive_confirmation = bool(
+            row.get("destructive_confirmation", False)
+            or (
+                isinstance(blocking_surface.get("destructive_dialog_buttons", []), list)
+                and len(blocking_surface.get("destructive_dialog_buttons", [])) > 0
+            )
+            or "destructive" in dialog_kind
+            or "destructive" in stop_reason_code
+        )
+        admin_clearance_required = bool(
+            row.get("admin_clearance_required", False)
+            or approval_kind in {"elevation_consent", "elevation_credentials"}
+            or secure_desktop_likely
+        )
+        permission_review_required = bool(
+            row.get("permission_review_required", False) or approval_kind == "permission_review"
+        )
+        credential_review_required = bool(
+            row.get("credential_review_required", False) or approval_kind == "credential_input"
+        )
+        requires_manual_review = bool(
+            row.get("requires_manual_review", False)
+            or blocking_surface.get("review_required", False)
+            or destructive_confirmation
+            or admin_clearance_required
+            or permission_review_required
+            or credential_review_required
+            or any(marker in dialog_kind or marker in stop_reason_code for marker in ("review", "warning", "confirm"))
+        )
+        high_risk = risk_level in {"high", "critical"}
+        critical_risk = risk_level == "critical"
+        if admin_clearance_required:
+            approval_state = "admin_blocked"
+            approval_scope = "admin"
+            approval_summary = "Administrator approval is still required before JARVIS can safely continue."
+        elif credential_review_required:
+            approval_state = "credential_blocked"
+            approval_scope = "credential"
+            approval_summary = "Credentials are required before this paused mission can resume."
+        elif permission_review_required:
+            approval_state = "permission_blocked"
+            approval_scope = "permission"
+            approval_summary = "A permission review surface is still blocking autonomous progress."
+        elif destructive_confirmation:
+            approval_state = "destructive_review"
+            approval_scope = "destructive"
+            approval_summary = "This paused mission is sitting on a destructive confirmation or commit surface."
+        elif requires_manual_review:
+            approval_state = "operator_review"
+            approval_scope = "operator"
+            approval_summary = "A human review surface is still likely in the way of safe autonomous recovery."
+        else:
+            approval_state = "resume_ready"
+            approval_scope = "resume"
+            approval_summary = "No approval blocker is currently inferred, so the paused mission is ready for bounded resume."
+        return {
+            "approval_state": approval_state,
+            "approval_scope": approval_scope,
+            "approval_summary": approval_summary,
+            "admin_clearance_required": admin_clearance_required,
+            "permission_review_required": permission_review_required,
+            "credential_review_required": credential_review_required,
+            "destructive_confirmation": destructive_confirmation,
+            "secure_desktop_likely": secure_desktop_likely,
+            "requires_manual_review": requires_manual_review,
+            "high_risk": high_risk,
+            "critical_risk": critical_risk,
         }
 
     def _recovery_profile_details(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -797,7 +922,8 @@ class DesktopMissionMemory:
             if isinstance(row.get("blocking_surface", {}), dict)
             else {}
         )
-        secure_desktop_likely = bool(blocking_surface.get("secure_desktop_likely", False))
+        approval_policy = self._approval_policy_details(row)
+        secure_desktop_likely = bool(approval_policy.get("secure_desktop_likely", False))
 
         recovery_profile = "unknown"
         recovery_hint = "Inspect the stored desktop mission before resuming it."
@@ -830,6 +956,12 @@ class DesktopMissionMemory:
             recovery_profile = "permission_review"
             recovery_hint = "Review the permission surface, then let JARVIS resume the mission."
             recovery_priority = 78
+            approval_blocked = True
+            manual_attention_required = True
+        elif bool(approval_policy.get("destructive_confirmation", False)):
+            recovery_profile = "destructive_review"
+            recovery_hint = "A destructive confirmation or commit surface is still active, so review it before resuming."
+            recovery_priority = 80 if bool(approval_policy.get("critical_risk", False)) else 76
             approval_blocked = True
             manual_attention_required = True
         elif any(

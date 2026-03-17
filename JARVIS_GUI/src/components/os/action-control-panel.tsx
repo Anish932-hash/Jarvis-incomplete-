@@ -175,14 +175,21 @@ interface ToolDefinition {
   required_args: string[];
 }
 
-interface PendingApprovalPrompt {
-  approval: ApprovalRecord;
-  request: {
-    action: string;
-    args: Record<string, unknown>;
-    metadata?: Record<string, unknown>;
-  };
-}
+type PendingApprovalPrompt =
+  | {
+      mode: 'action';
+      approval: ApprovalRecord;
+      request: {
+        action: string;
+        args: Record<string, unknown>;
+        metadata?: Record<string, unknown>;
+      };
+    }
+  | {
+      mode: 'desktop';
+      approval: ApprovalRecord;
+      request: DesktopInteractInput;
+    };
 
 interface GoalTimelineEntry {
   id: string;
@@ -993,13 +1000,9 @@ function riskVariant(risk: string): 'default' | 'secondary' | 'outline' | 'destr
   return 'default';
 }
 
-function extractApprovalFromResult(result: ActionExecutionResponse): ApprovalRecord | null {
-  const output = result.output;
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
-  const approval = (output as Record<string, unknown>).approval;
-  if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return null;
-
-  const candidate = approval as Partial<ApprovalRecord>;
+function coerceApprovalRecord(value: unknown): ApprovalRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Partial<ApprovalRecord>;
   if (typeof candidate.approval_id !== 'string') return null;
 
   return {
@@ -1018,7 +1021,20 @@ function extractApprovalFromResult(result: ActionExecutionResponse): ApprovalRec
     approved_at: candidate.approved_at ?? null,
     consumed_at: candidate.consumed_at ?? null,
     note: typeof candidate.note === 'string' ? candidate.note : '',
+    reuse_count: typeof candidate.reuse_count === 'number' ? candidate.reuse_count : 0,
+    last_reused_at: typeof candidate.last_reused_at === 'string' ? candidate.last_reused_at : null,
+    last_reuse_reason: typeof candidate.last_reuse_reason === 'string' ? candidate.last_reuse_reason : '',
   };
+}
+
+function extractApprovalFromResult(result: ActionExecutionResponse): ApprovalRecord | null {
+  const output = result.output;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+  return coerceApprovalRecord((output as Record<string, unknown>).approval);
+}
+
+function extractApprovalFromDesktopResponse(result: DesktopInteractResponse): ApprovalRecord | null {
+  return coerceApprovalRecord((result as Record<string, unknown>).approval);
 }
 
 const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
@@ -1777,6 +1793,15 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
       .sort((left, right) => right[1] - left[1]);
   }, [desktopMissionSnapshot]);
+  const desktopMissionApprovalStateCountRows = useMemo(() => {
+    const approvalStateCounts = isObjectRecord(desktopMissionSnapshot?.approval_state_counts)
+      ? (desktopMissionSnapshot.approval_state_counts as Record<string, unknown>)
+      : null;
+    if (!approvalStateCounts) return [] as Array<[string, number]>;
+    return Object.entries(approvalStateCounts)
+      .map(([key, value]) => [key, Number(value ?? 0)] as [string, number])
+      .sort((left, right) => right[1] - left[1]);
+  }, [desktopMissionSnapshot]);
   const desktopMissionRecoveryProfileCountRows = useMemo(() => {
     const recoveryCounts = isObjectRecord(desktopMissionSnapshot?.recovery_profile_counts)
       ? (desktopMissionSnapshot.recovery_profile_counts as Record<string, unknown>)
@@ -1807,6 +1832,19 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   }, [desktopMissionSnapshot]);
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
+  const desktopRecoveryDaemonPolicyProfile =
+    String(desktopRecoveryDaemonStatus?.policy_profile ?? 'balanced').trim() || 'balanced';
+  const desktopRecoveryDaemonAllowHighRisk = Boolean(desktopRecoveryDaemonStatus?.allow_high_risk);
+  const desktopRecoveryDaemonAllowCriticalRisk = Boolean(desktopRecoveryDaemonStatus?.allow_critical_risk);
+  const desktopRecoveryDaemonAllowAdminClearance = Boolean(desktopRecoveryDaemonStatus?.allow_admin_clearance);
+  const desktopRecoveryDaemonAllowDestructive = Boolean(desktopRecoveryDaemonStatus?.allow_destructive);
+  const desktopRecoveryDaemonLastSummary = asObjectRecord(desktopRecoveryDaemonStatus?.last_summary);
+  const desktopRecoveryDaemonPolicyBlockedCount = Number(
+    desktopRecoveryDaemonLastSummary.policy_blocked_count ??
+      (desktopRecoveryWatchdogHistory?.latest_run && isObjectRecord(desktopRecoveryWatchdogHistory.latest_run)
+        ? asObjectRecord(desktopRecoveryWatchdogHistory.latest_run).policy_blocked_count
+        : 0)
+  );
   const desktopRecoveryWatchdogLatestRun = useMemo(() => {
     const latestRun =
       desktopRecoveryWatchdogHistory?.latest_run && isObjectRecord(desktopRecoveryWatchdogHistory.latest_run)
@@ -12259,7 +12297,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
 
         const approval = extractApprovalFromResult(response);
         if (approval && response.status === 'blocked') {
-          setApprovalPrompt({ approval, request: payload });
+          setApprovalPrompt({ mode: 'action', approval, request: payload });
           toast({
             title: 'Approval Required',
             description: `${payload.action} requires confirmation before execution.`,
@@ -12478,6 +12516,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       intervalS,
       limit,
       maxAutoResumes,
+      policyProfile,
+      allowHighRisk,
+      allowCriticalRisk,
+      allowAdminClearance,
+      allowDestructive,
       missionStatus,
       missionKind,
       appName,
@@ -12488,6 +12531,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       intervalS?: number;
       limit?: number;
       maxAutoResumes?: number;
+      policyProfile?: string;
+      allowHighRisk?: boolean;
+      allowCriticalRisk?: boolean;
+      allowAdminClearance?: boolean;
+      allowDestructive?: boolean;
       missionStatus?: string;
       missionKind?: string;
       appName?: string;
@@ -12501,6 +12549,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           interval_s: intervalS,
           limit,
           max_auto_resumes: maxAutoResumes,
+          policy_profile: policyProfile,
+          allow_high_risk: allowHighRisk,
+          allow_critical_risk: allowCriticalRisk,
+          allow_admin_clearance: allowAdminClearance,
+          allow_destructive: allowDestructive,
           mission_status: missionStatus,
           mission_kind: missionKind,
           app_name: appName,
@@ -12544,6 +12597,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     async ({
       limit,
       maxAutoResumes,
+      policyProfile,
+      allowHighRisk,
+      allowCriticalRisk,
+      allowAdminClearance,
+      allowDestructive,
       missionStatus,
       missionKind,
       appName,
@@ -12552,6 +12610,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }: {
       limit?: number;
       maxAutoResumes?: number;
+      policyProfile?: string;
+      allowHighRisk?: boolean;
+      allowCriticalRisk?: boolean;
+      allowAdminClearance?: boolean;
+      allowDestructive?: boolean;
       missionStatus?: string;
       missionKind?: string;
       appName?: string;
@@ -12563,6 +12626,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         const payload = await backendClient.triggerDesktopRecoveryDaemon({
           limit,
           max_auto_resumes: maxAutoResumes,
+          policy_profile: policyProfile,
+          allow_high_risk: allowHighRisk,
+          allow_critical_risk: allowCriticalRisk,
+          allow_admin_clearance: allowAdminClearance,
+          allow_destructive: allowDestructive,
           mission_status: missionStatus,
           mission_kind: missionKind,
           app_name: appName,
@@ -13205,6 +13273,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
             ? (responseAdvice.exploration_plan as DesktopSurfaceExplorationResponse)
             : null;
       setDesktopCoworkerExploration(exploration);
+      const approval = extractApprovalFromDesktopResponse(response);
+      if (approval && String(response.status ?? '').trim().toLowerCase() === 'blocked') {
+        setApprovalPrompt({
+          mode: 'desktop',
+          approval,
+          request: payload,
+        });
+        toast({
+          title: 'Desktop Approval Required',
+          description:
+            String(response.message ?? '').trim() ||
+            `${String(response.action ?? payload.action ?? 'desktop action').trim() || 'Desktop action'} requires approval before execution.`,
+        });
+        return response;
+      }
       if (String(response.status ?? '').trim().toLowerCase() === 'success') {
         toast({
           title: 'Desktop Action Executed',
@@ -14597,6 +14680,55 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       }
 
       setApprovalPrompt(null);
+      if (approvalPrompt.mode === 'desktop') {
+        const response = await backendClient.desktopInteract({
+          ...approvalPrompt.request,
+          approval_id: approvalId,
+        });
+        setDesktopCoworkerResult(response);
+        const responseAdvice =
+          response.advice && typeof response.advice === 'object' && !Array.isArray(response.advice)
+            ? (response.advice as DesktopActionAdviceResponse)
+            : null;
+        if (responseAdvice) {
+          setDesktopCoworkerAdvice(responseAdvice);
+        }
+        const exploration =
+          response.exploration_plan &&
+          typeof response.exploration_plan === 'object' &&
+          !Array.isArray(response.exploration_plan)
+            ? (response.exploration_plan as DesktopSurfaceExplorationResponse)
+            : responseAdvice?.exploration_plan &&
+                typeof responseAdvice.exploration_plan === 'object' &&
+                !Array.isArray(responseAdvice.exploration_plan)
+              ? (responseAdvice.exploration_plan as DesktopSurfaceExplorationResponse)
+              : null;
+        setDesktopCoworkerExploration(exploration);
+        const followupApproval = extractApprovalFromDesktopResponse(response);
+        if (followupApproval && String(response.status ?? '').trim().toLowerCase() === 'blocked') {
+          setApprovalPrompt({
+            mode: 'desktop',
+            approval: followupApproval,
+            request: approvalPrompt.request,
+          });
+          toast({
+            title: 'Desktop Approval Still Required',
+            description:
+              String(response.message ?? '').trim() ||
+              'The desktop route still requires approval before it can continue.',
+          });
+          return;
+        }
+        if (String(response.status ?? '').trim().toLowerCase() === 'success') {
+          toast({
+            title: 'Desktop Action Executed',
+            description:
+              String(response.final_action ?? '').trim() || 'JARVIS completed the approved desktop coworker action.',
+          });
+          return;
+        }
+        throw new Error(String(response.message ?? 'The approved desktop action did not complete successfully.'));
+      }
       await executePayload({
         action: approvalPrompt.request.action,
         args: approvalPrompt.request.args,
@@ -16332,6 +16464,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               review:{Number(desktopMissionSnapshot?.manual_attention_count ?? 0)}
                                             </Badge>
                                           ) : null}
+                                          {Number(desktopMissionSnapshot?.admin_approval_count ?? 0) > 0 ? (
+                                            <Badge variant="outline">
+                                              admin:{Number(desktopMissionSnapshot?.admin_approval_count ?? 0)}
+                                            </Badge>
+                                          ) : null}
+                                          {Number(desktopMissionSnapshot?.destructive_approval_count ?? 0) > 0 ? (
+                                            <Badge variant="outline">
+                                              destructive:{Number(desktopMissionSnapshot?.destructive_approval_count ?? 0)}
+                                            </Badge>
+                                          ) : null}
+                                          {Number(desktopMissionSnapshot?.critical_risk_count ?? 0) > 0 ? (
+                                            <Badge variant="outline">
+                                              critical:{Number(desktopMissionSnapshot?.critical_risk_count ?? 0)}
+                                            </Badge>
+                                          ) : null}
                                         </div>
                                       </div>
                                       {desktopRecoveryDaemonStatus ? (
@@ -16456,6 +16603,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             interval: {desktopRecoveryDaemonIntervalS > 0 ? `${Math.round(desktopRecoveryDaemonIntervalS)}s` : 'n/a'}
                                             {' • '}limit: {Number(desktopRecoveryDaemonStatus.limit ?? 0)}
                                             {' • '}auto resumes: {Number(desktopRecoveryDaemonStatus.max_auto_resumes ?? 0)}
+                                            {' • '}profile: {desktopRecoveryDaemonPolicyProfile}
                                             {' • '}last result: {String(desktopRecoveryDaemonStatus.last_result_status ?? 'idle')}
                                           </p>
                                           <p className="mt-1">
@@ -16463,6 +16611,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}manual: {Number(desktopRecoveryDaemonStatus.manual_trigger_count ?? 0)}
                                             {' • '}auto: {Number(desktopRecoveryDaemonStatus.auto_trigger_count ?? 0)}
                                             {' • '}last tick: {formatIso(String(desktopRecoveryDaemonStatus.last_tick_at ?? ''))}
+                                          </p>
+                                          <p className="mt-1">
+                                            policy: high={desktopRecoveryDaemonAllowHighRisk ? 'on' : 'off'}
+                                            {' • '}critical={desktopRecoveryDaemonAllowCriticalRisk ? 'on' : 'off'}
+                                            {' • '}admin={desktopRecoveryDaemonAllowAdminClearance ? 'on' : 'off'}
+                                            {' • '}destructive={desktopRecoveryDaemonAllowDestructive ? 'on' : 'off'}
+                                            {desktopRecoveryDaemonPolicyBlockedCount > 0
+                                              ? ` • deferred:${desktopRecoveryDaemonPolicyBlockedCount}`
+                                              : ''}
                                           </p>
                                           {desktopRecoveryWatchdogHistory ? (
                                             <div className="mt-2 rounded border border-primary/10 bg-background/25 p-2">
@@ -16591,10 +16748,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     {String(desktopMissionLatestPaused.recovery_profile)}
                                                   </Badge>
                                                 ) : null}
+                                                {desktopMissionLatestPaused.approval_state ? (
+                                                  <Badge variant="outline">
+                                                    state:{String(desktopMissionLatestPaused.approval_state)}
+                                                  </Badge>
+                                                ) : null}
                                                 {desktopMissionLatestPaused.approval_kind ? (
                                                   <Badge variant="outline">
                                                     approval:{String(desktopMissionLatestPaused.approval_kind)}
                                                   </Badge>
+                                                ) : null}
+                                                {desktopMissionLatestPaused.admin_clearance_required ? (
+                                                  <Badge variant="destructive">admin</Badge>
+                                                ) : null}
+                                                {desktopMissionLatestPaused.destructive_confirmation ? (
+                                                  <Badge variant="destructive">destructive</Badge>
+                                                ) : null}
+                                                {desktopMissionLatestPaused.critical_risk ? (
+                                                  <Badge variant="destructive">critical</Badge>
                                                 ) : null}
                                               </div>
                                               <p className="mt-1 text-primary/80">
@@ -16611,6 +16782,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     'Awaiting recovery.'
                                                 )}
                                               </p>
+                                              {desktopMissionLatestPaused.approval_summary ? (
+                                                <p className="mt-1 text-amber-200/80">
+                                                  {String(desktopMissionLatestPaused.approval_summary)}
+                                                </p>
+                                              ) : null}
                                             </div>
                                           ) : null}
                                           <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
@@ -16622,6 +16798,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {desktopMissionRecoveryProfileCountRows.slice(0, 3).map(([label, count]) => (
                                               <Badge key={`desktop-mission-recovery-${label}`} variant="secondary">
                                                 {label}:{count}
+                                              </Badge>
+                                            ))}
+                                            {desktopMissionApprovalStateCountRows.slice(0, 3).map(([label, count]) => (
+                                              <Badge key={`desktop-mission-approval-state-${label}`} variant="outline">
+                                                state:{label}:{count}
                                               </Badge>
                                             ))}
                                             {desktopMissionApprovalCountRows.slice(0, 2).map(([label, count]) => (
@@ -28526,7 +28707,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           <AlertDialogHeader>
             <AlertDialogTitle>Approval Required</AlertDialogTitle>
             <AlertDialogDescription>
-              This action is marked high risk. Approve the generated ticket to execute it.
+              {approvalPrompt?.mode === 'desktop'
+                ? 'This desktop operation is marked high risk. Approve the generated ticket to let JARVIS continue the Windows action.'
+                : 'This action is marked high risk. Approve the generated ticket to execute it.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

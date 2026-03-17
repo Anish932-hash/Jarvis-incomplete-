@@ -125,6 +125,21 @@ export function useDesktopRecovery({
       missionRows.filter((item) => Boolean(item.manual_attention_required)).length ??
       0
   );
+  const adminApprovalCount = Number(
+    snapshot?.admin_approval_count ??
+      missionRows.filter((item) => Boolean(item.admin_clearance_required)).length ??
+      0
+  );
+  const destructiveApprovalCount = Number(
+    snapshot?.destructive_approval_count ??
+      missionRows.filter((item) => Boolean(item.destructive_confirmation)).length ??
+      0
+  );
+  const criticalRiskCount = Number(
+    snapshot?.critical_risk_count ??
+      missionRows.filter((item) => Boolean(item.critical_risk)).length ??
+      0
+  );
   const backendSupervisorEnabled = Boolean(supervisorStatus?.enabled);
 
   const resumeLatestMission = useCallback(async (): Promise<DesktopInteractResponse | null> => {
@@ -152,6 +167,11 @@ export function useDesktopRecovery({
       intervalS?: number;
       limit?: number;
       maxAutoResumes?: number;
+      policyProfile?: string;
+      allowHighRisk?: boolean;
+      allowCriticalRisk?: boolean;
+      allowAdminClearance?: boolean;
+      allowDestructive?: boolean;
       missionStatus?: string;
       missionKind?: string;
       appName?: string;
@@ -165,6 +185,11 @@ export function useDesktopRecovery({
           interval_s: input?.intervalS,
           limit: input?.limit,
           max_auto_resumes: input?.maxAutoResumes,
+          policy_profile: input?.policyProfile,
+          allow_high_risk: input?.allowHighRisk,
+          allow_critical_risk: input?.allowCriticalRisk,
+          allow_admin_clearance: input?.allowAdminClearance,
+          allow_destructive: input?.allowDestructive,
           mission_status: input?.missionStatus,
           mission_kind: input?.missionKind,
           app_name: input?.appName,
@@ -199,6 +224,11 @@ export function useDesktopRecovery({
     async (input?: {
       limit?: number;
       maxAutoResumes?: number;
+      policyProfile?: string;
+      allowHighRisk?: boolean;
+      allowCriticalRisk?: boolean;
+      allowAdminClearance?: boolean;
+      allowDestructive?: boolean;
       missionStatus?: string;
       missionKind?: string;
       appName?: string;
@@ -210,6 +240,11 @@ export function useDesktopRecovery({
         const response = await backendClient.triggerDesktopRecoveryDaemon({
           limit: input?.limit,
           max_auto_resumes: input?.maxAutoResumes,
+          policy_profile: input?.policyProfile,
+          allow_high_risk: input?.allowHighRisk,
+          allow_critical_risk: input?.allowCriticalRisk,
+          allow_admin_clearance: input?.allowAdminClearance,
+          allow_destructive: input?.allowDestructive,
           mission_status: input?.missionStatus,
           mission_kind: input?.missionKind,
           app_name: input?.appName,
@@ -298,6 +333,9 @@ export function useDesktopRecovery({
     explorationMissionCount,
     explorationResumeReadyCount,
     manualAttentionCount,
+    adminApprovalCount,
+    destructiveApprovalCount,
+    criticalRiskCount,
     loading,
     resuming,
     configuringDaemon,
