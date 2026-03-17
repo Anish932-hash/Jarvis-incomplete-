@@ -13530,6 +13530,9 @@ class FakeDesktopService:
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
         allow_destructive_forms: bool | None = None,
+        attempted_targets: list[Dict[str, Any]] | None = None,
+        surface_signature_history: list[str] | None = None,
+        branch_history: list[Dict[str, Any]] | None = None,
         resume_contract: Dict[str, Any] | None = None,
         blocking_surface: Dict[str, Any] | None = None,
         resume_force: bool | None = None,
@@ -13559,6 +13562,9 @@ class FakeDesktopService:
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
             "allow_destructive_forms": allow_destructive_forms,
+            "attempted_targets": [dict(item) for item in attempted_targets or []],
+            "surface_signature_history": [str(item) for item in surface_signature_history or []],
+            "branch_history": [dict(item) for item in branch_history or []],
             "resume_contract": dict(resume_contract or {}),
             "blocking_surface": dict(blocking_surface or {}),
             "resume_force": resume_force,
@@ -13590,6 +13596,9 @@ class FakeDesktopService:
         allow_warning_pages: bool | None = None,
         max_form_pages: int | None = None,
         allow_destructive_forms: bool | None = None,
+        attempted_targets: list[Dict[str, Any]] | None = None,
+        surface_signature_history: list[str] | None = None,
+        branch_history: list[Dict[str, Any]] | None = None,
         resume_contract: Dict[str, Any] | None = None,
         blocking_surface: Dict[str, Any] | None = None,
         resume_force: bool | None = None,
@@ -13619,6 +13628,9 @@ class FakeDesktopService:
             "allow_warning_pages": allow_warning_pages,
             "max_form_pages": max_form_pages,
             "allow_destructive_forms": allow_destructive_forms,
+            "attempted_targets": [dict(item) for item in attempted_targets or []],
+            "surface_signature_history": [str(item) for item in surface_signature_history or []],
+            "branch_history": [dict(item) for item in branch_history or []],
             "resume_contract": dict(resume_contract or {}),
             "blocking_surface": dict(blocking_surface or {}),
             "resume_force": resume_force,
@@ -17311,6 +17323,43 @@ def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_se
     assert payload["max_strategy_attempts"] == 3
     assert payload["exploration_limit"] == 8
     assert payload["max_exploration_steps"] == 4
+
+
+def test_desktop_interact_route_forwards_nested_exploration_history(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, payload = request_json(
+        "POST",
+        f"{base_url}/desktop/interact",
+        payload={
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "query": "bluetooth",
+            "attempted_targets": [
+                {
+                    "candidate_id": "row_bluetooth",
+                    "selected_action": "select_list_item",
+                }
+            ],
+            "surface_signature_history": ["surface-before", "surface-after"],
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "row_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                }
+            ],
+        },
+    )
+    assert status == 200
+    assert payload["status"] == "success"
+    assert payload["action"] == "advance_surface_exploration"
+    assert payload["attempted_targets"][0]["candidate_id"] == "row_bluetooth"
+    assert payload["surface_signature_history"] == ["surface-before", "surface-after"]
+    assert payload["branch_history"][0]["transition_kind"] == "child_window"
 
 
 def test_desktop_surface_snapshot_route(api_server: tuple[str, FakeDesktopService]) -> None:

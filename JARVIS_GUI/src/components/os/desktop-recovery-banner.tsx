@@ -79,6 +79,8 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const explorationMaxSteps = Number(latestMission?.max_steps ?? 0);
   const explorationAttemptedCount = Number(latestMission?.attempted_target_count ?? 0);
   const explorationAlternativeCount = Number(latestMission?.alternative_target_count ?? 0);
+  const explorationBranchCount = Number(latestMission?.branch_transition_count ?? 0);
+  const explorationLastBranchKind = String(latestMission?.last_branch_kind ?? '').trim();
   const updatedAt = formatMissionTimestamp(String(latestMission?.updated_at ?? latestMission?.created_at ?? ''));
   const daemonLastTick = formatMissionTimestamp(String(supervisorStatus?.last_tick_at ?? ''));
   const daemonIntervalS = Number(supervisorStatus?.interval_s ?? 0);
@@ -115,6 +117,12 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
             {isExplorationMission && explorationAlternativeCount > 0 ? (
               <Badge variant="outline">alts:{explorationAlternativeCount}</Badge>
             ) : null}
+            {isExplorationMission && explorationBranchCount > 0 ? (
+              <Badge variant="outline">
+                branches:{explorationBranchCount}
+                {explorationLastBranchKind ? `:${explorationLastBranchKind}` : ''}
+              </Badge>
+            ) : null}
             {manualAttentionCount > 0 ? <Badge variant="outline">review:{manualAttentionCount}</Badge> : null}
             {additionalMissionCount > 0 ? <Badge variant="outline">+{additionalMissionCount} more</Badge> : null}
           </div>
@@ -131,6 +139,9 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               : ''}
             {missionKind === 'exploration' && explorationAlternativeCount > 0
               ? ` • alts:${explorationAlternativeCount}`
+              : ''}
+            {missionKind === 'exploration' && explorationBranchCount > 0
+              ? ` • branches:${explorationBranchCount}${explorationLastBranchKind ? `(${explorationLastBranchKind})` : ''}`
               : ''}
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}

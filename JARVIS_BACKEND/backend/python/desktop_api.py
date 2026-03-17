@@ -42844,6 +42844,21 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 mission_kind = str(body.get("mission_kind", "") or "").strip().lower()
                 candidate_id = str(body.get("candidate_id", "") or "").strip()
                 branch_action = str(body.get("branch_action", "") or "").strip()
+                attempted_targets = [
+                    dict(item)
+                    for item in body.get("attempted_targets", [])
+                    if isinstance(item, dict)
+                ] if isinstance(body.get("attempted_targets", []), list) else []
+                surface_signature_history = [
+                    str(item).strip()
+                    for item in body.get("surface_signature_history", [])
+                    if str(item).strip()
+                ] if isinstance(body.get("surface_signature_history", []), list) else []
+                branch_history = [
+                    dict(item)
+                    for item in body.get("branch_history", [])
+                    if isinstance(item, dict)
+                ] if isinstance(body.get("branch_history", []), list) else []
                 keys_raw = body.get("keys", [])
                 keys = [
                     str(item).strip().lower()
@@ -42854,34 +42869,41 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     for item in str(keys_raw or "").split(",")
                     if str(item).strip()
                 ]
-                payload = self.server.service.desktop_interact(
-                    action=action,
-                    app_name=app_name,
-                    window_title=window_title,
-                    query=query_text,
-                    text=typed_text,
-                    mission_id=mission_id,
-                    mission_kind=mission_kind,
-                    candidate_id=candidate_id,
-                    branch_action=branch_action,
-                    keys=keys or None,
-                    ensure_app_launch=bool(body.get("ensure_app_launch")) if "ensure_app_launch" in body else None,
-                    focus_first=bool(body.get("focus_first")) if "focus_first" in body else None,
-                    press_enter=(bool(body.get("press_enter", False) or body.get("submit", False)) if ("press_enter" in body or "submit" in body) else None),
-                    verify_after_action=bool(body.get("verify_after_action")) if "verify_after_action" in body else None,
-                    verify_text=str(body.get("verify_text", "") or "").strip(),
-                    retry_on_verification_failure=bool(body.get("retry_on_verification_failure")) if "retry_on_verification_failure" in body else None,
-                    max_strategy_attempts=self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
-                    exploration_limit=self._parse_int(str(body.get("exploration_limit", 6)), 6, minimum=1, maximum=12) if "exploration_limit" in body else None,
-                    max_exploration_steps=self._parse_int(str(body.get("max_exploration_steps", 3)), 3, minimum=1, maximum=8) if "max_exploration_steps" in body else None,
-                    max_wizard_pages=self._parse_int(str(body.get("max_wizard_pages", 6)), 6, minimum=1, maximum=12) if "max_wizard_pages" in body else None,
-                    allow_warning_pages=bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
-                    max_form_pages=self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,
-                    allow_destructive_forms=bool(body.get("allow_destructive_forms")) if "allow_destructive_forms" in body else None,
-                    resume_contract=dict(body.get("resume_contract", {})) if isinstance(body.get("resume_contract", {}), dict) else None,
-                    blocking_surface=dict(body.get("blocking_surface", {})) if isinstance(body.get("blocking_surface", {}), dict) else None,
-                    resume_force=bool(body.get("resume_force")) if "resume_force" in body else None,
-                )
+                interact_kwargs = {
+                    "action": action,
+                    "app_name": app_name,
+                    "window_title": window_title,
+                    "query": query_text,
+                    "text": typed_text,
+                    "mission_id": mission_id,
+                    "mission_kind": mission_kind,
+                    "candidate_id": candidate_id,
+                    "branch_action": branch_action,
+                    "keys": keys or None,
+                    "ensure_app_launch": bool(body.get("ensure_app_launch")) if "ensure_app_launch" in body else None,
+                    "focus_first": bool(body.get("focus_first")) if "focus_first" in body else None,
+                    "press_enter": (bool(body.get("press_enter", False) or body.get("submit", False)) if ("press_enter" in body or "submit" in body) else None),
+                    "verify_after_action": bool(body.get("verify_after_action")) if "verify_after_action" in body else None,
+                    "verify_text": str(body.get("verify_text", "") or "").strip(),
+                    "retry_on_verification_failure": bool(body.get("retry_on_verification_failure")) if "retry_on_verification_failure" in body else None,
+                    "max_strategy_attempts": self._parse_int(str(body.get("max_strategy_attempts", 2)), 2, minimum=1, maximum=4) if "max_strategy_attempts" in body else None,
+                    "exploration_limit": self._parse_int(str(body.get("exploration_limit", 6)), 6, minimum=1, maximum=12) if "exploration_limit" in body else None,
+                    "max_exploration_steps": self._parse_int(str(body.get("max_exploration_steps", 3)), 3, minimum=1, maximum=8) if "max_exploration_steps" in body else None,
+                    "max_wizard_pages": self._parse_int(str(body.get("max_wizard_pages", 6)), 6, minimum=1, maximum=12) if "max_wizard_pages" in body else None,
+                    "allow_warning_pages": bool(body.get("allow_warning_pages")) if "allow_warning_pages" in body else None,
+                    "max_form_pages": self._parse_int(str(body.get("max_form_pages", 5)), 5, minimum=1, maximum=10) if "max_form_pages" in body else None,
+                    "allow_destructive_forms": bool(body.get("allow_destructive_forms")) if "allow_destructive_forms" in body else None,
+                    "resume_contract": dict(body.get("resume_contract", {})) if isinstance(body.get("resume_contract", {}), dict) else None,
+                    "blocking_surface": dict(body.get("blocking_surface", {})) if isinstance(body.get("blocking_surface", {}), dict) else None,
+                    "resume_force": bool(body.get("resume_force")) if "resume_force" in body else None,
+                }
+                if attempted_targets:
+                    interact_kwargs["attempted_targets"] = attempted_targets
+                if surface_signature_history:
+                    interact_kwargs["surface_signature_history"] = surface_signature_history
+                if branch_history:
+                    interact_kwargs["branch_history"] = branch_history
+                payload = self.server.service.desktop_interact(**interact_kwargs)
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
 

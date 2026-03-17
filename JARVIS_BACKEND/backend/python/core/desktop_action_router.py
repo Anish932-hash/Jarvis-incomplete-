@@ -8864,6 +8864,7 @@ class DesktopActionRouter:
         return {
             "branch_key": branch_key,
             "step_index": max(0, int(row.get("step_index", 0) or 0)),
+            "occurrences": max(1, int(row.get("occurrences", 1) or 1)),
             "transition_kind": transition_kind,
             "nested_surface_progressed": nested_surface_progressed,
             "child_window_adopted": bool(row.get("child_window_adopted", False)),
@@ -8919,13 +8920,41 @@ class DesktopActionRouter:
         if not normalized:
             return rows[:16]
         branch_key = str(normalized.get("branch_key", "") or "").strip()
-        filtered = [
-            dict(row)
-            for row in rows
-            if str(row.get("branch_key", "") or "").strip() != branch_key
-        ]
-        filtered.append(normalized)
+        merged = False
+        filtered: List[Dict[str, Any]] = []
+        for row in rows:
+            existing_row = dict(row)
+            if str(existing_row.get("branch_key", "") or "").strip() == branch_key:
+                existing_occurrences = max(1, int(existing_row.get("occurrences", 1) or 1))
+                normalized["occurrences"] = existing_occurrences + 1
+                filtered.append(normalized)
+                merged = True
+                continue
+            filtered.append(existing_row)
+        if not merged:
+            filtered.append(normalized)
         return filtered[-16:]
+
+    @staticmethod
+    def _surface_exploration_branch_transition_count(
+        *,
+        branch_history: List[Dict[str, Any]],
+    ) -> int:
+        return sum(
+            max(1, int(row.get("occurrences", 1) or 1))
+            for row in branch_history
+            if isinstance(row, dict)
+        )
+
+    @staticmethod
+    def _surface_exploration_branch_repeat_count(
+        *,
+        branch_history: List[Dict[str, Any]],
+    ) -> int:
+        if not branch_history:
+            return 0
+        latest = dict(branch_history[-1]) if isinstance(branch_history[-1], dict) else {}
+        return max(1, int(latest.get("occurrences", 1) or 1)) if latest else 0
 
     @staticmethod
     def _surface_exploration_is_nested_branch_ready(

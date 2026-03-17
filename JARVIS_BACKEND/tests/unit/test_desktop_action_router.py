@@ -1118,14 +1118,19 @@ def test_desktop_action_router_surface_exploration_tracks_child_window_progress(
 
     assert payload["status"] == "partial"
     assert "Bluetooth" in invoked_targets
-    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_followup_available"
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_nested_branch_available"
     assert payload["exploration_mission"]["transition_kind"] == "child_window"
     assert payload["exploration_mission"]["nested_surface_progressed"] is True
     assert payload["exploration_mission"]["child_window_adopted"] is True
     assert payload["exploration_mission"]["surface_path_tail"] == ["Devices", "Bluetooth"]
     assert payload["exploration_mission"]["window_title_history_tail"][-1] == "Bluetooth & devices"
+    assert payload["exploration_mission"]["last_branch_kind"] == "child_window"
+    assert payload["exploration_mission"]["branch_transition_count"] == 1
+    assert payload["exploration_mission"]["branch_history_tail"][0]["window_title"] == "Bluetooth & devices"
     assert payload["mission_record"]["transition_kind"] == "child_window"
     assert payload["mission_record"]["child_window_adopted"] is True
+    assert payload["mission_record"]["last_branch_kind"] == "child_window"
+    assert payload["mission_record"]["branch_transition_count"] == 1
     assert payload["mission_record"]["page_history_tail"][0]["surface_path_after"] == ["Devices", "Bluetooth"]
     assert payload["mission_record"]["page_history_tail"][0]["window_title_after"] == "Bluetooth & devices"
 
@@ -1346,6 +1351,155 @@ def test_desktop_action_router_surface_exploration_flow_pauses_at_step_limit(tmp
     assert payload["mission_record"]["mission_kind"] == "exploration"
     assert payload["mission_record"]["resume_action"] == "complete_surface_exploration_flow"
     assert payload["mission_record"]["recovery_profile"] == "resume_ready"
+
+
+def test_desktop_action_router_surface_exploration_flow_pauses_at_nested_branch_limit(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2205, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2205, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2205), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", ""))) or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_nested_limit",
+                "text": "Settings bluetooth nested surface",
+                "screenshot_path": "E:/tmp/settings_nested_limit.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    plans = [
+        {
+            "status": "success",
+            "surface_mode": "list_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "row_bluetooth",
+                    "label": "Bluetooth",
+                    "suggested_action": "select_list_item",
+                    "confidence": 0.92,
+                    "reason": "Bluetooth is the strongest visible target.",
+                    "action_payload": {
+                        "action": "select_list_item",
+                        "app_name": "settings",
+                        "window_title": "Settings",
+                        "query": "Bluetooth",
+                        "control_type": "ListItem",
+                        "element_id": "row_bluetooth",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2205, "title": "Settings"},
+                "active_window": {"hwnd": 2205, "title": "Settings"},
+                "candidate_windows": [{"hwnd": 2205, "title": "Settings"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"list_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_nested_limit_before"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Settings", "query": "Bluetooth"},
+            "message": "Top target: Bluetooth via select_list_item.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "form_navigation",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "child_toggle",
+                    "label": "Bluetooth toggle",
+                    "suggested_action": "toggle_switch",
+                    "confidence": 0.9,
+                    "reason": "The nested child surface exposes a direct Bluetooth control.",
+                    "action_payload": {
+                        "action": "toggle_switch",
+                        "app_name": "settings",
+                        "window_title": "Bluetooth & devices",
+                        "query": "Bluetooth toggle",
+                        "control_type": "ToggleButton",
+                        "element_id": "child_toggle",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2206, "title": "Bluetooth & devices"},
+                "active_window": {"hwnd": 2206, "title": "Bluetooth & devices"},
+                "candidate_windows": [{"hwnd": 2206, "title": "Bluetooth & devices"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "form_page_state": {
+                    "page_kind": "form_navigation",
+                    "selected_navigation_target": "Bluetooth",
+                    "breadcrumb_path": ["Devices", "Bluetooth"],
+                },
+                "surface_flags": {"form_visible": True, "window_targeted": True},
+                "observation": {"screen_hash": "settings_nested_limit_after"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Bluetooth & devices", "query": "Bluetooth"},
+            "message": "Bluetooth moved into a nested child surface with more device controls.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _exploration_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _exploration_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 1,
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert "Bluetooth" in invoked_targets
+    assert payload["exploration_mission"]["completed"] is False
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_nested_branch_limit_reached"
+    assert payload["exploration_mission"]["branch_transition_count"] == 1
+    assert payload["exploration_mission"]["last_branch_kind"] == "child_window"
+    assert payload["mission_record"]["recovery_profile"] == "resume_ready"
+    assert payload["mission_record"]["last_branch_kind"] == "child_window"
+    assert payload["mission_record"]["branch_transition_count"] == 1
 
 
 def test_desktop_action_router_builds_navigation_workflow_for_browser(tmp_path: Path) -> None:

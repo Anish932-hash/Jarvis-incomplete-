@@ -12738,6 +12738,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           .map((item) => String(item ?? '').trim())
           .filter(Boolean)
       : [];
+    const branchHistory = Array.isArray(desktopCoworkerExplorationMission?.branch_history_tail)
+      ? desktopCoworkerExplorationMission.branch_history_tail.filter(
+          (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+        )
+      : [];
     if (!appName && !windowTitle && !query) {
       toast({
         variant: 'destructive',
@@ -12760,6 +12765,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
         attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
         surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
+        branch_history: branchHistory.length > 0 ? branchHistory : undefined,
       });
       setDesktopCoworkerResult(response);
       const responseAdvice =
@@ -12856,6 +12862,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           .map((item) => String(item ?? '').trim())
           .filter(Boolean)
       : [];
+    const branchHistory = Array.isArray(desktopCoworkerExplorationMission?.branch_history_tail)
+      ? desktopCoworkerExplorationMission.branch_history_tail.filter(
+          (item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))
+        )
+      : [];
     if (!appName && !windowTitle && !query) {
       toast({
         variant: 'destructive',
@@ -12879,6 +12890,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_exploration_steps: desktopCoworkerMaxExplorationSteps,
         attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
         surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
+        branch_history: branchHistory.length > 0 ? branchHistory : undefined,
       });
       setDesktopCoworkerResult(response);
       const responseAdvice =
@@ -15761,6 +15773,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     .map((item) => String(item ?? '').trim())
                                                     .filter(Boolean)
                                                 : [];
+                                              const lastBranchKind = String(explorationMission.last_branch_kind ?? '').trim();
+                                              const branchTransitionCount = Number(explorationMission.branch_transition_count ?? 0);
+                                              const branchHistoryTail = Array.isArray(explorationMission.branch_history_tail)
+                                                ? explorationMission.branch_history_tail.filter(
+                                                    (item): item is Record<string, unknown> =>
+                                                      Boolean(item && typeof item === 'object' && !Array.isArray(item))
+                                                  )
+                                                : [];
                                               return (
                                                 <>
                                             <p>
@@ -15787,6 +15807,31 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {surfacePathTail.length > 0 ? <p>path: {surfacePathTail.join(' -> ')}</p> : null}
                                             {windowTitleHistoryTail.length > 1 ? (
                                               <p>window trail: {windowTitleHistoryTail.slice(-3).join(' -> ')}</p>
+                                            ) : null}
+                                            {branchTransitionCount > 0 || lastBranchKind ? (
+                                              <p>
+                                                nested branches: {branchTransitionCount}
+                                                {lastBranchKind ? ` • last: ${humanizeRuntimeLabel(lastBranchKind)}` : ''}
+                                              </p>
+                                            ) : null}
+                                            {branchHistoryTail.length > 0 ? (
+                                              <p>
+                                                branch trail:{' '}
+                                                {branchHistoryTail
+                                                  .slice(-3)
+                                                  .map((item) =>
+                                                    String(
+                                                      item?.surface_path_tail && Array.isArray(item.surface_path_tail) && item.surface_path_tail.length > 0
+                                                        ? item.surface_path_tail[item.surface_path_tail.length - 1]
+                                                        : item?.window_title ??
+                                                            item?.selected_candidate_label ??
+                                                            item?.transition_kind ??
+                                                            'branch'
+                                                    ).trim()
+                                                  )
+                                                  .filter(Boolean)
+                                                  .join(' -> ')}
+                                              </p>
                                             ) : null}
                                             {Array.isArray(explorationMission.attempted_targets_tail) &&
                                             explorationMission.attempted_targets_tail.length > 0 ? (

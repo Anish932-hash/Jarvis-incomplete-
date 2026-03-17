@@ -227,7 +227,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
         mission_payload={
             "status": "partial",
             "message": "JARVIS advanced the surface and found another bounded recon step.",
-            "stop_reason_code": "exploration_followup_available",
+            "stop_reason_code": "exploration_nested_branch_available",
             "surface_mode": "list_navigation",
             "exploration_query": "bluetooth",
             "hypothesis_count": 2,
@@ -248,6 +248,19 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "surface_path_tail": ["Devices", "Bluetooth"],
             "window_title_history_tail": ["Settings", "Bluetooth & devices"],
             "nested_progress_count": 1,
+            "last_branch_kind": "child_window",
+            "branch_transition_count": 1,
+            "branch_history": [
+                {
+                    "step_index": 1,
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "list_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                }
+            ],
             "attempted_targets": [
                 {
                     "candidate_id": "list_bluetooth",
@@ -275,6 +288,9 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["surface_path_tail"] == ["Devices", "Bluetooth"]
     assert ready_mission["window_title_history_tail"] == ["Settings", "Bluetooth & devices"]
     assert ready_mission["nested_progress_count"] == 1
+    assert ready_mission["last_branch_kind"] == "child_window"
+    assert ready_mission["branch_transition_count"] == 1
+    assert ready_mission["branch_history_tail"][0]["window_title"] == "Bluetooth & devices"
     assert ready_mission["attempted_targets_tail"][0]["candidate_id"] == "list_bluetooth"
     assert ready_mission["surface_signature_history"] == ["surface-exploration-ready-1", "surface-exploration-ready-2"]
 
