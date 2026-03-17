@@ -12891,6 +12891,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
         max_exploration_steps: desktopCoworkerMaxExplorationSteps,
         max_nested_branch_steps: desktopCoworkerMaxNestedBranchSteps,
+        max_branch_family_switches: Math.max(1, Math.min(desktopCoworkerMaxNestedBranchSteps, 2)),
         max_branch_cascade_steps: desktopCoworkerMaxNestedBranchSteps,
         attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
         surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
@@ -15928,6 +15929,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               const branchFamilySwitchCount = Number(
                                                 explorationMission.branch_family_switch_count ?? 0
                                               );
+                                              const maxBranchFamilySwitches = Number(
+                                                explorationMission.max_branch_family_switches ?? 0
+                                              );
                                               const branchFamilyContinuity = Boolean(
                                                 explorationMission.branch_family_continuity ?? false
                                               );
@@ -15993,6 +15997,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 family: {branchFamilySignature}
                                                 {branchFamilyRepeatCount > 0 ? ` • repeat ${branchFamilyRepeatCount}` : ''}
                                                 {branchFamilySwitchCount > 0 ? ` • switches ${branchFamilySwitchCount}` : ''}
+                                                {maxBranchFamilySwitches > 0 ? `/${maxBranchFamilySwitches}` : ''}
                                                 {branchFamilyContinuity ? ' • continuity yes' : ''}
                                               </p>
                                             ) : null}

@@ -365,6 +365,241 @@ class WindowManager:
         chain.reverse()
         return chain[:8]
 
+    @staticmethod
+    def _direct_child_rows(window: Dict[str, Any], *, windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        hwnd = int(payload.get("hwnd", 0) or 0)
+        if hwnd <= 0:
+            return []
+        rows = [
+            dict(row)
+            for row in windows
+            if isinstance(row, dict) and int(row.get("owner_hwnd", 0) or 0) == hwnd
+        ]
+        rows.sort(
+            key=lambda row: (
+                max(0, int(row.get("owner_chain_depth", 0) or 0)),
+                str(row.get("title", "") or "").lower(),
+            )
+        )
+        return rows[:12]
+
+    @staticmethod
+    def _descendant_relative_depth(
+        *,
+        window: Dict[str, Any],
+        descendant: Dict[str, Any],
+        hwnd_map: Dict[int, Dict[str, Any]],
+    ) -> int:
+        ancestor_hwnd = int(window.get("hwnd", 0) or 0)
+        current_owner_hwnd = int(descendant.get("owner_hwnd", 0) or 0)
+        if ancestor_hwnd <= 0 or current_owner_hwnd <= 0:
+            return 0
+        depth = 0
+        seen: set[int] = set()
+        while current_owner_hwnd > 0 and current_owner_hwnd not in seen:
+            seen.add(current_owner_hwnd)
+            depth += 1
+            if current_owner_hwnd == ancestor_hwnd:
+                return depth
+            owner_row = hwnd_map.get(current_owner_hwnd, {})
+            if not owner_row:
+                break
+            current_owner_hwnd = int(owner_row.get("owner_hwnd", 0) or 0)
+        return 0
+
+    @classmethod
+    def _descendant_rows(cls, window: Dict[str, Any], *, windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        ancestor_hwnd = int(payload.get("hwnd", 0) or 0)
+        if ancestor_hwnd <= 0:
+            return []
+        hwnd_map = {
+            int(row.get("hwnd", 0) or 0): dict(row)
+            for row in windows
+            if isinstance(row, dict) and int(row.get("hwnd", 0) or 0) > 0
+        }
+        descendants: List[Dict[str, Any]] = []
+        for row in windows:
+            if not isinstance(row, dict):
+                continue
+            candidate = dict(row)
+            candidate_hwnd = int(candidate.get("hwnd", 0) or 0)
+            if candidate_hwnd <= 0 or candidate_hwnd == ancestor_hwnd:
+                continue
+            relative_depth = cls._descendant_relative_depth(
+                window=payload,
+                descendant=candidate,
+                hwnd_map=hwnd_map,
+            )
+            if relative_depth <= 0:
+                continue
+            candidate["_relative_descendant_depth"] = relative_depth
+            descendants.append(candidate)
+        descendants.sort(
+            key=lambda row: (
+                -max(0, int(row.get("_relative_descendant_depth", 0) or 0)),
+                str(row.get("title", "") or "").lower(),
+            )
+        )
+        return descendants[:24]
+
+    @classmethod
+    def _descendant_chain_titles(
+        cls,
+        *,
+        window: Dict[str, Any],
+        descendant: Dict[str, Any],
+        windows: List[Dict[str, Any]],
+    ) -> List[str]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        target = dict(descendant) if isinstance(descendant, dict) else {}
+        ancestor_hwnd = int(payload.get("hwnd", 0) or 0)
+        current_hwnd = int(target.get("hwnd", 0) or 0)
+        if ancestor_hwnd <= 0 or current_hwnd <= 0 or current_hwnd == ancestor_hwnd:
+            return []
+        hwnd_map = {
+            int(row.get("hwnd", 0) or 0): dict(row)
+            for row in windows
+            if isinstance(row, dict) and int(row.get("hwnd", 0) or 0) > 0
+        }
+        titles: List[str] = []
+        seen: set[int] = set()
+        while current_hwnd > 0 and current_hwnd not in seen:
+            seen.add(current_hwnd)
+            current_row = hwnd_map.get(current_hwnd, target if current_hwnd == int(target.get("hwnd", 0) or 0) else {})
+            if not current_row:
+                break
+            title = str(current_row.get("title", "") or "").strip()
+            if title:
+                titles.append(title)
+            owner_hwnd = int(current_row.get("owner_hwnd", 0) or 0)
+            if owner_hwnd <= 0 or owner_hwnd == ancestor_hwnd:
+                break
+            current_hwnd = owner_hwnd
+        titles.reverse()
+        deduped: List[str] = []
+        for title in titles:
+            if title not in deduped:
+                deduped.append(title)
+        return deduped[:8]
+
+    @classmethod
+    def _child_chain_signature(
+        cls,
+        *,
+        window: Dict[str, Any],
+        direct_child_window_count: int,
+        descendant_chain_depth: int,
+        descendant_chain_titles: List[str],
+    ) -> str:
+        hwnd = max(0, int(window.get("hwnd", 0) or 0))
+        parts = [str(hwnd), str(max(0, int(direct_child_window_count))), str(max(0, int(descendant_chain_depth)))]
+        parts.extend(str(title).strip() for title in descendant_chain_titles[:5] if str(title).strip())
+        return "|".join(parts)
+
+    @classmethod
+    def _child_chain_metrics(
+        cls,
+        *,
+        window: Dict[str, Any],
+        windows: List[Dict[str, Any]],
+        query: str = "",
+        window_title: str = "",
+    ) -> Dict[str, Any]:
+        payload = dict(window) if isinstance(window, dict) else {}
+        if not payload:
+            return {
+                "direct_child_window_count": 0,
+                "direct_child_dialog_like_count": 0,
+                "direct_child_titles": [],
+                "descendant_chain_depth": 0,
+                "descendant_dialog_chain_depth": 0,
+                "descendant_query_match_count": 0,
+                "descendant_chain_titles": [],
+                "child_chain_signature": "",
+                "preferred_descendant": {},
+            }
+        direct_children = cls._direct_child_rows(payload, windows=windows)
+        descendants = cls._descendant_rows(payload, windows=windows)
+        direct_child_dialog_like_count = sum(
+            1
+            for row in direct_children
+            if isinstance(row.get("surface_hints", {}), dict)
+            and bool(row.get("surface_hints", {}).get("dialog_like", False))
+        )
+        descendant_chain_depth = max(
+            [max(0, int(row.get("_relative_descendant_depth", 0) or 0)) for row in descendants],
+            default=0,
+        )
+        descendant_dialog_chain_depth = max(
+            [
+                max(0, int(row.get("_relative_descendant_depth", 0) or 0))
+                for row in descendants
+                if isinstance(row.get("surface_hints", {}), dict)
+                and bool(row.get("surface_hints", {}).get("dialog_like", False))
+            ],
+            default=0,
+        )
+        descendant_query_match_count = sum(
+            1
+            for row in descendants
+            if max(
+                cls._text_match_score(row.get("title", ""), query),
+                cls._text_match_score(row.get("process_name", ""), query),
+                cls._text_match_score(row.get("title", ""), window_title),
+            ) > 0.0
+        )
+        ranked_descendants = sorted(
+            descendants,
+            key=lambda row: (
+                -(
+                    max(
+                        cls._text_match_score(row.get("title", ""), query),
+                        cls._text_match_score(row.get("process_name", ""), query),
+                        cls._text_match_score(row.get("title", ""), window_title),
+                    )
+                ),
+                -max(0, int(row.get("_relative_descendant_depth", 0) or 0)),
+                not bool(
+                    isinstance(row.get("surface_hints", {}), dict)
+                    and row.get("surface_hints", {}).get("dialog_like", False)
+                ),
+                str(row.get("title", "") or "").lower(),
+            ),
+        )
+        preferred_descendant = dict(ranked_descendants[0]) if ranked_descendants else {}
+        descendant_chain_titles = cls._descendant_chain_titles(
+            window=payload,
+            descendant=preferred_descendant,
+            windows=windows,
+        )
+        child_chain_signature = cls._child_chain_signature(
+            window=payload,
+            direct_child_window_count=len(direct_children),
+            descendant_chain_depth=descendant_chain_depth,
+            descendant_chain_titles=descendant_chain_titles,
+        )
+        return {
+            "direct_child_window_count": len(direct_children),
+            "direct_child_dialog_like_count": direct_child_dialog_like_count,
+            "direct_child_titles": [
+                str(row.get("title", "") or "").strip()
+                for row in direct_children[:8]
+                if str(row.get("title", "") or "").strip()
+            ],
+            "descendant_chain_depth": descendant_chain_depth,
+            "descendant_dialog_chain_depth": descendant_dialog_chain_depth,
+            "descendant_query_match_count": descendant_query_match_count,
+            "descendant_chain_titles": descendant_chain_titles,
+            "child_chain_signature": child_chain_signature,
+            "preferred_descendant": {
+                key: value
+                for key, value in preferred_descendant.items()
+                if not str(key).startswith("_")
+            } if preferred_descendant else {},
+        }
+
     def _window_relation_score(
         self,
         *,
@@ -581,6 +816,59 @@ class WindowManager:
             "window": window,
         }
 
+    def _native_trace_related_window_chain(
+        self,
+        *,
+        query: str = "",
+        window_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        limit: int = 80,
+    ) -> Dict[str, Any] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.trace_related_window_chain(
+                query=query,
+                window_title=window_title,
+                hwnd=hwnd,
+                pid=pid,
+                limit=limit,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        candidate = self._compose_window_info(payload.get("candidate", {}), observation_backend=backend)
+        preferred_descendant = self._compose_window_info(
+            payload.get("preferred_descendant", {}),
+            observation_backend=backend,
+        )
+        return {
+            "status": "success",
+            "backend": backend,
+            "candidate": candidate,
+            "direct_child_window_count": max(0, int(payload.get("direct_child_window_count", 0) or 0)),
+            "direct_child_dialog_like_count": max(0, int(payload.get("direct_child_dialog_like_count", 0) or 0)),
+            "direct_child_titles": [
+                str(item).strip()
+                for item in payload.get("direct_child_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("direct_child_titles", []), list) else [],
+            "descendant_chain_depth": max(0, int(payload.get("descendant_chain_depth", 0) or 0)),
+            "descendant_dialog_chain_depth": max(0, int(payload.get("descendant_dialog_chain_depth", 0) or 0)),
+            "descendant_query_match_count": max(0, int(payload.get("descendant_query_match_count", 0) or 0)),
+            "descendant_chain_titles": [
+                str(item).strip()
+                for item in payload.get("descendant_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("descendant_chain_titles", []), list) else [],
+            "child_chain_signature": str(payload.get("child_chain_signature", "") or "").strip(),
+            "preferred_descendant": preferred_descendant,
+            "match_score": float(payload.get("match_score", 0.0) or 0.0),
+        }
+
     def _native_reacquire_window(
         self,
         *,
@@ -694,6 +982,18 @@ class WindowManager:
             same_root_owner_dialog_titles=same_root_owner_dialog_titles,
             owner_chain_titles=owner_chain_titles,
         )
+        child_chain_trace = self._native_trace_related_window_chain(
+            query=query,
+            window_title=window_title,
+            hwnd=int(candidate.get("hwnd", 0) or 0),
+            pid=int(candidate.get("pid", 0) or 0),
+            limit=limit,
+        ) or self._child_chain_metrics(
+            window=candidate,
+            windows=candidates,
+            query=query,
+            window_title=window_title,
+        )
         return {
             "status": "success",
             "backend": backend,
@@ -718,6 +1018,25 @@ class WindowManager:
             "same_root_owner_dialog_titles": same_root_owner_dialog_titles[:6],
             "modal_chain_signature": modal_chain_signature,
             "branch_family_signature": branch_family_signature,
+            "direct_child_window_count": max(0, int(child_chain_trace.get("direct_child_window_count", 0) or 0)),
+            "direct_child_dialog_like_count": max(0, int(child_chain_trace.get("direct_child_dialog_like_count", 0) or 0)),
+            "direct_child_titles": [
+                str(item).strip()
+                for item in child_chain_trace.get("direct_child_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(child_chain_trace.get("direct_child_titles", []), list) else [],
+            "descendant_chain_depth": max(0, int(child_chain_trace.get("descendant_chain_depth", 0) or 0)),
+            "descendant_dialog_chain_depth": max(0, int(child_chain_trace.get("descendant_dialog_chain_depth", 0) or 0)),
+            "descendant_query_match_count": max(0, int(child_chain_trace.get("descendant_query_match_count", 0) or 0)),
+            "descendant_chain_titles": [
+                str(item).strip()
+                for item in child_chain_trace.get("descendant_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(child_chain_trace.get("descendant_chain_titles", []), list) else [],
+            "child_chain_signature": str(child_chain_trace.get("child_chain_signature", "") or "").strip(),
+            "preferred_descendant": dict(child_chain_trace.get("preferred_descendant", {}))
+            if isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
+            else {},
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
 
@@ -895,6 +1214,22 @@ class WindowManager:
             ],
             owner_chain_titles=owner_chain_titles,
         )
+        child_chain_trace = (
+            self._native_trace_related_window_chain(
+                query=query,
+                window_title=window_title,
+                hwnd=active_hwnd,
+                pid=active_pid,
+                limit=bounded,
+            )
+            if active_hwnd > 0
+            else None
+        ) or self._child_chain_metrics(
+            window=active,
+            windows=windows,
+            query=query,
+            window_title=window_title,
+        )
         payload = {
             "status": "success",
             "backend": topology_backend,
@@ -903,6 +1238,8 @@ class WindowManager:
             "window_title": str(window_title or "").strip(),
             "active_window": active,
             "active_hwnd": active_hwnd,
+            "active_owner_hwnd": active_owner_hwnd,
+            "active_root_owner_hwnd": active_root_owner_hwnd,
             "active_pid": active_pid,
             "active_app_name": active_app_name,
             "active_window_signature": active_signature,
@@ -932,6 +1269,25 @@ class WindowManager:
             "owner_chain_titles": owner_chain_titles[:8],
             "modal_chain_signature": modal_chain_signature,
             "branch_family_signature": branch_family_signature,
+            "direct_child_window_count": max(0, int(child_chain_trace.get("direct_child_window_count", 0) or 0)),
+            "direct_child_dialog_like_count": max(0, int(child_chain_trace.get("direct_child_dialog_like_count", 0) or 0)),
+            "direct_child_titles": [
+                str(item).strip()
+                for item in child_chain_trace.get("direct_child_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(child_chain_trace.get("direct_child_titles", []), list) else [],
+            "descendant_chain_depth": max(0, int(child_chain_trace.get("descendant_chain_depth", 0) or 0)),
+            "descendant_dialog_chain_depth": max(0, int(child_chain_trace.get("descendant_dialog_chain_depth", 0) or 0)),
+            "descendant_query_match_count": max(0, int(child_chain_trace.get("descendant_query_match_count", 0) or 0)),
+            "descendant_chain_titles": [
+                str(item).strip()
+                for item in child_chain_trace.get("descendant_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(child_chain_trace.get("descendant_chain_titles", []), list) else [],
+            "child_chain_signature": str(child_chain_trace.get("child_chain_signature", "") or "").strip(),
+            "preferred_descendant": dict(child_chain_trace.get("preferred_descendant", {}))
+            if isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
+            else {},
             "topology_signature": topology_signature,
         }
         if include_windows:
@@ -1134,6 +1490,29 @@ class WindowManager:
             ],
             owner_chain_titles=owner_chain_titles,
         )
+        child_chain_metrics = self._child_chain_metrics(
+            window=candidate,
+            windows=windows,
+            query=query,
+            window_title=window_title,
+        ) if candidate else {}
+        payload["direct_child_window_count"] = max(0, int(child_chain_metrics.get("direct_child_window_count", 0) or 0))
+        payload["direct_child_dialog_like_count"] = max(0, int(child_chain_metrics.get("direct_child_dialog_like_count", 0) or 0))
+        payload["direct_child_titles"] = [
+            str(item).strip()
+            for item in child_chain_metrics.get("direct_child_titles", [])
+            if str(item).strip()
+        ][:8] if isinstance(child_chain_metrics.get("direct_child_titles", []), list) else []
+        payload["descendant_chain_depth"] = max(0, int(child_chain_metrics.get("descendant_chain_depth", 0) or 0))
+        payload["descendant_dialog_chain_depth"] = max(0, int(child_chain_metrics.get("descendant_dialog_chain_depth", 0) or 0))
+        payload["descendant_query_match_count"] = max(0, int(child_chain_metrics.get("descendant_query_match_count", 0) or 0))
+        payload["descendant_chain_titles"] = [
+            str(item).strip()
+            for item in child_chain_metrics.get("descendant_chain_titles", [])
+            if str(item).strip()
+        ][:8] if isinstance(child_chain_metrics.get("descendant_chain_titles", []), list) else []
+        payload["child_chain_signature"] = str(child_chain_metrics.get("child_chain_signature", "") or "").strip()
+        payload["preferred_descendant"] = dict(child_chain_metrics.get("preferred_descendant", {})) if isinstance(child_chain_metrics.get("preferred_descendant", {}), dict) else {}
         if include_candidates:
             payload["candidates"] = [dict(row) for row in candidates]
             payload["related_windows"] = [dict(row) for row in related_windows]

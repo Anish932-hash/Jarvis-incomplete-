@@ -395,6 +395,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
                 "app_name": "settings",
                 "query": "pair device",
                 "max_nested_branch_steps": 1,
+                "max_branch_family_switches": 1,
                 "max_branch_cascade_steps": 1,
             },
         },
@@ -408,6 +409,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
             "branch_cascade_count": 2,
             "branch_cascade_kind_count": 2,
             "branch_cascade_signature": "child_window_chain>dialog_shift",
+            "max_branch_family_switches": 1,
             "max_branch_cascade_steps": 1,
             "topology_owner_link_count": 2,
             "topology_owner_chain_visible": True,
@@ -431,6 +433,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
             "branch_cascade_count": 2,
             "branch_cascade_kind_count": 2,
             "branch_cascade_signature": "child_window_chain>dialog_shift",
+            "max_branch_family_switches": 1,
             "max_branch_cascade_steps": 1,
             "topology_owner_link_count": 2,
             "topology_owner_chain_visible": True,
@@ -460,6 +463,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
     assert mission["branch_cascade_count"] == 2
     assert mission["branch_cascade_kind_count"] == 2
     assert mission["branch_cascade_signature"] == "child_window_chain>dialog_shift"
+    assert mission["max_branch_family_switches"] == 1
     assert mission["max_branch_cascade_steps"] == 1
     assert mission["topology_owner_link_count"] == 2
     assert mission["topology_owner_chain_visible"] is True
@@ -475,3 +479,54 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
     assert mission["branch_family_continuity"] is True
     assert snapshot["recovery_profile_counts"] == {"resume_ready": 1}
     assert snapshot["stop_reason_counts"] == {"exploration_branch_cascade_limit_reached": 1}
+
+
+def test_desktop_mission_memory_marks_branch_family_switch_limit_as_resume_ready() -> None:
+    memory = DesktopMissionMemory()
+
+    saved = memory.save_paused_mission(
+        mission_kind="exploration",
+        args={
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "add device",
+        },
+        resume_contract={
+            "mission_kind": "exploration",
+            "resume_action": "complete_surface_exploration_flow",
+            "anchor_app_name": "settings",
+            "resume_payload": {
+                "action": "complete_surface_exploration_flow",
+                "app_name": "settings",
+                "query": "add device",
+                "max_branch_family_switches": 1,
+            },
+        },
+        blocking_surface={
+            "window_title": "Add device",
+            "surface_signature": "surface-exploration-family-switch-1",
+            "surface_mode": "dialog_resolution",
+            "branch_family_signature": "5000|2|Bluetooth & devices|Add device",
+            "branch_family_switch_count": 1,
+            "max_branch_family_switches": 1,
+        },
+        mission_payload={
+            "status": "partial",
+            "message": "JARVIS paused at the configured branch-family switch limit.",
+            "stop_reason_code": "exploration_branch_family_switch_limit_reached",
+            "surface_mode": "dialog_resolution",
+            "branch_family_signature": "5000|2|Bluetooth & devices|Add device",
+            "branch_family_switch_count": 1,
+            "max_branch_family_switches": 1,
+        },
+        message="JARVIS paused at the configured branch-family switch limit.",
+    )
+
+    mission = saved["mission"]
+
+    assert mission["recovery_profile"] == "resume_ready"
+    assert mission["recovery_priority"] == 92
+    assert mission["resume_ready"] is True
+    assert mission["branch_family_signature"] == "5000|2|Bluetooth & devices|Add device"
+    assert mission["branch_family_switch_count"] == 1
+    assert mission["max_branch_family_switches"] == 1

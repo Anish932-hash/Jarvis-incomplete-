@@ -200,6 +200,90 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
                 },
             }
 
+        @staticmethod
+        def trace_related_window_chain(*, query: str = "", window_title: str = "", hwnd: int | None = None, pid: int | None = None, limit: int = 120) -> dict:
+            assert limit >= 3
+            if int(hwnd or 0) == 5001:
+                return {
+                    "status": "success",
+                    "backend": "cpp_cython",
+                    "candidate": {
+                        "hwnd": 5001,
+                        "owner_hwnd": 5000,
+                        "title": "Bluetooth & devices",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "minimized": False,
+                        "maximized": False,
+                        "is_foreground": True,
+                        "left": 120,
+                        "top": 80,
+                        "right": 1100,
+                        "bottom": 760,
+                    },
+                    "direct_child_window_count": 1,
+                    "direct_child_dialog_like_count": 1,
+                    "direct_child_titles": ["Pair device"],
+                    "descendant_chain_depth": 1,
+                    "descendant_dialog_chain_depth": 1,
+                    "descendant_query_match_count": 1,
+                    "descendant_chain_titles": ["Pair device"],
+                    "child_chain_signature": "5001|1|1|Pair device",
+                    "preferred_descendant": {
+                        "hwnd": 5002,
+                        "owner_hwnd": 5001,
+                        "title": "Pair device",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "minimized": False,
+                        "maximized": False,
+                        "is_foreground": False,
+                        "left": 280,
+                        "top": 160,
+                        "right": 980,
+                        "bottom": 640,
+                    },
+                }
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "candidate": {
+                    "hwnd": 5002,
+                    "owner_hwnd": 5001,
+                    "title": "Pair device",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": False,
+                    "left": 280,
+                    "top": 160,
+                    "right": 980,
+                    "bottom": 640,
+                },
+                "direct_child_window_count": 0,
+                "direct_child_dialog_like_count": 0,
+                "direct_child_titles": [],
+                "descendant_chain_depth": 0,
+                "descendant_dialog_chain_depth": 0,
+                "descendant_query_match_count": 0,
+                "descendant_chain_titles": [],
+                "child_chain_signature": "5002|0|0",
+                "preferred_descendant": {},
+            }
+
     manager = WindowManager(native_runtime=_FakeNativeRuntime())
 
     topology = manager.window_topology_snapshot(app_name="settings", query="bluetooth", include_windows=True)
@@ -215,6 +299,12 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
     assert topology["max_owner_chain_depth"] == 2
     assert topology["modal_chain_signature"] == "5000|2|1|Bluetooth & devices|Pair device"
     assert topology["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
+    assert topology["direct_child_window_count"] == 1
+    assert topology["direct_child_dialog_like_count"] == 1
+    assert topology["descendant_chain_depth"] == 1
+    assert topology["descendant_chain_titles"] == ["Pair device"]
+    assert topology["child_chain_signature"] == "5001|1|1|Pair device"
+    assert topology["preferred_descendant"]["hwnd"] == 5002
     assert "Settings" in topology["owner_window_titles"]
     assert "Pair device" in topology["owner_window_titles"]
     assert topology["owner_chain_titles"] == ["Settings", "Bluetooth & devices"]
@@ -234,6 +324,8 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
     assert reacquired["max_owner_chain_depth"] == 2
     assert reacquired["modal_chain_signature"] == "5000|2|2|Bluetooth & devices|Pair device"
     assert reacquired["branch_family_signature"] == "5000|2|Bluetooth & devices|Pair device"
+    assert reacquired["child_chain_signature"] == "5002|0|0"
+    assert reacquired["descendant_chain_depth"] == 0
     assert "Settings" in reacquired["owner_chain_titles"]
 
 

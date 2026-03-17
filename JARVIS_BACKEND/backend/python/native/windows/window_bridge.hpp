@@ -14,5 +14,12 @@ std::string reacquire_related_window_json(
     long pid_value,
     int limit
 );
+std::string trace_related_window_chain_json(
+    const std::string& query_utf8,
+    const std::string& window_title_utf8,
+    long long hwnd_value,
+    long pid_value,
+    int limit
+);
 
 }  // namespace jarvis::native

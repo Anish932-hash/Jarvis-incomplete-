@@ -13526,6 +13526,7 @@ class FakeDesktopService:
         max_strategy_attempts: int | None = None,
         exploration_limit: int | None = None,
         max_exploration_steps: int | None = None,
+        max_branch_family_switches: int | None = None,
         max_branch_cascade_steps: int | None = None,
         max_wizard_pages: int | None = None,
         allow_warning_pages: bool | None = None,
@@ -13559,6 +13560,7 @@ class FakeDesktopService:
             "max_strategy_attempts": max_strategy_attempts,
             "exploration_limit": exploration_limit,
             "max_exploration_steps": max_exploration_steps,
+            "max_branch_family_switches": max_branch_family_switches,
             "max_branch_cascade_steps": max_branch_cascade_steps,
             "max_wizard_pages": max_wizard_pages,
             "allow_warning_pages": allow_warning_pages,
@@ -13594,6 +13596,7 @@ class FakeDesktopService:
         max_strategy_attempts: int | None = None,
         exploration_limit: int | None = None,
         max_exploration_steps: int | None = None,
+        max_branch_family_switches: int | None = None,
         max_branch_cascade_steps: int | None = None,
         max_wizard_pages: int | None = None,
         allow_warning_pages: bool | None = None,
@@ -13627,6 +13630,7 @@ class FakeDesktopService:
             "max_strategy_attempts": max_strategy_attempts,
             "exploration_limit": exploration_limit,
             "max_exploration_steps": max_exploration_steps,
+            "max_branch_family_switches": max_branch_family_switches,
             "max_branch_cascade_steps": max_branch_cascade_steps,
             "max_wizard_pages": max_wizard_pages,
             "allow_warning_pages": allow_warning_pages,
@@ -17317,6 +17321,7 @@ def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_se
             "max_strategy_attempts": 3,
             "exploration_limit": 8,
             "max_exploration_steps": 4,
+            "max_branch_family_switches": 1,
             "max_branch_cascade_steps": 2,
         },
     )
@@ -17328,6 +17333,7 @@ def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_se
     assert payload["max_strategy_attempts"] == 3
     assert payload["exploration_limit"] == 8
     assert payload["max_exploration_steps"] == 4
+    assert payload["max_branch_family_switches"] == 1
     assert payload["max_branch_cascade_steps"] == 2
 
 

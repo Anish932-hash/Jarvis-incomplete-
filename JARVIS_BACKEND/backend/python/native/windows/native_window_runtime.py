@@ -152,6 +152,28 @@ class NativeWindowRuntime:
             safe_limit,
         )
 
+    def trace_related_window_chain(
+        self,
+        *,
+        query: str = "",
+        window_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        limit: int = 120,
+    ) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        hwnd_value = 0 if hwnd is None else int(hwnd)
+        pid_value = 0 if pid is None else int(pid)
+        return self._call(
+            "trace_related_window_chain",
+            "trace_related_window_chain",
+            str(query or ""),
+            str(window_title or ""),
+            hwnd_value,
+            pid_value,
+            safe_limit,
+        )
+
 
 @lru_cache(maxsize=1)
 def get_native_window_runtime() -> NativeWindowRuntime:

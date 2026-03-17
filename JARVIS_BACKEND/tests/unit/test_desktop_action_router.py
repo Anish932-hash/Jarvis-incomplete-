@@ -490,8 +490,17 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
                 "owner_chain_visible": True,
                 "same_root_owner_window_count": 3,
                 "same_root_owner_dialog_like_count": 2,
+                "active_root_owner_hwnd": 5000,
                 "active_owner_chain_depth": 1,
                 "max_owner_chain_depth": 2,
+                "direct_child_window_count": 1,
+                "direct_child_dialog_like_count": 1,
+                "direct_child_titles": ["Pair device"],
+                "descendant_chain_depth": 1,
+                "descendant_dialog_chain_depth": 1,
+                "descendant_query_match_count": 1,
+                "descendant_chain_titles": ["Pair device"],
+                "child_chain_signature": "4401|1|1|Pair device",
                 "modal_chain_signature": "4400|2|2|1",
                 "child_dialog_like_visible": True,
             },
@@ -506,6 +515,13 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
                 "candidate_root_owner_hwnd": 4400,
                 "candidate_owner_chain_depth": 2,
                 "max_owner_chain_depth": 2,
+                "direct_child_window_count": 0,
+                "direct_child_dialog_like_count": 0,
+                "descendant_chain_depth": 0,
+                "descendant_dialog_chain_depth": 0,
+                "descendant_query_match_count": 0,
+                "descendant_chain_titles": [],
+                "child_chain_signature": "4410|0|0",
                 "modal_chain_signature": "4400|2|2|2",
                 "child_dialog_like_visible": True,
                 "candidate": {
@@ -535,16 +551,95 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
     assert payload["window_reacquisition"]["owner_link_count"] == 2
     assert payload["window_reacquisition"]["same_root_owner_window_count"] == 3
     assert payload["window_reacquisition"]["same_root_owner_dialog_like_count"] == 2
+    assert payload["window_reacquisition"]["child_chain_signature"] == "4410|0|0"
     assert payload["window_reacquisition"]["modal_chain_signature"] == "4400|2|2|2"
     assert payload["native_window_topology"]["same_process_window_count"] == 3
     assert payload["native_window_topology"]["owner_chain_visible"] is True
     assert payload["native_window_topology"]["owner_link_count"] == 2
     assert payload["native_window_topology"]["same_root_owner_window_count"] == 3
     assert payload["native_window_topology"]["same_root_owner_dialog_like_count"] == 2
+    assert payload["native_window_topology"]["direct_child_window_count"] == 1
+    assert payload["native_window_topology"]["descendant_chain_depth"] == 1
+    assert payload["native_window_topology"]["child_chain_signature"] == "4401|1|1|Pair device"
     assert payload["native_window_topology"]["active_owner_chain_depth"] == 1
     assert payload["native_window_topology"]["max_owner_chain_depth"] == 2
     assert payload["native_window_topology"]["modal_chain_signature"] == "4400|2|2|1"
     assert payload["native_window_topology"]["child_dialog_like_visible"] is True
+
+
+def test_desktop_action_router_transition_summary_detects_descendant_title_adoption() -> None:
+    router = _build_router({})
+
+    before_plan = {
+        "surface_mode": "dialog_resolution",
+        "surface_snapshot": {
+            "target_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+            "active_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+            "observation": {"screen_hash": "before_hash"},
+            "native_window_topology": {
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "owner_link_count": 2,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "active_root_owner_hwnd": 5000,
+                "active_owner_chain_depth": 1,
+                "max_owner_chain_depth": 2,
+                "descendant_chain_depth": 1,
+                "descendant_dialog_chain_depth": 1,
+                "descendant_chain_titles": ["Pair device"],
+                "child_chain_signature": "5001|1|1|Pair device",
+                "modal_chain_signature": "5000|2|1|Pair device",
+                "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            },
+        },
+    }
+    after_plan = {
+        "surface_mode": "dialog_resolution",
+        "surface_snapshot": {
+            "target_window": {"hwnd": 5002, "title": "Pair device"},
+            "active_window": {"hwnd": 5002, "title": "Pair device"},
+            "observation": {"screen_hash": "after_hash"},
+            "native_window_topology": {
+                "same_process_window_count": 3,
+                "related_window_count": 2,
+                "owner_link_count": 2,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "active_root_owner_hwnd": 5000,
+                "active_owner_chain_depth": 2,
+                "max_owner_chain_depth": 2,
+                "descendant_chain_depth": 0,
+                "descendant_dialog_chain_depth": 0,
+                "descendant_chain_titles": [],
+                "child_chain_signature": "5002|0|0",
+                "modal_chain_signature": "5000|2|2|Pair device",
+                "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            },
+            "window_reacquisition": {
+                "candidate": {
+                    "hwnd": 5002,
+                    "owner_hwnd": 5001,
+                    "root_owner_hwnd": 5000,
+                    "owner_chain_depth": 2,
+                    "title": "Pair device",
+                },
+                "child_chain_signature": "5002|0|0",
+            },
+        },
+    }
+
+    payload = router._surface_exploration_transition_summary(  # noqa: SLF001
+        before_plan=before_plan,
+        after_plan=after_plan,
+    )
+
+    assert payload["transition_kind"] == "child_window_chain"
+    assert payload["child_window_chain_progressed"] is True
+    assert payload["descendant_title_adoption"] is True
+    assert payload["child_chain_signature_changed"] is True
 
 
 def test_desktop_action_router_advise_surface_exploration_advance_prefers_rust_router_ranked_candidate(tmp_path: Path) -> None:
@@ -2736,6 +2831,451 @@ def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_li
     assert payload["mission_record"]["topology_same_root_owner_window_count"] == 3
     assert payload["mission_record"]["topology_same_root_owner_dialog_like_count"] == 2
     assert payload["mission_record"]["dialog_cascade_count"] == 0
+
+
+def test_desktop_action_router_surface_exploration_flow_continues_across_same_branch_family_chain(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2221, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2221, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2221), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", "")))
+                or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_same_family_chain",
+                "text": "Settings bluetooth modal family chain",
+                "screenshot_path": "E:/tmp/settings_same_family_chain.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    family_signature = "2221|2|Bluetooth & devices|Pair device"
+    plans: List[Dict[str, Any]] = [
+        {
+            "status": "success",
+            "surface_mode": "dialog_resolution",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "dialog_pair",
+                    "label": "Pair",
+                    "suggested_action": "press_dialog_button",
+                    "confidence": 0.94,
+                    "reason": "The pairing dialog is ready.",
+                    "action_payload": {
+                        "action": "press_dialog_button",
+                        "app_name": "settings",
+                        "window_title": "Pair device",
+                        "query": "Pair",
+                        "control_type": "Button",
+                        "element_id": "dialog_pair",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2222, "title": "Pair device"},
+                "active_window": {"hwnd": 2222, "title": "Pair device"},
+                "candidate_windows": [{"hwnd": 2222, "title": "Pair device"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"window_targeted": True, "dialog_visible": True},
+                "native_window_topology": {
+                    "topology_signature": "settings|4|3|3",
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "active_owner_chain_depth": 1,
+                    "max_owner_chain_depth": 2,
+                    "modal_chain_signature": "2221|2|2|1",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "window_reacquisition": {
+                    "candidate": {
+                        "hwnd": 2222,
+                        "title": "Pair device",
+                        "match_score": 0.9,
+                        "owner_hwnd": 2221,
+                        "root_owner_hwnd": 2221,
+                        "owner_chain_depth": 1,
+                    },
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "modal_chain_signature": "2221|2|2|1",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "form_page_state": {
+                    "page_kind": "dialog_resolution",
+                    "breadcrumb_path": ["Devices", "Bluetooth", "Pair device"],
+                },
+                "observation": {"screen_hash": "settings_same_family_pair"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Pair device", "query": "Bluetooth"},
+            "message": "A pairing dialog is active.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "dialog_resolution",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "dialog_confirm",
+                    "label": "Confirm",
+                    "suggested_action": "press_dialog_button",
+                    "confidence": 0.91,
+                    "reason": "The same modal family is still active and ready to confirm.",
+                    "action_payload": {
+                        "action": "press_dialog_button",
+                        "app_name": "settings",
+                        "window_title": "Confirm Pairing",
+                        "query": "Confirm",
+                        "control_type": "Button",
+                        "element_id": "dialog_confirm",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2223, "title": "Confirm Pairing"},
+                "active_window": {"hwnd": 2223, "title": "Confirm Pairing"},
+                "candidate_windows": [{"hwnd": 2223, "title": "Confirm Pairing"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"window_targeted": True, "dialog_visible": True},
+                "native_window_topology": {
+                    "topology_signature": "settings|4|3|3",
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "active_owner_chain_depth": 2,
+                    "max_owner_chain_depth": 2,
+                    "modal_chain_signature": "2221|2|2|2",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "window_reacquisition": {
+                    "candidate": {
+                        "hwnd": 2223,
+                        "title": "Confirm Pairing",
+                        "match_score": 0.88,
+                        "owner_hwnd": 2222,
+                        "root_owner_hwnd": 2221,
+                        "owner_chain_depth": 2,
+                    },
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "modal_chain_signature": "2221|2|2|2",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "form_page_state": {
+                    "page_kind": "dialog_resolution",
+                    "breadcrumb_path": ["Devices", "Bluetooth", "Pair device", "Confirm Pairing"],
+                },
+                "observation": {"screen_hash": "settings_same_family_confirm"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Confirm Pairing", "query": "Bluetooth"},
+            "message": "A confirmation dialog in the same modal family is active.",
+        },
+        {
+            "status": "success",
+            "surface_mode": "dialog_resolution",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 0,
+            "branch_action_count": 0,
+            "top_hypotheses": [],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2221, "title": "Bluetooth & devices"},
+                "active_window": {"hwnd": 2221, "title": "Bluetooth & devices"},
+                "candidate_windows": [{"hwnd": 2221, "title": "Bluetooth & devices"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"window_targeted": True},
+                "native_window_topology": {
+                    "topology_signature": "settings|2|1|1",
+                    "same_process_window_count": 2,
+                    "related_window_count": 1,
+                    "owner_link_count": 1,
+                    "owner_chain_visible": False,
+                    "same_root_owner_window_count": 1,
+                    "same_root_owner_dialog_like_count": 0,
+                    "active_owner_chain_depth": 0,
+                    "max_owner_chain_depth": 0,
+                    "modal_chain_signature": "",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": False,
+                },
+                "window_reacquisition": {
+                    "candidate": {"hwnd": 2221, "title": "Bluetooth & devices", "match_score": 0.86, "owner_hwnd": 0, "root_owner_hwnd": 0, "owner_chain_depth": 0},
+                    "same_process_window_count": 2,
+                    "related_window_count": 1,
+                    "owner_link_count": 1,
+                    "owner_chain_visible": False,
+                    "same_root_owner_window_count": 1,
+                    "same_root_owner_dialog_like_count": 0,
+                    "modal_chain_signature": "",
+                    "branch_family_signature": family_signature,
+                    "child_dialog_like_visible": False,
+                },
+                "observation": {"screen_hash": "settings_same_family_complete"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Bluetooth & devices", "query": "Bluetooth"},
+            "message": "Surface recon completed without another strong target.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _surface_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _surface_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 3,
+            "max_nested_branch_steps": 1,
+            "max_branch_cascade_steps": 1,
+            "max_branch_family_switches": 1,
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "list_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                    "topology_branch_family_signature": family_signature,
+                    "occurrences": 1,
+                }
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert any(target in {"dialog_pair", "Pair"} for target in invoked_targets)
+    assert any(target in {"dialog_confirm", "Confirm"} for target in invoked_targets)
+    assert payload["exploration_mission"]["completed"] is True
+    assert payload["exploration_mission"]["step_count"] >= 2
+    assert payload["exploration_mission"]["max_branch_family_switches"] == 1
+    assert payload["exploration_mission"]["branch_family_signature"] == family_signature
+    assert payload["exploration_mission"]["branch_family_switch_count"] == 0
+    assert payload["exploration_mission"]["branch_family_continuity"] is True
+    assert payload["exploration_mission"]["stop_reason_code"] == ""
+
+
+def test_desktop_action_router_surface_exploration_flow_pauses_at_branch_family_switch_limit(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    invoked_targets: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 2231, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 2231, "title": "Settings", "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "focus_window": lambda payload: {"status": "success", "window": {"hwnd": payload.get("hwnd", 2231), "title": "Settings"}},
+            "accessibility_find_element": lambda _payload: {"status": "success", "count": 0, "items": []},
+            "accessibility_invoke_element": lambda payload: (
+                invoked_targets.append(str(payload.get("element_id", "") or payload.get("query", "")))
+                or {"status": "success", "method": "invoke"}
+            ),
+            "computer_observe": lambda _payload: {
+                "status": "success",
+                "screen_hash": "settings_branch_family_switch",
+                "text": "Settings alternate modal family",
+                "screenshot_path": "E:/tmp/settings_branch_family_switch.png",
+            },
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        settle_delay_s=0.0,
+    )
+    prior_family_signature = "2231|2|Bluetooth & devices|Pair device"
+    switched_family_signature = "2231|2|Bluetooth & devices|Add device"
+    plans: List[Dict[str, Any]] = [
+        {
+            "status": "success",
+            "surface_mode": "dialog_resolution",
+            "automation_ready": True,
+            "manual_attention_required": False,
+            "hypothesis_count": 1,
+            "branch_action_count": 0,
+            "top_hypotheses": [
+                {
+                    "candidate_id": "dialog_add_device",
+                    "label": "Add device",
+                    "suggested_action": "press_dialog_button",
+                    "confidence": 0.93,
+                    "reason": "A sibling modal family is active.",
+                    "action_payload": {
+                        "action": "press_dialog_button",
+                        "app_name": "settings",
+                        "window_title": "Add device",
+                        "query": "Add device",
+                        "control_type": "Button",
+                        "element_id": "dialog_add_device",
+                    },
+                }
+            ],
+            "branch_actions": [],
+            "surface_snapshot": {
+                "status": "success",
+                "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+                "target_window": {"hwnd": 2232, "title": "Add device"},
+                "active_window": {"hwnd": 2232, "title": "Add device"},
+                "candidate_windows": [{"hwnd": 2232, "title": "Add device"}],
+                "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+                "safety_signals": {},
+                "surface_flags": {"window_targeted": True, "dialog_visible": True},
+                "native_window_topology": {
+                    "topology_signature": "settings|4|3|3",
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "active_owner_chain_depth": 2,
+                    "max_owner_chain_depth": 2,
+                    "modal_chain_signature": "2231|2|2|2",
+                    "branch_family_signature": switched_family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "window_reacquisition": {
+                    "candidate": {
+                        "hwnd": 2232,
+                        "title": "Add device",
+                        "match_score": 0.9,
+                        "owner_hwnd": 2231,
+                        "root_owner_hwnd": 2231,
+                        "owner_chain_depth": 1,
+                    },
+                    "same_process_window_count": 4,
+                    "related_window_count": 3,
+                    "owner_link_count": 3,
+                    "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "modal_chain_signature": "2231|2|2|2",
+                    "branch_family_signature": switched_family_signature,
+                    "child_dialog_like_visible": True,
+                },
+                "form_page_state": {
+                    "page_kind": "dialog_resolution",
+                    "breadcrumb_path": ["Devices", "Bluetooth", "Add device"],
+                },
+                "observation": {"screen_hash": "settings_branch_family_switch_after"},
+            },
+            "filters": {"app_name": "settings", "window_title": "Add device", "query": "Bluetooth"},
+            "message": "A sibling modal family is active.",
+        },
+    ]
+    plan_index = {"value": 0}
+
+    def _surface_plan(**_kwargs: Any) -> Dict[str, Any]:
+        current = plans[min(plan_index["value"], len(plans) - 1)]
+        plan_index["value"] += 1
+        return current
+
+    router.surface_exploration_plan = _surface_plan  # type: ignore[method-assign]
+
+    payload = router.execute(
+        {
+            "action": "complete_surface_exploration_flow",
+            "app_name": "settings",
+            "query": "Bluetooth",
+            "verify_after_action": False,
+            "max_exploration_steps": 3,
+            "max_nested_branch_steps": 3,
+            "max_branch_cascade_steps": 3,
+            "max_branch_family_switches": 1,
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_pair",
+                    "selected_candidate_label": "Pair",
+                    "window_title": "Pair device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                    "topology_branch_family_signature": prior_family_signature,
+                    "occurrences": 1,
+                }
+            ],
+        }
+    )
+
+    assert payload["status"] == "partial"
+    assert any(target in {"dialog_add_device", "Add device"} for target in invoked_targets)
+    assert payload["exploration_mission"]["completed"] is False
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_branch_family_switch_limit_reached"
+    assert payload["exploration_mission"]["branch_family_signature"] == switched_family_signature
+    assert payload["exploration_mission"]["branch_family_switch_count"] == 1
+    assert payload["exploration_mission"]["max_branch_family_switches"] == 1
+    assert payload["mission_record"]["recovery_profile"] == "resume_ready"
+    assert payload["mission_record"]["recovery_priority"] == 92
 
 
 def test_desktop_action_router_builds_navigation_workflow_for_browser(tmp_path: Path) -> None:

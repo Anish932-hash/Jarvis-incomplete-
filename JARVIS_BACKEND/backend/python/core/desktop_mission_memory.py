@@ -116,6 +116,7 @@ class DesktopMissionMemory:
                 "steps_completed": self._coerce_int(payload.get("steps_completed", payload.get("pages_completed", 0)), minimum=0, maximum=100_000, default=0),
                 "max_steps": self._coerce_int(payload.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
                 "max_branch_cascade_steps": self._coerce_int(payload.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
+                "max_branch_family_switches": self._coerce_int(payload.get("max_branch_family_switches", 0), minimum=0, maximum=100_000, default=0),
                 "auto_continued": bool(payload.get("auto_continued", False)),
                 "selected_action": str(payload.get("selected_action", "") or "").strip(),
                 "selected_candidate_id": str(payload.get("selected_candidate_id", "") or "").strip(),
@@ -318,6 +319,7 @@ class DesktopMissionMemory:
                 "branch_cascade_count",
                 "branch_cascade_kind_count",
                 "max_branch_cascade_steps",
+                "max_branch_family_switches",
                 "branch_family_repeat_count",
                 "branch_family_switch_count",
             ):
@@ -376,6 +378,7 @@ class DesktopMissionMemory:
                 "branch_cascade_count",
                 "branch_cascade_kind_count",
                 "max_branch_cascade_steps",
+                "max_branch_family_switches",
             ):
                 if field_name in payload:
                     row[field_name] = self._coerce_int(
@@ -695,6 +698,7 @@ class DesktopMissionMemory:
             "steps_completed": self._coerce_int(row.get("steps_completed", 0), minimum=0, maximum=100_000, default=0),
             "max_steps": self._coerce_int(row.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
             "max_branch_cascade_steps": self._coerce_int(row.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
+            "max_branch_family_switches": self._coerce_int(row.get("max_branch_family_switches", 0), minimum=0, maximum=100_000, default=0),
             "auto_continued": bool(row.get("auto_continued", False)),
             "selected_action": str(row.get("selected_action", "") or "").strip(),
             "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
@@ -826,6 +830,7 @@ class DesktopMissionMemory:
             "exploration_nested_branch_limit_reached",
             "exploration_nested_chain_limit_reached",
             "exploration_branch_cascade_limit_reached",
+            "exploration_branch_family_switch_limit_reached",
         }:
             recovery_profile = "resume_ready"
             recovery_hint = (
@@ -843,7 +848,11 @@ class DesktopMissionMemory:
                             else (
                                 "JARVIS paused after a deeper nested window chain and is ready to continue in another bounded wave."
                                 if stop_reason_code == "exploration_nested_chain_limit_reached"
-                                else "JARVIS paused after a deeper branch cascade and is ready to continue that unsupported-app recovery path."
+                                else (
+                                    "JARVIS paused after a deeper branch cascade and is ready to continue that unsupported-app recovery path."
+                                    if stop_reason_code == "exploration_branch_cascade_limit_reached"
+                                    else "JARVIS paused after switching across sibling branch families and is ready to continue from the latest stable anchor."
+                                )
                             )
                         )
                     )
@@ -856,6 +865,7 @@ class DesktopMissionMemory:
                 "exploration_nested_branch_limit_reached": 87,
                 "exploration_nested_chain_limit_reached": 90,
                 "exploration_branch_cascade_limit_reached": 91,
+                "exploration_branch_family_switch_limit_reached": 92,
             }.get(stop_reason_code, 86)
         elif stop_reason_code == "exploration_nested_branch_loop_guard":
             recovery_profile = "surface_review"

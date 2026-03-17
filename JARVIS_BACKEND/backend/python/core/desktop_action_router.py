@@ -3567,7 +3567,9 @@ class DesktopActionRouter:
                     "max_strategy_attempts": ("max_strategy_attempts",),
                     "max_exploration_steps": ("max_exploration_steps",),
                     "max_nested_branch_steps": ("max_nested_branch_steps",),
+                    "max_descendant_chain_steps": ("max_descendant_chain_steps",),
                     "max_branch_cascade_steps": ("max_branch_cascade_steps",),
+                    "max_branch_family_switches": ("max_branch_family_switches",),
                     "max_wizard_pages": ("max_wizard_pages",),
                     "allow_warning_pages": ("allow_warning_pages",),
                     "max_form_pages": ("max_form_pages",),
@@ -3643,6 +3645,20 @@ class DesktopActionRouter:
             "max_strategy_attempts": max(1, min(int(raw.get("max_strategy_attempts", 2) or 2), 4)),
             "max_exploration_steps": max(1, min(int(raw.get("max_exploration_steps", 3) or 3), 8)),
             "max_nested_branch_steps": max(1, min(int(raw.get("max_nested_branch_steps", 3) or 3), 8)),
+            "max_descendant_chain_steps": max(
+                1,
+                min(
+                    int(
+                        raw.get(
+                            "max_descendant_chain_steps",
+                            raw.get("max_nested_branch_steps", 3),
+                        )
+                        or raw.get("max_nested_branch_steps", 3)
+                        or 3
+                    ),
+                    8,
+                ),
+            ),
             "max_branch_cascade_steps": max(
                 1,
                 min(
@@ -3653,6 +3669,20 @@ class DesktopActionRouter:
                         )
                         or raw.get("max_nested_branch_steps", 3)
                         or 3
+                    ),
+                    8,
+                ),
+            ),
+            "max_branch_family_switches": max(
+                1,
+                min(
+                    int(
+                        raw.get(
+                            "max_branch_family_switches",
+                            raw.get("max_branch_cascade_steps", 2),
+                        )
+                        or raw.get("max_branch_cascade_steps", 2)
+                        or 2
                     ),
                     8,
                 ),
@@ -4472,10 +4502,20 @@ class DesktopActionRouter:
             "recommended_actions": [str(item).strip() for item in payload.get("recommended_actions", []) if str(item).strip()] if isinstance(payload.get("recommended_actions", []), list) else [],
             "operator_steps": [str(item).strip() for item in payload.get("operator_steps", []) if str(item).strip()] if isinstance(payload.get("operator_steps", []), list) else [],
             "surface_signature": str(payload.get("surface_signature", "") or "").strip(),
+            "max_descendant_chain_steps": max(0, int(payload.get("max_descendant_chain_steps", 0) or 0)),
             "max_branch_cascade_steps": max(0, int(payload.get("max_branch_cascade_steps", 0) or 0)),
+            "max_branch_family_switches": max(0, int(payload.get("max_branch_family_switches", 0) or 0)),
             "branch_cascade_count": max(0, int(payload.get("branch_cascade_count", 0) or 0)),
             "branch_cascade_kind_count": max(0, int(payload.get("branch_cascade_kind_count", 0) or 0)),
             "branch_cascade_signature": str(payload.get("branch_cascade_signature", "") or "").strip(),
+            "descendant_chain_repeat_count": max(0, int(payload.get("descendant_chain_repeat_count", 0) or 0)),
+            "descendant_chain_continuity": bool(payload.get("descendant_chain_continuity", False)),
+            "topology_direct_child_window_count": max(0, int(payload.get("topology_direct_child_window_count", 0) or 0)),
+            "topology_direct_child_dialog_like_count": max(0, int(payload.get("topology_direct_child_dialog_like_count", 0) or 0)),
+            "topology_descendant_chain_depth": max(0, int(payload.get("topology_descendant_chain_depth", 0) or 0)),
+            "topology_descendant_dialog_chain_depth": max(0, int(payload.get("topology_descendant_dialog_chain_depth", 0) or 0)),
+            "topology_descendant_query_match_count": max(0, int(payload.get("topology_descendant_query_match_count", 0) or 0)),
+            "topology_child_chain_signature": str(payload.get("topology_child_chain_signature", "") or "").strip(),
             "target_group_state": dict(payload.get("target_group_state", {})) if isinstance(payload.get("target_group_state", {}), dict) else {},
             "notes": [str(item).strip() for item in payload.get("notes", []) if str(item).strip()] if isinstance(payload.get("notes", []), list) else [],
         }
@@ -4514,7 +4554,9 @@ class DesktopActionRouter:
             "max_strategy_attempts",
             "max_exploration_steps",
             "max_nested_branch_steps",
+            "max_descendant_chain_steps",
             "max_branch_cascade_steps",
+            "max_branch_family_switches",
             "max_wizard_pages",
             "allow_warning_pages",
             "max_form_pages",
@@ -8837,6 +8879,79 @@ class DesktopActionRouter:
                 selected_tab,
             ]
         )[:8]
+        native_direct_child_window_count = max(
+            int(native_window_topology.get("direct_child_window_count", 0) or 0),
+            int(window_reacquisition.get("direct_child_window_count", 0) or 0),
+        )
+        native_direct_child_dialog_like_count = max(
+            int(native_window_topology.get("direct_child_dialog_like_count", 0) or 0),
+            int(window_reacquisition.get("direct_child_dialog_like_count", 0) or 0),
+        )
+        native_descendant_chain_depth = max(
+            int(native_window_topology.get("descendant_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_chain_depth", 0) or 0),
+        )
+        native_descendant_dialog_chain_depth = max(
+            int(native_window_topology.get("descendant_dialog_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_dialog_chain_depth", 0) or 0),
+        )
+        native_descendant_query_match_count = max(
+            int(native_window_topology.get("descendant_query_match_count", 0) or 0),
+            int(window_reacquisition.get("descendant_query_match_count", 0) or 0),
+        )
+        native_direct_child_titles = self._dedupe_strings(
+            [
+                *(
+                    [
+                        str(item).strip()
+                        for item in native_window_topology.get("direct_child_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(native_window_topology.get("direct_child_titles", []), list)
+                    else []
+                ),
+                *(
+                    [
+                        str(item).strip()
+                        for item in window_reacquisition.get("direct_child_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(window_reacquisition.get("direct_child_titles", []), list)
+                    else []
+                ),
+            ]
+        )[:8]
+        native_descendant_chain_titles = self._dedupe_strings(
+            [
+                *(
+                    [
+                        str(item).strip()
+                        for item in native_window_topology.get("descendant_chain_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(native_window_topology.get("descendant_chain_titles", []), list)
+                    else []
+                ),
+                *(
+                    [
+                        str(item).strip()
+                        for item in window_reacquisition.get("descendant_chain_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(window_reacquisition.get("descendant_chain_titles", []), list)
+                    else []
+                ),
+            ]
+        )[:8]
+        preferred_descendant = (
+            window_reacquisition.get("preferred_descendant", {})
+            if isinstance(window_reacquisition.get("preferred_descendant", {}), dict)
+            else {}
+        ) or (
+            native_window_topology.get("preferred_descendant", {})
+            if isinstance(native_window_topology.get("preferred_descendant", {}), dict)
+            else {}
+        )
         return {
             "surface_mode": str(plan.get("surface_mode", "") or "").strip(),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
@@ -8854,6 +8969,7 @@ class DesktopActionRouter:
             "native_owner_chain_visible": bool(native_window_topology.get("owner_chain_visible", False)),
             "native_same_root_owner_window_count": int(native_window_topology.get("same_root_owner_window_count", 0) or 0),
             "native_same_root_owner_dialog_like_count": int(native_window_topology.get("same_root_owner_dialog_like_count", 0) or 0),
+            "native_active_root_owner_hwnd": int(native_window_topology.get("active_root_owner_hwnd", 0) or 0),
             "native_active_owner_chain_depth": int(native_window_topology.get("active_owner_chain_depth", 0) or 0),
             "native_max_owner_chain_depth": int(native_window_topology.get("max_owner_chain_depth", 0) or 0),
             "native_owner_chain_titles": [
@@ -8861,11 +8977,23 @@ class DesktopActionRouter:
                 for item in native_window_topology.get("owner_chain_titles", [])
                 if str(item).strip()
             ][:8] if isinstance(native_window_topology.get("owner_chain_titles", []), list) else [],
+            "native_direct_child_window_count": native_direct_child_window_count,
+            "native_direct_child_dialog_like_count": native_direct_child_dialog_like_count,
+            "native_direct_child_titles": native_direct_child_titles,
+            "native_descendant_chain_depth": native_descendant_chain_depth,
+            "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
+            "native_descendant_query_match_count": native_descendant_query_match_count,
+            "native_descendant_chain_titles": native_descendant_chain_titles,
             "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
             "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(
                 native_window_topology.get("modal_chain_signature", "")
                 or window_reacquisition.get("modal_chain_signature", "")
+                or ""
+            ).strip(),
+            "native_child_chain_signature": str(
+                native_window_topology.get("child_chain_signature", "")
+                or window_reacquisition.get("child_chain_signature", "")
                 or ""
             ).strip(),
             "native_branch_family_signature": str(
@@ -8878,6 +9006,8 @@ class DesktopActionRouter:
             "reacquired_candidate_root_owner_hwnd": int(reacquired_candidate.get("root_owner_hwnd", 0) or 0),
             "reacquired_candidate_owner_chain_depth": int(reacquired_candidate.get("owner_chain_depth", 0) or 0),
             "reacquired_candidate_title": str(reacquired_candidate.get("title", "") or "").strip(),
+            "preferred_descendant_title": str(preferred_descendant.get("title", "") or "").strip(),
+            "preferred_descendant_hwnd": int(preferred_descendant.get("hwnd", 0) or 0),
             "reacquisition_match_score": float(window_reacquisition.get("candidate", {}).get("match_score", 0.0) or 0.0)
             if isinstance(window_reacquisition.get("candidate", {}), dict)
             else 0.0,
@@ -8916,11 +9046,13 @@ class DesktopActionRouter:
         )
         before_root_owner_hwnd = int(
             before_state.get("reacquired_candidate_root_owner_hwnd", 0)
+            or before_state.get("native_active_root_owner_hwnd", 0)
             or before_state.get("window_hwnd", 0)
             or 0
         )
         after_root_owner_hwnd = int(
             after_state.get("reacquired_candidate_root_owner_hwnd", 0)
+            or after_state.get("native_active_root_owner_hwnd", 0)
             or after_state.get("window_hwnd", 0)
             or 0
         )
@@ -8937,10 +9069,43 @@ class DesktopActionRouter:
             and after_root_owner_hwnd > 0
             and before_root_owner_hwnd == after_root_owner_hwnd
         )
+        descendant_chain_depth_before = max(0, int(before_state.get("native_descendant_chain_depth", 0) or 0))
+        descendant_chain_depth_after = max(0, int(after_state.get("native_descendant_chain_depth", 0) or 0))
+        descendant_dialog_chain_depth_before = max(
+            0,
+            int(before_state.get("native_descendant_dialog_chain_depth", 0) or 0),
+        )
+        descendant_dialog_chain_depth_after = max(
+            0,
+            int(after_state.get("native_descendant_dialog_chain_depth", 0) or 0),
+        )
+        descendant_titles_before = [
+            self._normalize_probe_text(item)
+            for item in before_state.get("native_descendant_chain_titles", [])
+            if str(item).strip()
+        ] if isinstance(before_state.get("native_descendant_chain_titles", []), list) else []
+        descendant_titles_after = [
+            self._normalize_probe_text(item)
+            for item in after_state.get("native_descendant_chain_titles", [])
+            if str(item).strip()
+        ] if isinstance(after_state.get("native_descendant_chain_titles", []), list) else []
+        after_title_candidates = {
+            self._normalize_probe_text(after_window_title),
+            self._normalize_probe_text(after_state.get("reacquired_candidate_title", "")),
+            self._normalize_probe_text(after_state.get("preferred_descendant_title", "")),
+        }
+        descendant_title_adoption = any(
+            title and title in descendant_titles_before
+            for title in after_title_candidates
+        )
         child_window_chain_progressed = bool(
             window_changed
             and same_root_owner_continuity
-            and after_owner_chain_depth > before_owner_chain_depth
+            and (
+                after_owner_chain_depth > before_owner_chain_depth
+                or descendant_chain_depth_after > descendant_chain_depth_before
+                or descendant_title_adoption
+            )
         )
         same_process_cluster_visible = bool(int(after_state.get("native_same_process_window_count", 0) or 0) > 1)
         owner_chain_visible = bool(after_state.get("native_owner_chain_visible", False))
@@ -8971,6 +9136,13 @@ class DesktopActionRouter:
             branch_family_signature_before
             and branch_family_signature_after
             and branch_family_signature_before != branch_family_signature_after
+        )
+        child_chain_signature_before = str(before_state.get("native_child_chain_signature", "") or "").strip()
+        child_chain_signature_after = str(after_state.get("native_child_chain_signature", "") or "").strip()
+        child_chain_signature_changed = bool(
+            child_chain_signature_before
+            and child_chain_signature_after
+            and child_chain_signature_before != child_chain_signature_after
         )
         before_path = [
             str(item).strip()
@@ -9065,6 +9237,16 @@ class DesktopActionRouter:
             "branch_family_signature_after": branch_family_signature_after,
             "branch_family_continuity": branch_family_continuity,
             "branch_family_changed": branch_family_changed,
+            "descendant_chain_depth_before": descendant_chain_depth_before,
+            "descendant_chain_depth_after": descendant_chain_depth_after,
+            "descendant_dialog_chain_depth_before": descendant_dialog_chain_depth_before,
+            "descendant_dialog_chain_depth_after": descendant_dialog_chain_depth_after,
+            "descendant_title_adoption": descendant_title_adoption,
+            "descendant_titles_before": descendant_titles_before,
+            "descendant_titles_after": descendant_titles_after,
+            "child_chain_signature_before": child_chain_signature_before,
+            "child_chain_signature_after": child_chain_signature_after,
+            "child_chain_signature_changed": child_chain_signature_changed,
             "modal_dialog_cascade_progressed": modal_dialog_cascade_progressed,
             "surface_path_before": before_path,
             "surface_path_after": after_path,
@@ -9216,8 +9398,14 @@ class DesktopActionRouter:
             "topology_same_root_owner_dialog_like_count": _clean_int(topology.get("same_root_owner_dialog_like_count", 0)),
             "topology_active_owner_chain_depth": _clean_int(topology.get("active_owner_chain_depth", 0)),
             "topology_max_owner_chain_depth": _clean_int(topology.get("max_owner_chain_depth", 0)),
+            "topology_direct_child_window_count": _clean_int(topology.get("direct_child_window_count", 0)),
+            "topology_direct_child_dialog_like_count": _clean_int(topology.get("direct_child_dialog_like_count", 0)),
+            "topology_descendant_chain_depth": _clean_int(topology.get("descendant_chain_depth", 0)),
+            "topology_descendant_dialog_chain_depth": _clean_int(topology.get("descendant_dialog_chain_depth", 0)),
+            "topology_descendant_query_match_count": _clean_int(topology.get("descendant_query_match_count", 0)),
             "topology_modal_chain_signature": str(topology.get("modal_chain_signature", "") or "").strip(),
             "topology_branch_family_signature": str(topology.get("branch_family_signature", "") or "").strip(),
+            "topology_child_chain_signature": str(topology.get("child_chain_signature", "") or "").strip(),
         }
 
     def _normalize_surface_exploration_branch_entry(self, row: Any) -> Dict[str, Any]:
@@ -9302,8 +9490,24 @@ class DesktopActionRouter:
             "topology_max_owner_chain_depth": self._surface_topology_summary(
                 topology={"max_owner_chain_depth": row.get("topology_max_owner_chain_depth", 0)}
             ).get("topology_max_owner_chain_depth", 0),
+            "topology_direct_child_window_count": self._surface_topology_summary(
+                topology={"direct_child_window_count": row.get("topology_direct_child_window_count", 0)}
+            ).get("topology_direct_child_window_count", 0),
+            "topology_direct_child_dialog_like_count": self._surface_topology_summary(
+                topology={"direct_child_dialog_like_count": row.get("topology_direct_child_dialog_like_count", 0)}
+            ).get("topology_direct_child_dialog_like_count", 0),
+            "topology_descendant_chain_depth": self._surface_topology_summary(
+                topology={"descendant_chain_depth": row.get("topology_descendant_chain_depth", 0)}
+            ).get("topology_descendant_chain_depth", 0),
+            "topology_descendant_dialog_chain_depth": self._surface_topology_summary(
+                topology={"descendant_dialog_chain_depth": row.get("topology_descendant_dialog_chain_depth", 0)}
+            ).get("topology_descendant_dialog_chain_depth", 0),
+            "topology_descendant_query_match_count": self._surface_topology_summary(
+                topology={"descendant_query_match_count": row.get("topology_descendant_query_match_count", 0)}
+            ).get("topology_descendant_query_match_count", 0),
             "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
             "topology_branch_family_signature": topology_branch_family_signature,
+            "topology_child_chain_signature": str(row.get("topology_child_chain_signature", "") or "").strip(),
         }
 
     def _surface_exploration_branch_history(self, *, args: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -9483,6 +9687,31 @@ class DesktopActionRouter:
         return switches
 
     @staticmethod
+    def _surface_exploration_child_chain_repeat_count(
+        *,
+        branch_history: List[Dict[str, Any]],
+        current_signature: str = "",
+    ) -> int:
+        clean_signature = str(current_signature or "").strip()
+        if not clean_signature and branch_history:
+            clean_signature = str(branch_history[-1].get("topology_child_chain_signature", "") or "").strip()
+        if not clean_signature:
+            return 0
+        repeats = 0
+        for row in reversed(branch_history):
+            if not isinstance(row, dict):
+                continue
+            row_signature = str(row.get("topology_child_chain_signature", "") or "").strip()
+            if not row_signature:
+                continue
+            if row_signature != clean_signature:
+                if repeats > 0:
+                    break
+                continue
+            repeats += max(1, int(row.get("occurrences", 1) or 1))
+        return repeats
+
+    @staticmethod
     def _surface_exploration_is_nested_branch_ready(
         *,
         transition_kind: str,
@@ -9638,10 +9867,30 @@ class DesktopActionRouter:
             0,
             int(state_summary.get("native_same_root_owner_dialog_like_count", 0) or 0),
         )
+        native_direct_child_window_count = max(0, int(state_summary.get("native_direct_child_window_count", 0) or 0))
+        native_direct_child_dialog_like_count = max(
+            0,
+            int(state_summary.get("native_direct_child_dialog_like_count", 0) or 0),
+        )
         native_active_owner_chain_depth = max(0, int(state_summary.get("native_active_owner_chain_depth", 0) or 0))
         native_max_owner_chain_depth = max(0, int(state_summary.get("native_max_owner_chain_depth", 0) or 0))
+        native_descendant_chain_depth = max(0, int(state_summary.get("native_descendant_chain_depth", 0) or 0))
+        native_descendant_dialog_chain_depth = max(
+            0,
+            int(state_summary.get("native_descendant_dialog_chain_depth", 0) or 0),
+        )
+        native_descendant_query_match_count = max(
+            0,
+            int(state_summary.get("native_descendant_query_match_count", 0) or 0),
+        )
+        native_descendant_chain_titles = [
+            str(item).strip()
+            for item in state_summary.get("native_descendant_chain_titles", [])
+            if str(item).strip()
+        ] if isinstance(state_summary.get("native_descendant_chain_titles", []), list) else []
         native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(state_summary.get("native_modal_chain_signature", "") or "").strip()
+        native_child_chain_signature = str(state_summary.get("native_child_chain_signature", "") or "").strip()
         native_branch_family_signature = str(state_summary.get("native_branch_family_signature", "") or "").strip()
         latest_branch = dict(branch_history[-1]) if branch_history else {}
         branch_cascade_count = self._surface_exploration_branch_cascade_count(branch_history=branch_history)
@@ -9678,6 +9927,7 @@ class DesktopActionRouter:
                     or native_owner_chain_visible
                     or native_child_dialog_like_visible
                     or native_same_root_owner_dialog_like_count > 1
+                    or native_descendant_chain_depth > 0
                     or bool(current_reacquired_hwnd)
                 )
             ),
@@ -9693,11 +9943,18 @@ class DesktopActionRouter:
             "native_owner_chain_visible": native_owner_chain_visible,
             "native_same_root_owner_window_count": native_same_root_owner_window_count,
             "native_same_root_owner_dialog_like_count": native_same_root_owner_dialog_like_count,
+            "native_direct_child_window_count": native_direct_child_window_count,
+            "native_direct_child_dialog_like_count": native_direct_child_dialog_like_count,
             "native_active_owner_chain_depth": native_active_owner_chain_depth,
             "native_max_owner_chain_depth": native_max_owner_chain_depth,
+            "native_descendant_chain_depth": native_descendant_chain_depth,
+            "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
+            "native_descendant_query_match_count": native_descendant_query_match_count,
+            "native_descendant_chain_titles": native_descendant_chain_titles,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": native_modal_chain_signature,
+            "native_child_chain_signature": native_child_chain_signature,
             "native_branch_family_signature": native_branch_family_signature,
             "last_branch_kind": str(latest_branch.get("transition_kind", "") or "").strip().lower(),
             "latest_selected_action": str(latest_branch.get("selected_action", "") or "").strip().lower(),
@@ -9745,10 +10002,30 @@ class DesktopActionRouter:
             0,
             int(branch_context.get("native_same_root_owner_dialog_like_count", 0) or 0),
         )
+        native_direct_child_window_count = max(0, int(branch_context.get("native_direct_child_window_count", 0) or 0))
+        native_direct_child_dialog_like_count = max(
+            0,
+            int(branch_context.get("native_direct_child_dialog_like_count", 0) or 0),
+        )
         native_active_owner_chain_depth = max(0, int(branch_context.get("native_active_owner_chain_depth", 0) or 0))
         native_max_owner_chain_depth = max(0, int(branch_context.get("native_max_owner_chain_depth", 0) or 0))
+        native_descendant_chain_depth = max(0, int(branch_context.get("native_descendant_chain_depth", 0) or 0))
+        native_descendant_dialog_chain_depth = max(
+            0,
+            int(branch_context.get("native_descendant_dialog_chain_depth", 0) or 0),
+        )
+        native_descendant_query_match_count = max(
+            0,
+            int(branch_context.get("native_descendant_query_match_count", 0) or 0),
+        )
+        native_descendant_chain_titles = {
+            self._normalize_probe_text(item)
+            for item in branch_context.get("native_descendant_chain_titles", [])
+            if str(item).strip()
+        } if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else set()
         native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(branch_context.get("native_modal_chain_signature", "") or "").strip()
+        native_child_chain_signature = str(branch_context.get("native_child_chain_signature", "") or "").strip()
         native_branch_family_signature = str(branch_context.get("native_branch_family_signature", "") or "").strip()
         latest_occurrences = max(0, int(branch_context.get("latest_branch_occurrences", 0) or 0))
         latest_branch_family_signature = str(branch_context.get("latest_branch_family_signature", "") or "").strip()
@@ -9779,6 +10056,10 @@ class DesktopActionRouter:
         if current_reacquired_title and self._text_match_score(current_reacquired_title, label) > 0:
             score += 0.04
         if current_reacquired_title and self._normalize_probe_text(action_payload.get("window_title", "")) == current_reacquired_title:
+            score += 0.05
+        if native_descendant_chain_titles and self._normalize_probe_text(label) in native_descendant_chain_titles:
+            score += 0.06
+        if native_descendant_chain_titles and self._normalize_probe_text(action_payload.get("window_title", "")) in native_descendant_chain_titles:
             score += 0.05
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
@@ -9856,6 +10137,13 @@ class DesktopActionRouter:
                 score += 0.1 if last_branch_kind in {"child_window_chain", "dialog_shift"} else 0.06
             elif last_branch_kind in {"child_window_chain", "dialog_shift"}:
                 score -= 0.05
+        if native_direct_child_window_count > 0:
+            if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+                score += 0.04
+            elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "focus_input_field"}:
+                score += 0.02
+        if native_direct_child_dialog_like_count > 0 and selected_action == "press_dialog_button":
+            score += 0.04
         if native_active_owner_chain_depth > 0 and selected_action == "press_dialog_button":
             score += min(0.12, native_active_owner_chain_depth * 0.03)
         if native_max_owner_chain_depth > native_active_owner_chain_depth:
@@ -9863,6 +10151,15 @@ class DesktopActionRouter:
                 score += min(0.14, (native_max_owner_chain_depth - native_active_owner_chain_depth) * 0.04)
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page"}:
                 score += 0.03
+        if native_descendant_chain_depth > 0:
+            if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+                score += min(0.12, native_descendant_chain_depth * 0.03)
+            elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
+                score += 0.03
+        if native_descendant_dialog_chain_depth > 0 and selected_action == "press_dialog_button":
+            score += min(0.1, native_descendant_dialog_chain_depth * 0.03)
+        if native_descendant_query_match_count > 0 and kind == "hypothesis":
+            score += min(0.08, native_descendant_query_match_count * 0.02)
         if native_owner_link_count > 1 and selected_action == "press_dialog_button":
             score += 0.05
         if native_related_window_count > 1 and kind == "hypothesis":
@@ -9873,6 +10170,11 @@ class DesktopActionRouter:
         if native_modal_chain_signature and last_branch_kind in {"child_window_chain", "dialog_shift"}:
             if selected_action == "press_dialog_button":
                 score += 0.04
+            elif kind == "branch_action":
+                score -= 0.02
+        if native_child_chain_signature and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+            if selected_action == "press_dialog_button":
+                score += 0.05
             elif kind == "branch_action":
                 score -= 0.02
         if branch_family_continuity:
@@ -9938,11 +10240,22 @@ class DesktopActionRouter:
             "native_owner_chain_visible": bool(branch_context.get("native_owner_chain_visible", False)),
             "native_same_root_owner_window_count": max(0, int(branch_context.get("native_same_root_owner_window_count", 0) or 0)),
             "native_same_root_owner_dialog_like_count": max(0, int(branch_context.get("native_same_root_owner_dialog_like_count", 0) or 0)),
+            "native_direct_child_window_count": max(0, int(branch_context.get("native_direct_child_window_count", 0) or 0)),
+            "native_direct_child_dialog_like_count": max(0, int(branch_context.get("native_direct_child_dialog_like_count", 0) or 0)),
             "native_active_owner_chain_depth": max(0, int(branch_context.get("native_active_owner_chain_depth", 0) or 0)),
             "native_max_owner_chain_depth": max(0, int(branch_context.get("native_max_owner_chain_depth", 0) or 0)),
+            "native_descendant_chain_depth": max(0, int(branch_context.get("native_descendant_chain_depth", 0) or 0)),
+            "native_descendant_dialog_chain_depth": max(0, int(branch_context.get("native_descendant_dialog_chain_depth", 0) or 0)),
+            "native_descendant_query_match_count": max(0, int(branch_context.get("native_descendant_query_match_count", 0) or 0)),
+            "native_descendant_chain_titles": [
+                str(item).strip()
+                for item in branch_context.get("native_descendant_chain_titles", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else [],
             "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
             "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(branch_context.get("native_modal_chain_signature", "") or "").strip(),
+            "native_child_chain_signature": str(branch_context.get("native_child_chain_signature", "") or "").strip(),
             "native_branch_family_signature": str(branch_context.get("native_branch_family_signature", "") or "").strip(),
             "branch_family_repeat_count": max(0, int(branch_context.get("branch_family_repeat_count", 0) or 0)),
             "branch_family_switch_count": max(0, int(branch_context.get("branch_family_switch_count", 0) or 0)),
@@ -10235,6 +10548,7 @@ class DesktopActionRouter:
         alternative_target_count: int = 0,
         alternative_hypothesis_count: int = 0,
         alternative_branch_action_count: int = 0,
+        max_descendant_chain_steps: int = 0,
     ) -> Dict[str, Any]:
         plan = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
         attempted_rows = [dict(row) for row in attempted_targets if isinstance(row, dict)] if isinstance(attempted_targets, list) else []
@@ -10298,9 +10612,17 @@ class DesktopActionRouter:
                 "JARVIS paused after several nested child-surface or modal-dialog transitions to avoid overcommitting inside a deep window chain.",
                 "Resume the paused exploration flow mission if you want JARVIS to continue another bounded wave through that nested chain or dialog cascade.",
             ],
+            "exploration_descendant_chain_limit_reached": [
+                "JARVIS paused after continuing through a stable descendant child-dialog chain to avoid overcommitting inside the same modal family.",
+                "Resume the paused exploration flow mission if you want JARVIS to continue another bounded wave through that descendant chain.",
+            ],
             "exploration_branch_cascade_limit_reached": [
                 "JARVIS paused after several deeper dialog, pane, or drilldown cascades to avoid overcommitting inside a mixed unsupported-app branch.",
                 "Resume the paused exploration flow mission if you want JARVIS to continue another bounded wave through that branch cascade.",
+            ],
+            "exploration_branch_family_switch_limit_reached": [
+                "JARVIS paused after bouncing across sibling child-surface families to avoid drifting through unrelated unsupported-app branches.",
+                "Resume the paused exploration flow mission if you want JARVIS to continue another bounded wave from the latest family anchor.",
             ],
             "exploration_nested_branch_loop_guard": [
                 "JARVIS is revisiting the same nested branch, so inspect the current child surface before resuming.",
@@ -10423,6 +10745,18 @@ class DesktopActionRouter:
             branch_history=branch_rows,
             transition_kinds={"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"},
         )
+        current_child_chain_signature = str(topology_summary.get("topology_child_chain_signature", "") or "").strip()
+        latest_child_chain_signature = str(last_branch.get("topology_child_chain_signature", "") or "").strip()
+        descendant_chain_repeat_count = self._surface_exploration_child_chain_repeat_count(
+            branch_history=branch_rows,
+            current_signature=current_child_chain_signature or latest_child_chain_signature,
+        )
+        descendant_chain_continuity = bool(
+            current_child_chain_signature
+            and latest_child_chain_signature
+            and current_child_chain_signature == latest_child_chain_signature
+            and int(topology_summary.get("topology_descendant_chain_depth", 0) or 0) > 0
+        )
         return {
             "mission_kind": "exploration",
             "stop_reason_code": str(stop_reason_code or "").strip(),
@@ -10466,6 +10800,7 @@ class DesktopActionRouter:
                 ],
             ),
             "surface_signature": self._surface_exploration_signature(exploration_plan=plan),
+            "max_descendant_chain_steps": max(0, int(max_descendant_chain_steps or 0)),
             "target_group_state": dict(snapshot.get("target_group_state", {})) if isinstance(snapshot.get("target_group_state", {}), dict) else {},
             "surface_mode": str(plan.get("surface_mode", "") or "").strip(),
             "hypothesis_count": int(plan.get("hypothesis_count", 0) or 0),
@@ -10490,6 +10825,12 @@ class DesktopActionRouter:
             "surface_path_depth": len(surface_path_tail),
             "topology_owner_link_count": int(topology_summary.get("topology_owner_link_count", 0) or 0),
             "topology_owner_chain_visible": bool(topology_summary.get("topology_owner_chain_visible", False)),
+            "topology_direct_child_window_count": int(topology_summary.get("topology_direct_child_window_count", 0) or 0),
+            "topology_direct_child_dialog_like_count": int(topology_summary.get("topology_direct_child_dialog_like_count", 0) or 0),
+            "topology_descendant_chain_depth": int(topology_summary.get("topology_descendant_chain_depth", 0) or 0),
+            "topology_descendant_dialog_chain_depth": int(topology_summary.get("topology_descendant_dialog_chain_depth", 0) or 0),
+            "topology_descendant_query_match_count": int(topology_summary.get("topology_descendant_query_match_count", 0) or 0),
+            "topology_child_chain_signature": current_child_chain_signature or latest_child_chain_signature,
             "nested_chain_count": nested_chain_count,
             "child_window_chain_count": child_window_chain_count,
             "dialog_cascade_count": dialog_cascade_count,
@@ -10498,6 +10839,8 @@ class DesktopActionRouter:
             "branch_cascade_count": branch_cascade_count,
             "branch_cascade_kind_count": branch_cascade_kind_count,
             "branch_cascade_signature": branch_cascade_signature,
+            "descendant_chain_repeat_count": descendant_chain_repeat_count,
+            "descendant_chain_continuity": descendant_chain_continuity,
             "branch_history_tail": [dict(row) for row in branch_rows[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_rows[-6:]],
             "notes": notes[:12],
@@ -10547,6 +10890,20 @@ class DesktopActionRouter:
             "retry_on_verification_failure": bool(args.get("retry_on_verification_failure", True)),
             "max_strategy_attempts": max(1, min(int(args.get("max_strategy_attempts", 2) or 2), 4)),
             "exploration_limit": max(1, min(int(args.get("exploration_limit", 6) or 6), 12)),
+            "max_descendant_chain_steps": max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "max_descendant_chain_steps",
+                            args.get("max_nested_branch_steps", 3),
+                        )
+                        or args.get("max_nested_branch_steps", 3)
+                        or 3
+                    ),
+                    8,
+                ),
+            ),
             "max_branch_cascade_steps": max(
                 1,
                 min(
@@ -10557,6 +10914,20 @@ class DesktopActionRouter:
                         )
                         or args.get("max_nested_branch_steps", 3)
                         or 3
+                    ),
+                    8,
+                ),
+            ),
+            "max_branch_family_switches": max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "max_branch_family_switches",
+                            args.get("max_branch_cascade_steps", 2),
+                        )
+                        or args.get("max_branch_cascade_steps", 2)
+                        or 2
                     ),
                     8,
                 ),
@@ -10580,10 +10951,32 @@ class DesktopActionRouter:
             "branch_cascade_count": max(0, int(blocking_surface.get("branch_cascade_count", 0) or 0)),
             "branch_cascade_kind_count": max(0, int(blocking_surface.get("branch_cascade_kind_count", 0) or 0)),
             "branch_cascade_signature": str(blocking_surface.get("branch_cascade_signature", "") or "").strip(),
+            "descendant_chain_repeat_count": max(0, int(blocking_surface.get("descendant_chain_repeat_count", 0) or 0)),
+            "descendant_chain_continuity": bool(blocking_surface.get("descendant_chain_continuity", False)),
+            "topology_direct_child_window_count": max(0, int(blocking_surface.get("topology_direct_child_window_count", 0) or 0)),
+            "topology_direct_child_dialog_like_count": max(0, int(blocking_surface.get("topology_direct_child_dialog_like_count", 0) or 0)),
+            "topology_descendant_chain_depth": max(0, int(blocking_surface.get("topology_descendant_chain_depth", 0) or 0)),
+            "topology_descendant_dialog_chain_depth": max(0, int(blocking_surface.get("topology_descendant_dialog_chain_depth", 0) or 0)),
+            "topology_descendant_query_match_count": max(0, int(blocking_surface.get("topology_descendant_query_match_count", 0) or 0)),
+            "topology_child_chain_signature": str(blocking_surface.get("topology_child_chain_signature", "") or "").strip(),
         }
         if resume_action == EXPLORATION_FLOW_ACTION:
             resume_payload["max_exploration_steps"] = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
             resume_payload["max_nested_branch_steps"] = max(1, min(int(args.get("max_nested_branch_steps", 3) or 3), 8))
+            resume_payload["max_descendant_chain_steps"] = max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "max_descendant_chain_steps",
+                            args.get("max_nested_branch_steps", 3),
+                        )
+                        or args.get("max_nested_branch_steps", 3)
+                        or 3
+                    ),
+                    8,
+                ),
+            )
             resume_payload["max_branch_cascade_steps"] = max(
                 1,
                 min(
@@ -10594,6 +10987,20 @@ class DesktopActionRouter:
                         )
                         or args.get("max_nested_branch_steps", 3)
                         or 3
+                    ),
+                    8,
+                ),
+            )
+            resume_payload["max_branch_family_switches"] = max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "max_branch_family_switches",
+                            args.get("max_branch_cascade_steps", 2),
+                        )
+                        or args.get("max_branch_cascade_steps", 2)
+                        or 2
                     ),
                     8,
                 ),
@@ -10668,6 +11075,7 @@ class DesktopActionRouter:
                 "pane_cascade_count": max(0, int(blocking_surface.get("pane_cascade_count", 0) or 0)),
                 "drilldown_cascade_count": max(0, int(blocking_surface.get("drilldown_cascade_count", 0) or 0)),
                 "max_branch_cascade_steps": max(0, int(blocking_surface.get("max_branch_cascade_steps", 0) or 0)),
+                "max_branch_family_switches": max(0, int(blocking_surface.get("max_branch_family_switches", 0) or 0)),
                 "branch_cascade_count": max(0, int(blocking_surface.get("branch_cascade_count", 0) or 0)),
                 "branch_cascade_kind_count": max(0, int(blocking_surface.get("branch_cascade_kind_count", 0) or 0)),
                 "branch_cascade_signature": str(blocking_surface.get("branch_cascade_signature", "") or "").strip(),
@@ -10705,14 +11113,23 @@ class DesktopActionRouter:
         app_name = str(args.get("app_name", "") or "").strip()
         window_title = str(args.get("window_title", "") or "").strip()
         query = str(args.get("query", "") or "").strip()
-        exploration_plan = self.surface_exploration_plan(
-            app_name=app_name,
-            window_title=window_title,
-            query=query,
-            limit=exploration_limit,
-            include_observation=True,
-            include_elements=True,
-            include_workflow_probes=True,
+        prefetched_plan = (
+            dict(args.get("_prefetched_exploration_plan", {}))
+            if isinstance(args.get("_prefetched_exploration_plan", {}), dict)
+            else {}
+        )
+        exploration_plan = (
+            prefetched_plan
+            if prefetched_plan
+            else self.surface_exploration_plan(
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                limit=exploration_limit,
+                include_observation=True,
+                include_elements=True,
+                include_workflow_probes=True,
+            )
         )
         snapshot = exploration_plan.get("surface_snapshot", {}) if isinstance(exploration_plan.get("surface_snapshot", {}), dict) else {}
         app_profile = snapshot.get("app_profile", {}) if isinstance(snapshot.get("app_profile", {}), dict) else {}
@@ -10865,6 +11282,20 @@ class DesktopActionRouter:
     def _advise_surface_exploration_flow(self, *, args: Dict[str, Any]) -> Dict[str, Any]:
         max_exploration_steps = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
         max_nested_branch_steps = max(1, min(int(args.get("max_nested_branch_steps", 3) or 3), 8))
+        max_descendant_chain_steps = max(
+            1,
+            min(
+                int(
+                    args.get(
+                        "max_descendant_chain_steps",
+                        args.get("max_nested_branch_steps", 3),
+                    )
+                    or args.get("max_nested_branch_steps", 3)
+                    or 3
+                ),
+                8,
+            ),
+        )
         max_branch_cascade_steps = max(
             1,
             min(
@@ -10875,6 +11306,20 @@ class DesktopActionRouter:
                     )
                     or args.get("max_nested_branch_steps", 3)
                     or 3
+                ),
+                8,
+            ),
+        )
+        max_branch_family_switches = max(
+            1,
+            min(
+                int(
+                    args.get(
+                        "max_branch_family_switches",
+                        args.get("max_branch_cascade_steps", 2),
+                    )
+                    or args.get("max_branch_cascade_steps", 2)
+                    or 2
                 ),
                 8,
             ),
@@ -10890,7 +11335,9 @@ class DesktopActionRouter:
             "exploration_flow": True,
             "max_exploration_steps": max_exploration_steps,
             "max_nested_branch_steps": max_nested_branch_steps,
+            "max_descendant_chain_steps": max_descendant_chain_steps,
             "max_branch_cascade_steps": max_branch_cascade_steps,
+            "max_branch_family_switches": max_branch_family_switches,
         }
         existing_message = str(payload.get("message", "") or "").strip()
         if payload.get("status") == "success":
@@ -11236,6 +11683,12 @@ class DesktopActionRouter:
             and str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
             and branch_family_signature == str(runtime_topology_summary.get("topology_branch_family_signature", "") or "").strip()
         )
+        stable_branch_family_continuation = bool(
+            branch_family_continuity
+            and branch_family_switch_count == 0
+            and branch_family_repeat_count > 0
+            and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
+        )
         child_window_chain_count = self._surface_exploration_branch_kind_count(
             branch_history=branch_history,
             transition_kinds={"child_window", "child_window_chain"},
@@ -11260,7 +11713,11 @@ class DesktopActionRouter:
             transition_kinds={"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"},
         )
         surface_path_depth = len(surface_path_tail)
-        if stop_reason_code == "exploration_nested_branch_available" and branch_repeat_count >= 2:
+        if (
+            stop_reason_code == "exploration_nested_branch_available"
+            and branch_repeat_count >= 2
+            and not stable_branch_family_continuation
+        ):
             stop_reason_code = "exploration_nested_branch_loop_guard"
             stop_reason = (
                 "JARVIS keeps landing on the same nested branch, so it is pausing to avoid looping until the surface changes."
@@ -11594,6 +12051,20 @@ class DesktopActionRouter:
                 8,
             ),
         )
+        max_branch_family_switches = max(
+            1,
+            min(
+                int(
+                    args.get(
+                        "max_branch_family_switches",
+                        args.get("max_branch_cascade_steps", 2),
+                    )
+                    or args.get("max_branch_cascade_steps", 2)
+                    or 2
+                ),
+                8,
+            ),
+        )
         results: List[Dict[str, Any]] = []
         step_history: List[Dict[str, Any]] = []
         current_args = dict(args)
@@ -11620,14 +12091,102 @@ class DesktopActionRouter:
             if isinstance(current_advice.get("exploration_plan", {}), dict)
             else {}
         )
+        pending_followup_plan: Optional[Dict[str, Any]] = None
         latest_selected_action = ""
         latest_selected_candidate_id = ""
         latest_selected_candidate_label = ""
 
         for step_index in range(1, max_exploration_steps + 1):
             if step_index > 1:
-                current_advice = self._advise_surface_exploration_advance(args=current_args)
+                if isinstance(pending_followup_plan, dict) and pending_followup_plan:
+                    prefetched_args = dict(current_args)
+                    prefetched_args["_prefetched_exploration_plan"] = pending_followup_plan
+                    prefetched_advice = self._advise_surface_exploration_advance(args=prefetched_args)
+                    prefetched_selection = (
+                        prefetched_advice.get("exploration_selection", {})
+                        if isinstance(prefetched_advice.get("exploration_selection", {}), dict)
+                        else {}
+                    )
+                    prefetched_candidate_id = str(
+                        prefetched_selection.get("candidate_id", "") or ""
+                    ).strip()
+                    prefetched_selected_action = str(
+                        prefetched_selection.get("selected_action", "") or ""
+                    ).strip()
+                    prefetched_selected_label = str(
+                        prefetched_selection.get("label", "") or ""
+                    ).strip()
+                    repeated_prefetched_selection = bool(
+                        prefetched_advice.get("status") == "success"
+                        and prefetched_selected_action
+                        and prefetched_selected_action == latest_selected_action
+                        and (
+                            (
+                                prefetched_candidate_id
+                                and prefetched_candidate_id == latest_selected_candidate_id
+                            )
+                            or (
+                                not prefetched_candidate_id
+                                and prefetched_selected_label
+                                and prefetched_selected_label == latest_selected_candidate_label
+                            )
+                        )
+                    )
+                    if prefetched_advice.get("status") == "success" and not repeated_prefetched_selection:
+                        current_advice = prefetched_advice
+                    else:
+                        current_advice = self._advise_surface_exploration_advance(args=current_args)
+                    pending_followup_plan = None
+                else:
+                    current_advice = self._advise_surface_exploration_advance(args=current_args)
             if current_advice.get("status") != "success":
+                advice_plan = (
+                    current_advice.get("exploration_plan", {})
+                    if isinstance(current_advice.get("exploration_plan", {}), dict)
+                    else {}
+                )
+                advice_selection = (
+                    current_advice.get("exploration_selection", {})
+                    if isinstance(current_advice.get("exploration_selection", {}), dict)
+                    else {}
+                )
+                advice_stop_reason_code = str(
+                    advice_selection.get("stop_reason_code", "") or ""
+                ).strip()
+                advice_hypothesis_count = max(
+                    0,
+                    int(advice_plan.get("hypothesis_count", 0) or 0),
+                )
+                advice_branch_action_count = max(
+                    0,
+                    int(advice_plan.get("branch_action_count", 0) or 0),
+                )
+                advice_remaining_target_count = max(
+                    0,
+                    int(
+                        advice_plan.get(
+                            "remaining_target_count",
+                            advice_hypothesis_count + advice_branch_action_count,
+                        )
+                        or 0
+                    ),
+                )
+                if (
+                    step_index > 1
+                    and advice_stop_reason_code in {"exploration_no_safe_path", "exploration_no_progress"}
+                    and advice_hypothesis_count == 0
+                    and advice_branch_action_count == 0
+                    and advice_remaining_target_count == 0
+                    and not bool(advice_plan.get("manual_attention_required", False))
+                ):
+                    completed = True
+                    latest_followup_plan = advice_plan or latest_followup_plan
+                    message = str(
+                        current_advice.get("message", "")
+                        or advice_plan.get("message", "")
+                        or "surface exploration flow completed"
+                    ).strip()
+                    break
                 stop_reason_code = "exploration_route_unavailable"
                 stop_reason = "; ".join(
                     str(item).strip()
@@ -11767,12 +12326,31 @@ class DesktopActionRouter:
             current_args["branch_cascade_signature"] = str(
                 latest_runtime.get("branch_cascade_signature", current_args.get("branch_cascade_signature", "")) or ""
             ).strip()
+            current_args["max_branch_family_switches"] = max_branch_family_switches
             if bool(step_mission.get("completed", False)):
                 completed = True
                 message = str(step_payload.get("message", "") or "surface exploration flow completed").strip()
                 break
             step_stop_reason_code = str(step_mission.get("stop_reason_code", "") or latest_runtime.get("stop_reason_code", "") or "").strip()
             step_stop_reason = str(step_mission.get("stop_reason", "") or latest_runtime.get("stop_reason", "") or step_payload.get("message", "") or "").strip()
+            branch_family_repeat_count = max(0, int(latest_runtime.get("branch_family_repeat_count", 0) or 0))
+            branch_family_switch_count = max(0, int(latest_runtime.get("branch_family_switch_count", 0) or 0))
+            branch_family_continuity = bool(latest_runtime.get("branch_family_continuity", False))
+            branch_family_signature = str(latest_runtime.get("branch_family_signature", "") or "").strip()
+            stable_branch_family_continuation = bool(
+                branch_family_continuity
+                and branch_family_switch_count == 0
+                and branch_family_repeat_count > 0
+                and str(latest_selected_action or "").strip()
+                and str(
+                    latest_runtime.get(
+                        "last_branch_kind",
+                        latest_runtime.get("transition_kind", ""),
+                    )
+                    or ""
+                ).strip()
+                in {"child_window", "child_window_chain", "dialog_shift", "drilldown", "pane_shift"}
+            )
             nested_chain_count = max(0, int(latest_runtime.get("nested_chain_count", 0) or 0))
             child_window_chain_count = max(0, int(latest_runtime.get("child_window_chain_count", 0) or 0))
             dialog_cascade_count = max(0, int(latest_runtime.get("dialog_cascade_count", 0) or 0))
@@ -11781,6 +12359,11 @@ class DesktopActionRouter:
             branch_cascade_count = max(0, int(latest_runtime.get("branch_cascade_count", 0) or 0))
             branch_cascade_kind_count = max(0, int(latest_runtime.get("branch_cascade_kind_count", 0) or 0))
             branch_cascade_signature = str(latest_runtime.get("branch_cascade_signature", "") or "").strip()
+            branch_family_switch_pause_ready = bool(
+                branch_family_switch_count > 0
+                and branch_family_switch_count >= max_branch_family_switches
+                and str(latest_selected_action or "").strip()
+            )
             nested_chain_pause_ready = bool(
                 nested_chain_count >= max_nested_branch_steps
                 and (
@@ -11796,6 +12379,16 @@ class DesktopActionRouter:
                 and branch_cascade_kind_count > 0
                 and str(latest_selected_action or "").strip()
             )
+            if step_stop_reason_code == "exploration_no_progress" and branch_family_switch_pause_ready:
+                stop_reason_code = "exploration_branch_family_switch_limit_reached"
+                stop_reason = (
+                    f"JARVIS paused at the configured branch-family switch limit of {max_branch_family_switches} "
+                    f"after bouncing across {branch_family_switch_count} sibling family switch"
+                    f"{'' if branch_family_switch_count == 1 else 'es'}"
+                    f"{f' ({branch_family_signature})' if branch_family_signature else ''}."
+                )
+                message = stop_reason
+                break
             if step_stop_reason_code == "exploration_no_progress" and branch_cascade_pause_ready:
                 stop_reason_code = "exploration_branch_cascade_limit_reached"
                 stop_reason = (
@@ -11814,7 +12407,16 @@ class DesktopActionRouter:
                 message = stop_reason
                 break
             if step_stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available"} and step_index < max_exploration_steps:
-                if branch_cascade_pause_ready:
+                if branch_family_switch_pause_ready:
+                    stop_reason_code = "exploration_branch_family_switch_limit_reached"
+                    stop_reason = (
+                        f"JARVIS advanced through {branch_family_switch_count} sibling branch-family switch"
+                        f"{'' if branch_family_switch_count == 1 else 'es'}"
+                        f"{f' around {branch_family_signature}' if branch_family_signature else ''} and paused at the configured branch-family switch limit of {max_branch_family_switches}."
+                    )
+                    message = stop_reason
+                    break
+                if branch_cascade_pause_ready and not stable_branch_family_continuation:
                     stop_reason_code = "exploration_branch_cascade_limit_reached"
                     stop_reason = (
                         f"JARVIS advanced through {branch_cascade_count} branch-cascade step"
@@ -11823,7 +12425,11 @@ class DesktopActionRouter:
                     )
                     message = stop_reason
                     break
-                if step_stop_reason_code == "exploration_nested_branch_available" and nested_chain_count >= max_nested_branch_steps:
+                if (
+                    step_stop_reason_code == "exploration_nested_branch_available"
+                    and nested_chain_count >= max_nested_branch_steps
+                    and not stable_branch_family_continuation
+                ):
                     stop_reason_code = "exploration_nested_chain_limit_reached"
                     stop_reason = (
                         f"JARVIS advanced through {nested_chain_count} nested branch step"
@@ -11857,6 +12463,13 @@ class DesktopActionRouter:
                     current_args.pop("window_title", None)
                 if str(latest_filters.get("app_name", "") or "").strip() and not str(current_args.get("app_name", "") or "").strip():
                     current_args["app_name"] = str(latest_filters.get("app_name", "") or "").strip()
+                pending_followup_plan = (
+                    dict(step_payload.get("advice", {}).get("exploration_plan", {}))
+                    if isinstance(step_payload.get("advice", {}), dict)
+                    and isinstance(step_payload.get("advice", {}).get("exploration_plan", {}), dict)
+                    and step_payload.get("advice", {}).get("status") == "success"
+                    else None
+                )
                 continue
             stop_reason_code = step_stop_reason_code or "exploration_no_safe_path"
             stop_reason = step_stop_reason or "surface exploration flow stopped before a safe follow-up could be selected"
@@ -11913,6 +12526,7 @@ class DesktopActionRouter:
                 "steps_completed": len(step_history),
                 "max_steps": max_exploration_steps,
                 "max_nested_branch_steps": max_nested_branch_steps,
+                "max_branch_family_switches": max_branch_family_switches,
                 "max_branch_cascade_steps": max_branch_cascade_steps,
                 "auto_continued": len(step_history) > 1,
                 "selected_action": latest_selected_action,
@@ -11950,6 +12564,10 @@ class DesktopActionRouter:
                 "last_branch_kind": str(latest_runtime.get("last_branch_kind", "") or "").strip(),
                 "branch_transition_count": int(latest_runtime.get("branch_transition_count", 0) or 0),
                 "branch_repeat_count": int(latest_runtime.get("branch_repeat_count", 0) or 0),
+                "branch_family_signature": str(latest_runtime.get("branch_family_signature", "") or "").strip(),
+                "branch_family_repeat_count": int(latest_runtime.get("branch_family_repeat_count", 0) or 0),
+                "branch_family_switch_count": int(latest_runtime.get("branch_family_switch_count", 0) or 0),
+                "branch_family_continuity": bool(latest_runtime.get("branch_family_continuity", False)),
                 "surface_path_depth": int(latest_runtime.get("surface_path_depth", 0) or 0),
                 "nested_chain_count": int(latest_runtime.get("nested_chain_count", 0) or 0),
                 "child_window_chain_count": int(latest_runtime.get("child_window_chain_count", 0) or 0),
@@ -11990,6 +12608,7 @@ class DesktopActionRouter:
                 "topology_active_owner_chain_depth": int(latest_runtime.get("topology_active_owner_chain_depth", 0) or 0),
                 "topology_max_owner_chain_depth": int(latest_runtime.get("topology_max_owner_chain_depth", 0) or 0),
                 "topology_modal_chain_signature": str(latest_runtime.get("topology_modal_chain_signature", "") or "").strip(),
+                "topology_branch_family_signature": str(latest_runtime.get("topology_branch_family_signature", "") or "").strip(),
                 "automation_ready": bool(latest_followup_plan.get("automation_ready", False)) if isinstance(latest_followup_plan, dict) else False,
                 "manual_attention_required": bool(latest_followup_plan.get("manual_attention_required", False)) if isinstance(latest_followup_plan, dict) else False,
                 "next_actions": [],
@@ -12143,6 +12762,11 @@ class DesktopActionRouter:
             "topology_active_owner_chain_depth": int(latest_runtime.get("topology_active_owner_chain_depth", 0) or 0),
             "topology_max_owner_chain_depth": int(latest_runtime.get("topology_max_owner_chain_depth", 0) or 0),
             "topology_modal_chain_signature": str(latest_runtime.get("topology_modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": str(latest_runtime.get("topology_branch_family_signature", "") or "").strip(),
+            "branch_family_signature": str(latest_runtime.get("branch_family_signature", "") or "").strip(),
+            "branch_family_repeat_count": int(latest_runtime.get("branch_family_repeat_count", 0) or 0),
+            "branch_family_switch_count": int(latest_runtime.get("branch_family_switch_count", 0) or 0),
+            "branch_family_continuity": bool(latest_runtime.get("branch_family_continuity", False)),
             "final_page": {
                 "window_title": str(
                     pause_snapshot.get("surface_snapshot", {}).get("target_window", {}).get("title", "")
@@ -12158,6 +12782,7 @@ class DesktopActionRouter:
             "max_steps": max_exploration_steps,
             "max_nested_branch_steps": max_nested_branch_steps,
             "max_branch_cascade_steps": max_branch_cascade_steps,
+            "max_branch_family_switches": max_branch_family_switches,
             "auto_continued": len(step_history) > 1,
         }
         mission_record = self._persist_paused_mission(
@@ -12192,7 +12817,7 @@ class DesktopActionRouter:
                 },
             ],
         }
-        pause_status = "partial" if executed_recon_step and stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_branch_cascade_limit_reached"} else "blocked"
+        pause_status = "partial" if executed_recon_step and stop_reason_code in {"exploration_followup_available", "exploration_nested_branch_available", "exploration_step_limit_reached", "exploration_nested_branch_limit_reached", "exploration_nested_chain_limit_reached", "exploration_branch_cascade_limit_reached", "exploration_branch_family_switch_limit_reached"} else "blocked"
         exploration_mission = {
             "enabled": True,
             "completed": False,
@@ -12201,6 +12826,7 @@ class DesktopActionRouter:
             "max_steps": max_exploration_steps,
             "max_nested_branch_steps": max_nested_branch_steps,
             "max_branch_cascade_steps": max_branch_cascade_steps,
+            "max_branch_family_switches": max_branch_family_switches,
             "auto_continued": len(step_history) > 1,
             "selected_action": latest_selected_action,
             "selected_candidate_id": latest_selected_candidate_id,
@@ -12233,6 +12859,10 @@ class DesktopActionRouter:
             "last_branch_kind": str(pause_payload.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": int(pause_payload.get("branch_transition_count", 0) or 0),
             "branch_repeat_count": int(pause_payload.get("branch_repeat_count", 0) or 0),
+            "branch_family_signature": str(pause_payload.get("branch_family_signature", "") or "").strip(),
+            "branch_family_repeat_count": int(pause_payload.get("branch_family_repeat_count", 0) or 0),
+            "branch_family_switch_count": int(pause_payload.get("branch_family_switch_count", 0) or 0),
+            "branch_family_continuity": bool(pause_payload.get("branch_family_continuity", False)),
             "surface_path_depth": int(pause_payload.get("surface_path_depth", 0) or 0),
             "nested_chain_count": int(pause_payload.get("nested_chain_count", 0) or 0),
             "child_window_chain_count": int(pause_payload.get("child_window_chain_count", 0) or 0),
@@ -12269,6 +12899,7 @@ class DesktopActionRouter:
             "topology_active_owner_chain_depth": int(pause_payload.get("topology_active_owner_chain_depth", 0) or 0),
             "topology_max_owner_chain_depth": int(pause_payload.get("topology_max_owner_chain_depth", 0) or 0),
             "topology_modal_chain_signature": str(pause_payload.get("topology_modal_chain_signature", "") or "").strip(),
+            "topology_branch_family_signature": str(pause_payload.get("topology_branch_family_signature", "") or "").strip(),
             "automation_ready": bool(pause_snapshot.get("automation_ready", False)) if isinstance(pause_snapshot, dict) else False,
             "manual_attention_required": bool(pause_snapshot.get("manual_attention_required", False)) if isinstance(pause_snapshot, dict) else False,
             "next_actions": self._dedupe_strings(
