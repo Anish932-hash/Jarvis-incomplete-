@@ -85,11 +85,31 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const explorationSurfaceDepth = Number(latestMission?.surface_path_depth ?? 0);
   const explorationNestedChainCount = Number(latestMission?.nested_chain_count ?? 0);
   const explorationChildWindowChainCount = Number(latestMission?.child_window_chain_count ?? 0);
+  const explorationDialogCascadeCount = Number(latestMission?.dialog_cascade_count ?? 0);
   const explorationPaneCascadeCount = Number(latestMission?.pane_cascade_count ?? 0);
   const explorationDrilldownCascadeCount = Number(latestMission?.drilldown_cascade_count ?? 0);
   const explorationMaxNestedBranchSteps = Number(latestMission?.max_nested_branch_steps ?? 0);
+  const explorationBranchCascadeCount = Number(latestMission?.branch_cascade_count ?? 0);
+  const explorationBranchCascadeKindCount = Number(latestMission?.branch_cascade_kind_count ?? 0);
+  const explorationBranchCascadeSignature = String(latestMission?.branch_cascade_signature ?? '').trim();
+  const explorationMaxBranchCascadeSteps = Number(latestMission?.max_branch_cascade_steps ?? 0);
   const explorationTopologyOwnerLinkCount = Number(latestMission?.topology_owner_link_count ?? 0);
   const explorationTopologyOwnerChainVisible = Boolean(latestMission?.topology_owner_chain_visible ?? false);
+  const explorationTopologySameRootOwnerWindowCount = Number(
+    latestMission?.topology_same_root_owner_window_count ?? 0
+  );
+  const explorationTopologySameRootOwnerDialogLikeCount = Number(
+    latestMission?.topology_same_root_owner_dialog_like_count ?? 0
+  );
+  const explorationTopologyActiveOwnerChainDepth = Number(
+    latestMission?.topology_active_owner_chain_depth ?? 0
+  );
+  const explorationTopologyMaxOwnerChainDepth = Number(
+    latestMission?.topology_max_owner_chain_depth ?? 0
+  );
+  const explorationTopologyModalChainSignature = String(
+    latestMission?.topology_modal_chain_signature ?? ''
+  ).trim();
   const explorationRustRouterHint = String(latestMission?.rust_router_hint ?? '').trim();
   const explorationTopologyVisibleWindowCount = Number(latestMission?.topology_visible_window_count ?? 0);
   const explorationTopologyDialogLikeCount = Number(latestMission?.topology_dialog_like_count ?? 0);
@@ -141,14 +161,24 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
             {isExplorationMission &&
             (explorationNestedChainCount > 0 ||
               explorationChildWindowChainCount > 0 ||
+              explorationDialogCascadeCount > 0 ||
               explorationPaneCascadeCount > 0 ||
               explorationDrilldownCascadeCount > 0) ? (
               <Badge variant="outline">
                 chain:{explorationNestedChainCount}
                 {explorationChildWindowChainCount > 0 ? `:${explorationChildWindowChainCount}w` : ''}
+                {explorationDialogCascadeCount > 0 ? `:${explorationDialogCascadeCount}g` : ''}
                 {explorationPaneCascadeCount > 0 ? `:${explorationPaneCascadeCount}p` : ''}
                 {explorationDrilldownCascadeCount > 0 ? `:${explorationDrilldownCascadeCount}d` : ''}
                 {explorationMaxNestedBranchSteps > 0 ? `/${explorationMaxNestedBranchSteps}` : ''}
+              </Badge>
+            ) : null}
+            {isExplorationMission && (explorationBranchCascadeCount > 0 || Boolean(explorationBranchCascadeSignature)) ? (
+              <Badge variant="outline">
+                cascade:{explorationBranchCascadeCount}
+                {explorationBranchCascadeKindCount > 0 ? `:${explorationBranchCascadeKindCount}k` : ''}
+                {explorationMaxBranchCascadeSteps > 0 ? `/${explorationMaxBranchCascadeSteps}` : ''}
+                {explorationBranchCascadeSignature ? `:${explorationBranchCascadeSignature}` : ''}
               </Badge>
             ) : null}
             {isExplorationMission && explorationRustRouterHint ? (
@@ -164,6 +194,25 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
                 topo:{explorationTopologyVisibleWindowCount}/{explorationTopologyDialogLikeCount}/{explorationTopologySameProcessWindowCount}
                 {explorationTopologyOwnerLinkCount > 0 ? `/${explorationTopologyOwnerLinkCount}` : ''}
                 {explorationTopologyOwnerChainVisible ? ':owner' : ''}
+              </Badge>
+            ) : null}
+            {isExplorationMission &&
+            (explorationTopologySameRootOwnerWindowCount > 0 ||
+              explorationTopologySameRootOwnerDialogLikeCount > 0 ||
+              explorationTopologyActiveOwnerChainDepth > 0 ||
+              explorationTopologyMaxOwnerChainDepth > 0 ||
+              Boolean(explorationTopologyModalChainSignature)) ? (
+              <Badge variant="outline">
+                modal:{explorationTopologySameRootOwnerWindowCount}
+                {explorationTopologySameRootOwnerDialogLikeCount > 0
+                  ? ` dlg:${explorationTopologySameRootOwnerDialogLikeCount}`
+                  : ''}
+                {explorationTopologyActiveOwnerChainDepth > 0 || explorationTopologyMaxOwnerChainDepth > 0
+                  ? ` d${explorationTopologyActiveOwnerChainDepth}/${explorationTopologyMaxOwnerChainDepth}`
+                  : ''}
+                {explorationTopologyModalChainSignature
+                  ? ` sig:${explorationTopologyModalChainSignature}`
+                  : ''}
               </Badge>
             ) : null}
             {manualAttentionCount > 0 ? <Badge variant="outline">review:{manualAttentionCount}</Badge> : null}
@@ -189,9 +238,13 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
             {missionKind === 'exploration' &&
             (explorationNestedChainCount > 0 ||
               explorationChildWindowChainCount > 0 ||
+              explorationDialogCascadeCount > 0 ||
               explorationPaneCascadeCount > 0 ||
               explorationDrilldownCascadeCount > 0)
-              ? ` • chain:${explorationNestedChainCount}${explorationChildWindowChainCount > 0 ? ` child:${explorationChildWindowChainCount}` : ''}${explorationPaneCascadeCount > 0 ? ` panes:${explorationPaneCascadeCount}` : ''}${explorationDrilldownCascadeCount > 0 ? ` drill:${explorationDrilldownCascadeCount}` : ''}${explorationMaxNestedBranchSteps > 0 ? `/${explorationMaxNestedBranchSteps}` : ''}`
+              ? ` • chain:${explorationNestedChainCount}${explorationChildWindowChainCount > 0 ? ` child:${explorationChildWindowChainCount}` : ''}${explorationDialogCascadeCount > 0 ? ` dialogs:${explorationDialogCascadeCount}` : ''}${explorationPaneCascadeCount > 0 ? ` panes:${explorationPaneCascadeCount}` : ''}${explorationDrilldownCascadeCount > 0 ? ` drill:${explorationDrilldownCascadeCount}` : ''}${explorationMaxNestedBranchSteps > 0 ? `/${explorationMaxNestedBranchSteps}` : ''}`
+              : ''}
+            {missionKind === 'exploration' && (explorationBranchCascadeCount > 0 || Boolean(explorationBranchCascadeSignature))
+              ? ` • cascade:${explorationBranchCascadeCount}${explorationBranchCascadeKindCount > 0 ? ` kinds:${explorationBranchCascadeKindCount}` : ''}${explorationMaxBranchCascadeSteps > 0 ? `/${explorationMaxBranchCascadeSteps}` : ''}${explorationBranchCascadeSignature ? `(${explorationBranchCascadeSignature})` : ''}`
               : ''}
             {missionKind === 'exploration' && explorationSurfaceDepth > 0
               ? ` • depth:${explorationSurfaceDepth}`
@@ -206,6 +259,14 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               explorationTopologyOwnerLinkCount > 0 ||
               explorationTopologyOwnerChainVisible)
               ? ` • topo:${explorationTopologyVisibleWindowCount}/${explorationTopologyDialogLikeCount}/${explorationTopologySameProcessWindowCount}${explorationTopologyOwnerLinkCount > 0 ? `/${explorationTopologyOwnerLinkCount}` : ''}${explorationTopologyOwnerChainVisible ? ':owner' : ''}${explorationTopologySignature ? `(${explorationTopologySignature})` : ''}`
+              : ''}
+            {missionKind === 'exploration' &&
+            (explorationTopologySameRootOwnerWindowCount > 0 ||
+              explorationTopologySameRootOwnerDialogLikeCount > 0 ||
+              explorationTopologyActiveOwnerChainDepth > 0 ||
+              explorationTopologyMaxOwnerChainDepth > 0 ||
+              Boolean(explorationTopologyModalChainSignature))
+              ? ` • modal:${explorationTopologySameRootOwnerWindowCount}${explorationTopologySameRootOwnerDialogLikeCount > 0 ? ` dialogs:${explorationTopologySameRootOwnerDialogLikeCount}` : ''}${explorationTopologyActiveOwnerChainDepth > 0 || explorationTopologyMaxOwnerChainDepth > 0 ? ` depth:${explorationTopologyActiveOwnerChainDepth}/${explorationTopologyMaxOwnerChainDepth}` : ''}${explorationTopologyModalChainSignature ? ` sig:${explorationTopologyModalChainSignature}` : ''}`
               : ''}
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}

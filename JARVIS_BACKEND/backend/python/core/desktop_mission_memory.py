@@ -115,6 +115,7 @@ class DesktopMissionMemory:
                 "step_count": self._coerce_int(payload.get("step_count", payload.get("page_count", 0)), minimum=0, maximum=100_000, default=0),
                 "steps_completed": self._coerce_int(payload.get("steps_completed", payload.get("pages_completed", 0)), minimum=0, maximum=100_000, default=0),
                 "max_steps": self._coerce_int(payload.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+                "max_branch_cascade_steps": self._coerce_int(payload.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
                 "auto_continued": bool(payload.get("auto_continued", False)),
                 "selected_action": str(payload.get("selected_action", "") or "").strip(),
                 "selected_candidate_id": str(payload.get("selected_candidate_id", "") or "").strip(),
@@ -127,6 +128,11 @@ class DesktopMissionMemory:
                 "topology_same_process_window_count": self._coerce_int(payload.get("topology_same_process_window_count", 0), minimum=0, maximum=100_000, default=0),
                 "topology_owner_link_count": self._coerce_int(payload.get("topology_owner_link_count", 0), minimum=0, maximum=100_000, default=0),
                 "topology_owner_chain_visible": bool(payload.get("topology_owner_chain_visible", False)),
+                "topology_same_root_owner_window_count": self._coerce_int(payload.get("topology_same_root_owner_window_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_same_root_owner_dialog_like_count": self._coerce_int(payload.get("topology_same_root_owner_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+                "topology_active_owner_chain_depth": self._coerce_int(payload.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+                "topology_max_owner_chain_depth": self._coerce_int(payload.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+                "topology_modal_chain_signature": str(payload.get("topology_modal_chain_signature", "") or "").strip(),
                 "transition_kind": str(payload.get("transition_kind", "") or "").strip(),
                 "nested_surface_progressed": bool(payload.get("nested_surface_progressed", False)),
                 "child_window_adopted": bool(payload.get("child_window_adopted", False)),
@@ -171,8 +177,12 @@ class DesktopMissionMemory:
                 ),
                 "nested_chain_count": self._coerce_int(payload.get("nested_chain_count", 0), minimum=0, maximum=100_000, default=0),
                 "child_window_chain_count": self._coerce_int(payload.get("child_window_chain_count", 0), minimum=0, maximum=100_000, default=0),
+                "dialog_cascade_count": self._coerce_int(payload.get("dialog_cascade_count", 0), minimum=0, maximum=100_000, default=0),
                 "pane_cascade_count": self._coerce_int(payload.get("pane_cascade_count", 0), minimum=0, maximum=100_000, default=0),
                 "drilldown_cascade_count": self._coerce_int(payload.get("drilldown_cascade_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_cascade_count": self._coerce_int(payload.get("branch_cascade_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_cascade_kind_count": self._coerce_int(payload.get("branch_cascade_kind_count", 0), minimum=0, maximum=100_000, default=0),
+                "branch_cascade_signature": str(payload.get("branch_cascade_signature", "") or "").strip(),
                 "branch_history_tail": [
                     dict(item)
                     for item in payload.get("branch_history", [])[-8:]
@@ -270,6 +280,7 @@ class DesktopMissionMemory:
                 "last_branch_kind",
                 "rust_router_hint",
                 "surface_topology_signature",
+                "topology_modal_chain_signature",
             ):
                 if field_name in payload:
                     row[field_name] = str(payload.get(field_name, row.get(field_name, "")) or "").strip()
@@ -287,10 +298,18 @@ class DesktopMissionMemory:
                 "topology_dialog_like_count",
                 "topology_same_process_window_count",
                 "topology_owner_link_count",
+                "topology_same_root_owner_window_count",
+                "topology_same_root_owner_dialog_like_count",
+                "topology_active_owner_chain_depth",
+                "topology_max_owner_chain_depth",
                 "nested_chain_count",
                 "child_window_chain_count",
+                "dialog_cascade_count",
                 "pane_cascade_count",
                 "drilldown_cascade_count",
+                "branch_cascade_count",
+                "branch_cascade_kind_count",
+                "max_branch_cascade_steps",
             ):
                 if field_name in payload:
                     row[field_name] = self._coerce_int(
@@ -341,8 +360,12 @@ class DesktopMissionMemory:
             for field_name in (
                 "nested_chain_count",
                 "child_window_chain_count",
+                "dialog_cascade_count",
                 "pane_cascade_count",
                 "drilldown_cascade_count",
+                "branch_cascade_count",
+                "branch_cascade_kind_count",
+                "max_branch_cascade_steps",
             ):
                 if field_name in payload:
                     row[field_name] = self._coerce_int(
@@ -351,6 +374,8 @@ class DesktopMissionMemory:
                         maximum=100_000,
                         default=0,
                     )
+            if "branch_cascade_signature" in payload:
+                row["branch_cascade_signature"] = str(payload.get("branch_cascade_signature", row.get("branch_cascade_signature", "")) or "").strip()
             if "nested_progress_count" in payload:
                 row["nested_progress_count"] = self._coerce_int(
                     payload.get("nested_progress_count", row.get("nested_progress_count", 0)),
@@ -659,6 +684,7 @@ class DesktopMissionMemory:
             "step_count": self._coerce_int(row.get("step_count", 0), minimum=0, maximum=100_000, default=0),
             "steps_completed": self._coerce_int(row.get("steps_completed", 0), minimum=0, maximum=100_000, default=0),
             "max_steps": self._coerce_int(row.get("max_steps", 0), minimum=0, maximum=100_000, default=0),
+            "max_branch_cascade_steps": self._coerce_int(row.get("max_branch_cascade_steps", 0), minimum=0, maximum=100_000, default=0),
             "auto_continued": bool(row.get("auto_continued", False)),
             "selected_action": str(row.get("selected_action", "") or "").strip(),
             "selected_candidate_id": str(row.get("selected_candidate_id", "") or "").strip(),
@@ -671,6 +697,11 @@ class DesktopMissionMemory:
             "topology_same_process_window_count": self._coerce_int(row.get("topology_same_process_window_count", 0), minimum=0, maximum=100_000, default=0),
             "topology_owner_link_count": self._coerce_int(row.get("topology_owner_link_count", 0), minimum=0, maximum=100_000, default=0),
             "topology_owner_chain_visible": bool(row.get("topology_owner_chain_visible", False)),
+            "topology_same_root_owner_window_count": self._coerce_int(row.get("topology_same_root_owner_window_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_same_root_owner_dialog_like_count": self._coerce_int(row.get("topology_same_root_owner_dialog_like_count", 0), minimum=0, maximum=100_000, default=0),
+            "topology_active_owner_chain_depth": self._coerce_int(row.get("topology_active_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+            "topology_max_owner_chain_depth": self._coerce_int(row.get("topology_max_owner_chain_depth", 0), minimum=0, maximum=100_000, default=0),
+            "topology_modal_chain_signature": str(row.get("topology_modal_chain_signature", "") or "").strip(),
             "transition_kind": str(row.get("transition_kind", "") or "").strip(),
             "nested_surface_progressed": bool(row.get("nested_surface_progressed", False)),
             "child_window_adopted": bool(row.get("child_window_adopted", False)),
@@ -682,8 +713,12 @@ class DesktopMissionMemory:
             "surface_path_depth": self._coerce_int(row.get("surface_path_depth", 0), minimum=0, maximum=100_000, default=0),
             "nested_chain_count": self._coerce_int(row.get("nested_chain_count", 0), minimum=0, maximum=100_000, default=0),
             "child_window_chain_count": self._coerce_int(row.get("child_window_chain_count", 0), minimum=0, maximum=100_000, default=0),
+            "dialog_cascade_count": self._coerce_int(row.get("dialog_cascade_count", 0), minimum=0, maximum=100_000, default=0),
             "pane_cascade_count": self._coerce_int(row.get("pane_cascade_count", 0), minimum=0, maximum=100_000, default=0),
             "drilldown_cascade_count": self._coerce_int(row.get("drilldown_cascade_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_cascade_count": self._coerce_int(row.get("branch_cascade_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_cascade_kind_count": self._coerce_int(row.get("branch_cascade_kind_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_cascade_signature": str(row.get("branch_cascade_signature", "") or "").strip(),
             "branch_history_tail": [dict(item) for item in row.get("branch_history_tail", []) if isinstance(item, dict)] if isinstance(row.get("branch_history_tail", []), list) else [],
             "nested_progress_count": self._coerce_int(row.get("nested_progress_count", 0), minimum=0, maximum=100_000, default=0),
             "attempted_targets_tail": [dict(item) for item in row.get("attempted_targets_tail", []) if isinstance(item, dict)] if isinstance(row.get("attempted_targets_tail", []), list) else [],
@@ -775,6 +810,7 @@ class DesktopMissionMemory:
             "exploration_step_limit_reached",
             "exploration_nested_branch_limit_reached",
             "exploration_nested_chain_limit_reached",
+            "exploration_branch_cascade_limit_reached",
         }:
             recovery_profile = "resume_ready"
             recovery_hint = (
@@ -789,7 +825,11 @@ class DesktopMissionMemory:
                         else (
                             "JARVIS paused at the configured recon step limit after advancing into a deeper nested branch."
                             if stop_reason_code == "exploration_nested_branch_limit_reached"
-                            else "JARVIS paused after a deeper nested window chain and is ready to continue in another bounded wave."
+                            else (
+                                "JARVIS paused after a deeper nested window chain and is ready to continue in another bounded wave."
+                                if stop_reason_code == "exploration_nested_chain_limit_reached"
+                                else "JARVIS paused after a deeper branch cascade and is ready to continue that unsupported-app recovery path."
+                            )
                         )
                     )
                 )
@@ -800,6 +840,7 @@ class DesktopMissionMemory:
                 "exploration_step_limit_reached": 86,
                 "exploration_nested_branch_limit_reached": 87,
                 "exploration_nested_chain_limit_reached": 90,
+                "exploration_branch_cascade_limit_reached": 91,
             }.get(stop_reason_code, 86)
         elif stop_reason_code == "exploration_nested_branch_loop_guard":
             recovery_profile = "surface_review"

@@ -254,6 +254,45 @@ std::wstring to_lower_copy(const std::wstring& value) {
     return output;
 }
 
+double substring_match_score(const std::wstring& haystack, const std::wstring& needle) {
+    const std::wstring clean_haystack = to_lower_copy(haystack);
+    const std::wstring clean_needle = to_lower_copy(needle);
+    if (clean_haystack.empty() || clean_needle.empty()) {
+        return 0.0;
+    }
+    if (clean_haystack == clean_needle) {
+        return 1.0;
+    }
+    const std::size_t position = clean_haystack.find(clean_needle);
+    if (position == std::wstring::npos) {
+        return 0.0;
+    }
+    const double coverage = static_cast<double>(clean_needle.size()) /
+        static_cast<double>(std::max<std::size_t>(1, clean_haystack.size()));
+    return std::clamp(coverage + 0.18, 0.38, 0.96);
+}
+
+bool snapshot_is_dialog_like(const WindowSnapshot& snapshot) {
+    const std::wstring class_name = to_lower_copy(utf8_to_wide(snapshot.class_name));
+    const std::wstring title = to_lower_copy(utf8_to_wide(snapshot.title));
+    if (class_name.find(L"#32770") != std::wstring::npos || class_name.find(L"dialog") != std::wstring::npos) {
+        return true;
+    }
+    for (const std::wstring& token : {
+             std::wstring(L"dialog"),
+             std::wstring(L"properties"),
+             std::wstring(L"options"),
+             std::wstring(L"warning"),
+             std::wstring(L"error"),
+             std::wstring(L"confirm"),
+             std::wstring(L"permission")}) {
+        if (title.find(token) != std::wstring::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 struct EnumWindowsContext {
     std::vector<WindowSnapshot>* rows = nullptr;
     HWND foreground = nullptr;
@@ -281,6 +320,11 @@ struct FindWindowContext {
     HWND match = nullptr;
 };
 
+struct RelatedWindowScore {
+    double score = 0.0;
+    std::vector<std::string> reasons;
+};
+
 BOOL CALLBACK EnumWindowsFindProc(HWND hwnd, LPARAM lparam) {
     auto* context = reinterpret_cast<FindWindowContext*>(lparam);
     if (context == nullptr) {
@@ -301,6 +345,192 @@ BOOL CALLBACK EnumWindowsFindProc(HWND hwnd, LPARAM lparam) {
         return FALSE;
     }
     return TRUE;
+}
+
+RelatedWindowScore score_related_window(
+    const WindowSnapshot& snapshot,
+    const std::wstring& query,
+    const std::wstring& window_title,
+    long long anchor_hwnd,
+    long anchor_pid,
+    long long anchor_root_owner_hwnd,
+    int anchor_owner_chain_depth
+) {
+    RelatedWindowScore relation;
+    const long long candidate_hwnd = snapshot.hwnd;
+    const long long candidate_owner_hwnd = snapshot.owner_hwnd;
+    const long long candidate_root_owner_hwnd = snapshot.root_owner_hwnd > 0 ? snapshot.root_owner_hwnd : snapshot.hwnd;
+    const int candidate_owner_chain_depth = snapshot.owner_chain_depth;
+    const double title_score = substring_match_score(utf8_to_wide(snapshot.title), window_title);
+    const double query_score = substring_match_score(utf8_to_wide(snapshot.title), query);
+
+    if (anchor_hwnd > 0 && candidate_hwnd == anchor_hwnd) {
+        relation.score += 2.4;
+        relation.reasons.push_back("exact_hwnd");
+    }
+    if (anchor_pid > 0 && snapshot.pid == anchor_pid) {
+        relation.score += 1.15;
+        relation.reasons.push_back("same_pid");
+    }
+    if (anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 1.05;
+        relation.reasons.push_back("owned_by_hwnd");
+    }
+    if (anchor_root_owner_hwnd > 0 && candidate_root_owner_hwnd == anchor_root_owner_hwnd) {
+        relation.score += 0.72;
+        relation.reasons.push_back("same_root_owner");
+    }
+    if (title_score > 0.0) {
+        relation.score += 0.95 * title_score;
+        relation.reasons.push_back("window_title");
+    }
+    if (query_score > 0.0) {
+        relation.score += 0.52 * query_score;
+        relation.reasons.push_back("query");
+    }
+    if (query_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 1.2;
+        relation.reasons.push_back("query_owned_child");
+    } else if (query_score >= 0.95 && anchor_root_owner_hwnd > 0 && candidate_root_owner_hwnd == anchor_root_owner_hwnd) {
+        relation.score += 0.7;
+        relation.reasons.push_back("query_same_root_owner");
+    }
+    if (anchor_root_owner_hwnd > 0 &&
+        candidate_root_owner_hwnd == anchor_root_owner_hwnd &&
+        candidate_owner_chain_depth > anchor_owner_chain_depth) {
+        relation.score += std::min(0.24, 0.08 * std::max(1, candidate_owner_chain_depth - anchor_owner_chain_depth));
+        relation.reasons.push_back("deeper_owner_chain");
+    }
+    if (snapshot.is_foreground) {
+        relation.score += 0.08;
+        relation.reasons.push_back("foreground");
+    }
+    if (snapshot.visible && snapshot.enabled) {
+        relation.score += 0.05;
+    }
+    if (snapshot_is_dialog_like(snapshot) && (query_score > 0.0 || title_score > 0.0 || anchor_pid > 0)) {
+        relation.score += 0.06;
+        relation.reasons.push_back("dialog_related");
+    }
+    return relation;
+}
+
+std::string related_window_payload_json(
+    const std::vector<WindowSnapshot>& rows,
+    const WindowSnapshot& candidate,
+    const std::vector<WindowSnapshot>& candidates,
+    long long anchor_root_owner_hwnd,
+    long anchor_pid,
+    double top_score
+) {
+    std::vector<WindowSnapshot> same_root_owner_windows;
+    std::vector<WindowSnapshot> related_windows;
+    std::vector<WindowSnapshot> owner_chain_rows;
+    int same_process_window_count = 0;
+    int owner_link_count = 0;
+    int same_root_owner_dialog_like_count = 0;
+    int max_owner_chain_depth = candidate.owner_chain_depth;
+
+    for (const WindowSnapshot& row : rows) {
+        if (anchor_pid > 0 && row.pid == anchor_pid) {
+            ++same_process_window_count;
+        }
+        if (anchor_root_owner_hwnd > 0 && row.root_owner_hwnd == anchor_root_owner_hwnd) {
+            same_root_owner_windows.push_back(row);
+            if (snapshot_is_dialog_like(row)) {
+                ++same_root_owner_dialog_like_count;
+            }
+            if (row.owner_chain_depth > max_owner_chain_depth) {
+                max_owner_chain_depth = row.owner_chain_depth;
+            }
+        }
+        if (candidate.hwnd > 0 &&
+            (row.owner_hwnd == candidate.hwnd ||
+             row.owner_hwnd == candidate.owner_hwnd ||
+             (candidate.root_owner_hwnd > 0 && row.root_owner_hwnd == candidate.root_owner_hwnd))) {
+            related_windows.push_back(row);
+        }
+    }
+
+    owner_link_count = static_cast<int>(std::count_if(
+        related_windows.begin(),
+        related_windows.end(),
+        [](const WindowSnapshot& row) { return row.hwnd > 0; }
+    ));
+
+    for (const WindowSnapshot& row : rows) {
+        if (row.hwnd == candidate.hwnd || row.hwnd == candidate.owner_hwnd || row.hwnd == candidate.root_owner_hwnd) {
+            owner_chain_rows.push_back(row);
+        }
+    }
+    std::sort(owner_chain_rows.begin(), owner_chain_rows.end(), [](const WindowSnapshot& left, const WindowSnapshot& right) {
+        if (left.owner_chain_depth != right.owner_chain_depth) {
+            return left.owner_chain_depth < right.owner_chain_depth;
+        }
+        return left.hwnd < right.hwnd;
+    });
+
+    std::ostringstream output;
+    output << "{"
+           << "\"status\":\"success\","
+           << "\"backend\":\"cpp_cython\","
+           << "\"candidate\":" << snapshot_to_json(candidate) << ","
+           << "\"same_process_window_count\":" << same_process_window_count << ","
+           << "\"related_window_count\":" << related_windows.size() << ","
+           << "\"owner_link_count\":" << owner_link_count << ","
+           << "\"owner_chain_visible\":" << ((candidate.owner_hwnd > 0 || owner_link_count > 0) ? "true" : "false") << ","
+           << "\"same_root_owner_window_count\":" << same_root_owner_windows.size() << ","
+           << "\"same_root_owner_dialog_like_count\":" << same_root_owner_dialog_like_count << ","
+           << "\"candidate_root_owner_hwnd\":" << candidate.root_owner_hwnd << ","
+           << "\"candidate_owner_chain_depth\":" << candidate.owner_chain_depth << ","
+           << "\"max_owner_chain_depth\":" << max_owner_chain_depth << ","
+           << "\"child_dialog_like_visible\":"
+           << (std::any_of(
+                   related_windows.begin(),
+                   related_windows.end(),
+                   [&candidate](const WindowSnapshot& row) {
+                       return row.hwnd != candidate.hwnd && snapshot_is_dialog_like(row);
+                   }) ? "true" : "false")
+           << ","
+           << "\"match_score\":" << top_score << ","
+           << "\"same_root_owner_titles\":[";
+    for (std::size_t index = 0; index < same_root_owner_windows.size() && index < 6; ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(same_root_owner_windows[index].title) << "\"";
+    }
+    output << "],\"same_root_owner_dialog_titles\":[";
+    int dialog_title_index = 0;
+    for (const WindowSnapshot& row : same_root_owner_windows) {
+        if (!snapshot_is_dialog_like(row)) {
+            continue;
+        }
+        if (dialog_title_index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(row.title) << "\"";
+        ++dialog_title_index;
+        if (dialog_title_index >= 6) {
+            break;
+        }
+    }
+    output << "],\"owner_chain_titles\":[";
+    for (std::size_t index = 0; index < owner_chain_rows.size() && index < 8; ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(owner_chain_rows[index].title) << "\"";
+    }
+    output << "],\"candidates\":[";
+    for (std::size_t index = 0; index < candidates.size() && index < 8; ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << snapshot_to_json(candidates[index]);
+    }
+    output << "]}";
+    return output.str();
 }
 
 }  // namespace
@@ -381,6 +611,102 @@ std::string focus_window_json(const std::string& title_contains_utf8, long long 
            << ((focus_result != FALSE || foreground == target) ? "true" : "false")
            << ",\"window\":" << snapshot_to_json(snapshot) << "}";
     return output.str();
+}
+
+std::string reacquire_related_window_json(
+    const std::string& query_utf8,
+    const std::string& window_title_utf8,
+    long long hwnd_value,
+    long pid_value,
+    int limit
+) {
+    const int safe_limit = std::max(1, std::min(limit, 500));
+    const HWND foreground = GetForegroundWindow();
+
+    std::vector<WindowSnapshot> rows;
+    rows.reserve(static_cast<std::size_t>(safe_limit));
+    EnumWindowsContext context{&rows, foreground, safe_limit};
+    EnumWindows(EnumWindowsListProc, reinterpret_cast<LPARAM>(&context));
+
+    WindowSnapshot anchor;
+    bool anchor_found = false;
+    if (hwnd_value > 0) {
+        for (const WindowSnapshot& row : rows) {
+            if (row.hwnd == hwnd_value) {
+                anchor = row;
+                anchor_found = true;
+                break;
+            }
+        }
+    }
+    if (!anchor_found && foreground != nullptr) {
+        collect_window_snapshot(foreground, foreground, anchor);
+        anchor_found = anchor.hwnd > 0;
+    }
+
+    const std::wstring query = utf8_to_wide(query_utf8);
+    const std::wstring window_title = utf8_to_wide(window_title_utf8);
+    const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
+    const long anchor_pid = pid_value > 0 ? pid_value : (anchor_found ? anchor.pid : 0);
+    const long long anchor_root_owner_hwnd =
+        anchor_found && anchor.root_owner_hwnd > 0 ? anchor.root_owner_hwnd : (anchor_hwnd > 0 ? anchor_hwnd : 0);
+    const int anchor_owner_chain_depth = anchor_found ? anchor.owner_chain_depth : 0;
+
+    std::vector<std::pair<double, WindowSnapshot>> scored_rows;
+    for (const WindowSnapshot& row : rows) {
+        const RelatedWindowScore relation = score_related_window(
+            row,
+            query,
+            window_title,
+            anchor_hwnd,
+            anchor_pid,
+            anchor_root_owner_hwnd,
+            anchor_owner_chain_depth
+        );
+        if (relation.score <= 0.0) {
+            continue;
+        }
+        scored_rows.push_back({relation.score, row});
+    }
+
+    std::sort(scored_rows.begin(), scored_rows.end(), [](const auto& left, const auto& right) {
+        if (left.first != right.first) {
+            return left.first > right.first;
+        }
+        if (left.second.is_foreground != right.second.is_foreground) {
+            return left.second.is_foreground;
+        }
+        const int left_area = std::max(0, left.second.right - left.second.left) * std::max(0, left.second.bottom - left.second.top);
+        const int right_area = std::max(0, right.second.right - right.second.left) * std::max(0, right.second.bottom - right.second.top);
+        if (left_area != right_area) {
+            return left_area > right_area;
+        }
+        return left.second.title < right.second.title;
+    });
+
+    if (scored_rows.empty()) {
+        return "{\"status\":\"missing\",\"backend\":\"cpp_cython\",\"message\":\"no matching related window candidate found\"}";
+    }
+
+    std::vector<WindowSnapshot> candidates;
+    candidates.reserve(std::min<std::size_t>(8, scored_rows.size()));
+    for (std::size_t index = 0; index < scored_rows.size() && index < 8; ++index) {
+        candidates.push_back(scored_rows[index].second);
+    }
+    const WindowSnapshot& candidate = scored_rows.front().second;
+    const double top_score = std::round(scored_rows.front().first * 1000.0) / 1000.0;
+    if (top_score < 0.42) {
+        return "{\"status\":\"missing\",\"backend\":\"cpp_cython\",\"message\":\"no matching related window candidate found\"}";
+    }
+
+    return related_window_payload_json(
+        rows,
+        candidate,
+        candidates,
+        candidate.root_owner_hwnd > 0 ? candidate.root_owner_hwnd : anchor_root_owner_hwnd,
+        candidate.pid > 0 ? candidate.pid : anchor_pid,
+        top_score
+    );
 }
 
 }  // namespace jarvis::native

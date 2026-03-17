@@ -17313,6 +17313,7 @@ def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_se
             "max_strategy_attempts": 3,
             "exploration_limit": 8,
             "max_exploration_steps": 4,
+            "max_branch_cascade_steps": 2,
         },
     )
     assert status == 200
@@ -17323,6 +17324,7 @@ def test_desktop_interact_route_forwards_surface_exploration_flow_payload(api_se
     assert payload["max_strategy_attempts"] == 3
     assert payload["exploration_limit"] == 8
     assert payload["max_exploration_steps"] == 4
+    assert payload["max_branch_cascade_steps"] == 2
 
 
 def test_desktop_interact_route_forwards_nested_exploration_history(api_server: tuple[str, FakeDesktopService]) -> None:

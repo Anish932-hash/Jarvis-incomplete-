@@ -12891,6 +12891,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_strategy_attempts: desktopCoworkerMaxStrategyAttempts,
         max_exploration_steps: desktopCoworkerMaxExplorationSteps,
         max_nested_branch_steps: desktopCoworkerMaxNestedBranchSteps,
+        max_branch_cascade_steps: desktopCoworkerMaxNestedBranchSteps,
         attempted_targets: attemptedTargets.length > 0 ? attemptedTargets : undefined,
         surface_signature_history: surfaceSignatureHistory.length > 0 ? surfaceSignatureHistory : undefined,
         branch_history: branchHistory.length > 0 ? branchHistory : undefined,
@@ -15866,6 +15867,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   explorationMission.topology_owner_chain_visible ??
                                                   false
                                               );
+                                              const topologySameRootOwnerWindowCount = Number(
+                                                (surfaceTopology?.same_root_owner_window_count as number | undefined) ??
+                                                  explorationMission.topology_same_root_owner_window_count ??
+                                                  0
+                                              );
+                                              const topologySameRootOwnerDialogLikeCount = Number(
+                                                (surfaceTopology?.same_root_owner_dialog_like_count as number | undefined) ??
+                                                  explorationMission.topology_same_root_owner_dialog_like_count ??
+                                                  0
+                                              );
+                                              const topologyActiveOwnerChainDepth = Number(
+                                                (surfaceTopology?.active_owner_chain_depth as number | undefined) ??
+                                                  explorationMission.topology_active_owner_chain_depth ??
+                                                  0
+                                              );
+                                              const topologyMaxOwnerChainDepth = Number(
+                                                (surfaceTopology?.max_owner_chain_depth as number | undefined) ??
+                                                  explorationMission.topology_max_owner_chain_depth ??
+                                                  0
+                                              );
                                               const branchHistoryTail = Array.isArray(explorationMission.branch_history_tail)
                                                 ? explorationMission.branch_history_tail.filter(
                                                     (item): item is Record<string, unknown> =>
@@ -15874,9 +15895,25 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 : [];
                                               const nestedChainCount = Number(explorationMission.nested_chain_count ?? 0);
                                               const childWindowChainCount = Number(explorationMission.child_window_chain_count ?? 0);
+                                              const dialogCascadeCount = Number(explorationMission.dialog_cascade_count ?? 0);
                                               const paneCascadeCount = Number(explorationMission.pane_cascade_count ?? 0);
                                               const drilldownCascadeCount = Number(explorationMission.drilldown_cascade_count ?? 0);
                                               const maxNestedBranchSteps = Number(explorationMission.max_nested_branch_steps ?? 0);
+                                              const branchCascadeCount = Number(explorationMission.branch_cascade_count ?? 0);
+                                              const branchCascadeKindCount = Number(
+                                                explorationMission.branch_cascade_kind_count ?? 0
+                                              );
+                                              const branchCascadeSignature = String(
+                                                explorationMission.branch_cascade_signature ?? ''
+                                              ).trim();
+                                              const maxBranchCascadeSteps = Number(
+                                                explorationMission.max_branch_cascade_steps ?? 0
+                                              );
+                                              const topologyModalChainSignature = String(
+                                                (surfaceTopology?.modal_chain_signature as string | undefined) ??
+                                                  explorationMission.topology_modal_chain_signature ??
+                                                  ''
+                                              ).trim();
                                               return (
                                                 <>
                                             <p>
@@ -15914,14 +15951,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             ) : null}
                                             {nestedChainCount > 0 ||
                                             childWindowChainCount > 0 ||
+                                            dialogCascadeCount > 0 ||
                                             paneCascadeCount > 0 ||
                                             drilldownCascadeCount > 0 ? (
                                               <p>
                                                 chain: {nestedChainCount}
+                                                {dialogCascadeCount > 0 ? ` • dialogs ${dialogCascadeCount}` : ''}
                                                 {childWindowChainCount > 0 ? ` • child windows ${childWindowChainCount}` : ''}
                                                 {paneCascadeCount > 0 ? ` • panes ${paneCascadeCount}` : ''}
                                                 {drilldownCascadeCount > 0 ? ` • drilldowns ${drilldownCascadeCount}` : ''}
                                                 {maxNestedBranchSteps > 0 ? ` • limit ${maxNestedBranchSteps}` : ''}
+                                              </p>
+                                            ) : null}
+                                            {branchCascadeCount > 0 || branchCascadeSignature ? (
+                                              <p>
+                                                cascade: {branchCascadeCount}
+                                                {branchCascadeKindCount > 0 ? ` • kinds ${branchCascadeKindCount}` : ''}
+                                                {branchCascadeSignature ? ` • ${branchCascadeSignature}` : ''}
+                                                {maxBranchCascadeSteps > 0 ? ` • limit ${maxBranchCascadeSteps}` : ''}
                                               </p>
                                             ) : null}
                                             {rustRouterHint || rustScore !== null || rustRank !== null ? (
@@ -15936,13 +15983,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             topologyDialogLikeCount > 0 ||
                                             topologySameProcessWindowCount > 0 ||
                                             topologyOwnerLinkCount > 0 ||
-                                            topologyOwnerChainVisible ? (
+                                            topologyOwnerChainVisible ||
+                                            topologySameRootOwnerWindowCount > 0 ||
+                                            topologySameRootOwnerDialogLikeCount > 0 ||
+                                            topologyActiveOwnerChainDepth > 0 ||
+                                            topologyMaxOwnerChainDepth > 0 ||
+                                            Boolean(topologyModalChainSignature) ? (
                                               <p>
                                                 topology: windows {topologyVisibleWindowCount}
+                                                {topologyModalChainSignature ? ` • modal ${topologyModalChainSignature}` : ''}
+                                                {topologySameRootOwnerDialogLikeCount > 0
+                                                  ? ` • root-owner dialogs ${topologySameRootOwnerDialogLikeCount}`
+                                                  : ''}
                                                 {` • dialogs ${topologyDialogLikeCount}`}
                                                 {` • same-process ${topologySameProcessWindowCount}`}
                                                 {topologyOwnerLinkCount > 0 ? ` • owner-links ${topologyOwnerLinkCount}` : ''}
                                                 {topologyOwnerChainVisible ? ' • owner-chain yes' : ''}
+                                                {topologySameRootOwnerWindowCount > 0 ? ` • root-owner ${topologySameRootOwnerWindowCount}` : ''}
+                                                {topologyActiveOwnerChainDepth > 0 || topologyMaxOwnerChainDepth > 0
+                                                  ? ` • depth ${topologyActiveOwnerChainDepth}/${topologyMaxOwnerChainDepth}`
+                                                  : ''}
                                                 {topologySignature ? ` • ${topologySignature}` : ''}
                                               </p>
                                             ) : null}

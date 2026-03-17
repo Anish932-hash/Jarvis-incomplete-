@@ -488,6 +488,11 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
                 "related_window_count": 2,
                 "owner_link_count": 2,
                 "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "active_owner_chain_depth": 1,
+                "max_owner_chain_depth": 2,
+                "modal_chain_signature": "4400|2|2|1",
                 "child_dialog_like_visible": True,
             },
             "reacquire_window": lambda _payload: {
@@ -496,10 +501,18 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
                 "related_window_count": 2,
                 "owner_link_count": 2,
                 "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "candidate_root_owner_hwnd": 4400,
+                "candidate_owner_chain_depth": 2,
+                "max_owner_chain_depth": 2,
+                "modal_chain_signature": "4400|2|2|2",
                 "child_dialog_like_visible": True,
                 "candidate": {
                     "hwnd": 4410,
                     "owner_hwnd": 4401,
+                    "root_owner_hwnd": 4400,
+                    "owner_chain_depth": 2,
                     "title": "Pair device",
                     "app_name": "settings",
                     "process_name": "SystemSettings.exe",
@@ -516,11 +529,21 @@ def test_desktop_action_router_surface_snapshot_promotes_native_reacquired_candi
     assert payload["target_window"]["hwnd"] == 4410
     assert payload["window_reacquisition"]["candidate"]["title"] == "Pair device"
     assert payload["window_reacquisition"]["candidate"]["owner_hwnd"] == 4401
+    assert payload["window_reacquisition"]["candidate"]["root_owner_hwnd"] == 4400
+    assert payload["window_reacquisition"]["candidate"]["owner_chain_depth"] == 2
     assert payload["window_reacquisition"]["owner_chain_visible"] is True
     assert payload["window_reacquisition"]["owner_link_count"] == 2
+    assert payload["window_reacquisition"]["same_root_owner_window_count"] == 3
+    assert payload["window_reacquisition"]["same_root_owner_dialog_like_count"] == 2
+    assert payload["window_reacquisition"]["modal_chain_signature"] == "4400|2|2|2"
     assert payload["native_window_topology"]["same_process_window_count"] == 3
     assert payload["native_window_topology"]["owner_chain_visible"] is True
     assert payload["native_window_topology"]["owner_link_count"] == 2
+    assert payload["native_window_topology"]["same_root_owner_window_count"] == 3
+    assert payload["native_window_topology"]["same_root_owner_dialog_like_count"] == 2
+    assert payload["native_window_topology"]["active_owner_chain_depth"] == 1
+    assert payload["native_window_topology"]["max_owner_chain_depth"] == 2
+    assert payload["native_window_topology"]["modal_chain_signature"] == "4400|2|2|1"
     assert payload["native_window_topology"]["child_dialog_like_visible"] is True
 
 
@@ -1056,6 +1079,168 @@ def test_desktop_action_router_advise_surface_exploration_prefers_native_child_d
     assert payload["exploration_selection"]["candidate_id"] == "dialog_ok"
     assert float(payload["exploration_selection"]["branch_score"]) >= 0.2
     assert payload["execution_plan"][-1]["args"]["query"] == "OK"
+
+
+def test_desktop_action_router_advise_surface_exploration_forwards_branch_cascade_context_to_rust(tmp_path: Path) -> None:
+    registry = _build_registry(
+        tmp_path,
+        ["Windows Settings                          Microsoft.WindowsSettings   1.0                  winget"],
+    )
+    rust_calls: List[str] = []
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {"status": "success", "windows": []},
+            "active_window": lambda _payload: {"status": "success", "window": {}},
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+        },
+        app_profile_registry=registry,
+        workflow_memory=_isolated_workflow_memory(),
+        rust_request_handler=lambda event, payload, _timeout_s: (
+            rust_calls.append(event)
+            or (
+                {
+                    "status": "success",
+                    "data": {
+                        "router_hint": "prefer_branch_cascade_dialog",
+                        "prefer_nested_branch": True,
+                        "loop_risk": False,
+                        "ranked_candidates": [
+                            {
+                                "selection_key": router._surface_exploration_selection_key(
+                                    kind="hypothesis",
+                                    candidate_id="dialog_ok",
+                                    selected_action="press_dialog_button",
+                                    label="OK",
+                                ),
+                                "rank": 1,
+                                "rust_score": 0.31,
+                                "router_hint": "prefer_branch_cascade_dialog",
+                                "reasons": ["branch_cascade_dialog_resolution:2"],
+                            }
+                        ],
+                    },
+                }
+                if event == "surface_exploration_router"
+                and payload.get("branch_cascade_count") == 2
+                and payload.get("branch_cascade_kind_count") == 2
+                and payload.get("branch_cascade_signature") == "child_window_chain>dialog_shift"
+                else {"status": "error", "message": "unexpected rust payload"}
+            )
+        ),
+        settle_delay_s=0.0,
+    )
+    router.surface_exploration_plan = lambda **_kwargs: {  # type: ignore[method-assign]
+        "status": "success",
+        "surface_mode": "dialog_resolution",
+        "automation_ready": True,
+        "manual_attention_required": False,
+        "hypothesis_count": 2,
+        "branch_action_count": 0,
+        "top_hypotheses": [
+            {
+                "candidate_id": "dialog_ok",
+                "label": "OK",
+                "suggested_action": "press_dialog_button",
+                "confidence": 0.74,
+                "reason": "OK resolves the active dialog branch.",
+                "action_payload": {
+                    "action": "press_dialog_button",
+                    "app_name": "settings",
+                    "window_title": "Pair device",
+                    "query": "OK",
+                    "control_type": "Button",
+                    "element_id": "dialog_ok",
+                },
+            },
+            {
+                "candidate_id": "row_previous",
+                "label": "Previous page",
+                "suggested_action": "select_list_item",
+                "confidence": 0.77,
+                "reason": "Previous page is visible.",
+                "action_payload": {
+                    "action": "select_list_item",
+                    "app_name": "settings",
+                    "window_title": "Pair device",
+                    "query": "Previous page",
+                    "control_type": "ListItem",
+                    "element_id": "row_previous",
+                },
+            },
+        ],
+        "branch_actions": [],
+        "surface_snapshot": {
+            "status": "success",
+            "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+            "target_window": {"hwnd": 2411, "title": "Pair device"},
+            "active_window": {"hwnd": 2411, "title": "Pair device"},
+            "candidate_windows": [{"hwnd": 2411, "title": "Pair device"}],
+            "capabilities": {"accessibility": {"available": True}, "vision": {"available": True}},
+            "safety_signals": {"dialog_visible": True},
+            "surface_flags": {"window_targeted": True, "dialog_visible": True},
+            "native_window_topology": {
+                "topology_signature": "settings|4|3|3",
+                "same_process_window_count": 4,
+                "related_window_count": 3,
+                "owner_link_count": 3,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "active_owner_chain_depth": 2,
+                "max_owner_chain_depth": 2,
+                "modal_chain_signature": "2410|2|2|2",
+                "child_dialog_like_visible": True,
+            },
+            "window_reacquisition": {
+                "candidate": {"hwnd": 2411, "title": "Pair device", "match_score": 0.85},
+                "same_process_window_count": 4,
+                "related_window_count": 3,
+                "owner_link_count": 3,
+                "owner_chain_visible": True,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
+                "modal_chain_signature": "2410|2|2|2",
+                "child_dialog_like_visible": True,
+            },
+            "observation": {"screen_hash": "pair_device_branch_cascade"},
+        },
+        "filters": {"app_name": "settings", "window_title": "Pair device", "query": "Bluetooth"},
+        "message": "A mixed dialog cascade is active in Bluetooth settings.",
+    }
+
+    payload = router.advise(
+        {
+            "action": "advance_surface_exploration",
+            "app_name": "settings",
+            "window_title": "Pair device",
+            "query": "Bluetooth",
+            "branch_history": [
+                {
+                    "transition_kind": "child_window_chain",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "row_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Pair device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                },
+                {
+                    "transition_kind": "dialog_shift",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_confirm",
+                    "selected_candidate_label": "Confirm",
+                    "window_title": "Pair device",
+                    "surface_path_tail": ["Devices", "Bluetooth", "Pair device"],
+                },
+            ],
+        }
+    )
+
+    assert payload["status"] == "success"
+    assert payload["exploration_selection"]["selected_action"] == "press_dialog_button"
+    assert payload["exploration_selection"]["candidate_id"] == "dialog_ok"
+    assert payload["exploration_selection"]["rust_router_hint"] == "prefer_branch_cascade_dialog"
+    assert "surface_exploration_router" in rust_calls
 
 
 def test_desktop_action_router_execute_surface_exploration_persists_followup_mission(tmp_path: Path) -> None:
@@ -2171,14 +2356,29 @@ def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_li
                         "related_window_count": 2,
                         "owner_link_count": 2,
                         "owner_chain_visible": True,
+                        "same_root_owner_window_count": 3,
+                        "same_root_owner_dialog_like_count": 2,
+                        "active_owner_chain_depth": 1,
+                        "max_owner_chain_depth": 2,
+                        "modal_chain_signature": "2221|2|2|1",
                         "child_dialog_like_visible": True,
                     },
                     "window_reacquisition": {
-                        "candidate": {"hwnd": 2222, "title": "Pair device", "match_score": 0.84, "owner_hwnd": 2221},
+                        "candidate": {
+                            "hwnd": 2222,
+                            "title": "Pair device",
+                            "match_score": 0.84,
+                            "owner_hwnd": 2221,
+                            "root_owner_hwnd": 2221,
+                            "owner_chain_depth": 1,
+                        },
                         "same_process_window_count": 3,
                         "related_window_count": 2,
                         "owner_link_count": 2,
                         "owner_chain_visible": True,
+                        "same_root_owner_window_count": 3,
+                        "same_root_owner_dialog_like_count": 2,
+                        "modal_chain_signature": "2221|2|2|1",
                         "child_dialog_like_visible": True,
                     },
                     "form_page_state": {
@@ -2230,14 +2430,29 @@ def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_li
                     "related_window_count": 3,
                     "owner_link_count": 3,
                     "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "active_owner_chain_depth": 2,
+                    "max_owner_chain_depth": 2,
+                    "modal_chain_signature": "2221|2|2|2",
                     "child_dialog_like_visible": True,
                 },
                 "window_reacquisition": {
-                    "candidate": {"hwnd": 2223, "title": "Confirm Pairing", "match_score": 0.89, "owner_hwnd": 2222},
+                    "candidate": {
+                        "hwnd": 2223,
+                        "title": "Confirm Pairing",
+                        "match_score": 0.89,
+                        "owner_hwnd": 2222,
+                        "root_owner_hwnd": 2221,
+                        "owner_chain_depth": 2,
+                    },
                     "same_process_window_count": 4,
                     "related_window_count": 3,
                     "owner_link_count": 3,
                     "owner_chain_visible": True,
+                    "same_root_owner_window_count": 3,
+                    "same_root_owner_dialog_like_count": 2,
+                    "modal_chain_signature": "2221|2|2|2",
                     "child_dialog_like_visible": True,
                 },
                 "form_page_state": {
@@ -2260,6 +2475,7 @@ def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_li
             "verify_after_action": False,
             "max_exploration_steps": 3,
             "max_nested_branch_steps": 1,
+            "max_branch_cascade_steps": 1,
             "branch_history": [
                 {
                     "transition_kind": "child_window",
@@ -2277,12 +2493,30 @@ def test_desktop_action_router_surface_exploration_flow_respects_nested_chain_li
     assert payload["status"] == "partial"
     assert invoked_targets
     assert invoked_targets[0] in {"dialog_pair", "Pair"}
-    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_nested_chain_limit_reached"
+    assert payload["exploration_mission"]["stop_reason_code"] == "exploration_branch_cascade_limit_reached"
+    assert payload["exploration_mission"]["transition_kind"] == "child_window_chain"
+    assert payload["exploration_mission"]["last_branch_kind"] == "child_window_chain"
     assert payload["exploration_mission"]["nested_chain_count"] == 2
     assert payload["exploration_mission"]["child_window_chain_count"] == 2
+    assert payload["exploration_mission"]["dialog_cascade_count"] == 0
     assert payload["exploration_mission"]["max_nested_branch_steps"] == 1
+    assert payload["exploration_mission"]["branch_cascade_count"] == 1
+    assert payload["exploration_mission"]["branch_cascade_kind_count"] == 1
+    assert payload["exploration_mission"]["branch_cascade_signature"] == "child_window_chain"
+    assert payload["exploration_mission"]["max_branch_cascade_steps"] == 1
+    assert payload["exploration_mission"]["topology_same_root_owner_window_count"] == 3
+    assert payload["exploration_mission"]["topology_same_root_owner_dialog_like_count"] == 2
+    assert payload["exploration_mission"]["topology_active_owner_chain_depth"] == 2
+    assert payload["exploration_mission"]["topology_max_owner_chain_depth"] == 2
+    assert payload["exploration_mission"]["topology_modal_chain_signature"] == "2221|2|2|2"
     assert payload["mission_record"]["recovery_profile"] == "resume_ready"
     assert payload["mission_record"]["nested_chain_count"] == 2
+    assert payload["mission_record"]["branch_cascade_count"] == 1
+    assert payload["mission_record"]["branch_cascade_kind_count"] == 1
+    assert payload["mission_record"]["branch_cascade_signature"] == "child_window_chain"
+    assert payload["mission_record"]["topology_same_root_owner_window_count"] == 3
+    assert payload["mission_record"]["topology_same_root_owner_dialog_like_count"] == 2
+    assert payload["mission_record"]["dialog_cascade_count"] == 0
 
 
 def test_desktop_action_router_builds_navigation_workflow_for_browser(tmp_path: Path) -> None:

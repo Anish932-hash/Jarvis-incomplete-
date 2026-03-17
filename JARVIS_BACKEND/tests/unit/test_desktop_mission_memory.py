@@ -250,6 +250,11 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "topology_same_process_window_count": 2,
             "topology_owner_link_count": 2,
             "topology_owner_chain_visible": True,
+            "topology_same_root_owner_window_count": 3,
+            "topology_same_root_owner_dialog_like_count": 2,
+            "topology_active_owner_chain_depth": 1,
+            "topology_max_owner_chain_depth": 2,
+            "topology_modal_chain_signature": "5000|2|2|1",
             "transition_kind": "child_window",
             "nested_surface_progressed": True,
             "child_window_adopted": True,
@@ -262,6 +267,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "surface_path_depth": 2,
             "nested_chain_count": 1,
             "child_window_chain_count": 1,
+            "dialog_cascade_count": 0,
             "pane_cascade_count": 0,
             "drilldown_cascade_count": 0,
             "branch_history": [
@@ -302,6 +308,11 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["topology_same_process_window_count"] == 2
     assert ready_mission["topology_owner_link_count"] == 2
     assert ready_mission["topology_owner_chain_visible"] is True
+    assert ready_mission["topology_same_root_owner_window_count"] == 3
+    assert ready_mission["topology_same_root_owner_dialog_like_count"] == 2
+    assert ready_mission["topology_active_owner_chain_depth"] == 1
+    assert ready_mission["topology_max_owner_chain_depth"] == 2
+    assert ready_mission["topology_modal_chain_signature"] == "5000|2|2|1"
     assert ready_mission["attempted_target_count"] == 1
     assert ready_mission["alternative_target_count"] == 1
     assert ready_mission["transition_kind"] == "child_window"
@@ -316,6 +327,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["surface_path_depth"] == 2
     assert ready_mission["nested_chain_count"] == 1
     assert ready_mission["child_window_chain_count"] == 1
+    assert ready_mission["dialog_cascade_count"] == 0
     assert ready_mission["pane_cascade_count"] == 0
     assert ready_mission["drilldown_cascade_count"] == 0
     assert ready_mission["branch_history_tail"][0]["window_title"] == "Bluetooth & devices"
@@ -372,6 +384,7 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
                 "app_name": "settings",
                 "query": "pair device",
                 "max_nested_branch_steps": 1,
+                "max_branch_cascade_steps": 1,
             },
         },
         blocking_surface={
@@ -380,33 +393,63 @@ def test_desktop_mission_memory_tracks_nested_chain_limit_resume_ready(tmp_path:
             "surface_mode": "dialog_resolution",
             "nested_chain_count": 2,
             "child_window_chain_count": 2,
+            "dialog_cascade_count": 1,
+            "branch_cascade_count": 2,
+            "branch_cascade_kind_count": 2,
+            "branch_cascade_signature": "child_window_chain>dialog_shift",
+            "max_branch_cascade_steps": 1,
             "topology_owner_link_count": 2,
             "topology_owner_chain_visible": True,
+            "topology_same_root_owner_window_count": 3,
+            "topology_same_root_owner_dialog_like_count": 2,
+            "topology_active_owner_chain_depth": 2,
+            "topology_max_owner_chain_depth": 2,
+            "topology_modal_chain_signature": "5000|2|2|2",
         },
         mission_payload={
             "status": "partial",
-            "message": "JARVIS paused at the configured nested child-window chain limit.",
-            "stop_reason_code": "exploration_nested_chain_limit_reached",
+            "message": "JARVIS paused at the configured branch-cascade limit.",
+            "stop_reason_code": "exploration_branch_cascade_limit_reached",
             "surface_mode": "dialog_resolution",
             "nested_chain_count": 2,
             "child_window_chain_count": 2,
+            "dialog_cascade_count": 1,
             "pane_cascade_count": 0,
             "drilldown_cascade_count": 0,
+            "branch_cascade_count": 2,
+            "branch_cascade_kind_count": 2,
+            "branch_cascade_signature": "child_window_chain>dialog_shift",
+            "max_branch_cascade_steps": 1,
             "topology_owner_link_count": 2,
             "topology_owner_chain_visible": True,
+            "topology_same_root_owner_window_count": 3,
+            "topology_same_root_owner_dialog_like_count": 2,
+            "topology_active_owner_chain_depth": 2,
+            "topology_max_owner_chain_depth": 2,
+            "topology_modal_chain_signature": "5000|2|2|2",
         },
-        message="JARVIS paused at the configured nested child-window chain limit.",
+        message="JARVIS paused at the configured branch-cascade limit.",
     )
 
     mission = saved["mission"]
     snapshot = memory.snapshot(status="paused", mission_kind="exploration", app_name="settings")
 
     assert mission["recovery_profile"] == "resume_ready"
-    assert mission["recovery_priority"] == 90
+    assert mission["recovery_priority"] == 91
     assert mission["resume_ready"] is True
     assert mission["nested_chain_count"] == 2
     assert mission["child_window_chain_count"] == 2
+    assert mission["dialog_cascade_count"] == 1
+    assert mission["branch_cascade_count"] == 2
+    assert mission["branch_cascade_kind_count"] == 2
+    assert mission["branch_cascade_signature"] == "child_window_chain>dialog_shift"
+    assert mission["max_branch_cascade_steps"] == 1
     assert mission["topology_owner_link_count"] == 2
     assert mission["topology_owner_chain_visible"] is True
+    assert mission["topology_same_root_owner_window_count"] == 3
+    assert mission["topology_same_root_owner_dialog_like_count"] == 2
+    assert mission["topology_active_owner_chain_depth"] == 2
+    assert mission["topology_max_owner_chain_depth"] == 2
+    assert mission["topology_modal_chain_signature"] == "5000|2|2|2"
     assert snapshot["recovery_profile_counts"] == {"resume_ready": 1}
-    assert snapshot["stop_reason_counts"] == {"exploration_nested_chain_limit_reached": 1}
+    assert snapshot["stop_reason_counts"] == {"exploration_branch_cascade_limit_reached": 1}

@@ -9,6 +9,13 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
     string list_windows_json(int limit) except +
     string active_window_json() except +
     string focus_window_json(const string& title_contains_utf8, long long hwnd_value) except +
+    string reacquire_related_window_json(
+        const string& query_utf8,
+        const string& window_title_utf8,
+        long long hwnd_value,
+        long pid_value,
+        int limit
+    ) except +
 
 
 cdef object _decode_payload(const string& payload):
@@ -28,3 +35,20 @@ def focus_window(title_contains="", hwnd=0):
     cdef string encoded_title = str(title_contains or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
     return _decode_payload(focus_window_json(encoded_title, hwnd_value))
+
+
+def reacquire_related_window(query="", window_title="", hwnd=0, pid=0, limit=120):
+    cdef string encoded_query = str(query or "").encode("utf-8")
+    cdef string encoded_window_title = str(window_title or "").encode("utf-8")
+    cdef long long hwnd_value = int(hwnd or 0)
+    cdef long pid_value = int(pid or 0)
+    cdef int safe_limit = max(1, min(int(limit or 120), 500))
+    return _decode_payload(
+        reacquire_related_window_json(
+            encoded_query,
+            encoded_window_title,
+            hwnd_value,
+            pid_value,
+            safe_limit,
+        )
+    )

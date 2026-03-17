@@ -171,7 +171,7 @@ class WindowManager:
         class_name = str(raw.get("class_name", "") or "")
         hwnd = int(raw.get("hwnd", 0) or 0)
         owner_hwnd = int(raw.get("owner_hwnd", 0) or 0)
-        root_owner_hwnd = int(raw.get("root_owner_hwnd", hwnd or 0) or hwnd or 0)
+        root_owner_hwnd = int(raw.get("root_owner_hwnd", 0) or 0)
         owner_chain_depth = max(0, int(raw.get("owner_chain_depth", 0) or 0))
         pid = int(raw.get("pid", 0) or 0)
         left = int(raw.get("left", 0) or 0)
@@ -550,6 +550,137 @@ class WindowManager:
             "window": window,
         }
 
+    def _native_reacquire_window(
+        self,
+        *,
+        query: str = "",
+        window_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        limit: int = 80,
+    ) -> Dict[str, Any] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.reacquire_related_window(
+                query=query,
+                window_title=window_title,
+                hwnd=hwnd,
+                pid=pid,
+                limit=limit,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        candidate = self._compose_window_info(payload.get("candidate", {}), observation_backend=backend)
+        if not candidate:
+            return None
+        candidates = [
+            normalized
+            for normalized in (
+                self._compose_window_info(item, observation_backend=backend)
+                for item in payload.get("candidates", []) or []
+            )
+            if normalized
+        ]
+        candidates = self._enrich_owner_chain_metrics(candidates)
+        if not any(int(row.get("hwnd", 0) or 0) == int(candidate.get("hwnd", 0) or 0) for row in candidates):
+            candidates.insert(0, candidate)
+        candidates = self._enrich_owner_chain_metrics(candidates)
+        related_windows = self._related_window_cluster(
+            windows=candidates,
+            seed_window=candidate,
+            query=query,
+            window_title=window_title,
+            app_name=str(candidate.get("app_name", "") or "").strip(),
+        )
+        candidate_hwnd = int(candidate.get("hwnd", 0) or 0)
+        candidate_root_owner_hwnd = int(candidate.get("root_owner_hwnd", 0) or candidate_hwnd or 0)
+        same_root_owner_windows = [
+            dict(row)
+            for row in candidates
+            if candidate_root_owner_hwnd and int(row.get("root_owner_hwnd", 0) or 0) == candidate_root_owner_hwnd
+        ]
+        same_root_owner_dialog_windows = [
+            dict(row)
+            for row in same_root_owner_windows
+            if isinstance(row.get("surface_hints", {}), dict)
+            and bool(row.get("surface_hints", {}).get("dialog_like", False))
+        ]
+        owner_linked_windows = [
+            dict(row)
+            for row in related_windows
+            if (
+                candidate_hwnd and int(row.get("owner_hwnd", 0) or 0) == candidate_hwnd
+            )
+            or (
+                candidate_root_owner_hwnd
+                and int(row.get("root_owner_hwnd", 0) or 0) == candidate_root_owner_hwnd
+            )
+        ]
+        owner_chain_titles = [
+            str(item).strip()
+            for item in payload.get("owner_chain_titles", [])
+            if str(item).strip()
+        ] if isinstance(payload.get("owner_chain_titles", []), list) else [
+            str(row.get("title", "") or "").strip()
+            for row in self._owner_chain_rows(candidate, windows=candidates)
+            if str(row.get("title", "") or "").strip()
+        ]
+        same_root_owner_titles = [
+            str(item).strip()
+            for item in payload.get("same_root_owner_titles", [])
+            if str(item).strip()
+        ] if isinstance(payload.get("same_root_owner_titles", []), list) else [
+            str(row.get("title", "") or "").strip()
+            for row in same_root_owner_windows[:6]
+            if str(row.get("title", "") or "").strip()
+        ]
+        same_root_owner_dialog_titles = [
+            str(item).strip()
+            for item in payload.get("same_root_owner_dialog_titles", [])
+            if str(item).strip()
+        ] if isinstance(payload.get("same_root_owner_dialog_titles", []), list) else [
+            str(row.get("title", "") or "").strip()
+            for row in same_root_owner_dialog_windows[:6]
+            if str(row.get("title", "") or "").strip()
+        ]
+        modal_chain_signature = "|".join(
+            [
+                str(candidate_root_owner_hwnd or 0),
+                str(len(same_root_owner_dialog_windows)),
+                str(max(0, int(candidate.get("owner_chain_depth", 0) or 0))),
+                *same_root_owner_dialog_titles[:4],
+            ]
+        )
+        return {
+            "status": "success",
+            "backend": backend,
+            "query": str(query or "").strip(),
+            "window_title": str(window_title or "").strip(),
+            "candidate": candidate,
+            "candidates": [dict(row) for row in candidates[:8]],
+            "related_windows": [dict(row) for row in related_windows[:8]],
+            "owner_windows": [dict(row) for row in owner_linked_windows[:8]],
+            "same_process_window_count": max(0, int(payload.get("same_process_window_count", 0) or 0)),
+            "related_window_count": max(0, int(payload.get("related_window_count", len(related_windows)) or len(related_windows))),
+            "owner_link_count": max(0, int(payload.get("owner_link_count", len(owner_linked_windows)) or len(owner_linked_windows))),
+            "owner_chain_visible": bool(payload.get("owner_chain_visible", False)),
+            "same_root_owner_window_count": max(0, int(payload.get("same_root_owner_window_count", len(same_root_owner_windows)) or len(same_root_owner_windows))),
+            "same_root_owner_dialog_like_count": max(0, int(payload.get("same_root_owner_dialog_like_count", len(same_root_owner_dialog_windows)) or len(same_root_owner_dialog_windows))),
+            "candidate_root_owner_hwnd": int(payload.get("candidate_root_owner_hwnd", candidate_root_owner_hwnd) or candidate_root_owner_hwnd),
+            "candidate_owner_chain_depth": max(0, int(payload.get("candidate_owner_chain_depth", candidate.get("owner_chain_depth", 0)) or candidate.get("owner_chain_depth", 0) or 0)),
+            "max_owner_chain_depth": max(0, int(payload.get("max_owner_chain_depth", max((int(row.get("owner_chain_depth", 0) or 0) for row in same_root_owner_windows), default=0)) or 0)),
+            "child_dialog_like_visible": bool(payload.get("child_dialog_like_visible", False)),
+            "owner_chain_titles": owner_chain_titles[:8],
+            "same_root_owner_titles": same_root_owner_titles[:6],
+            "same_root_owner_dialog_titles": same_root_owner_dialog_titles[:6],
+            "modal_chain_signature": modal_chain_signature,
+            "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
+        }
+
     def window_topology_snapshot(
         self,
         *,
@@ -652,6 +783,12 @@ class WindowManager:
                 if int(row.get("hwnd", 0) or 0) > 0
             }
         )
+        same_root_owner_dialog_windows = [
+            dict(row)
+            for row in same_root_owner_windows
+            if isinstance(row.get("surface_hints", {}), dict)
+            and bool(row.get("surface_hints", {}).get("dialog_like", False))
+        ]
         owner_chain_visible = bool(
             owner_link_count > 0
             or (active_hwnd > 0 and active_owner_hwnd > 0)
@@ -715,6 +852,7 @@ class WindowManager:
             "owner_link_count": owner_link_count,
             "owner_chain_visible": owner_chain_visible,
             "same_root_owner_window_count": len(same_root_owner_windows),
+            "same_root_owner_dialog_like_count": len(same_root_owner_dialog_windows),
             "active_owner_chain_depth": active_owner_chain_depth,
             "max_owner_chain_depth": max_owner_chain_depth,
             "child_dialog_like_visible": bool(child_dialog_like_visible),
@@ -722,7 +860,20 @@ class WindowManager:
             "related_window_titles": [str(row.get("title", "") or "").strip() for row in related_windows[:6] if str(row.get("title", "") or "").strip()],
             "owner_window_titles": [str(row.get("title", "") or "").strip() for row in owner_linked_windows[:6] if str(row.get("title", "") or "").strip()],
             "same_root_owner_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_windows[:6] if str(row.get("title", "") or "").strip()],
+            "same_root_owner_dialog_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_dialog_windows[:6] if str(row.get("title", "") or "").strip()],
             "owner_chain_titles": owner_chain_titles[:8],
+            "modal_chain_signature": "|".join(
+                [
+                    str(active_root_owner_hwnd or 0),
+                    str(len(same_root_owner_dialog_windows)),
+                    str(active_owner_chain_depth),
+                    *[
+                        str(row.get("title", "") or "").strip()
+                        for row in same_root_owner_dialog_windows[:4]
+                        if str(row.get("title", "") or "").strip()
+                    ],
+                ]
+            ),
             "topology_signature": topology_signature,
         }
         if include_windows:
@@ -746,6 +897,17 @@ class WindowManager:
         limit: int = 80,
     ) -> Dict[str, Any]:
         bounded = max(1, min(int(limit), 300))
+        native_payload = self._native_reacquire_window(
+            query=query,
+            window_title=window_title,
+            hwnd=hwnd,
+            pid=pid,
+            limit=bounded,
+        )
+        if native_payload is not None:
+            native_payload["app_name"] = str(app_name or "").strip()
+            native_payload["window_signature"] = str(window_signature or "").strip()
+            return native_payload
         windows = self.list_windows()[:bounded]
         anchor_window = next(
             (
@@ -831,6 +993,12 @@ class WindowManager:
                 if int(row.get("hwnd", 0) or 0) > 0
             }
         ) if candidate else 0
+        same_root_owner_dialog_windows = [
+            dict(row)
+            for row in same_root_owner_windows
+            if isinstance(row.get("surface_hints", {}), dict)
+            and bool(row.get("surface_hints", {}).get("dialog_like", False))
+        ] if candidate else []
         owner_chain_titles = [
             str(row.get("title", "") or "").strip()
             for row in self._owner_chain_rows(candidate, windows=windows)
@@ -858,6 +1026,7 @@ class WindowManager:
                 )
             ),
             "same_root_owner_window_count": len(same_root_owner_windows),
+            "same_root_owner_dialog_like_count": len(same_root_owner_dialog_windows),
             "candidate_root_owner_hwnd": int(candidate.get("root_owner_hwnd", 0) or 0) if candidate else 0,
             "candidate_owner_chain_depth": max(0, int(candidate.get("owner_chain_depth", 0) or 0)) if candidate else 0,
             "max_owner_chain_depth": max_owner_chain_depth,
@@ -877,6 +1046,19 @@ class WindowManager:
             "message": "candidate_reacquired" if status == "success" else "no matching related window candidate found",
             "owner_chain_titles": owner_chain_titles[:8],
             "same_root_owner_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_windows[:6] if str(row.get("title", "") or "").strip()],
+            "same_root_owner_dialog_titles": [str(row.get("title", "") or "").strip() for row in same_root_owner_dialog_windows[:6] if str(row.get("title", "") or "").strip()],
+            "modal_chain_signature": "|".join(
+                [
+                    str(int(candidate.get("root_owner_hwnd", 0) or 0) if candidate else 0),
+                    str(len(same_root_owner_dialog_windows)),
+                    str(max(0, int(candidate.get("owner_chain_depth", 0) or 0)) if candidate else 0),
+                    *[
+                        str(row.get("title", "") or "").strip()
+                        for row in same_root_owner_dialog_windows[:4]
+                        if str(row.get("title", "") or "").strip()
+                    ],
+                ]
+            ),
         }
         if include_candidates:
             payload["candidates"] = [dict(row) for row in candidates]

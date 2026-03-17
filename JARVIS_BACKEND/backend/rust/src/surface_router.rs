@@ -66,6 +66,8 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_same_root_owner_window_count: u32,
     #[serde(default)]
+    pub native_same_root_owner_dialog_like_count: u32,
+    #[serde(default)]
     pub native_active_owner_chain_depth: u32,
     #[serde(default)]
     pub native_max_owner_chain_depth: u32,
@@ -73,6 +75,14 @@ pub struct SurfaceExplorationRouterInput {
     pub native_child_dialog_like_visible: bool,
     #[serde(default)]
     pub native_topology_signature: String,
+    #[serde(default)]
+    pub native_modal_chain_signature: String,
+    #[serde(default)]
+    pub branch_cascade_count: u32,
+    #[serde(default)]
+    pub branch_cascade_kind_count: u32,
+    #[serde(default)]
+    pub branch_cascade_signature: String,
     #[serde(default)]
     pub selection_rows: Vec<SurfaceExplorationSelectionRow>,
     #[serde(default)]
@@ -187,6 +197,7 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
     let mut query_window_match_count = 0usize;
     let mut owner_link_count = 0usize;
     let mut same_root_owner_window_count = 0usize;
+    let mut same_root_owner_dialog_like_count = 0usize;
     let mut max_owner_chain_depth = active_owner_chain_depth as usize;
     let mut window_title_tail: Vec<String> = Vec::new();
     let mut class_name_tail: Vec<String> = Vec::new();
@@ -239,6 +250,14 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
             if active_root_owner_hwnd > 0 && row_root_owner_hwnd == active_root_owner_hwnd {
                 same_root_owner_window_count += 1;
                 owner_title_tail.push(title.to_string());
+                if row
+                    .get("surface_hints")
+                    .and_then(|value| value.get("dialog_like"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    same_root_owner_dialog_like_count += 1;
+                }
             }
         }
         let class_name = row
@@ -260,6 +279,17 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         windows.len(),
         dialog_like_count,
     );
+    let modal_chain_signature = if active_root_owner_hwnd > 0 || same_root_owner_window_count > 0 {
+        format!(
+            "{}|{}|{}|{}",
+            active_root_owner_hwnd,
+            same_root_owner_window_count,
+            same_root_owner_dialog_like_count,
+            max_owner_chain_depth
+        )
+    } else {
+        String::new()
+    };
 
     Ok(json!({
         "status": "success",
@@ -273,6 +303,7 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         "owner_link_count": owner_link_count,
         "owner_chain_visible": owner_link_count > 0 || active_owner_chain_depth > 0,
         "same_root_owner_window_count": same_root_owner_window_count,
+        "same_root_owner_dialog_like_count": same_root_owner_dialog_like_count,
         "active_owner_chain_depth": active_owner_chain_depth,
         "max_owner_chain_depth": max_owner_chain_depth,
         "window_title_tail": window_title_tail.into_iter().take(8).collect::<Vec<_>>(),
@@ -280,6 +311,7 @@ pub fn window_topology_snapshot(query: &str) -> anyhow::Result<Value> {
         "class_name_tail": class_name_tail.into_iter().take(8).collect::<Vec<_>>(),
         "windows": sample_windows,
         "topology_signature": topology_signature,
+        "modal_chain_signature": modal_chain_signature,
     }))
 }
 
@@ -346,6 +378,12 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32,
     );
+    let native_same_root_owner_dialog_like_count = input.native_same_root_owner_dialog_like_count.max(
+        topology
+            .get("same_root_owner_dialog_like_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+    );
     let native_active_owner_chain_depth = input.native_active_owner_chain_depth.max(
         topology
             .get("active_owner_chain_depth")
@@ -364,13 +402,28 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             .and_then(Value::as_u64)
             .unwrap_or(0)
             > 0;
+    let native_modal_chain_signature = if !input.native_modal_chain_signature.trim().is_empty() {
+        input.native_modal_chain_signature.trim().to_string()
+    } else {
+        topology
+            .get("modal_chain_signature")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
     let latest_branch = input.branch_history.last().cloned().unwrap_or_default();
     let latest_transition = normalize_text(&latest_branch.transition_kind);
     let latest_occurrences = latest_branch.occurrences.max(1);
+    let branch_cascade_count = input.branch_cascade_count;
+    let branch_cascade_kind_count = input.branch_cascade_kind_count;
+    let branch_cascade_signature = normalize_text(&input.branch_cascade_signature);
     let prefer_nested_branch = matches!(
         latest_transition.as_str(),
         "child_window" | "dialog_shift" | "drilldown" | "pane_shift"
     );
+    let prefer_branch_cascade = branch_cascade_count > 0 && branch_cascade_kind_count > 0;
+    let mixed_branch_cascade = branch_cascade_kind_count > 1;
 
     let mut ranked_candidates: Vec<Value> = Vec::new();
     for row in &input.selection_rows {
@@ -456,6 +509,37 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 _ => {}
             }
         }
+        if prefer_branch_cascade {
+            match latest_transition.as_str() {
+                "child_window_chain" | "dialog_shift" => {
+                    if selected_action == "press_dialog_button" {
+                        rust_score += if mixed_branch_cascade { 0.08 } else { 0.05 };
+                        reasons.push(format!("branch_cascade_dialog_resolution:{branch_cascade_count}"));
+                    } else if kind == "branch_action" && mixed_branch_cascade {
+                        rust_score -= 0.04;
+                    }
+                }
+                "drilldown" | "pane_shift" => {
+                    if matches!(
+                        selected_action.as_str(),
+                        "select_sidebar_item" | "select_tab_page" | "select_list_item" | "select_tree_item" | "focus_input_field" | "open_dropdown"
+                    ) {
+                        rust_score += if mixed_branch_cascade { 0.08 } else { 0.05 };
+                        reasons.push(format!("branch_cascade_navigation:{branch_cascade_count}"));
+                    } else if kind == "branch_action" && mixed_branch_cascade {
+                        rust_score -= 0.03;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !branch_cascade_signature.is_empty()
+            && branch_cascade_signature.contains("dialog_shift")
+            && selected_action == "press_dialog_button"
+        {
+            rust_score += 0.03;
+            reasons.push("branch_cascade_signature_dialog".to_string());
+        }
         if native_same_process_window_count > 1 && selected_action == "press_dialog_button" {
             rust_score += 0.05;
             reasons.push(format!("same_process_cluster:{}", native_same_process_window_count));
@@ -481,6 +565,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push(format!(
                 "same_root_owner_cluster:{}",
                 native_same_root_owner_window_count
+            ));
+        }
+        if native_same_root_owner_dialog_like_count > 1 && selected_action == "press_dialog_button" {
+            rust_score += 0.08;
+            reasons.push(format!(
+                "same_root_owner_dialog_cluster:{}",
+                native_same_root_owner_dialog_like_count
             ));
         }
         if native_active_owner_chain_depth > 0 && selected_action == "press_dialog_button" {
@@ -509,6 +600,16 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             rust_score += 0.03;
             reasons.push(format!("related_window_cluster:{}", native_related_window_count));
         }
+        if !native_modal_chain_signature.is_empty()
+            && matches!(latest_transition.as_str(), "child_window" | "dialog_shift" | "child_window_chain")
+        {
+            if selected_action == "press_dialog_button" {
+                rust_score += 0.05;
+                reasons.push("modal_chain_signature".to_string());
+            } else {
+                rust_score -= 0.03;
+            }
+        }
 
         if latest_occurrences >= 2
             && !latest_branch.selected_action.is_empty()
@@ -536,7 +637,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push("same_process_child_window_bias".to_string());
         }
 
-        let router_hint = if native_max_owner_chain_depth >= 2 && selected_action == "press_dialog_button" {
+        let router_hint = if (native_max_owner_chain_depth >= 2 || native_same_root_owner_dialog_like_count > 1)
+            && selected_action == "press_dialog_button"
+        {
             "prefer_modal_chain_resolution"
         } else if (input.current_dialog_visible || active_dialog_visible)
             && selected_action == "press_dialog_button"
@@ -607,8 +710,10 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "native_owner_chain_visible": native_owner_chain_visible,
         "native_owner_link_count": native_owner_link_count,
         "native_same_root_owner_window_count": native_same_root_owner_window_count,
+        "native_same_root_owner_dialog_like_count": native_same_root_owner_dialog_like_count,
         "native_active_owner_chain_depth": native_active_owner_chain_depth,
         "native_max_owner_chain_depth": native_max_owner_chain_depth,
+        "native_modal_chain_signature": native_modal_chain_signature,
         "topology": topology,
         "ranked_candidates": ranked_candidates,
     }))
@@ -774,6 +879,11 @@ mod tests {
             "current_dialog_visible": false,
             "native_owner_link_count": 2,
             "native_owner_chain_visible": true,
+            "native_same_root_owner_window_count": 3,
+            "native_same_root_owner_dialog_like_count": 2,
+            "native_active_owner_chain_depth": 1,
+            "native_max_owner_chain_depth": 2,
+            "native_modal_chain_signature": "5000|3|2|2",
             "selection_rows": [
                 {
                     "selection_key": "branch_action||press_dialog_button|continue",
@@ -818,6 +928,27 @@ mod tests {
                 .and_then(Value::as_str),
             Some("press_dialog_button")
         );
+        assert_eq!(
+            result.get("router_hint").and_then(Value::as_str),
+            Some("prefer_modal_chain_resolution")
+        );
         assert!(reasons.iter().any(|value| value.as_str() == Some("owner_chain_visible")));
+        assert!(reasons.iter().any(|value| value.as_str() == Some("same_root_owner_cluster:3")));
+        assert!(reasons.iter().any(|value| value.as_str() == Some("same_root_owner_dialog_cluster:2")));
+        assert!(reasons.iter().any(|value| value.as_str() == Some("active_owner_chain_depth:1")));
+        assert!(reasons.iter().any(|value| value.as_str() == Some("deeper_owner_chain_available:2")));
+        assert!(reasons.iter().any(|value| value.as_str() == Some("modal_chain_signature")));
+        assert_eq!(
+            result
+                .get("native_same_root_owner_dialog_like_count")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .get("native_modal_chain_signature")
+                .and_then(Value::as_str),
+            Some("5000|3|2|2")
+        );
     }
 }

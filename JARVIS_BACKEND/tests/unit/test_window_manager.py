@@ -209,14 +209,30 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
     assert topology["backend"] == "cpp_cython"
     assert topology["owner_chain_visible"] is True
     assert topology["owner_link_count"] >= 2
+    assert topology["same_root_owner_window_count"] == 3
+    assert topology["same_root_owner_dialog_like_count"] == 2
+    assert topology["active_owner_chain_depth"] == 1
+    assert topology["max_owner_chain_depth"] == 2
+    assert topology["modal_chain_signature"] == "5000|2|1|Bluetooth & devices|Pair device"
     assert "Settings" in topology["owner_window_titles"]
     assert "Pair device" in topology["owner_window_titles"]
+    assert topology["owner_chain_titles"] == ["Settings", "Bluetooth & devices"]
+    assert "Pair device" in topology["same_root_owner_titles"]
     assert len(topology["owner_windows"]) >= 2
     assert reacquired["status"] == "success"
     assert reacquired["candidate"]["hwnd"] == 5002
     assert reacquired["candidate"]["owner_hwnd"] == 5001
+    assert reacquired["candidate"]["root_owner_hwnd"] == 5000
+    assert reacquired["candidate"]["owner_chain_depth"] == 2
     assert reacquired["owner_chain_visible"] is True
     assert reacquired["owner_link_count"] >= 2
+    assert reacquired["same_root_owner_window_count"] == 3
+    assert reacquired["same_root_owner_dialog_like_count"] == 2
+    assert reacquired["candidate_root_owner_hwnd"] == 5000
+    assert reacquired["candidate_owner_chain_depth"] == 2
+    assert reacquired["max_owner_chain_depth"] == 2
+    assert reacquired["modal_chain_signature"] == "5000|2|2|Bluetooth & devices|Pair device"
+    assert "Settings" in reacquired["owner_chain_titles"]
 
 
 def test_native_window_runtime_reports_missing_extension_build_hint(monkeypatch) -> None:
