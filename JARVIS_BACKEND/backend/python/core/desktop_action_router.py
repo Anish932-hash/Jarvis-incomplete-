@@ -9791,15 +9791,16 @@ class DesktopActionRouter:
                 continue
             score = float(row.get("confidence", 0.0) or 0.0) + (0.05 if bool(row.get("matched", False)) else 0.0)
             label = str(row.get("title", "") or row.get("action", "") or "").strip()
+            candidate_id = str(row.get("candidate_id", "") or "").strip()
             rows.append(
                 {
                     "kind": "branch_action",
-                    "candidate_id": "",
+                    "candidate_id": candidate_id,
                     "label": label,
                     "selected_action": action_name,
                     "selection_key": self._surface_exploration_selection_key(
                         kind="branch_action",
-                        candidate_id="",
+                        candidate_id=candidate_id,
                         selected_action=action_name,
                         label=label,
                     ),
@@ -9888,6 +9889,8 @@ class DesktopActionRouter:
             for item in state_summary.get("native_descendant_chain_titles", [])
             if str(item).strip()
         ] if isinstance(state_summary.get("native_descendant_chain_titles", []), list) else []
+        preferred_descendant_title = str(state_summary.get("preferred_descendant_title", "") or "").strip()
+        preferred_descendant_hwnd = int(state_summary.get("preferred_descendant_hwnd", 0) or 0)
         native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(state_summary.get("native_modal_chain_signature", "") or "").strip()
         native_child_chain_signature = str(state_summary.get("native_child_chain_signature", "") or "").strip()
@@ -9951,6 +9954,8 @@ class DesktopActionRouter:
             "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
             "native_descendant_query_match_count": native_descendant_query_match_count,
             "native_descendant_chain_titles": native_descendant_chain_titles,
+            "preferred_descendant_title": preferred_descendant_title,
+            "preferred_descendant_hwnd": preferred_descendant_hwnd,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": native_modal_chain_signature,
@@ -10023,6 +10028,8 @@ class DesktopActionRouter:
             for item in branch_context.get("native_descendant_chain_titles", [])
             if str(item).strip()
         } if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else set()
+        preferred_descendant_title = self._normalize_probe_text(branch_context.get("preferred_descendant_title", ""))
+        preferred_descendant_hwnd = int(branch_context.get("preferred_descendant_hwnd", 0) or 0)
         native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(branch_context.get("native_modal_chain_signature", "") or "").strip()
         native_child_chain_signature = str(branch_context.get("native_child_chain_signature", "") or "").strip()
@@ -10061,6 +10068,28 @@ class DesktopActionRouter:
             score += 0.06
         if native_descendant_chain_titles and self._normalize_probe_text(action_payload.get("window_title", "")) in native_descendant_chain_titles:
             score += 0.05
+        preferred_descendant_focus = bool(
+            kind == "branch_action"
+            and selected_action == "focus"
+            and (
+                (preferred_descendant_title and self._normalize_probe_text(action_payload.get("window_title", "")) == preferred_descendant_title)
+                or (preferred_descendant_title and self._normalize_probe_text(label) == preferred_descendant_title)
+                or (preferred_descendant_hwnd > 0 and int(action_payload.get("hwnd", 0) or 0) == preferred_descendant_hwnd)
+                or (preferred_descendant_hwnd > 0 and str(candidate_id) == str(preferred_descendant_hwnd))
+            )
+        )
+        if preferred_descendant_focus:
+            score += 0.14
+            if native_descendant_chain_depth > 0:
+                score += min(0.12, native_descendant_chain_depth * 0.03)
+            if native_descendant_dialog_chain_depth > 0:
+                score += min(0.08, native_descendant_dialog_chain_depth * 0.02)
+            if native_descendant_query_match_count > 0:
+                score += min(0.06, native_descendant_query_match_count * 0.02)
+            if native_child_chain_signature:
+                score += 0.05
+            if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
+                score += 0.04
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
         if kind == "hypothesis":
@@ -10071,22 +10100,28 @@ class DesktopActionRouter:
         if last_branch_kind == "dialog_shift":
             if selected_action == "press_dialog_button":
                 score += 0.18
+            elif preferred_descendant_focus:
+                score += 0.08
             else:
                 score -= 0.12
             if kind == "branch_action" and selected_action != "press_dialog_button":
-                score -= 0.04
+                score -= 0.01 if preferred_descendant_focus else 0.04
         elif last_branch_kind == "child_window":
             if kind == "hypothesis":
                 score += 0.07
             if selected_action in {"focus_input_field", "open_dropdown", "toggle_switch", "select_list_item", "select_tree_item"}:
                 score += 0.04
+            if preferred_descendant_focus:
+                score += 0.12
         elif last_branch_kind == "child_window_chain":
             if selected_action == "press_dialog_button":
                 score += 0.16
+            elif preferred_descendant_focus:
+                score += 0.09
             elif kind == "hypothesis" and selected_action in {"focus_input_field", "open_dropdown", "toggle_switch", "select_list_item", "select_tree_item"}:
                 score += 0.05
             elif kind == "branch_action":
-                score -= 0.04
+                score -= 0.01 if preferred_descendant_focus else 0.04
         elif last_branch_kind == "drilldown":
             if selected_action in {"select_tree_item", "select_list_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
                 score += 0.08
@@ -10105,6 +10140,8 @@ class DesktopActionRouter:
                 "open_dropdown",
             }:
                 score += 0.05 if branch_cascade_kind_count > 1 else 0.03
+            elif preferred_descendant_focus and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+                score += 0.04 if branch_cascade_kind_count > 1 else 0.02
             elif kind == "branch_action" and branch_cascade_kind_count > 1:
                 score -= 0.03
         if branch_cascade_signature and "dialog_shift" in branch_cascade_signature and selected_action == "press_dialog_button":
@@ -10113,6 +10150,8 @@ class DesktopActionRouter:
         if native_child_dialog_like_visible:
             if selected_action == "press_dialog_button":
                 score += 0.14 if last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} else 0.08
+            elif preferred_descendant_focus:
+                score += 0.07 if last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} else 0.03
             elif last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score -= 0.06
             elif kind == "branch_action":
@@ -10120,67 +10159,99 @@ class DesktopActionRouter:
         if native_same_process_window_count > 1:
             if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score += 0.06
+            elif preferred_descendant_focus:
+                score += 0.03
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "focus_input_field", "open_dropdown"}:
                 score += 0.03
         if native_owner_chain_visible:
             if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score += 0.11
+            elif preferred_descendant_focus:
+                score += 0.06
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "focus_input_field", "open_dropdown"}:
                 score += 0.05
         if native_same_root_owner_window_count > 1:
             if selected_action == "press_dialog_button":
                 score += 0.05
+            elif preferred_descendant_focus:
+                score += 0.04
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "focus_input_field", "open_dropdown"}:
                 score += 0.03
         if native_same_root_owner_dialog_like_count > 1:
             if selected_action == "press_dialog_button":
                 score += 0.1 if last_branch_kind in {"child_window_chain", "dialog_shift"} else 0.06
+            elif preferred_descendant_focus:
+                score += 0.07 if last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} else 0.03
             elif last_branch_kind in {"child_window_chain", "dialog_shift"}:
                 score -= 0.05
         if native_direct_child_window_count > 0:
             if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score += 0.04
+            elif preferred_descendant_focus:
+                score += 0.05
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "focus_input_field"}:
                 score += 0.02
         if native_direct_child_dialog_like_count > 0 and selected_action == "press_dialog_button":
             score += 0.04
+        elif native_direct_child_dialog_like_count > 0 and preferred_descendant_focus:
+            score += 0.03
         if native_active_owner_chain_depth > 0 and selected_action == "press_dialog_button":
             score += min(0.12, native_active_owner_chain_depth * 0.03)
+        elif native_active_owner_chain_depth > 0 and preferred_descendant_focus:
+            score += min(0.08, native_active_owner_chain_depth * 0.02)
         if native_max_owner_chain_depth > native_active_owner_chain_depth:
             if selected_action == "press_dialog_button":
                 score += min(0.14, (native_max_owner_chain_depth - native_active_owner_chain_depth) * 0.04)
+            elif preferred_descendant_focus:
+                score += min(0.1, (native_max_owner_chain_depth - native_active_owner_chain_depth) * 0.03)
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page"}:
                 score += 0.03
         if native_descendant_chain_depth > 0:
             if selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 score += min(0.12, native_descendant_chain_depth * 0.03)
+            elif preferred_descendant_focus:
+                score += min(0.1, native_descendant_chain_depth * 0.03)
             elif kind == "hypothesis" and selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
                 score += 0.03
         if native_descendant_dialog_chain_depth > 0 and selected_action == "press_dialog_button":
             score += min(0.1, native_descendant_dialog_chain_depth * 0.03)
+        elif native_descendant_dialog_chain_depth > 0 and preferred_descendant_focus:
+            score += min(0.08, native_descendant_dialog_chain_depth * 0.02)
         if native_descendant_query_match_count > 0 and kind == "hypothesis":
             score += min(0.08, native_descendant_query_match_count * 0.02)
+        elif native_descendant_query_match_count > 0 and preferred_descendant_focus:
+            score += min(0.05, native_descendant_query_match_count * 0.02)
         if native_owner_link_count > 1 and selected_action == "press_dialog_button":
             score += 0.05
+        elif native_owner_link_count > 1 and preferred_descendant_focus:
+            score += 0.04
         if native_related_window_count > 1 and kind == "hypothesis":
             if selected_action in {"select_list_item", "select_tree_item", "select_sidebar_item", "select_tab_page", "focus_input_field", "open_dropdown"}:
                 score += 0.03
         if current_reacquired_hwnd and selected_action == "press_dialog_button" and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
             score += 0.04
+        elif current_reacquired_hwnd and preferred_descendant_focus and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
+            score += 0.03
         if native_modal_chain_signature and last_branch_kind in {"child_window_chain", "dialog_shift"}:
             if selected_action == "press_dialog_button":
                 score += 0.04
+            elif preferred_descendant_focus:
+                score += 0.03
             elif kind == "branch_action":
                 score -= 0.02
         if native_child_chain_signature and last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
             if selected_action == "press_dialog_button":
                 score += 0.05
+            elif preferred_descendant_focus:
+                score += 0.06
             elif kind == "branch_action":
                 score -= 0.02
         if branch_family_continuity:
             if last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"}:
                 if selected_action == "press_dialog_button":
                     score += 0.08 if branch_family_repeat_count < 2 else 0.12
+                elif preferred_descendant_focus:
+                    score += 0.06 if branch_family_repeat_count < 2 else 0.09
                 elif kind == "branch_action":
                     score -= 0.03
             elif last_branch_kind in {"drilldown", "pane_shift"} and selected_action in {
@@ -10197,18 +10268,20 @@ class DesktopActionRouter:
             and latest_branch_family_signature
             and native_branch_family_signature != latest_branch_family_signature
         ):
-            if kind == "branch_action":
+            if kind == "branch_action" and not preferred_descendant_focus:
                 score -= 0.04
             elif last_branch_kind in {"child_window", "child_window_chain", "dialog_shift"} and selected_action != "press_dialog_button":
                 score -= 0.03
-        if branch_family_switch_count >= 2 and kind == "branch_action":
+        if branch_family_switch_count >= 2 and kind == "branch_action" and not preferred_descendant_focus:
             score -= 0.03
         if bool(branch_context.get("current_dialog_visible", False)):
             if selected_action == "press_dialog_button":
                 score += 0.12
+            elif preferred_descendant_focus:
+                score -= 0.02
             else:
                 score -= 0.08
-        if latest_occurrences >= 2 and kind == "branch_action":
+        if latest_occurrences >= 2 and kind == "branch_action" and not preferred_descendant_focus:
             score -= 0.06
         return round(score, 4)
 
@@ -10252,6 +10325,8 @@ class DesktopActionRouter:
                 for item in branch_context.get("native_descendant_chain_titles", [])
                 if str(item).strip()
             ] if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else [],
+            "preferred_descendant_title": str(branch_context.get("preferred_descendant_title", "") or "").strip(),
+            "preferred_descendant_hwnd": int(branch_context.get("preferred_descendant_hwnd", 0) or 0),
             "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
             "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(branch_context.get("native_modal_chain_signature", "") or "").strip(),
@@ -13364,6 +13439,18 @@ class DesktopActionRouter:
             or snapshot.get("filters", {}).get("window_title", "")
             or ""
         ).strip()
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        window_reacquisition = (
+            snapshot.get("window_reacquisition", {})
+            if isinstance(snapshot.get("window_reacquisition", {}), dict)
+            else {}
+        )
+        native_window_topology = (
+            snapshot.get("native_window_topology", {})
+            if isinstance(snapshot.get("native_window_topology", {}), dict)
+            else {}
+        )
         rows: List[Dict[str, Any]] = []
         seen: set[str] = set()
         for workflow in workflow_surfaces:
@@ -13427,6 +13514,103 @@ class DesktopActionRouter:
                     "reason": "The current surface recommends this next action.",
                     "action_payload": payload,
                     "recommended_followups": [str(item).strip() for item in definition.get("recommended_followups", []) if str(item).strip()][:6],
+                }
+            )
+        preferred_descendant = (
+            window_reacquisition.get("preferred_descendant", {})
+            if isinstance(window_reacquisition.get("preferred_descendant", {}), dict)
+            else {}
+        ) or (
+            native_window_topology.get("preferred_descendant", {})
+            if isinstance(native_window_topology.get("preferred_descendant", {}), dict)
+            else {}
+        )
+        preferred_descendant_title = str(preferred_descendant.get("title", "") or "").strip()
+        preferred_descendant_hwnd = int(preferred_descendant.get("hwnd", 0) or 0)
+        current_window_titles = {
+            self._normalize_probe_text(value)
+            for value in [
+                window_hint,
+                str(target_window.get("title", "") or "").strip(),
+                str(active_window.get("title", "") or "").strip(),
+                str(window_reacquisition.get("candidate", {}).get("title", "") or "").strip()
+                if isinstance(window_reacquisition.get("candidate", {}), dict)
+                else "",
+            ]
+            if str(value).strip()
+        }
+        current_window_hwnds = {
+            int(value or 0)
+            for value in [
+                target_window.get("hwnd", 0),
+                active_window.get("hwnd", 0),
+                window_reacquisition.get("candidate", {}).get("hwnd", 0)
+                if isinstance(window_reacquisition.get("candidate", {}), dict)
+                else 0,
+            ]
+            if int(value or 0) > 0
+        }
+        descendant_chain_depth = max(
+            int(native_window_topology.get("descendant_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_chain_depth", 0) or 0),
+        )
+        descendant_dialog_chain_depth = max(
+            int(native_window_topology.get("descendant_dialog_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_dialog_chain_depth", 0) or 0),
+        )
+        descendant_query_match_count = max(
+            int(native_window_topology.get("descendant_query_match_count", 0) or 0),
+            int(window_reacquisition.get("descendant_query_match_count", 0) or 0),
+        )
+        child_chain_signature = str(
+            window_reacquisition.get("child_chain_signature", "")
+            or native_window_topology.get("child_chain_signature", "")
+            or ""
+        ).strip()
+        preferred_descendant_label = preferred_descendant_title or (
+            f"Child surface {preferred_descendant_hwnd}" if preferred_descendant_hwnd > 0 else ""
+        )
+        preferred_descendant_current = bool(
+            (preferred_descendant_title and self._normalize_probe_text(preferred_descendant_title) in current_window_titles)
+            or (preferred_descendant_hwnd > 0 and preferred_descendant_hwnd in current_window_hwnds)
+        )
+        if preferred_descendant_label and not preferred_descendant_current:
+            adoption_payload: Dict[str, Any] = {
+                "action": "focus",
+                "focus_first": False,
+            }
+            if app_hint:
+                adoption_payload["app_name"] = app_hint
+            if preferred_descendant_title:
+                adoption_payload["window_title"] = preferred_descendant_title
+            if preferred_descendant_hwnd > 0:
+                adoption_payload["hwnd"] = preferred_descendant_hwnd
+            descendant_focus_confidence = 0.78
+            descendant_focus_confidence += min(0.08, max(0, descendant_chain_depth) * 0.02)
+            descendant_focus_confidence += min(0.05, max(0, descendant_dialog_chain_depth) * 0.015)
+            descendant_focus_confidence += min(0.05, max(0, descendant_query_match_count) * 0.02)
+            if child_chain_signature:
+                descendant_focus_confidence += 0.03
+            descendant_focus_confidence = min(0.96, descendant_focus_confidence)
+            descendant_reason = (
+                "Native window topology found a deeper child surface in the current modal chain."
+            )
+            if descendant_query_match_count > 0:
+                descendant_reason = (
+                    "Native window topology found a deeper child surface that still matches the active exploration query."
+                )
+            rows.append(
+                {
+                    "action": "focus",
+                    "title": f"Adopt child surface: {preferred_descendant_label}",
+                    "candidate_id": str(preferred_descendant_hwnd) if preferred_descendant_hwnd > 0 else preferred_descendant_title,
+                    "matched": descendant_query_match_count > 0,
+                    "supported": True,
+                    "confidence": round(descendant_focus_confidence, 4),
+                    "reason": descendant_reason,
+                    "action_payload": adoption_payload,
+                    "recommended_followups": [],
+                    "child_chain_signature": child_chain_signature,
                 }
             )
         rows.sort(key=lambda row: (-float(row.get("confidence", 0.0) or 0.0), str(row.get("action", "") or "")))

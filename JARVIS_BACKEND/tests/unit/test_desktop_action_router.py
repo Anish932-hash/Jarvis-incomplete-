@@ -377,6 +377,188 @@ def test_desktop_action_router_surface_exploration_ranks_dialog_buttons() -> Non
     assert payload["branch_actions"][0]["action"] == "confirm_dialog"
 
 
+def test_desktop_action_router_surface_exploration_adds_preferred_descendant_adoption_branch() -> None:
+    router = _build_router({})
+    snapshot = {
+        "status": "success",
+        "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+        "target_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+        "active_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+        "query_targets": [],
+        "query_related_candidates": [],
+        "selection_candidates": [],
+        "workflow_surfaces": [],
+        "surface_flags": {"window_targeted": True},
+        "safety_signals": {},
+        "recommended_actions": [],
+        "native_window_topology": {
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "owner_link_count": 2,
+            "owner_chain_visible": True,
+            "same_root_owner_window_count": 3,
+            "same_root_owner_dialog_like_count": 2,
+            "direct_child_window_count": 1,
+            "direct_child_dialog_like_count": 1,
+            "descendant_chain_depth": 2,
+            "descendant_dialog_chain_depth": 1,
+            "descendant_query_match_count": 1,
+            "descendant_chain_titles": ["Pair device", "Confirm pairing"],
+            "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+            "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
+        },
+        "window_reacquisition": {
+            "candidate": {
+                "hwnd": 5001,
+                "title": "Bluetooth & devices",
+                "root_owner_hwnd": 5000,
+                "owner_chain_depth": 1,
+            },
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "owner_link_count": 2,
+            "owner_chain_visible": True,
+            "same_root_owner_window_count": 3,
+            "same_root_owner_dialog_like_count": 2,
+            "descendant_chain_depth": 2,
+            "descendant_dialog_chain_depth": 1,
+            "descendant_query_match_count": 1,
+            "descendant_chain_titles": ["Pair device", "Confirm pairing"],
+            "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+            "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
+        },
+        "filters": {"app_name": "settings", "query": "Pair device"},
+    }
+    router.surface_snapshot = lambda **_kwargs: snapshot  # type: ignore[method-assign]
+
+    payload = router.surface_exploration_plan(
+        app_name="settings",
+        query="Pair device",
+        include_workflow_probes=False,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["branch_actions"]
+    assert payload["branch_actions"][0]["action"] == "focus"
+    assert payload["branch_actions"][0]["candidate_id"] == "5002"
+    assert payload["branch_actions"][0]["action_payload"]["window_title"] == "Pair device"
+    assert payload["branch_actions"][0]["action_payload"]["hwnd"] == 5002
+    assert "deeper child surface" in payload["branch_actions"][0]["reason"].lower()
+
+
+def test_desktop_action_router_select_surface_exploration_target_prefers_preferred_descendant_adoption() -> None:
+    router = _build_router({})
+    snapshot = {
+        "status": "success",
+        "app_profile": {"status": "success", "category": "utility", "name": "Settings"},
+        "target_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+        "active_window": {"hwnd": 5001, "title": "Bluetooth & devices"},
+        "query_targets": [
+            {
+                "element_id": "list_devices",
+                "name": "Devices",
+                "control_type": "ListItem",
+                "enabled": True,
+                "visible": True,
+                "match_score": 0.32,
+            }
+        ],
+        "query_related_candidates": [],
+        "selection_candidates": [
+            {
+                "element_id": "list_devices",
+                "name": "Devices",
+                "control_type": "ListItem",
+                "enabled": True,
+                "visible": True,
+            }
+        ],
+        "workflow_surfaces": [],
+        "surface_flags": {"window_targeted": True, "list_visible": True},
+        "safety_signals": {},
+        "recommended_actions": [],
+        "native_window_topology": {
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "owner_link_count": 2,
+            "owner_chain_visible": True,
+            "same_root_owner_window_count": 3,
+            "same_root_owner_dialog_like_count": 2,
+            "direct_child_window_count": 1,
+            "direct_child_dialog_like_count": 1,
+            "active_owner_chain_depth": 1,
+            "max_owner_chain_depth": 2,
+            "descendant_chain_depth": 2,
+            "descendant_dialog_chain_depth": 1,
+            "descendant_query_match_count": 1,
+            "descendant_chain_titles": ["Pair device", "Confirm pairing"],
+            "child_dialog_like_visible": True,
+            "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+            "modal_chain_signature": "5000|2|1|Pair device",
+            "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
+        },
+        "window_reacquisition": {
+            "candidate": {
+                "hwnd": 5001,
+                "title": "Bluetooth & devices",
+                "root_owner_hwnd": 5000,
+                "owner_chain_depth": 1,
+                "match_score": 0.86,
+            },
+            "same_process_window_count": 3,
+            "related_window_count": 2,
+            "owner_link_count": 2,
+            "owner_chain_visible": True,
+            "same_root_owner_window_count": 3,
+            "same_root_owner_dialog_like_count": 2,
+            "candidate_root_owner_hwnd": 5000,
+            "candidate_owner_chain_depth": 1,
+            "descendant_chain_depth": 2,
+            "descendant_dialog_chain_depth": 1,
+            "descendant_query_match_count": 1,
+            "descendant_chain_titles": ["Pair device", "Confirm pairing"],
+            "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+            "branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+            "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
+        },
+        "filters": {"app_name": "settings", "query": "Pair device"},
+    }
+    router.surface_snapshot = lambda **_kwargs: snapshot  # type: ignore[method-assign]
+
+    plan = router.surface_exploration_plan(
+        app_name="settings",
+        query="Pair device",
+        include_workflow_probes=False,
+    )
+    selected = router._select_surface_exploration_target(  # noqa: SLF001
+        exploration_plan=plan,
+        args={
+            "app_name": "settings",
+            "query": "Pair device",
+            "branch_history": [
+                {
+                    "transition_kind": "child_window",
+                    "selected_action": "select_list_item",
+                    "selected_candidate_id": "list_bluetooth",
+                    "selected_candidate_label": "Bluetooth",
+                    "window_title": "Bluetooth & devices",
+                    "surface_path_tail": ["Devices", "Bluetooth"],
+                    "topology_branch_family_signature": "5000|2|Bluetooth & devices|Pair device",
+                    "occurrences": 1,
+                }
+            ],
+        },
+    )
+
+    assert selected["status"] == "success"
+    assert selected["selected_action"] == "focus"
+    assert selected["candidate_id"] == "5002"
+    assert selected["action_payload"]["window_title"] == "Pair device"
+    assert selected["action_payload"]["hwnd"] == 5002
+    assert selected["confidence"] > 0.8
+
+
 def test_desktop_action_router_surface_exploration_uses_surface_intelligence_for_mode_and_message() -> None:
     router = _build_router({})
     snapshot = {
