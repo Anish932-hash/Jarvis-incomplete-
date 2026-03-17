@@ -61,6 +61,9 @@ import {
   type CoworkerStackStatusResponse,
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
+  type DesktopEvaluationCatalogResponse,
+  type DesktopEvaluationHistoryResponse,
+  type DesktopEvaluationRunResponse,
   type DesktopExplorationMission,
   type DesktopInteractInput,
   type DesktopInteractResponse,
@@ -1144,6 +1147,23 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopRecoveryWatchdogBusy, setDesktopRecoveryWatchdogBusy] = useState(false);
   const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
   const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
+  const [desktopEvaluationCatalogState, setDesktopEvaluationCatalogState] =
+    useState<DesktopEvaluationCatalogResponse | null>(null);
+  const [desktopEvaluationRunState, setDesktopEvaluationRunState] =
+    useState<DesktopEvaluationRunResponse | null>(null);
+  const [desktopEvaluationHistoryState, setDesktopEvaluationHistoryState] =
+    useState<DesktopEvaluationHistoryResponse | null>(null);
+  const [desktopEvaluationCatalogBusy, setDesktopEvaluationCatalogBusy] = useState(false);
+  const [desktopEvaluationRunBusy, setDesktopEvaluationRunBusy] = useState(false);
+  const [desktopEvaluationHistoryBusy, setDesktopEvaluationHistoryBusy] = useState(false);
+  const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
+  const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
+  const [desktopEvaluationCapabilityFilter, setDesktopEvaluationCapabilityFilter] = useState('');
+  const [desktopEvaluationRiskFilter, setDesktopEvaluationRiskFilter] = useState('');
+  const [desktopEvaluationAutonomyFilter, setDesktopEvaluationAutonomyFilter] = useState('');
+  const [desktopEvaluationMissionFamilyFilter, setDesktopEvaluationMissionFamilyFilter] = useState('');
+  const [desktopEvaluationAppFilter, setDesktopEvaluationAppFilter] = useState('');
+  const [desktopEvaluationLimit, setDesktopEvaluationLimit] = useState(18);
   const [approvalPrompt, setApprovalPrompt] = useState<PendingApprovalPrompt | null>(null);
   const [coworkerStackState, setCoworkerStackState] = useState<CoworkerStackStatusResponse | null>(null);
   const [coworkerStackApplyState, setCoworkerStackApplyState] = useState<CoworkerStackApplyResponse | null>(null);
@@ -1830,6 +1850,36 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return desktopMissionSnapshot.latest_paused as DesktopMissionRecord;
   }, [desktopMissionSnapshot]);
+  const desktopEvaluationCatalogSummary = useMemo(
+    () => asObjectRecord(desktopEvaluationCatalogState?.summary),
+    [desktopEvaluationCatalogState]
+  );
+  const desktopEvaluationRunSummary = useMemo(
+    () => asObjectRecord(desktopEvaluationRunState?.summary),
+    [desktopEvaluationRunState]
+  );
+  const desktopEvaluationRunRegression = useMemo(
+    () => asObjectRecord(desktopEvaluationRunState?.regression),
+    [desktopEvaluationRunState]
+  );
+  const desktopEvaluationLatestRun = useMemo(() => {
+    const runLatest = asObjectRecord(desktopEvaluationRunState?.latest_run);
+    if (Object.keys(runLatest).length > 0) return runLatest;
+    const historyLatest = asObjectRecord(desktopEvaluationHistoryState?.latest_run);
+    if (Object.keys(historyLatest).length > 0) return historyLatest;
+    return asObjectRecord(desktopEvaluationCatalogState?.latest_run);
+  }, [desktopEvaluationCatalogState, desktopEvaluationHistoryState, desktopEvaluationRunState]);
+  const desktopEvaluationHistoryRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationHistoryState?.items)
+        ? desktopEvaluationHistoryState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopEvaluationHistoryState]
+  );
+  const desktopEvaluationImprovementCandidates = useMemo(
+    () => asObjectRecord(desktopEvaluationRunSummary.improvement_candidates),
+    [desktopEvaluationRunSummary]
+  );
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
   const desktopRecoveryDaemonPolicyProfile =
@@ -13065,6 +13115,119 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }
   }, [desktopCoworkerAppName, toast]);
 
+  const buildDesktopEvaluationQueryInput = useCallback(() => {
+    const appName = desktopEvaluationAppFilter.trim();
+    return {
+      pack: desktopEvaluationPackFilter.trim() || undefined,
+      category: desktopEvaluationCategoryFilter.trim() || undefined,
+      capability: desktopEvaluationCapabilityFilter.trim() || undefined,
+      risk_level: desktopEvaluationRiskFilter.trim() || undefined,
+      autonomy_tier: desktopEvaluationAutonomyFilter.trim() || undefined,
+      mission_family: desktopEvaluationMissionFamilyFilter.trim() || undefined,
+      app_name: appName || undefined,
+      limit: desktopEvaluationLimit,
+    };
+  }, [
+    desktopEvaluationAppFilter,
+    desktopEvaluationAutonomyFilter,
+    desktopEvaluationCapabilityFilter,
+    desktopEvaluationCategoryFilter,
+    desktopEvaluationLimit,
+    desktopEvaluationMissionFamilyFilter,
+    desktopEvaluationPackFilter,
+    desktopEvaluationRiskFilter,
+  ]);
+
+  const refreshDesktopEvaluationCatalog = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationCatalogBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationCatalog(buildDesktopEvaluationQueryInput());
+        setDesktopEvaluationCatalogState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Desktop Benchmarks Ready',
+            description: `${Number(payload.count ?? 0)} benchmark scenario(s) matched the active Windows coworker filters.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Desktop Benchmark Catalog Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationCatalogBusy(false);
+      }
+    },
+    [buildDesktopEvaluationQueryInput, toast]
+  );
+
+  const refreshDesktopEvaluationHistory = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationHistoryBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationHistory({ limit: 8 });
+        setDesktopEvaluationHistoryState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Benchmark History Ready',
+            description: `${Number(payload.count ?? 0)} stored desktop benchmark run(s) are available for review.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Benchmark History Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationHistoryBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const runDesktopEvaluationBenchmarks = useCallback(async () => {
+    setDesktopEvaluationRunBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationRun(buildDesktopEvaluationQueryInput());
+      setDesktopEvaluationRunState(payload);
+      await refreshDesktopEvaluationCatalog({ quiet: true });
+      await refreshDesktopEvaluationHistory({ quiet: true });
+      const summary = asObjectRecord(payload.summary);
+      const candidates = asObjectRecord(summary.improvement_candidates);
+      const weakestPacks = Array.isArray(candidates.packs)
+        ? candidates.packs.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [];
+      const topPack = weakestPacks[0];
+      toast({
+        title: 'Desktop Benchmarks Ran',
+        description:
+          `${Number(summary.count ?? 0)} scenario(s) • pass ${Number(summary.weighted_pass_rate ?? 0).toFixed(2)} • score ${Number(summary.weighted_score ?? 0).toFixed(2)}` +
+          (topPack ? ` • focus:${String(topPack.name ?? 'unknown')}` : ''),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Desktop Benchmark Run Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationRunBusy(false);
+    }
+  }, [buildDesktopEvaluationQueryInput, refreshDesktopEvaluationCatalog, refreshDesktopEvaluationHistory, toast]);
+
   const previewSelectedDesktopMissionResume = useCallback(async () => {
     const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
     if (!missionId) {
@@ -13229,7 +13392,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     if (!open) return;
     void refreshDesktopMissions({ quiet: true });
     void refreshDesktopRecoveryDaemonStatus({ quiet: true });
-  }, [open, refreshDesktopMissions, refreshDesktopRecoveryDaemonStatus]);
+    void refreshDesktopEvaluationCatalog({ quiet: true });
+    void refreshDesktopEvaluationHistory({ quiet: true });
+  }, [
+    open,
+    refreshDesktopEvaluationCatalog,
+    refreshDesktopEvaluationHistory,
+    refreshDesktopMissions,
+    refreshDesktopRecoveryDaemonStatus,
+  ]);
 
   useEffect(() => {
     const missionRecord =
@@ -16975,6 +17146,351 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         Load the catalog to browse the app-specific profiles generated from `E:\\apps.txt` and `C:\\apps.txt`.
                                       </p>
                                     )}
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Desktop Benchmark Packs
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          Run the Windows coworker benchmark packs, inspect recovery/native-hybrid gaps, and use the results to steer the next control upgrades.
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {desktopEvaluationCatalogState ? (
+                                          <Badge variant="outline">
+                                            catalog:{Number(desktopEvaluationCatalogState.count ?? 0)}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="secondary">catalog:idle</Badge>
+                                        )}
+                                        {desktopEvaluationRunState ? (
+                                          <Badge variant="secondary">
+                                            run:{Number(desktopEvaluationRunSummary.count ?? 0)}
+                                          </Badge>
+                                        ) : null}
+                                        {desktopEvaluationHistoryState ? (
+                                          <Badge variant="outline">
+                                            history:{Number(desktopEvaluationHistoryState.count ?? 0)}
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Pack</p>
+                                        <select
+                                          value={desktopEvaluationPackFilter}
+                                          onChange={(event) => setDesktopEvaluationPackFilter(event.target.value)}
+                                          className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                        >
+                                          <option value="">all</option>
+                                          <option value="desktop_core">desktop_core</option>
+                                          <option value="browser_productivity">browser_productivity</option>
+                                          <option value="settings_and_admin">settings_and_admin</option>
+                                          <option value="communication_and_productivity">communication_and_productivity</option>
+                                          <option value="unsupported_and_recovery">unsupported_and_recovery</option>
+                                          <option value="installer_and_governance">installer_and_governance</option>
+                                        </select>
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Risk</p>
+                                        <select
+                                          value={desktopEvaluationRiskFilter}
+                                          onChange={(event) => setDesktopEvaluationRiskFilter(event.target.value)}
+                                          className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                        >
+                                          <option value="">all</option>
+                                          <option value="standard">standard</option>
+                                          <option value="guarded">guarded</option>
+                                          <option value="high">high</option>
+                                          <option value="critical">critical</option>
+                                        </select>
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Autonomy</p>
+                                        <select
+                                          value={desktopEvaluationAutonomyFilter}
+                                          onChange={(event) => setDesktopEvaluationAutonomyFilter(event.target.value)}
+                                          className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                        >
+                                          <option value="">all</option>
+                                          <option value="assisted">assisted</option>
+                                          <option value="bounded_autonomy">bounded_autonomy</option>
+                                          <option value="autonomous">autonomous</option>
+                                          <option value="guardrailed">guardrailed</option>
+                                        </select>
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Mission</p>
+                                        <select
+                                          value={desktopEvaluationMissionFamilyFilter}
+                                          onChange={(event) => setDesktopEvaluationMissionFamilyFilter(event.target.value)}
+                                          className="h-9 w-full rounded-md border border-primary/20 bg-background/60 px-2 text-xs"
+                                        >
+                                          <option value="">all</option>
+                                          <option value="launch">launch</option>
+                                          <option value="workflow">workflow</option>
+                                          <option value="form">form</option>
+                                          <option value="wizard">wizard</option>
+                                          <option value="exploration">exploration</option>
+                                          <option value="recovery">recovery</option>
+                                          <option value="review">review</option>
+                                          <option value="read_only">read_only</option>
+                                        </select>
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_120px]">
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Category</p>
+                                        <Input
+                                          value={desktopEvaluationCategoryFilter}
+                                          onChange={(event) => setDesktopEvaluationCategoryFilter(event.target.value)}
+                                          className="h-9 border-primary/20 bg-background/60 text-xs"
+                                          placeholder="settings, installer..."
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Capability</p>
+                                        <Input
+                                          value={desktopEvaluationCapabilityFilter}
+                                          onChange={(event) => setDesktopEvaluationCapabilityFilter(event.target.value)}
+                                          className="h-9 border-primary/20 bg-background/60 text-xs"
+                                          placeholder="desktop_recovery, form_mission..."
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">App</p>
+                                        <Input
+                                          value={desktopEvaluationAppFilter}
+                                          onChange={(event) => setDesktopEvaluationAppFilter(event.target.value)}
+                                          className="h-9 border-primary/20 bg-background/60 text-xs"
+                                          placeholder="settings, installer..."
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Limit</p>
+                                        <Input
+                                          type="number"
+                                          min={1}
+                                          max={120}
+                                          value={desktopEvaluationLimit}
+                                          onChange={(event) =>
+                                            setDesktopEvaluationLimit(
+                                              Math.max(1, Math.min(120, Number.parseInt(event.target.value || '18', 10) || 18))
+                                            )
+                                          }
+                                          className="h-9 border-primary/20 bg-background/60 text-xs"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationCatalog()}
+                                        disabled={desktopEvaluationCatalogBusy}
+                                      >
+                                        {desktopEvaluationCatalogBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="h-4 w-4" />
+                                        )}
+                                        Refresh Catalog
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void runDesktopEvaluationBenchmarks()}
+                                        disabled={desktopEvaluationRunBusy}
+                                      >
+                                        {desktopEvaluationRunBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Activity className="h-4 w-4" />
+                                        )}
+                                        Run Benchmarks
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationHistory()}
+                                        disabled={desktopEvaluationHistoryBusy}
+                                      >
+                                        {desktopEvaluationHistoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Workflow className="h-4 w-4" />
+                                        )}
+                                        Refresh History
+                                      </Button>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1.15fr_1fr]">
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Catalog Summary</p>
+                                        {desktopEvaluationCatalogState ? (
+                                          <>
+                                            <p className="mt-2">
+                                              scenarios: {Number(desktopEvaluationCatalogSummary.scenario_count ?? desktopEvaluationCatalogState.count ?? 0)}
+                                              {' • '}recovery-expected:{Number(desktopEvaluationCatalogSummary.recovery_expected_count ?? 0)}
+                                              {' • '}native-hybrid:{Number(desktopEvaluationCatalogSummary.native_hybrid_focus_count ?? 0)}
+                                            </p>
+                                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                              {Object.entries(asObjectRecord(desktopEvaluationCatalogSummary.pack_counts))
+                                                .slice(0, 4)
+                                                .map(([label, count]) => (
+                                                  <Badge key={`desktop-eval-pack-${label}`} variant="outline">
+                                                    {label}:{String(count)}
+                                                  </Badge>
+                                                ))}
+                                              {Object.entries(asObjectRecord(desktopEvaluationCatalogSummary.autonomy_tier_counts))
+                                                .slice(0, 3)
+                                                .map(([label, count]) => (
+                                                  <Badge key={`desktop-eval-autonomy-${label}`} variant="secondary">
+                                                    {label}:{String(count)}
+                                                  </Badge>
+                                                ))}
+                                            </div>
+                                            <ScrollArea className="mt-2 h-[120px] rounded border border-primary/10 bg-black/10 p-2">
+                                              <div className="space-y-2">
+                                                {(desktopEvaluationCatalogState.items ?? []).slice(0, 6).map((item, index) => (
+                                                  <div
+                                                    key={`${String(item.name ?? item.scenario ?? 'benchmark')}-${index}`}
+                                                    className="rounded border border-primary/10 bg-background/30 p-2"
+                                                  >
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                      <p className="text-[11px] text-primary/90">
+                                                        {String(item.name ?? item.scenario ?? 'benchmark')}
+                                                      </p>
+                                                      <div className="flex flex-wrap items-center gap-1">
+                                                        {item.pack ? <Badge variant="outline">{String(item.pack)}</Badge> : null}
+                                                        {item.mission_family ? <Badge variant="secondary">{String(item.mission_family)}</Badge> : null}
+                                                      </div>
+                                                    </div>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      {String(item.category ?? 'general')}
+                                                      {Array.isArray(item.apps) && item.apps.length > 0 ? ` • apps:${item.apps.slice(0, 2).join(', ')}` : ''}
+                                                    </p>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </ScrollArea>
+                                          </>
+                                        ) : (
+                                          <p className="mt-2">Load the benchmark catalog to inspect current Windows coworker coverage packs.</p>
+                                        )}
+                                      </div>
+                                      <div className="space-y-2">
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/80">Latest Run</p>
+                                            {desktopEvaluationRunState ? (
+                                              <Badge variant="secondary">
+                                                {String(desktopEvaluationRunState.status ?? 'success')}
+                                              </Badge>
+                                            ) : (
+                                              <Badge variant="outline">idle</Badge>
+                                            )}
+                                          </div>
+                                          {Object.keys(desktopEvaluationLatestRun).length > 0 ? (
+                                            <>
+                                              <p className="mt-2">
+                                                ran: {formatIso(String(desktopEvaluationLatestRun.executed_at ?? ''))}
+                                                {' • '}scenarios:{String(desktopEvaluationLatestRun.scenario_count ?? 0)}
+                                              </p>
+                                              <p className="mt-1">
+                                                pass:{Number(desktopEvaluationRunSummary.weighted_pass_rate ?? asObjectRecord(desktopEvaluationLatestRun.summary).weighted_pass_rate ?? 0).toFixed(2)}
+                                                {' • '}score:{Number(desktopEvaluationRunSummary.weighted_score ?? asObjectRecord(desktopEvaluationLatestRun.summary).weighted_score ?? 0).toFixed(2)}
+                                              </p>
+                                              <p className="mt-1">
+                                                regression:{String(
+                                                  desktopEvaluationRunRegression.status ??
+                                                    asObjectRecord(desktopEvaluationLatestRun.regression).status ??
+                                                    'baseline'
+                                                )}
+                                                {' • '}delta:{Number(
+                                                  desktopEvaluationRunRegression.weighted_score_delta ??
+                                                    asObjectRecord(desktopEvaluationLatestRun.regression).weighted_score_delta ??
+                                                    0
+                                                ).toFixed(2)}
+                                              </p>
+                                            </>
+                                          ) : (
+                                            <p className="mt-2">No benchmark runs recorded yet.</p>
+                                          )}
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/80">Upgrade Targets</p>
+                                          {Object.keys(desktopEvaluationImprovementCandidates).length > 0 ? (
+                                            <div className="mt-2 space-y-1">
+                                              {(['packs', 'categories', 'capabilities', 'mission_families'] as const).map((groupKey) => {
+                                                const rows = Array.isArray(desktopEvaluationImprovementCandidates[groupKey])
+                                                  ? desktopEvaluationImprovementCandidates[groupKey].filter((item): item is Record<string, unknown> => isObjectRecord(item))
+                                                  : [];
+                                                if (rows.length === 0) return null;
+                                                return (
+                                                  <p key={`desktop-eval-gap-${groupKey}`}>
+                                                    {groupKey.replaceAll('_', ' ')}:{' '}
+                                                    {rows
+                                                      .slice(0, 2)
+                                                      .map((item) => `${String(item.name ?? 'unknown')}(${Number(item.weighted_score ?? 0).toFixed(2)})`)
+                                                      .join(' • ')}
+                                                  </p>
+                                                );
+                                              })}
+                                              {isObjectRecord(desktopEvaluationImprovementCandidates.recovery_focus) ? (
+                                                <p>
+                                                  recovery focus:{' '}
+                                                  {Number(asObjectRecord(desktopEvaluationImprovementCandidates.recovery_focus).weighted_score ?? 0).toFixed(2)}
+                                                </p>
+                                              ) : null}
+                                              {isObjectRecord(desktopEvaluationImprovementCandidates.native_hybrid_focus) ? (
+                                                <p>
+                                                  native hybrid focus:{' '}
+                                                  {Number(asObjectRecord(desktopEvaluationImprovementCandidates.native_hybrid_focus).weighted_score ?? 0).toFixed(2)}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          ) : (
+                                            <p className="mt-2">Run the benchmark packs to surface the weakest Windows coworker areas automatically.</p>
+                                          )}
+                                        </div>
+                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/80">Run History</p>
+                                          {desktopEvaluationHistoryRows.length > 0 ? (
+                                            <ScrollArea className="mt-2 h-[112px] rounded border border-primary/10 bg-black/10 p-2">
+                                              <div className="space-y-2">
+                                                {desktopEvaluationHistoryRows.slice(0, 5).map((item, index) => {
+                                                  const summary = asObjectRecord(item.summary);
+                                                  const regression = asObjectRecord(item.regression);
+                                                  return (
+                                                    <div
+                                                      key={`desktop-eval-history-${String(item.executed_at ?? index)}`}
+                                                      className="rounded border border-primary/10 bg-background/30 p-2"
+                                                    >
+                                                      <p>
+                                                        {formatIso(String(item.executed_at ?? ''))}
+                                                        {' • '}scenarios:{String(item.scenario_count ?? 0)}
+                                                      </p>
+                                                      <p className="mt-1">
+                                                        pass:{Number(summary.weighted_pass_rate ?? 0).toFixed(2)}
+                                                        {' • '}score:{Number(summary.weighted_score ?? 0).toFixed(2)}
+                                                        {' • '}reg:{String(regression.status ?? 'baseline')}
+                                                      </p>
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </ScrollArea>
+                                          ) : (
+                                            <p className="mt-2">No stored benchmark history yet.</p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
