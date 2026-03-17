@@ -49,7 +49,9 @@ Total = 14 Local AI models.
 
 And these API keys:
 1)Groq
+
 2)ElevenLabs
+
 3)Nvidia
 
 Total = 3 API keys.
