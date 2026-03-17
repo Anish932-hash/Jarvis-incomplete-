@@ -144,6 +144,23 @@ class DesktopMissionMemory:
                     maximum=100_000,
                     default=0,
                 ),
+                "branch_repeat_count": self._coerce_int(
+                    payload.get("branch_repeat_count", 0),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                ),
+                "surface_path_depth": self._coerce_int(
+                    payload.get(
+                        "surface_path_depth",
+                        len(payload.get("surface_path_tail", []))
+                        if isinstance(payload.get("surface_path_tail", []), list)
+                        else 0,
+                    ),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                ),
                 "branch_history_tail": [
                     dict(item)
                     for item in payload.get("branch_history", [])[-8:]
@@ -270,6 +287,20 @@ class DesktopMissionMemory:
             if "branch_transition_count" in payload:
                 row["branch_transition_count"] = self._coerce_int(
                     payload.get("branch_transition_count", row.get("branch_transition_count", 0)),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                )
+            if "branch_repeat_count" in payload:
+                row["branch_repeat_count"] = self._coerce_int(
+                    payload.get("branch_repeat_count", row.get("branch_repeat_count", 0)),
+                    minimum=0,
+                    maximum=100_000,
+                    default=0,
+                )
+            if "surface_path_depth" in payload:
+                row["surface_path_depth"] = self._coerce_int(
+                    payload.get("surface_path_depth", row.get("surface_path_depth", 0)),
                     minimum=0,
                     maximum=100_000,
                     default=0,
@@ -593,6 +624,8 @@ class DesktopMissionMemory:
             "window_title_history_tail": [str(item).strip() for item in row.get("window_title_history_tail", []) if str(item).strip()] if isinstance(row.get("window_title_history_tail", []), list) else [],
             "last_branch_kind": str(row.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": self._coerce_int(row.get("branch_transition_count", 0), minimum=0, maximum=100_000, default=0),
+            "branch_repeat_count": self._coerce_int(row.get("branch_repeat_count", 0), minimum=0, maximum=100_000, default=0),
+            "surface_path_depth": self._coerce_int(row.get("surface_path_depth", 0), minimum=0, maximum=100_000, default=0),
             "branch_history_tail": [dict(item) for item in row.get("branch_history_tail", []) if isinstance(item, dict)] if isinstance(row.get("branch_history_tail", []), list) else [],
             "nested_progress_count": self._coerce_int(row.get("nested_progress_count", 0), minimum=0, maximum=100_000, default=0),
             "attempted_targets_tail": [dict(item) for item in row.get("attempted_targets_tail", []) if isinstance(item, dict)] if isinstance(row.get("attempted_targets_tail", []), list) else [],
@@ -704,6 +737,11 @@ class DesktopMissionMemory:
                 "exploration_step_limit_reached": 86,
                 "exploration_nested_branch_limit_reached": 87,
             }.get(stop_reason_code, 86)
+        elif stop_reason_code == "exploration_nested_branch_loop_guard":
+            recovery_profile = "surface_review"
+            recovery_hint = "JARVIS is revisiting the same nested branch, so inspect the child surface before resuming."
+            recovery_priority = 77
+            manual_attention_required = True
         elif stop_reason_code in {
             "exploration_manual_review_required",
             "exploration_no_safe_path",

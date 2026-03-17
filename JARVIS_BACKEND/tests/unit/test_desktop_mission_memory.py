@@ -250,6 +250,8 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
             "nested_progress_count": 1,
             "last_branch_kind": "child_window",
             "branch_transition_count": 1,
+            "branch_repeat_count": 1,
+            "surface_path_depth": 2,
             "branch_history": [
                 {
                     "step_index": 1,
@@ -259,6 +261,7 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
                     "selected_candidate_label": "Bluetooth",
                     "window_title": "Bluetooth & devices",
                     "surface_path_tail": ["Devices", "Bluetooth"],
+                    "occurrences": 1,
                 }
             ],
             "attempted_targets": [
@@ -290,6 +293,8 @@ def test_desktop_mission_memory_tracks_exploration_recovery_profiles(tmp_path: P
     assert ready_mission["nested_progress_count"] == 1
     assert ready_mission["last_branch_kind"] == "child_window"
     assert ready_mission["branch_transition_count"] == 1
+    assert ready_mission["branch_repeat_count"] == 1
+    assert ready_mission["surface_path_depth"] == 2
     assert ready_mission["branch_history_tail"][0]["window_title"] == "Bluetooth & devices"
     assert ready_mission["attempted_targets_tail"][0]["candidate_id"] == "list_bluetooth"
     assert ready_mission["surface_signature_history"] == ["surface-exploration-ready-1", "surface-exploration-ready-2"]

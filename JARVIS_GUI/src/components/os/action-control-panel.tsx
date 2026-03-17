@@ -15775,6 +15775,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 : [];
                                               const lastBranchKind = String(explorationMission.last_branch_kind ?? '').trim();
                                               const branchTransitionCount = Number(explorationMission.branch_transition_count ?? 0);
+                                              const branchRepeatCount = Number(explorationMission.branch_repeat_count ?? 0);
+                                              const surfacePathDepth = Number(explorationMission.surface_path_depth ?? surfacePathTail.length);
                                               const branchHistoryTail = Array.isArray(explorationMission.branch_history_tail)
                                                 ? explorationMission.branch_history_tail.filter(
                                                     (item): item is Record<string, unknown> =>
@@ -15812,6 +15814,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               <p>
                                                 nested branches: {branchTransitionCount}
                                                 {lastBranchKind ? ` • last: ${humanizeRuntimeLabel(lastBranchKind)}` : ''}
+                                                {branchRepeatCount > 1 ? ` • repeat: ${branchRepeatCount}x` : ''}
+                                                {surfacePathDepth > 0 ? ` • depth: ${surfacePathDepth}` : ''}
                                               </p>
                                             ) : null}
                                             {branchHistoryTail.length > 0 ? (
@@ -15827,7 +15831,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                             item?.selected_candidate_label ??
                                                             item?.transition_kind ??
                                                             'branch'
-                                                    ).trim()
+                                                    ).trim() + (Number(item?.occurrences ?? 0) > 1 ? ` (${Number(item?.occurrences)}x)` : '')
                                                   )
                                                   .filter(Boolean)
                                                   .join(' -> ')}

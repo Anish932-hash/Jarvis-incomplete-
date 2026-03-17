@@ -81,6 +81,8 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
   const explorationAlternativeCount = Number(latestMission?.alternative_target_count ?? 0);
   const explorationBranchCount = Number(latestMission?.branch_transition_count ?? 0);
   const explorationLastBranchKind = String(latestMission?.last_branch_kind ?? '').trim();
+  const explorationBranchRepeatCount = Number(latestMission?.branch_repeat_count ?? 0);
+  const explorationSurfaceDepth = Number(latestMission?.surface_path_depth ?? 0);
   const updatedAt = formatMissionTimestamp(String(latestMission?.updated_at ?? latestMission?.created_at ?? ''));
   const daemonLastTick = formatMissionTimestamp(String(supervisorStatus?.last_tick_at ?? ''));
   const daemonIntervalS = Number(supervisorStatus?.interval_s ?? 0);
@@ -121,6 +123,7 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               <Badge variant="outline">
                 branches:{explorationBranchCount}
                 {explorationLastBranchKind ? `:${explorationLastBranchKind}` : ''}
+                {explorationBranchRepeatCount > 1 ? `:${explorationBranchRepeatCount}x` : ''}
               </Badge>
             ) : null}
             {manualAttentionCount > 0 ? <Badge variant="outline">review:{manualAttentionCount}</Badge> : null}
@@ -141,7 +144,10 @@ export default function DesktopRecoveryBanner({ className, compact = false }: De
               ? ` • alts:${explorationAlternativeCount}`
               : ''}
             {missionKind === 'exploration' && explorationBranchCount > 0
-              ? ` • branches:${explorationBranchCount}${explorationLastBranchKind ? `(${explorationLastBranchKind})` : ''}`
+              ? ` • branches:${explorationBranchCount}${explorationLastBranchKind ? `(${explorationLastBranchKind})` : ''}${explorationBranchRepeatCount > 1 ? `:${explorationBranchRepeatCount}x` : ''}`
+              : ''}
+            {missionKind === 'exploration' && explorationSurfaceDepth > 0
+              ? ` • depth:${explorationSurfaceDepth}`
               : ''}
             {latestMission?.resume_action ? ` • resume:${String(latestMission.resume_action)}` : ''}
             {supervisorStatus ? ` • daemon tick:${daemonLastTick}` : ''}

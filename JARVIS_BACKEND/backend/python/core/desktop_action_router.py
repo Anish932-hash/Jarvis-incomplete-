@@ -8856,7 +8856,6 @@ class DesktopActionRouter:
             selected_action,
             selected_candidate_id,
             selected_candidate_label.lower(),
-            surface_signature.lower(),
             window_title.lower(),
             "|".join(surface_path_tail).lower(),
         ]
@@ -9175,8 +9174,10 @@ class DesktopActionRouter:
 
         if last_branch_kind == "dialog_shift":
             if selected_action == "press_dialog_button":
-                score += 0.12
-            elif kind == "branch_action":
+                score += 0.18
+            else:
+                score -= 0.12
+            if kind == "branch_action" and selected_action != "press_dialog_button":
                 score -= 0.04
         elif last_branch_kind == "child_window":
             if kind == "hypothesis":
@@ -9190,8 +9191,11 @@ class DesktopActionRouter:
             if selected_action in {"select_tab_page", "select_sidebar_item", "select_list_item", "focus_input_field", "press_dialog_button"}:
                 score += 0.06
 
-        if bool(branch_context.get("current_dialog_visible", False)) and selected_action == "press_dialog_button":
-            score += 0.08
+        if bool(branch_context.get("current_dialog_visible", False)):
+            if selected_action == "press_dialog_button":
+                score += 0.12
+            else:
+                score -= 0.08
         if latest_occurrences >= 2 and kind == "branch_action":
             score -= 0.06
         return round(score, 4)
@@ -9416,6 +9420,10 @@ class DesktopActionRouter:
                 "JARVIS paused at the configured step budget after advancing into a deeper nested surface.",
                 "Resume the paused exploration flow mission to let JARVIS continue from that nested branch in another bounded wave.",
             ],
+            "exploration_nested_branch_loop_guard": [
+                "JARVIS is revisiting the same nested branch, so inspect the current child surface before resuming.",
+                "Change or dismiss the repeated child surface manually if you want JARVIS to continue exploring deeper.",
+            ],
             "exploration_no_safe_path": [
                 "Inspect the current window and decide what surface JARVIS should target next.",
                 "Use a more explicit query or manual steering before resuming automated exploration.",
@@ -9496,14 +9504,15 @@ class DesktopActionRouter:
             if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
         )
         last_branch = dict(branch_rows[-1]) if branch_rows else {}
-        branch_transition_count = len(branch_rows)
+        branch_transition_count = self._surface_exploration_branch_transition_count(branch_history=branch_rows)
+        branch_repeat_count = self._surface_exploration_branch_repeat_count(branch_history=branch_rows)
         return {
             "mission_kind": "exploration",
             "stop_reason_code": str(stop_reason_code or "").strip(),
             "resume_action": EXPLORATION_ADVANCE_ACTION,
             "resume_preconditions": (
                 ["review_current_surface"]
-                if stop_reason_code in {"exploration_manual_review_required", "exploration_no_safe_path", "exploration_no_progress", "exploration_route_unavailable"}
+                if stop_reason_code in {"exploration_manual_review_required", "exploration_no_safe_path", "exploration_no_progress", "exploration_route_unavailable", "exploration_nested_branch_loop_guard"}
                 else ["reacquire_current_surface"]
             ),
             "window_title": str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
@@ -9552,6 +9561,8 @@ class DesktopActionRouter:
             "nested_progress_count": nested_progress_count,
             "last_branch_kind": str(last_branch.get("transition_kind", "") or "").strip(),
             "branch_transition_count": branch_transition_count,
+            "branch_repeat_count": branch_repeat_count,
+            "surface_path_depth": len(surface_path_tail),
             "branch_history_tail": [dict(row) for row in branch_rows[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_rows[-6:]],
             "notes": notes[:12],
@@ -9606,6 +9617,8 @@ class DesktopActionRouter:
             "branch_history": [dict(row) for row in branch_history],
             "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
+            "branch_repeat_count": max(0, int(blocking_surface.get("branch_repeat_count", self._surface_exploration_branch_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_repeat_count(branch_history=branch_history))),
+            "surface_path_depth": max(0, int(blocking_surface.get("surface_path_depth", len(blocking_surface.get("surface_path_tail", [])) if isinstance(blocking_surface.get("surface_path_tail", []), list) else 0) or 0)),
         }
         if resume_action == EXPLORATION_FLOW_ACTION:
             resume_payload["max_exploration_steps"] = max(1, min(int(args.get("max_exploration_steps", 3) or 3), 8))
@@ -9666,6 +9679,8 @@ class DesktopActionRouter:
                 ] if isinstance(blocking_surface.get("surface_path_tail", []), list) else [],
                 "last_branch_kind": str(blocking_surface.get("last_branch_kind", "") or "").strip(),
                 "branch_transition_count": max(0, int(blocking_surface.get("branch_transition_count", len(branch_history)) or len(branch_history))),
+                "branch_repeat_count": max(0, int(blocking_surface.get("branch_repeat_count", self._surface_exploration_branch_repeat_count(branch_history=branch_history)) or self._surface_exploration_branch_repeat_count(branch_history=branch_history))),
+                "surface_path_depth": max(0, int(blocking_surface.get("surface_path_depth", len(blocking_surface.get("surface_path_tail", [])) if isinstance(blocking_surface.get("surface_path_tail", []), list) else 0) or 0)),
                 "branch_history_tail": [
                     dict(row)
                     for row in blocking_surface.get("branch_history_tail", [])[-6:]
@@ -9835,6 +9850,7 @@ class DesktopActionRouter:
                 "label": str(selected.get("label", "") or "").strip(),
                 "selected_action": str(selected.get("selected_action", "") or "").strip(),
                 "confidence": float(selected.get("confidence", 0.0) or 0.0),
+                "branch_score": float(selected.get("branch_score", 0.0) or 0.0),
                 "selection_key": str(selected.get("selection_key", "") or "").strip(),
                 "attempted_target_count": int(selected.get("attempted_target_count", 0) or 0),
                 "reason": str(selected.get("reason", "") or "").strip(),
@@ -10152,7 +10168,15 @@ class DesktopActionRouter:
             if isinstance(row, dict) and bool(row.get("nested_surface_progressed", row.get("progressed", False)))
         )
         last_branch_kind = str(branch_history[-1].get("transition_kind", "") or "").strip() if branch_history else ""
-        branch_transition_count = len(branch_history)
+        branch_transition_count = self._surface_exploration_branch_transition_count(branch_history=branch_history)
+        branch_repeat_count = self._surface_exploration_branch_repeat_count(branch_history=branch_history)
+        surface_path_depth = len(surface_path_tail)
+        if stop_reason_code == "exploration_nested_branch_available" and branch_repeat_count >= 2:
+            stop_reason_code = "exploration_nested_branch_loop_guard"
+            stop_reason = (
+                "JARVIS keeps landing on the same nested branch, so it is pausing to avoid looping until the surface changes."
+            )
+            mission_status = "blocked"
 
         blocking_surface: Dict[str, Any] = {}
         resume_contract: Dict[str, Any] = {}
@@ -10183,6 +10207,8 @@ class DesktopActionRouter:
             "nested_progress_count": nested_progress_count,
             "last_branch_kind": last_branch_kind,
             "branch_transition_count": branch_transition_count,
+            "branch_repeat_count": branch_repeat_count,
+            "surface_path_depth": surface_path_depth,
             "branch_history_tail": [dict(row) for row in branch_history[-6:]],
             "attempted_targets_tail": [dict(row) for row in attempted_targets[-6:]],
             "surface_signature_history": surface_signature_history,
@@ -10226,6 +10252,8 @@ class DesktopActionRouter:
             "alternative_target_count": alternative_target_count,
             "last_branch_kind": last_branch_kind,
             "branch_transition_count": branch_transition_count,
+            "branch_repeat_count": branch_repeat_count,
+            "surface_path_depth": surface_path_depth,
         }
         pause_payload: Dict[str, Any] = {}
         if stop_reason_code:
@@ -10245,6 +10273,8 @@ class DesktopActionRouter:
             resume_args["branch_history"] = [dict(row) for row in branch_history]
             resume_args["last_branch_kind"] = last_branch_kind
             resume_args["branch_transition_count"] = branch_transition_count
+            resume_args["branch_repeat_count"] = branch_repeat_count
+            resume_args["surface_path_depth"] = surface_path_depth
             resume_contract = self._surface_exploration_resume_contract(
                 args=resume_args,
                 exploration_plan=followup_plan if isinstance(followup_plan, dict) and followup_plan else initial_plan,
@@ -10279,6 +10309,8 @@ class DesktopActionRouter:
                 "nested_progress_count": nested_progress_count,
                 "last_branch_kind": last_branch_kind,
                 "branch_transition_count": branch_transition_count,
+                "branch_repeat_count": branch_repeat_count,
+                "surface_path_depth": surface_path_depth,
                 "branch_history": [dict(row) for row in branch_history],
                 "attempted_targets": [dict(row) for row in attempted_targets],
                 "surface_signature_history": surface_signature_history,
@@ -10337,6 +10369,8 @@ class DesktopActionRouter:
                 "nested_progress_count": nested_progress_count,
                 "last_branch_kind": last_branch_kind,
                 "branch_transition_count": branch_transition_count,
+                "branch_repeat_count": branch_repeat_count,
+                "surface_path_depth": surface_path_depth,
                 "branch_history": [dict(row) for row in branch_history],
                 "stop_reason_code": stop_reason_code,
                 "stop_reason": stop_reason,
@@ -10512,6 +10546,14 @@ class DesktopActionRouter:
                     or 0
                 ),
             )
+            current_args["branch_repeat_count"] = max(
+                0,
+                int(latest_runtime.get("branch_repeat_count", current_args.get("branch_repeat_count", 0)) or 0),
+            )
+            current_args["surface_path_depth"] = max(
+                0,
+                int(latest_runtime.get("surface_path_depth", current_args.get("surface_path_depth", 0)) or 0),
+            )
             if bool(step_mission.get("completed", False)):
                 completed = True
                 message = str(step_payload.get("message", "") or "surface exploration flow completed").strip()
@@ -10627,6 +10669,8 @@ class DesktopActionRouter:
                 "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
                 "last_branch_kind": str(latest_runtime.get("last_branch_kind", "") or "").strip(),
                 "branch_transition_count": int(latest_runtime.get("branch_transition_count", 0) or 0),
+                "branch_repeat_count": int(latest_runtime.get("branch_repeat_count", 0) or 0),
+                "surface_path_depth": int(latest_runtime.get("surface_path_depth", 0) or 0),
                 "branch_history_tail": [
                     dict(row)
                     for row in latest_runtime.get("branch_history", [])[-6:]
@@ -10752,6 +10796,8 @@ class DesktopActionRouter:
             "nested_progress_count": int(latest_runtime.get("nested_progress_count", 0) or 0),
             "last_branch_kind": str(latest_runtime.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": int(latest_runtime.get("branch_transition_count", 0) or 0),
+            "branch_repeat_count": int(latest_runtime.get("branch_repeat_count", 0) or 0),
+            "surface_path_depth": int(latest_runtime.get("surface_path_depth", 0) or 0),
             "branch_history": [
                 dict(row)
                 for row in current_args.get("branch_history", [])
@@ -10853,6 +10899,8 @@ class DesktopActionRouter:
             "nested_progress_count": int(pause_payload.get("nested_progress_count", 0) or 0),
             "last_branch_kind": str(pause_payload.get("last_branch_kind", "") or "").strip(),
             "branch_transition_count": int(pause_payload.get("branch_transition_count", 0) or 0),
+            "branch_repeat_count": int(pause_payload.get("branch_repeat_count", 0) or 0),
+            "surface_path_depth": int(pause_payload.get("surface_path_depth", 0) or 0),
             "branch_history_tail": [
                 dict(row)
                 for row in pause_payload.get("branch_history", [])[-6:]
