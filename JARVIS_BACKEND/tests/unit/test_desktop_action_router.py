@@ -584,8 +584,14 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context(
         "benchmark_target_app_matched": True,
         "benchmark_target_app_match_score": 1.0,
         "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+        "benchmark_target_hint_query": "pair device | confirm pairing",
         "benchmark_target_priority": 2.6,
         "benchmark_target_max_horizon_steps": 5,
+        "benchmark_target_replay_pressure": 1.65,
+        "benchmark_target_replay_session_count": 1,
+        "benchmark_target_replay_pending_count": 1,
+        "benchmark_target_replay_failed_count": 1,
+        "benchmark_target_replay_completed_count": 0,
         "benchmark_target_dialog_pressure": 0.85,
         "benchmark_target_descendant_focus_pressure": 0.92,
         "benchmark_target_navigation_pressure": 0.25,
@@ -620,6 +626,7 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context(
     )
 
     assert focus_score > click_score
+    assert (focus_score - click_score) > 0.12
 
 
 def test_desktop_action_router_select_surface_exploration_target_prefers_preferred_descendant_adoption() -> None:

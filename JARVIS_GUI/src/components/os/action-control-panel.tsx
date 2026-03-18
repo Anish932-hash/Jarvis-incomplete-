@@ -65,6 +65,10 @@ import {
   type DesktopEvaluationGuidanceResponse,
   type DesktopEvaluationHistoryResponse,
   type DesktopEvaluationLabResponse,
+  type DesktopEvaluationLabSessionCreateResponse,
+  type DesktopEvaluationLabSessionRecord,
+  type DesktopEvaluationLabSessionReplayResponse,
+  type DesktopEvaluationLabSessionsResponse,
   type DesktopEvaluationNativeTargetsResponse,
   type DesktopEvaluationRunResponse,
   type DesktopExplorationMission,
@@ -1160,6 +1164,12 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationGuidanceResponse | null>(null);
   const [desktopEvaluationLabState, setDesktopEvaluationLabState] =
     useState<DesktopEvaluationLabResponse | null>(null);
+  const [desktopEvaluationLabSessionsState, setDesktopEvaluationLabSessionsState] =
+    useState<DesktopEvaluationLabSessionsResponse | null>(null);
+  const [desktopEvaluationLabSessionCreateState, setDesktopEvaluationLabSessionCreateState] =
+    useState<DesktopEvaluationLabSessionCreateResponse | null>(null);
+  const [desktopEvaluationLabSessionReplayState, setDesktopEvaluationLabSessionReplayState] =
+    useState<DesktopEvaluationLabSessionReplayResponse | null>(null);
   const [desktopEvaluationNativeTargetsState, setDesktopEvaluationNativeTargetsState] =
     useState<DesktopEvaluationNativeTargetsResponse | null>(null);
   const [desktopEvaluationCatalogBusy, setDesktopEvaluationCatalogBusy] = useState(false);
@@ -1167,6 +1177,9 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationHistoryBusy, setDesktopEvaluationHistoryBusy] = useState(false);
   const [desktopEvaluationGuidanceBusy, setDesktopEvaluationGuidanceBusy] = useState(false);
   const [desktopEvaluationLabBusy, setDesktopEvaluationLabBusy] = useState(false);
+  const [desktopEvaluationLabSessionsBusy, setDesktopEvaluationLabSessionsBusy] = useState(false);
+  const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
+  const [desktopEvaluationLabSessionReplayBusy, setDesktopEvaluationLabSessionReplayBusy] = useState(false);
   const [desktopEvaluationNativeTargetsBusy, setDesktopEvaluationNativeTargetsBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
   const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
@@ -1895,6 +1908,23 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopEvaluationLab = useMemo(
     () => asObjectRecord(desktopEvaluationLabState),
     [desktopEvaluationLabState]
+  );
+  const desktopEvaluationLabSessions = useMemo(
+    () => asObjectRecord(desktopEvaluationLabSessionsState),
+    [desktopEvaluationLabSessionsState]
+  );
+  const desktopEvaluationLatestLabSession = useMemo(
+    () => asObjectRecord(desktopEvaluationLabSessions.latest_session),
+    [desktopEvaluationLabSessions]
+  );
+  const desktopEvaluationLabSessionRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabSessionsState?.items)
+        ? desktopEvaluationLabSessionsState.items.filter(
+            (item): item is DesktopEvaluationLabSessionRecord => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabSessionsState]
   );
   const desktopEvaluationNativeTargets = useMemo(
     () => asObjectRecord(desktopEvaluationNativeTargetsState),
@@ -13313,6 +13343,117 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [buildDesktopEvaluationQueryInput, toast]
   );
 
+  const refreshDesktopEvaluationLabSessions = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationLabSessionsBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationLabSessions({ limit: 8 });
+        setDesktopEvaluationLabSessionsState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Benchmark Sessions Ready',
+            description: `${Number(payload.count ?? 0)} stored benchmark lab session(s) are ready for replay and review.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Benchmark Sessions Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationLabSessionsBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const createDesktopEvaluationLabSession = useCallback(async () => {
+    setDesktopEvaluationLabSessionCreateBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationCreateLabSession({
+        ...buildDesktopEvaluationQueryInput(),
+        history_limit: 8,
+        source: 'action_control_panel',
+      });
+      setDesktopEvaluationLabSessionCreateState(payload);
+      if (payload.lab && isObjectRecord(payload.lab)) {
+        setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+      }
+      if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+        setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+      }
+      if (payload.guidance && isObjectRecord(payload.guidance)) {
+        setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+      }
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
+      toast({
+        title: 'Benchmark Lab Session Stored',
+        description:
+          `${String(asObjectRecord(payload.session).label ?? 'benchmark lab session')}` +
+          ` • replay:${Number(asObjectRecord(payload.session).replay_candidate_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Benchmark Lab Session Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationLabSessionCreateBusy(false);
+    }
+  }, [buildDesktopEvaluationQueryInput, refreshDesktopEvaluationLabSessions, toast]);
+
+  const replayDesktopEvaluationLabSessionScenario = useCallback(
+    async (sessionId: string, scenarioName?: string) => {
+      setDesktopEvaluationLabSessionReplayBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationReplayLabSession({
+          session_id: sessionId,
+          scenario_name: scenarioName,
+        });
+        setDesktopEvaluationLabSessionReplayState(payload);
+        if (payload.replay_result && isObjectRecord(payload.replay_result)) {
+          setDesktopEvaluationRunState(payload.replay_result as DesktopEvaluationRunResponse);
+        }
+        if (payload.lab && isObjectRecord(payload.lab)) {
+          setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+        }
+        if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+          setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+        }
+        if (payload.guidance && isObjectRecord(payload.guidance)) {
+          setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+        }
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
+        toast({
+          title: 'Lab Session Replay Ran',
+          description:
+            `${String(asObjectRecord(payload.updated_candidate).scenario ?? scenarioName ?? 'scenario')}` +
+            ` • ${String(asObjectRecord(payload.updated_candidate).replay_status ?? 'completed')}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Lab Session Replay Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationLabSessionReplayBusy(false);
+      }
+    },
+    [refreshDesktopEvaluationHistory, refreshDesktopEvaluationLabSessions, toast]
+  );
+
   const refreshDesktopEvaluationNativeTargets = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationNativeTargetsBusy(true);
@@ -13356,6 +13497,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       await refreshDesktopEvaluationHistory({ quiet: true });
       await refreshDesktopEvaluationGuidance({ quiet: true });
       await refreshDesktopEvaluationLab({ quiet: true });
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
       await refreshDesktopEvaluationNativeTargets({ quiet: true });
       const summary = asObjectRecord(payload.summary);
       const candidates = asObjectRecord(summary.improvement_candidates);
@@ -13386,6 +13528,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
+    refreshDesktopEvaluationLabSessions,
     refreshDesktopEvaluationNativeTargets,
     toast,
   ]);
@@ -13418,6 +13561,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         await refreshDesktopEvaluationHistory({ quiet: true });
         await refreshDesktopEvaluationGuidance({ quiet: true });
         await refreshDesktopEvaluationLab({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
         await refreshDesktopEvaluationNativeTargets({ quiet: true });
         toast({
           title: 'Benchmark Replay Ran',
@@ -13439,6 +13583,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       refreshDesktopEvaluationGuidance,
       refreshDesktopEvaluationHistory,
       refreshDesktopEvaluationLab,
+      refreshDesktopEvaluationLabSessions,
       refreshDesktopEvaluationNativeTargets,
       toast,
     ]
@@ -13612,6 +13757,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopEvaluationHistory({ quiet: true });
     void refreshDesktopEvaluationGuidance({ quiet: true });
     void refreshDesktopEvaluationLab({ quiet: true });
+    void refreshDesktopEvaluationLabSessions({ quiet: true });
     void refreshDesktopEvaluationNativeTargets({ quiet: true });
   }, [
     open,
@@ -13619,6 +13765,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
+    refreshDesktopEvaluationLabSessions,
     refreshDesktopEvaluationNativeTargets,
     refreshDesktopMissions,
     refreshDesktopRecoveryDaemonStatus,
@@ -17542,6 +17689,34 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         type="button"
                                         variant="outline"
                                         className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopEvaluationLabSessions()}
+                                        disabled={desktopEvaluationLabSessionsBusy}
+                                      >
+                                        {desktopEvaluationLabSessionsBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Database className="h-4 w-4" />
+                                        )}
+                                        Sessions
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void createDesktopEvaluationLabSession()}
+                                        disabled={desktopEvaluationLabSessionCreateBusy}
+                                      >
+                                        {desktopEvaluationLabSessionCreateBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="h-4 w-4" />
+                                        )}
+                                        Save Lab Session
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
                                         onClick={() => void refreshDesktopEvaluationNativeTargets()}
                                         disabled={desktopEvaluationNativeTargetsBusy}
                                       >
@@ -17800,6 +17975,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {Array.isArray(desktopEvaluationNativeTargets.coverage_gap_apps)
                                               ? desktopEvaluationNativeTargets.coverage_gap_apps.length
                                               : 0}
+                                            {' • '}sessions:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_session_summary).session_count ?? 0)}
+                                            {' • '}failed:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_session_summary).failed_replays ?? 0)}
                                           </p>
                                           {Object.keys(asObjectRecord(desktopEvaluationNativeTargets.strongest_tactics)).length > 0 ? (
                                             <div className="flex flex-wrap items-center gap-2">
@@ -17838,11 +18017,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                           {Array.isArray(item.mission_families)
                                                             ? item.mission_families.slice(0, 2).join(', ')
                                                             : 'n/a'}
+                                                          {' • '}replay:
+                                                          {Number(item.replay_pressure ?? 0).toFixed(2)}
                                                         </p>
                                                         <p className="mt-1 text-[10px] text-muted-foreground">
-                                                          {Array.isArray(item.query_hints) && item.query_hints.length > 0
-                                                            ? item.query_hints.slice(0, 3).join(' • ')
-                                                            : 'no query hints'}
+                                                          {String(item.hint_query ?? '').trim()
+                                                            ? String(item.hint_query ?? '').trim()
+                                                            : Array.isArray(item.query_hints) && item.query_hints.length > 0
+                                                              ? item.query_hints.slice(0, 3).join(' • ')
+                                                              : 'no query hints'}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          sessions:{Number(item.replay_session_count ?? 0)}
+                                                          {' • '}pending:{Number(item.replay_pending_count ?? 0)}
+                                                          {' • '}failed:{Number(item.replay_failed_count ?? 0)}
+                                                          {' • '}done:{Number(item.replay_completed_count ?? 0)}
                                                         </p>
                                                         <div className="mt-2 flex flex-wrap items-center gap-2">
                                                           {Object.entries(biases)
@@ -17949,14 +18138,111 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               </div>
                                             </div>
                                           ) : (
-                                            <p className="mt-2">
-                                              Load the benchmark lab to inspect replayable scenarios, long-horizon depth, installed-app coverage gaps, and trend drift.
+                                        <p className="mt-2">
+                                          Load the benchmark lab to inspect replayable scenarios, long-horizon depth, installed-app coverage gaps, and trend drift.
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Stored Lab Sessions</p>
+                                        {desktopEvaluationLabSessionsState ? (
+                                          <Badge variant="secondary">
+                                            {String(desktopEvaluationLatestLabSession.status ?? 'ready')}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline">idle</Badge>
+                                        )}
+                                      </div>
+                                      {desktopEvaluationLabSessionRows.length > 0 ? (
+                                        <div className="mt-2 space-y-2">
+                                          <p>
+                                            sessions:{desktopEvaluationLabSessionRows.length}
+                                            {' • '}pending:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).pending_replays ?? 0)}
+                                            {' • '}failed:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).failed_replays ?? 0)}
+                                          </p>
+                                          <div className="rounded border border-primary/10 bg-black/10 p-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/70">Latest Session</p>
+                                            <p className="mt-1">
+                                              {String(desktopEvaluationLatestLabSession.label ?? 'benchmark lab session')}
+                                              {' • '}targets:{Number(desktopEvaluationLatestLabSession.target_app_count ?? 0)}
                                             </p>
-                                          )}
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              focus:
+                                              {Array.isArray(desktopEvaluationLatestLabSession.focus_summary) &&
+                                              desktopEvaluationLatestLabSession.focus_summary.length > 0
+                                                ? ` ${desktopEvaluationLatestLabSession.focus_summary.slice(0, 4).join(' • ')}`
+                                                : ' n/a'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              trend:{String(desktopEvaluationLatestLabSession.history_direction ?? 'stable')}
+                                              {' • '}score:{Number(desktopEvaluationLatestLabSession.latest_weighted_score ?? 0).toFixed(2)}
+                                            </p>
+                                          </div>
+                                          <ScrollArea className="h-[138px] rounded border border-primary/10 bg-black/10 p-2">
+                                            <div className="space-y-2">
+                                              {desktopEvaluationLabSessionRows.slice(0, 4).map((session, index) => {
+                                                const candidates = Array.isArray(session.replay_candidates)
+                                                  ? session.replay_candidates.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+                                                  : [];
+                                                const nextCandidate = candidates.find(
+                                                  (item) => String(item.replay_status ?? 'pending').trim().toLowerCase() !== 'completed'
+                                                ) ?? candidates[0];
+                                                return (
+                                                  <div
+                                                    key={`desktop-eval-session-${String(session.session_id ?? index)}`}
+                                                    className="rounded border border-primary/10 bg-background/30 p-2"
+                                                  >
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                      <p className="text-[11px] text-primary/90">
+                                                        {String(session.label ?? session.session_id ?? 'session')}
+                                                      </p>
+                                                      <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                        onClick={() =>
+                                                          void replayDesktopEvaluationLabSessionScenario(
+                                                            String(session.session_id ?? ''),
+                                                            nextCandidate
+                                                              ? String(nextCandidate.scenario ?? '')
+                                                              : undefined
+                                                          )
+                                                        }
+                                                        disabled={
+                                                          desktopEvaluationLabSessionReplayBusy ||
+                                                          !String(session.session_id ?? '').trim() ||
+                                                          !nextCandidate
+                                                        }
+                                                      >
+                                                        Replay Next
+                                                      </Button>
+                                                    </div>
+                                                    <p className="mt-1">
+                                                      pending:{Number(session.pending_replay_count ?? 0)}
+                                                      {' • '}failed:{Number(session.failed_replay_count ?? 0)}
+                                                      {' • '}apps:{Number(session.target_app_count ?? 0)}
+                                                    </p>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      {nextCandidate
+                                                        ? `${String(nextCandidate.scenario ?? 'scenario')} • ${String(nextCandidate.replay_status ?? 'pending')}`
+                                                        : 'no replay candidates'}
+                                                    </p>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </ScrollArea>
                                         </div>
-                                        <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
-                                          <p className="font-semibold uppercase tracking-wider text-primary/80">Run History</p>
-                                          {desktopEvaluationHistoryRows.length > 0 ? (
+                                      ) : (
+                                        <p className="mt-2">
+                                          Save a benchmark lab session to keep replay queues, target apps, and trend snapshots as reusable regression assets.
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <p className="font-semibold uppercase tracking-wider text-primary/80">Run History</p>
+                                      {desktopEvaluationHistoryRows.length > 0 ? (
                                             <ScrollArea className="mt-2 h-[112px] rounded border border-primary/10 bg-black/10 p-2">
                                               <div className="space-y-2">
                                                 {desktopEvaluationHistoryRows.slice(0, 5).map((item, index) => {

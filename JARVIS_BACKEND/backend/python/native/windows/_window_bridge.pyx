@@ -11,6 +11,7 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
     string focus_window_json(const string& title_contains_utf8, long long hwnd_value) except +
     string reacquire_related_window_json(
         const string& query_utf8,
+        const string& hint_query_utf8,
         const string& window_title_utf8,
         long long hwnd_value,
         long pid_value,
@@ -18,6 +19,7 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
     ) except +
     string trace_related_window_chain_json(
         const string& query_utf8,
+        const string& hint_query_utf8,
         const string& window_title_utf8,
         long long hwnd_value,
         long pid_value,
@@ -44,8 +46,9 @@ def focus_window(title_contains="", hwnd=0):
     return _decode_payload(focus_window_json(encoded_title, hwnd_value))
 
 
-def reacquire_related_window(query="", window_title="", hwnd=0, pid=0, limit=120):
+def reacquire_related_window(query="", hint_query="", window_title="", hwnd=0, pid=0, limit=120):
     cdef string encoded_query = str(query or "").encode("utf-8")
+    cdef string encoded_hint_query = str(hint_query or "").encode("utf-8")
     cdef string encoded_window_title = str(window_title or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
     cdef long pid_value = int(pid or 0)
@@ -53,6 +56,7 @@ def reacquire_related_window(query="", window_title="", hwnd=0, pid=0, limit=120
     return _decode_payload(
         reacquire_related_window_json(
             encoded_query,
+            encoded_hint_query,
             encoded_window_title,
             hwnd_value,
             pid_value,
@@ -61,8 +65,9 @@ def reacquire_related_window(query="", window_title="", hwnd=0, pid=0, limit=120
     )
 
 
-def trace_related_window_chain(query="", window_title="", hwnd=0, pid=0, limit=120):
+def trace_related_window_chain(query="", hint_query="", window_title="", hwnd=0, pid=0, limit=120):
     cdef string encoded_query = str(query or "").encode("utf-8")
+    cdef string encoded_hint_query = str(hint_query or "").encode("utf-8")
     cdef string encoded_window_title = str(window_title or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
     cdef long pid_value = int(pid or 0)
@@ -70,6 +75,7 @@ def trace_related_window_chain(query="", window_title="", hwnd=0, pid=0, limit=1
     return _decode_payload(
         trace_related_window_chain_json(
             encoded_query,
+            encoded_hint_query,
             encoded_window_title,
             hwnd_value,
             pid_value,

@@ -376,12 +376,19 @@ bool snapshot_is_descendant_of(
 bool snapshot_matches_chain_query(
     const WindowSnapshot& snapshot,
     const std::wstring& query,
+    const std::wstring& hint_query,
     const std::wstring& window_title
 ) {
     if (substring_match_score(utf8_to_wide(snapshot.title), query) > 0.0) {
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.process_name), query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.title), hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.process_name), hint_query) > 0.0) {
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.title), window_title) > 0.0) {
@@ -464,6 +471,7 @@ BOOL CALLBACK EnumWindowsFindProc(HWND hwnd, LPARAM lparam) {
 RelatedWindowScore score_related_window(
     const WindowSnapshot& snapshot,
     const std::wstring& query,
+    const std::wstring& hint_query,
     const std::wstring& window_title,
     long long anchor_hwnd,
     long anchor_pid,
@@ -476,7 +484,14 @@ RelatedWindowScore score_related_window(
     const long long candidate_root_owner_hwnd = snapshot.root_owner_hwnd > 0 ? snapshot.root_owner_hwnd : snapshot.hwnd;
     const int candidate_owner_chain_depth = snapshot.owner_chain_depth;
     const double title_score = substring_match_score(utf8_to_wide(snapshot.title), window_title);
-    const double query_score = substring_match_score(utf8_to_wide(snapshot.title), query);
+    const double query_score = std::max(
+        substring_match_score(utf8_to_wide(snapshot.title), query),
+        substring_match_score(utf8_to_wide(snapshot.process_name), query)
+    );
+    const double hint_query_score = std::max(
+        substring_match_score(utf8_to_wide(snapshot.title), hint_query),
+        substring_match_score(utf8_to_wide(snapshot.process_name), hint_query)
+    );
 
     if (anchor_hwnd > 0 && candidate_hwnd == anchor_hwnd) {
         relation.score += 2.4;
@@ -502,12 +517,27 @@ RelatedWindowScore score_related_window(
         relation.score += 0.52 * query_score;
         relation.reasons.push_back("query");
     }
+    if (hint_query_score > 0.0) {
+        relation.score += 0.38 * hint_query_score;
+        relation.reasons.push_back("hint_query");
+    }
     if (query_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
         relation.score += 1.2;
         relation.reasons.push_back("query_owned_child");
     } else if (query_score >= 0.95 && anchor_root_owner_hwnd > 0 && candidate_root_owner_hwnd == anchor_root_owner_hwnd) {
         relation.score += 0.7;
         relation.reasons.push_back("query_same_root_owner");
+    }
+    if (hint_query_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 0.85;
+        relation.reasons.push_back("hint_query_owned_child");
+    } else if (
+        hint_query_score >= 0.95
+        && anchor_root_owner_hwnd > 0
+        && candidate_root_owner_hwnd == anchor_root_owner_hwnd
+    ) {
+        relation.score += 0.48;
+        relation.reasons.push_back("hint_query_same_root_owner");
     }
     if (anchor_root_owner_hwnd > 0 &&
         candidate_root_owner_hwnd == anchor_root_owner_hwnd &&
@@ -729,6 +759,7 @@ std::string focus_window_json(const std::string& title_contains_utf8, long long 
 
 std::string reacquire_related_window_json(
     const std::string& query_utf8,
+    const std::string& hint_query_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,
@@ -759,6 +790,7 @@ std::string reacquire_related_window_json(
     }
 
     const std::wstring query = utf8_to_wide(query_utf8);
+    const std::wstring hint_query = utf8_to_wide(hint_query_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
     const long anchor_pid = pid_value > 0 ? pid_value : (anchor_found ? anchor.pid : 0);
@@ -771,6 +803,7 @@ std::string reacquire_related_window_json(
         const RelatedWindowScore relation = score_related_window(
             row,
             query,
+            hint_query,
             window_title,
             anchor_hwnd,
             anchor_pid,
@@ -825,6 +858,7 @@ std::string reacquire_related_window_json(
 
 std::string trace_related_window_chain_json(
     const std::string& query_utf8,
+    const std::string& hint_query_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,
@@ -855,6 +889,7 @@ std::string trace_related_window_chain_json(
     }
 
     const std::wstring query = utf8_to_wide(query_utf8);
+    const std::wstring hint_query = utf8_to_wide(hint_query_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
     const long anchor_pid = pid_value > 0 ? pid_value : (anchor_found ? anchor.pid : 0);
@@ -867,6 +902,7 @@ std::string trace_related_window_chain_json(
         const RelatedWindowScore relation = score_related_window(
             row,
             query,
+            hint_query,
             window_title,
             anchor_hwnd,
             anchor_pid,
@@ -932,7 +968,7 @@ std::string trace_related_window_chain_json(
         if (snapshot_is_dialog_like(row)) {
             descendant_dialog_chain_depth = std::max(descendant_dialog_chain_depth, relative_depth);
         }
-        if (snapshot_matches_chain_query(row, query, window_title)) {
+        if (snapshot_matches_chain_query(row, query, hint_query, window_title)) {
             ++descendant_query_match_count;
         }
     }
@@ -944,8 +980,8 @@ std::string trace_related_window_chain_json(
         return left.title < right.title;
     });
     std::sort(descendant_depth_rows.begin(), descendant_depth_rows.end(), [&](const auto& left, const auto& right) {
-        const bool left_query_match = snapshot_matches_chain_query(left.second, query, window_title);
-        const bool right_query_match = snapshot_matches_chain_query(right.second, query, window_title);
+        const bool left_query_match = snapshot_matches_chain_query(left.second, query, hint_query, window_title);
+        const bool right_query_match = snapshot_matches_chain_query(right.second, query, hint_query, window_title);
         if (left_query_match != right_query_match) {
             return left_query_match;
         }

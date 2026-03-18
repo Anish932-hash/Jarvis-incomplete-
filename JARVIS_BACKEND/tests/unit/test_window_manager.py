@@ -201,7 +201,16 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
             }
 
         @staticmethod
-        def trace_related_window_chain(*, query: str = "", window_title: str = "", hwnd: int | None = None, pid: int | None = None, limit: int = 120) -> dict:
+        def trace_related_window_chain(
+            *,
+            query: str = "",
+            hint_query: str = "",
+            window_title: str = "",
+            hwnd: int | None = None,
+            pid: int | None = None,
+            limit: int = 120,
+        ) -> dict:
+            del query, hint_query, window_title, pid
             assert limit >= 3
             if int(hwnd or 0) == 5001:
                 return {
@@ -346,16 +355,20 @@ def test_native_window_runtime_reports_missing_extension_build_hint(monkeypatch)
 
 
 def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dialog_rerank() -> None:
+    calls: dict[str, str] = {}
+
     class _GuidedNativeRuntime:
         def reacquire_related_window(
             self,
             *,
             query: str = "",
+            hint_query: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 80,
         ) -> dict:
+            calls["reacquire_hint_query"] = str(hint_query or "")
             del query, window_title, hwnd, pid, limit
             return {
                 "status": "success",
@@ -422,11 +435,13 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             self,
             *,
             query: str = "",
+            hint_query: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 80,
         ) -> dict:
+            calls["trace_hint_query"] = str(hint_query or "")
             del query, window_title, hwnd, pid, limit
             return {
                 "status": "success",
@@ -464,6 +479,12 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "app_name": "systemsettings",
                         "priority": 2.5,
                         "query_hints": ["pair device", "confirm pairing"],
+                        "hint_query": "pair device | confirm pairing",
+                        "replay_pressure": 1.65,
+                        "replay_session_count": 1,
+                        "replay_pending_count": 1,
+                        "replay_failed_count": 1,
+                        "replay_completed_count": 0,
                         "control_biases": {
                             "dialog_resolution": 0.92,
                             "descendant_focus": 0.96,
@@ -480,10 +501,14 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
 
     assert payload["status"] == "success"
     assert payload["candidate"]["hwnd"] == 5002
+    assert calls["reacquire_hint_query"] == "pair device | confirm pairing"
+    assert calls["trace_hint_query"] == "pair device | confirm pairing"
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
     assert "benchmark_target_app_match" in payload["candidate"]["match_reasons"]
     assert "benchmark_target_query_hint" in payload["candidate"]["match_reasons"]
+    assert "benchmark_target_hint_query" in payload["candidate"]["match_reasons"]
+    assert "benchmark_replay_pressure" in payload["candidate"]["match_reasons"]
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:

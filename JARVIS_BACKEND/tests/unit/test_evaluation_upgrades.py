@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from backend.python.core.contracts import ExecutionPlan, PlanStep
+from backend.python.evaluation.benchmark_lab_memory import DesktopBenchmarkLabMemory
 from backend.python.evaluation.runner import EvaluationRunner
 from backend.python.evaluation.scenarios import Scenario
 
@@ -510,4 +511,157 @@ def test_evaluation_runner_native_control_targets_aggregates_app_tactics(monkeyp
     assert native_targets["benchmark_ready"] is True
     assert native_targets["target_apps"][0]["app_name"] == "installer"
     assert native_targets["target_app_biases"]["installer"]["recovery_reacquire"] > 0.0
+    assert native_targets["replay_session_summary"]["session_count"] == 0
     assert "Visual Studio Code" in native_targets["coverage_gap_apps"]
+
+
+def test_evaluation_runner_persists_lab_sessions_and_replays_them(monkeypatch, tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    runner = EvaluationRunner(history_limit=6, lab_memory=memory)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        text = str(goal.request.text).lower()
+        if "installer" in text:
+            steps = [PlanStep(step_id="s1", action="time_now")]
+        else:
+            steps = [PlanStep(step_id="s1", action="desktop_interact")]
+        return ExecutionPlan(plan_id="plan-1", goal_id=goal.goal_id, intent="test", steps=steps)
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "unsupported_child_dialog_chain",
+            "Explore surface for add bluetooth device in settings and continue through the child dialog chain",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="unsupported_app",
+            capabilities=["surface_exploration", "child_window_adoption", "recovery"],
+            risk_level="guarded",
+            pack="unsupported_and_recovery",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        )
+    ]
+
+    payload = runner.run_with_summary(scenarios)
+    assert payload["status"] == "success"
+
+    created = runner.create_lab_session(pack="unsupported_and_recovery", app="settings", history_limit=4)
+    assert created["status"] == "success"
+    session = created["session"]
+    assert session["replay_candidate_count"] >= 1
+    assert session["target_app_count"] >= 1
+
+    history = runner.lab_sessions(limit=4)
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_session"]["session_id"] == session["session_id"]
+
+    replayed = runner.replay_lab_session(
+        session_id=str(session["session_id"]),
+        scenario_name="unsupported_child_dialog_chain",
+    )
+    assert replayed["status"] == "success"
+    assert replayed["updated_candidate"]["scenario"] == "unsupported_child_dialog_chain"
+    assert replayed["updated_candidate"]["replay_status"] in {"completed", "failed"}
+    assert replayed["session"]["session_id"] == session["session_id"]
+
+    native_targets = runner.native_control_targets(pack="unsupported_and_recovery", app="settings", history_limit=4)
+    assert native_targets["status"] == "success"
+    assert native_targets["replay_session_summary"]["session_count"] == 1
+    assert native_targets["replay_session_summary"]["latest_session_id"] == session["session_id"]
+    target_row = next(item for item in native_targets["target_apps"] if str(item.get("app_name", "")) == "settings")
+    assert str(target_row["hint_query"]).strip()
+    assert float(target_row["replay_pressure"]) > 0.0
+    assert int(target_row["replay_session_count"]) == 1
+    assert int(target_row["replay_pending_count"]) >= 0
+    assert int(target_row["replay_failed_count"]) >= 0
+    assert "unsupported_child_dialog_chain" in list(target_row["replay_scenarios"])
+
+
+def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        return ExecutionPlan(
+            plan_id="plan-1",
+            goal_id=goal.goal_id,
+            intent="test",
+            steps=[PlanStep(step_id="s1", action="desktop_interact")],
+        )
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "custom_vscode_replay",
+            "Run npm test in vscode and reopen the failing file",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="editor_workflow",
+            capabilities=["desktop_workflow", "quick_open", "command_execution"],
+            risk_level="standard",
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["vscode"],
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=6,
+            tags=["editor", "long_horizon"],
+        )
+    ]
+
+    runner.run_with_summary(scenarios)
+    runner.last_items = [
+        {
+            "scenario": "custom_vscode_replay",
+            "user_text": "Run npm test in vscode and reopen the failing file",
+            "pack": "long_horizon_and_replay",
+            "category": "editor_workflow",
+            "mission_family": "workflow",
+            "capabilities": ["desktop_workflow", "quick_open", "command_execution"],
+            "apps": ["vscode"],
+            "native_hybrid_focus": True,
+            "recovery_expected": False,
+            "horizon_steps": 6,
+            "score": 0.61,
+            "weight": 1.4,
+            "replayable": True,
+        }
+    ]
+    lab_payload = runner.lab(pack="long_horizon_and_replay", app="vscode")
+    custom_candidates = list(lab_payload.get("replay_candidates", []))
+    custom_candidates.insert(
+        0,
+        {
+            "scenario": "custom_vscode_replay",
+            "pack": "long_horizon_and_replay",
+            "category": "editor_workflow",
+            "mission_family": "workflow",
+            "apps": ["vscode"],
+            "capabilities": ["desktop_workflow", "quick_open", "command_execution"],
+            "score": 0.5,
+            "weight": 1.5,
+            "replayable": True,
+            "horizon_steps": 6,
+            "reasons": ["custom_latest_row"],
+            "replay_query": {"scenario_name": "custom_vscode_replay", "limit": 1},
+        },
+    )
+    monkeypatch.setattr(runner, "lab", lambda **kwargs: {**lab_payload, "replay_candidates": custom_candidates})
+
+    payload = runner.native_control_targets(pack="long_horizon_and_replay", app="vscode")
+    assert payload["status"] == "success"
+    assert payload["benchmark_ready"] is True
+    vscode_row = next(item for item in payload["target_apps"] if str(item.get("app_name", "")) == "vscode")
+    assert str(vscode_row["hint_query"]).strip()
+    assert float(vscode_row["replay_pressure"]) > 0.0

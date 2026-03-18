@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Callable, Dict, List
+from typing import Any, Callable, Dict, List
 
 from backend.python.core.contracts import GoalRecord, GoalRequest
 from backend.python.core.planner import Planner
 from backend.python.core.task_state import GoalStatus
+from .benchmark_lab_memory import DesktopBenchmarkLabMemory
 from .scenarios import Scenario, default_scenarios, scenario_catalog
 
 
@@ -16,10 +17,12 @@ class EvaluationRunner:
         *,
         history_limit: int = 12,
         installed_app_catalog_provider: Callable[..., Dict[str, object]] | None = None,
+        lab_memory: DesktopBenchmarkLabMemory | None = None,
     ) -> None:
         self.planner = Planner()
         self.history_limit = max(1, min(int(history_limit), 128))
         self.installed_app_catalog_provider = installed_app_catalog_provider
+        self.lab_memory = lab_memory
         self.last_summary: Dict[str, object] = {}
         self.last_items: List[Dict[str, object]] = []
         self.last_run: Dict[str, object] = {}
@@ -149,6 +152,192 @@ class EvaluationRunner:
             "history_size": len(self.run_history),
         }
 
+    def lab_sessions(
+        self,
+        *,
+        limit: int = 12,
+        session_id: str = "",
+        status: str = "",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        return memory.session_history(limit=limit, session_id=session_id, status=status)
+
+    def create_lab_session(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        filters = self._filters_payload(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+        )
+        lab_payload = self.lab(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        native_targets_payload = self.native_control_targets(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        guidance_payload = self.control_guidance()
+        payload = memory.record_session(
+            filters=filters,
+            lab_payload=lab_payload,
+            native_targets_payload=native_targets_payload,
+            guidance_payload=guidance_payload,
+            source=source,
+            label=label,
+        )
+        session = dict(payload.get("session", {})) if isinstance(payload.get("session", {}), dict) else {}
+        return {
+            "status": str(payload.get("status", "success") or "success"),
+            "session": session,
+            "lab": lab_payload,
+            "native_targets": native_targets_payload,
+            "guidance": guidance_payload,
+        }
+
+    def replay_lab_session(
+        self,
+        *,
+        session_id: str,
+        scenario_name: str = "",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        session_payload = memory.get_session(session_id)
+        session = dict(session_payload.get("session", {})) if isinstance(session_payload.get("session", {}), dict) else {}
+        if not session:
+            return {"status": "error", "message": str(session_payload.get("message", "") or "benchmark lab session not found")}
+        candidates = (
+            [dict(item) for item in session.get("replay_candidates", []) if isinstance(item, dict)]
+            if isinstance(session.get("replay_candidates", []), list)
+            else []
+        )
+        selected_candidate: Dict[str, Any] | None = None
+        clean_scenario = str(scenario_name or "").strip()
+        if clean_scenario:
+            for candidate in candidates:
+                if str(candidate.get("scenario", "") or "").strip() == clean_scenario:
+                    selected_candidate = dict(candidate)
+                    break
+        if selected_candidate is None and candidates:
+            selected_candidate = dict(candidates[0])
+        if selected_candidate is None:
+            return {"status": "error", "message": "benchmark lab session has no replay candidates"}
+        replay_query = (
+            dict(selected_candidate.get("replay_query", {}))
+            if isinstance(selected_candidate.get("replay_query", {}), dict)
+            else {}
+        )
+        if not replay_query:
+            replay_query = {
+                **self._filters_payload(
+                    scenario_name=str(session.get("filters", {}).get("scenario_name", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    pack=str(session.get("filters", {}).get("pack", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    category=str(session.get("filters", {}).get("category", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    capability=str(session.get("filters", {}).get("capability", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    risk_level=str(session.get("filters", {}).get("risk_level", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    autonomy_tier=str(session.get("filters", {}).get("autonomy_tier", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    mission_family=str(session.get("filters", {}).get("mission_family", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    app=str(session.get("filters", {}).get("app", "") or "").strip()
+                    if isinstance(session.get("filters", {}), dict)
+                    else "",
+                    limit=1,
+                ),
+                "scenario_name": str(selected_candidate.get("scenario", "") or "").strip(),
+                "limit": 1,
+            }
+        replay_query = {**replay_query, "scenario_name": str(selected_candidate.get("scenario", "") or "").strip(), "limit": 1}
+        replay_result = self.run_with_summary(**self._filters_to_run_kwargs(replay_query))
+        session_filters = (
+            dict(session.get("filters", {}))
+            if isinstance(session.get("filters", {}), dict)
+            else {}
+        )
+        refreshed_lab = self.lab(
+            **self._filters_to_run_kwargs(session_filters),
+            history_limit=8,
+        )
+        refreshed_native_targets = self.native_control_targets(
+            **self._filters_to_run_kwargs(session_filters),
+            history_limit=8,
+        )
+        refreshed_guidance = self.control_guidance()
+        update_payload = memory.record_replay_result(
+            session_id=str(session.get("session_id", session_id) or session_id).strip(),
+            scenario_name=str(selected_candidate.get("scenario", "") or "").strip(),
+            replay_payload=replay_result,
+            replay_query=replay_query,
+            lab_payload=refreshed_lab,
+            native_targets_payload=refreshed_native_targets,
+            guidance_payload=refreshed_guidance,
+        )
+        return {
+            "status": str(update_payload.get("status", "success") or "success"),
+            "session": dict(update_payload.get("session", {})) if isinstance(update_payload.get("session", {}), dict) else {},
+            "replay_candidate": selected_candidate,
+            "updated_candidate": dict(update_payload.get("updated_candidate", {})) if isinstance(update_payload.get("updated_candidate", {}), dict) else {},
+            "replay_result": replay_result,
+            "lab": refreshed_lab,
+            "native_targets": refreshed_native_targets,
+            "guidance": refreshed_guidance,
+        }
+
     def control_guidance(self) -> Dict[str, object]:
         latest_run = dict(self.last_run) if isinstance(self.last_run, dict) else {}
         latest_summary = (
@@ -221,6 +410,17 @@ class EvaluationRunner:
         limit: int = 200,
         history_limit: int = 8,
     ) -> Dict[str, object]:
+        filters = self._filters_payload(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+        )
         lab_payload = self.lab(
             scenario_name=scenario_name,
             pack=pack,
@@ -246,6 +446,11 @@ class EvaluationRunner:
             limit=limit,
         )
         scenario_by_name = {row.name: row for row in selected}
+        latest_rows_by_name = {
+            str(row.get("scenario", "") or "").strip(): dict(row)
+            for row in self.last_items
+            if isinstance(row, dict) and str(row.get("scenario", "") or "").strip()
+        }
         replay_candidates = (
             [
                 dict(item)
@@ -255,6 +460,16 @@ class EvaluationRunner:
             if isinstance(lab_payload, dict)
             else []
         )
+        lab_sessions_payload = (
+            self.lab_sessions(limit=max(12, history_limit * 3))
+            if self.lab_memory is not None
+            else {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        )
+        replay_sessions = [
+            dict(item)
+            for item in lab_sessions_payload.get("items", [])
+            if isinstance(item, dict) and self._lab_session_matches_filters(session=item, filters=filters)
+        ] if isinstance(lab_sessions_payload, dict) and isinstance(lab_sessions_payload.get("items", []), list) else []
         target_apps: Dict[str, Dict[str, object]] = {}
         tactic_totals = {
             "dialog_resolution": 0.0,
@@ -264,55 +479,158 @@ class EvaluationRunner:
             "loop_guard": 0.0,
             "native_focus": 0.0,
         }
-        for candidate in replay_candidates:
-            scenario_name_value = str(candidate.get("scenario", "") or "").strip()
-            scenario = scenario_by_name.get(scenario_name_value)
-            if scenario is None:
-                continue
-            tactic_profile = self._scenario_native_tactic_profile(scenario=scenario)
-            for app_name in [str(item).strip().lower() for item in scenario.apps if str(item).strip()]:
-                entry = target_apps.setdefault(
-                    app_name,
-                    {
-                        "app_name": app_name,
-                        "priority": 0.0,
-                        "scenario_names": [],
-                        "packs": set(),
-                        "mission_families": set(),
-                        "query_hints": [],
-                        "max_horizon_steps": 0,
-                        "control_biases": {
-                            "dialog_resolution": 0.0,
-                            "descendant_focus": 0.0,
-                            "navigation_branch": 0.0,
-                            "recovery_reacquire": 0.0,
-                            "loop_guard": 0.0,
-                            "native_focus": 0.0,
-                        },
+        replay_session_summary = {
+            "session_count": len(replay_sessions),
+            "pending_replays": 0,
+            "failed_replays": 0,
+            "completed_replays": 0,
+            "replayable_candidates": 0,
+            "latest_session_id": "",
+            "latest_session_label": "",
+        }
+
+        def _ensure_target_entry(app_name_value: str) -> Dict[str, object]:
+            return target_apps.setdefault(
+                app_name_value,
+                {
+                    "app_name": app_name_value,
+                    "priority": 0.0,
+                    "scenario_names": [],
+                    "packs": set(),
+                    "mission_families": set(),
+                    "query_hints": [],
+                    "max_horizon_steps": 0,
+                    "hint_query": "",
+                    "replay_pressure": 0.0,
+                    "replay_session_ids": set(),
+                    "replay_session_labels": [],
+                    "replay_scenarios": [],
+                    "replay_pending_count": 0,
+                    "replay_failed_count": 0,
+                    "replay_completed_count": 0,
+                    "control_biases": {
+                        "dialog_resolution": 0.0,
+                        "descendant_focus": 0.0,
+                        "navigation_branch": 0.0,
+                        "recovery_reacquire": 0.0,
+                        "loop_guard": 0.0,
+                        "native_focus": 0.0,
                     },
-                )
-                entry["priority"] = float(entry.get("priority", 0.0) or 0.0) + float(
-                    candidate.get("weight", candidate.get("score", 0.0)) or 0.0
-                ) + max(0.0, 1.0 - float(candidate.get("score", 0.0) or 0.0))
+                },
+            )
+
+        def _ingest_native_target_candidate(
+            candidate: Dict[str, Any],
+            *,
+            scenario: Scenario | None,
+            row_fallback: Dict[str, Any],
+            session: Dict[str, Any] | None = None,
+        ) -> None:
+            scenario_name_value = str(candidate.get("scenario", "") or "").strip()
+            apps = [str(item).strip().lower() for item in scenario.apps if str(item).strip()] if scenario is not None else [
+                str(item).strip().lower()
+                for item in candidate.get("apps", row_fallback.get("apps", []))
+                if str(item).strip()
+            ] if isinstance(candidate.get("apps", row_fallback.get("apps", [])), list) else []
+            if not apps:
+                return
+            tactic_profile = (
+                self._scenario_native_tactic_profile(scenario=scenario)
+                if scenario is not None
+                else self._row_native_tactic_profile(row={**row_fallback, **candidate})
+            )
+            query_hints = (
+                self._scenario_query_hints(scenario=scenario)
+                if scenario is not None
+                else self._row_query_hints(row={**row_fallback, **candidate})
+            )
+            pack_name = str(scenario.pack or "").strip() if scenario is not None else str(candidate.get("pack", row_fallback.get("pack", "")) or "").strip()
+            mission_name = str(scenario.mission_family or "").strip() if scenario is not None else str(candidate.get("mission_family", row_fallback.get("mission_family", "")) or "").strip()
+            max_horizon_steps = max(
+                1,
+                int(
+                    scenario.horizon_steps
+                    if scenario is not None
+                    else candidate.get("horizon_steps", row_fallback.get("horizon_steps", 1))
+                    or 1
+                ),
+            )
+            replay_status = str(candidate.get("replay_status", "") or "").strip().lower()
+            last_result_status = str(candidate.get("last_result_status", "") or "").strip().lower()
+            last_regression_status = str(candidate.get("last_regression_status", "") or "").strip().lower()
+            failed_replay = replay_status == "failed" or last_result_status == "failed" or last_regression_status in {"regressed", "failed"}
+            completed_replay = replay_status == "completed" or last_result_status == "success"
+            pending_replay = replay_status in {"pending", "ready", "queued", "staged"} or (
+                not completed_replay and not failed_replay and session is not None
+            )
+            replay_hint_query = self._native_target_hint_query(
+                query_hints=query_hints,
+                replay_scenarios=[scenario_name_value] if scenario_name_value else [],
+            )
+            session_id = str(session.get("session_id", "") or "").strip() if isinstance(session, dict) else ""
+            session_label = str(session.get("label", "") or "").strip() if isinstance(session, dict) else ""
+            candidate_priority = float(candidate.get("weight", candidate.get("score", 0.0)) or 0.0) + max(
+                0.0,
+                1.0 - float(candidate.get("score", 0.0) or 0.0),
+            )
+            if session_id:
+                candidate_priority += 0.08
+            if failed_replay:
+                candidate_priority += 0.18
+            elif pending_replay:
+                candidate_priority += 0.1
+            elif completed_replay:
+                candidate_priority += 0.04
+            replay_pressure = max(
+                0.0,
+                min(
+                    candidate_priority + (0.25 if failed_replay else 0.12 if pending_replay else 0.05 if completed_replay else 0.0),
+                    6.0,
+                ),
+            )
+            for app_name_value in apps:
+                entry = _ensure_target_entry(app_name_value)
+                entry["priority"] = float(entry.get("priority", 0.0) or 0.0) + candidate_priority
                 scenario_names = entry["scenario_names"] if isinstance(entry.get("scenario_names"), list) else []
-                if scenario.name not in scenario_names:
-                    scenario_names.append(scenario.name)
-                entry["scenario_names"] = scenario_names[:6]
+                if scenario_name_value and scenario_name_value not in scenario_names:
+                    scenario_names.append(scenario_name_value)
+                entry["scenario_names"] = scenario_names[:8]
                 packs = entry["packs"] if isinstance(entry.get("packs"), set) else set(entry.get("packs", []))
-                packs.add(str(scenario.pack or "").strip())
+                if pack_name:
+                    packs.add(pack_name)
                 entry["packs"] = packs
                 missions = entry["mission_families"] if isinstance(entry.get("mission_families"), set) else set(entry.get("mission_families", []))
-                missions.add(str(scenario.mission_family or "").strip())
+                if mission_name:
+                    missions.add(mission_name)
                 entry["mission_families"] = missions
                 hints = entry["query_hints"] if isinstance(entry.get("query_hints"), list) else []
-                for hint in self._scenario_query_hints(scenario=scenario):
+                for hint in query_hints:
                     if hint not in hints:
                         hints.append(hint)
                 entry["query_hints"] = hints[:8]
-                entry["max_horizon_steps"] = max(
-                    int(entry.get("max_horizon_steps", 0) or 0),
-                    max(1, int(scenario.horizon_steps or 1)),
-                )
+                entry["max_horizon_steps"] = max(int(entry.get("max_horizon_steps", 0) or 0), max_horizon_steps)
+                if replay_hint_query and not str(entry.get("hint_query", "") or "").strip():
+                    entry["hint_query"] = replay_hint_query
+                entry["replay_pressure"] = float(entry.get("replay_pressure", 0.0) or 0.0) + replay_pressure
+                replay_scenarios = entry["replay_scenarios"] if isinstance(entry.get("replay_scenarios"), list) else []
+                if scenario_name_value and scenario_name_value not in replay_scenarios:
+                    replay_scenarios.append(scenario_name_value)
+                entry["replay_scenarios"] = replay_scenarios[:8]
+                if session_id:
+                    replay_session_ids = entry["replay_session_ids"] if isinstance(entry.get("replay_session_ids"), set) else set(entry.get("replay_session_ids", []))
+                    replay_session_ids.add(session_id)
+                    entry["replay_session_ids"] = replay_session_ids
+                if session_label:
+                    replay_session_labels = entry["replay_session_labels"] if isinstance(entry.get("replay_session_labels"), list) else []
+                    if session_label not in replay_session_labels:
+                        replay_session_labels.append(session_label)
+                    entry["replay_session_labels"] = replay_session_labels[:6]
+                if pending_replay:
+                    entry["replay_pending_count"] = int(entry.get("replay_pending_count", 0) or 0) + 1
+                if failed_replay:
+                    entry["replay_failed_count"] = int(entry.get("replay_failed_count", 0) or 0) + 1
+                if completed_replay:
+                    entry["replay_completed_count"] = int(entry.get("replay_completed_count", 0) or 0) + 1
                 control_biases = (
                     dict(entry.get("control_biases", {}))
                     if isinstance(entry.get("control_biases", {}), dict)
@@ -320,11 +638,52 @@ class EvaluationRunner:
                 )
                 for key, value in tactic_profile.items():
                     tactic_value = max(0.0, min(float(value or 0.0), 1.0))
+                    if failed_replay and key in {"descendant_focus", "dialog_resolution", "recovery_reacquire", "native_focus"}:
+                        tactic_value = min(1.0, tactic_value + 0.06)
+                    elif pending_replay and key in {"recovery_reacquire", "native_focus"}:
+                        tactic_value = min(1.0, tactic_value + 0.03)
                     control_biases[key] = max(float(control_biases.get(key, 0.0) or 0.0), tactic_value)
                     tactic_totals[key] += tactic_value
                 entry["control_biases"] = control_biases
+
+        for candidate in replay_candidates:
+            scenario_name_value = str(candidate.get("scenario", "") or "").strip()
+            scenario = scenario_by_name.get(scenario_name_value)
+            row_fallback = dict(latest_rows_by_name.get(scenario_name_value, {}))
+            _ingest_native_target_candidate(candidate, scenario=scenario, row_fallback=row_fallback)
+        for session in replay_sessions:
+            session_id = str(session.get("session_id", "") or "").strip()
+            session_label = str(session.get("label", "") or "").strip()
+            if session_id and not replay_session_summary["latest_session_id"]:
+                replay_session_summary["latest_session_id"] = session_id
+                replay_session_summary["latest_session_label"] = session_label
+            replay_session_summary["pending_replays"] = int(replay_session_summary["pending_replays"]) + int(session.get("pending_replay_count", 0) or 0)
+            replay_session_summary["failed_replays"] = int(replay_session_summary["failed_replays"]) + int(session.get("failed_replay_count", 0) or 0)
+            replay_session_summary["completed_replays"] = int(replay_session_summary["completed_replays"]) + int(session.get("completed_replay_count", 0) or 0)
+            replay_candidate_rows = [
+                dict(item)
+                for item in session.get("replay_candidates", [])
+                if isinstance(item, dict)
+            ] if isinstance(session.get("replay_candidates", []), list) else []
+            replay_session_summary["replayable_candidates"] = int(replay_session_summary["replayable_candidates"]) + len(replay_candidate_rows)
+            for candidate in replay_candidate_rows:
+                scenario_name_value = str(candidate.get("scenario", "") or "").strip()
+                scenario = scenario_by_name.get(scenario_name_value)
+                row_fallback = dict(latest_rows_by_name.get(scenario_name_value, {}))
+                _ingest_native_target_candidate(candidate, scenario=scenario, row_fallback=row_fallback, session=session)
         target_app_rows: List[Dict[str, object]] = []
         for row in target_apps.values():
+            replay_session_ids = row.get("replay_session_ids", set())
+            replay_session_count = len(replay_session_ids) if isinstance(replay_session_ids, set) else len(
+                [item for item in replay_session_ids if str(item).strip()]
+            ) if isinstance(replay_session_ids, list) else 0
+            replay_scenarios = list(row.get("replay_scenarios", []))[:8] if isinstance(row.get("replay_scenarios", []), list) else []
+            replay_session_labels = list(row.get("replay_session_labels", []))[:6] if isinstance(row.get("replay_session_labels", []), list) else []
+            query_hints = list(row.get("query_hints", []))[:8]
+            hint_query = str(row.get("hint_query", "") or "").strip() or self._native_target_hint_query(
+                query_hints=query_hints,
+                replay_scenarios=replay_scenarios,
+            )
             target_app_rows.append(
                 {
                     "app_name": str(row.get("app_name", "") or "").strip(),
@@ -334,8 +693,16 @@ class EvaluationRunner:
                     "mission_families": sorted(
                         str(item).strip() for item in row.get("mission_families", set()) if str(item).strip()
                     )[:6],
-                    "query_hints": list(row.get("query_hints", []))[:8],
+                    "query_hints": query_hints,
+                    "hint_query": hint_query,
                     "max_horizon_steps": int(row.get("max_horizon_steps", 0) or 0),
+                    "replay_pressure": round(float(row.get("replay_pressure", 0.0) or 0.0), 6),
+                    "replay_session_count": replay_session_count,
+                    "replay_pending_count": int(row.get("replay_pending_count", 0) or 0),
+                    "replay_failed_count": int(row.get("replay_failed_count", 0) or 0),
+                    "replay_completed_count": int(row.get("replay_completed_count", 0) or 0),
+                    "replay_scenarios": replay_scenarios,
+                    "replay_session_labels": replay_session_labels,
                     "control_biases": {
                         key: round(max(0.0, min(float(value or 0.0), 1.0)), 6)
                         for key, value in dict(row.get("control_biases", {})).items()
@@ -345,6 +712,7 @@ class EvaluationRunner:
         target_app_rows.sort(
             key=lambda item: (
                 -float(item.get("priority", 0.0) or 0.0),
+                -float(item.get("replay_pressure", 0.0) or 0.0),
                 -int(item.get("max_horizon_steps", 0) or 0),
                 str(item.get("app_name", "") or ""),
             )
@@ -376,6 +744,7 @@ class EvaluationRunner:
                 if str(item.get("app_name", "") or "").strip()
             },
             "replay_candidates": replay_candidates[:8],
+            "replay_session_summary": replay_session_summary,
             "strongest_tactics": strongest_tactics,
             "coverage_gap_apps": [
                 str(item).strip()
@@ -387,6 +756,52 @@ class EvaluationRunner:
             if isinstance(lab_payload.get("history_trend", {}), dict)
             else {},
         }
+
+    def _lab_session_matches_filters(
+        self,
+        *,
+        session: Dict[str, Any],
+        filters: Dict[str, object],
+    ) -> bool:
+        session_filters = dict(session.get("filters", {})) if isinstance(session.get("filters", {}), dict) else {}
+        for key in (
+            "scenario_name",
+            "pack",
+            "category",
+            "capability",
+            "risk_level",
+            "autonomy_tier",
+            "mission_family",
+            "app",
+        ):
+            expected = str(filters.get(key, "") or "").strip().lower()
+            if not expected:
+                continue
+            actual = str(session_filters.get(key, "") or "").strip().lower()
+            if actual != expected:
+                return False
+        return True
+
+    def _native_target_hint_query(
+        self,
+        *,
+        query_hints: List[str],
+        replay_scenarios: List[str],
+    ) -> str:
+        terms: List[str] = []
+        for hint in query_hints:
+            clean_hint = str(hint or "").strip()
+            if clean_hint and clean_hint not in terms:
+                terms.append(clean_hint)
+            if len(terms) >= 2:
+                break
+        for scenario_name in replay_scenarios:
+            clean_scenario = str(scenario_name or "").strip().replace("_", " ")
+            if clean_scenario and clean_scenario not in terms:
+                terms.append(clean_scenario)
+            if len(terms) >= 2:
+                break
+        return " | ".join(terms[:2])
 
     def run(self, scenarios: List[Scenario] | None = None) -> List[Dict[str, object]]:
         try:
@@ -911,6 +1326,9 @@ class EvaluationRunner:
                     "mission_family": str(row.get("mission_family", "") or "").strip(),
                     "risk_level": str(row.get("risk_level", "") or "").strip(),
                     "apps": list(row.get("apps", [])) if isinstance(row.get("apps", []), list) else [],
+                    "capabilities": list(row.get("capabilities", [])) if isinstance(row.get("capabilities", []), list) else [],
+                    "native_hybrid_focus": bool(row.get("native_hybrid_focus", False)),
+                    "recovery_expected": bool(row.get("recovery_expected", False)),
                     "score": round(score, 6),
                     "weight": round(float(row.get("weight", 0.0) or 0.0), 6),
                     "replayable": replayable,
@@ -1377,6 +1795,21 @@ class EvaluationRunner:
         return {key: round(max(0.0, min(value, 1.0)), 6) for key, value in biases.items()}
 
     @staticmethod
+    def _filters_to_run_kwargs(filters: Dict[str, object]) -> Dict[str, object]:
+        clean = dict(filters) if isinstance(filters, dict) else {}
+        return {
+            "scenario_name": str(clean.get("scenario_name", "") or "").strip(),
+            "pack": str(clean.get("pack", "") or "").strip(),
+            "category": str(clean.get("category", "") or "").strip(),
+            "capability": str(clean.get("capability", "") or "").strip(),
+            "risk_level": str(clean.get("risk_level", "") or "").strip(),
+            "autonomy_tier": str(clean.get("autonomy_tier", "") or "").strip(),
+            "mission_family": str(clean.get("mission_family", "") or "").strip(),
+            "app": str(clean.get("app", clean.get("app_name", "")) or "").strip(),
+            "limit": max(1, min(int(clean.get("limit", 200) or 200), 5000)),
+        }
+
+    @staticmethod
     def _scenario_query_hints(*, scenario: Scenario) -> List[str]:
         hints: List[str] = []
         text = " ".join(str(scenario.user_text or "").strip().split()).lower()
@@ -1399,6 +1832,24 @@ class EvaluationRunner:
             if clean and clean not in hints:
                 hints.append(clean)
         return hints[:8]
+
+    @classmethod
+    def _row_query_hints(cls, *, row: Dict[str, object]) -> List[str]:
+        text = " ".join(
+            [
+                str(row.get("user_text", "") or "").strip(),
+                " ".join(str(item).strip() for item in row.get("tags", []) if str(item).strip()) if isinstance(row.get("tags", []), list) else "",
+                " ".join(str(item).strip() for item in row.get("capabilities", []) if str(item).strip()) if isinstance(row.get("capabilities", []), list) else "",
+            ]
+        ).strip()
+        scenario = Scenario(
+            name=str(row.get("scenario", row.get("name", "")) or "").strip() or "replay_row",
+            user_text=text or str(row.get("user_text", "") or "").strip(),
+            expected_actions=[],
+            capabilities=[str(item).strip() for item in row.get("capabilities", []) if str(item).strip()] if isinstance(row.get("capabilities", []), list) else [],
+            tags=[str(item).strip() for item in row.get("tags", []) if str(item).strip()] if isinstance(row.get("tags", []), list) else [],
+        )
+        return cls._scenario_query_hints(scenario=scenario)
 
     @staticmethod
     def _scenario_native_tactic_profile(*, scenario: Scenario) -> Dict[str, float]:
@@ -1446,6 +1897,26 @@ class EvaluationRunner:
             key: round(max(0.0, min(float(value or 0.0), 1.0)), 6)
             for key, value in profile.items()
         }
+
+    @classmethod
+    def _row_native_tactic_profile(cls, *, row: Dict[str, object]) -> Dict[str, float]:
+        scenario = Scenario(
+            name=str(row.get("scenario", row.get("name", "")) or "").strip() or "replay_row",
+            user_text=str(row.get("user_text", "") or "").strip(),
+            expected_actions=[],
+            category=str(row.get("category", "") or "").strip() or "general",
+            capabilities=[str(item).strip() for item in row.get("capabilities", []) if str(item).strip()] if isinstance(row.get("capabilities", []), list) else [],
+            risk_level=str(row.get("risk_level", "") or "").strip() or "standard",
+            pack=str(row.get("pack", "") or "").strip() or "desktop_core",
+            mission_family=str(row.get("mission_family", "") or "").strip() or "task",
+            autonomy_tier=str(row.get("autonomy_tier", "") or "").strip() or "assisted",
+            apps=[str(item).strip() for item in row.get("apps", []) if str(item).strip()] if isinstance(row.get("apps", []), list) else [],
+            recovery_expected=bool(row.get("recovery_expected", False)),
+            native_hybrid_focus=bool(row.get("native_hybrid_focus", False)),
+            horizon_steps=max(1, int(row.get("horizon_steps", 1) or 1)),
+            tags=[str(item).strip() for item in row.get("tags", []) if str(item).strip()] if isinstance(row.get("tags", []), list) else [],
+        )
+        return cls._scenario_native_tactic_profile(scenario=scenario)
 
     def _last_run_regression_payload(self) -> Dict[str, object]:
         return dict(self.last_run.get("regression", {})) if isinstance(self.last_run, dict) else {}

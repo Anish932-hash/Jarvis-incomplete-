@@ -144,9 +144,21 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub benchmark_target_query_hints: Vec<String>,
     #[serde(default)]
+    pub benchmark_target_hint_query: String,
+    #[serde(default)]
     pub benchmark_target_priority: f64,
     #[serde(default)]
     pub benchmark_target_max_horizon_steps: u32,
+    #[serde(default)]
+    pub benchmark_target_replay_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_replay_session_count: u32,
+    #[serde(default)]
+    pub benchmark_target_replay_pending_count: u32,
+    #[serde(default)]
+    pub benchmark_target_replay_failed_count: u32,
+    #[serde(default)]
+    pub benchmark_target_replay_completed_count: u32,
     #[serde(default)]
     pub benchmark_target_dialog_pressure: f64,
     #[serde(default)]
@@ -575,8 +587,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         .iter()
         .flat_map(|value| tokenize(value))
         .collect::<Vec<_>>();
+    let benchmark_target_hint_query = normalize_text(&input.benchmark_target_hint_query);
+    let benchmark_target_hint_query_tokens = tokenize(&benchmark_target_hint_query);
     let benchmark_target_priority = input.benchmark_target_priority.max(0.0);
     let benchmark_target_max_horizon_steps = input.benchmark_target_max_horizon_steps;
+    let benchmark_target_replay_pressure = input.benchmark_target_replay_pressure.max(0.0);
+    let benchmark_target_replay_session_count = input.benchmark_target_replay_session_count;
+    let benchmark_target_replay_pending_count = input.benchmark_target_replay_pending_count;
+    let benchmark_target_replay_failed_count = input.benchmark_target_replay_failed_count;
+    let benchmark_target_replay_completed_count = input.benchmark_target_replay_completed_count;
     let benchmark_target_dialog_pressure = input.benchmark_target_dialog_pressure.clamp(0.0, 1.0);
     let benchmark_target_descendant_focus_pressure =
         input.benchmark_target_descendant_focus_pressure.clamp(0.0, 1.0);
@@ -651,6 +670,8 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             + token_overlap(&benchmark_target_app_tokens, &current_window_app_tokens)
             + token_overlap(&benchmark_target_app_tokens, &current_reacquired_app_tokens);
         let target_hint_overlap = token_overlap(&benchmark_target_query_hint_tokens, &label_tokens);
+        let target_hint_query_overlap =
+            token_overlap(&benchmark_target_hint_query_tokens, &label_tokens);
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
@@ -664,6 +685,12 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         if benchmark_target_app_matched && target_hint_overlap > 0 {
             rust_score += (target_hint_overlap as f64 * 0.04).min(0.14);
             reasons.push(format!("benchmark_target_query_hint:{target_hint_overlap}"));
+        }
+        if benchmark_target_app_matched && target_hint_query_overlap > 0 {
+            rust_score += (target_hint_query_overlap as f64 * 0.045).min(0.14);
+            reasons.push(format!(
+                "benchmark_target_hint_query:{target_hint_query_overlap}"
+            ));
         }
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
@@ -798,6 +825,24 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 benchmark_target_native_focus_pressure
             ));
         }
+        if benchmark_target_app_matched && benchmark_target_replay_pressure > 0.0 {
+            let mut replay_boost = (0.02 * benchmark_target_replay_pressure.min(5.0))
+                + (0.025 * benchmark_target_replay_failed_count.min(3) as f64)
+                + (0.015 * benchmark_target_replay_pending_count.min(3) as f64)
+                + (0.01 * benchmark_target_replay_session_count.min(3) as f64);
+            if preferred_descendant_focus {
+                replay_boost += (0.03 + (target_hint_query_overlap as f64 * 0.05)).min(0.09);
+            } else if selected_action == "press_dialog_button" {
+                replay_boost += (0.02 + (target_hint_overlap as f64 * 0.04)).min(0.07);
+            } else if selected_action == "focus" {
+                replay_boost += (0.02 + (target_hint_query_overlap as f64 * 0.03)).min(0.06);
+            }
+            rust_score += replay_boost.min(0.26);
+            reasons.push(format!(
+                "benchmark_target_replay_pressure:{:.2}",
+                benchmark_target_replay_pressure
+            ));
+        }
         if benchmark_target_app_matched
             && benchmark_target_loop_guard_pressure > 0.0
             && kind == "branch_action"
@@ -818,6 +863,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push(format!(
                 "benchmark_target_horizon_steps:{}",
                 benchmark_target_max_horizon_steps
+            ));
+        }
+        if benchmark_target_app_matched && benchmark_target_replay_completed_count > 0 && kind == "hypothesis" {
+            rust_score += (benchmark_target_replay_completed_count.min(4) as f64 * 0.01).min(0.04);
+            reasons.push(format!(
+                "benchmark_target_replay_completed:{}",
+                benchmark_target_replay_completed_count
             ));
         }
 
@@ -1808,8 +1860,14 @@ mod tests {
             "benchmark_target_app_matched": true,
             "benchmark_target_app_match_score": 1.0,
             "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+            "benchmark_target_hint_query": "pair device | confirm pairing",
             "benchmark_target_priority": 2.4,
             "benchmark_target_max_horizon_steps": 5,
+            "benchmark_target_replay_pressure": 1.65,
+            "benchmark_target_replay_session_count": 1,
+            "benchmark_target_replay_pending_count": 1,
+            "benchmark_target_replay_failed_count": 1,
+            "benchmark_target_replay_completed_count": 0,
             "benchmark_target_descendant_focus_pressure": 0.94,
             "benchmark_target_native_focus_pressure": 0.91,
             "benchmark_target_reacquire_pressure": 0.88,
@@ -1864,6 +1922,9 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("benchmark_target_exact_app_match")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_replay_pressure:1.65")));
     }
 
     #[test]

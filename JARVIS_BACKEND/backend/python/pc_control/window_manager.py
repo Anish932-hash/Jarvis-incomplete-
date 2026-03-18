@@ -219,7 +219,13 @@ class WindowManager:
                 "matched": False,
                 "match_score": 0.0,
                 "query_hints": [],
+                "hint_query": "",
                 "priority": 0.0,
+                "replay_pressure": 0.0,
+                "replay_session_count": 0,
+                "replay_pending_count": 0,
+                "replay_failed_count": 0,
+                "replay_completed_count": 0,
                 "control_biases": {
                     "dialog_resolution": 0.0,
                     "descendant_focus": 0.0,
@@ -243,11 +249,13 @@ class WindowManager:
                 candidate_terms.append(clean)
         best_row: Dict[str, Any] = {}
         best_score = 0.0
+        best_priority = 0.0
         for row in target_rows:
             target_app_name = cls._normalize_text(row.get("app_name", ""))
             if not target_app_name:
                 continue
             row_score = 0.0
+            row_hint_query = cls._normalize_text(row.get("hint_query", ""))
             if any(term == target_app_name for term in candidate_terms):
                 row_score = 1.0
             for term in candidate_terms:
@@ -266,8 +274,28 @@ class WindowManager:
                         cls._text_match_score(query, clean_hint),
                         cls._text_match_score(clean_hint, query),
                     )
-            if row_score > best_score:
+                if row_hint_query:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_hint_query),
+                        cls._text_match_score(row_hint_query, query),
+                    )
+            if row_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_hint_query),
+                        cls._text_match_score(row_hint_query, term),
+                    )
+            row_priority = (
+                max(0.0, float(row.get("priority", 0.0) or 0.0))
+                + max(0.0, float(row.get("replay_pressure", 0.0) or 0.0))
+            )
+            if row_score > best_score or (abs(row_score - best_score) <= 1e-9 and row_priority > best_priority):
                 best_score = row_score
+                best_priority = row_priority
                 best_row = row
         control_biases = dict(best_row.get("control_biases", {})) if isinstance(best_row.get("control_biases", {}), dict) else {}
         matched = bool(best_row and best_score >= 0.56)
@@ -280,7 +308,13 @@ class WindowManager:
                 for item in best_row.get("query_hints", [])
                 if str(item).strip()
             ][:8] if isinstance(best_row.get("query_hints", []), list) else [],
+            "hint_query": str(best_row.get("hint_query", "") or "").strip(),
             "priority": round(float(best_row.get("priority", 0.0) or 0.0), 6),
+            "replay_pressure": round(float(best_row.get("replay_pressure", 0.0) or 0.0), 6),
+            "replay_session_count": max(0, int(best_row.get("replay_session_count", 0) or 0)),
+            "replay_pending_count": max(0, int(best_row.get("replay_pending_count", 0) or 0)),
+            "replay_failed_count": max(0, int(best_row.get("replay_failed_count", 0) or 0)),
+            "replay_completed_count": max(0, int(best_row.get("replay_completed_count", 0) or 0)),
             "control_biases": {
                 "dialog_resolution": max(0.0, min(float(control_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
                 "descendant_focus": max(0.0, min(float(control_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
@@ -746,6 +780,11 @@ class WindowManager:
         descendant_pressure = max(0.0, min(float(benchmark_biases.get("descendant_focus", 0.0) or 0.0), 1.0))
         reacquire_pressure = max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0))
         native_focus_pressure = max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0))
+        target_hint_query = str(target_app_context.get("hint_query", "") or "").strip()
+        target_replay_pressure = max(0.0, float(target_app_context.get("replay_pressure", 0.0) or 0.0))
+        target_replay_pending_count = max(0, int(target_app_context.get("replay_pending_count", 0) or 0))
+        target_replay_failed_count = max(0, int(target_app_context.get("replay_failed_count", 0) or 0))
+        target_replay_completed_count = max(0, int(target_app_context.get("replay_completed_count", 0) or 0))
         if bool(target_app_context.get("matched", False)):
             dialog_pressure = max(dialog_pressure, float(target_biases.get("dialog_resolution", 0.0) or 0.0))
             descendant_pressure = max(descendant_pressure, float(target_biases.get("descendant_focus", 0.0) or 0.0))
@@ -769,16 +808,39 @@ class WindowManager:
                 self._text_match_score(candidate_title, hint),
                 self._text_match_score(candidate_signature, hint),
             )
+        if target_hint_query:
+            candidate_target_hint_score = max(
+                candidate_target_hint_score,
+                self._text_match_score(candidate_title, target_hint_query),
+                self._text_match_score(candidate_signature, target_hint_query),
+                self._text_match_score(candidate_process, target_hint_query),
+                self._text_match_score(candidate_app_name, target_hint_query),
+            )
         if bool(target_app_context.get("matched", False)):
             score += min(0.28, 0.08 + (0.2 * float(target_app_context.get("match_score", 0.0) or 0.0)))
             reasons.append("benchmark_target_app_match")
             if candidate_target_hint_score > 0.0:
                 score += min(0.18, 0.06 + (0.12 * candidate_target_hint_score))
                 reasons.append("benchmark_target_query_hint")
+            if target_hint_query and candidate_target_hint_score > 0.0:
+                score += min(0.12, 0.03 + (0.08 * candidate_target_hint_score))
+                reasons.append("benchmark_target_hint_query")
             target_priority = max(0.0, float(target_app_context.get("priority", 0.0) or 0.0))
             if target_priority > 0.0:
                 score += min(0.08, 0.01 + (0.01 * target_priority))
                 reasons.append("benchmark_target_priority")
+            if target_replay_pressure > 0.0:
+                replay_boost = min(
+                    0.18,
+                    (0.02 * min(target_replay_pressure, 4.0))
+                    + (0.03 * min(target_replay_failed_count, 2))
+                    + (0.02 * min(target_replay_pending_count, 2))
+                    + (0.01 * min(target_replay_completed_count, 2)),
+                )
+                if candidate_target_hint_score > 0.0:
+                    replay_boost += min(0.08, 0.05 * candidate_target_hint_score)
+                score += min(0.24, replay_boost)
+                reasons.append("benchmark_replay_pressure")
         if hwnd and candidate_hwnd and candidate_hwnd == int(hwnd):
             score += 2.4
             reasons.append("exact_hwnd")
@@ -1005,6 +1067,7 @@ class WindowManager:
         self,
         *,
         query: str = "",
+        hint_query: str = "",
         window_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
@@ -1015,6 +1078,7 @@ class WindowManager:
         try:
             payload = self._native_runtime.trace_related_window_chain(
                 query=query,
+                hint_query=hint_query,
                 window_title=window_title,
                 hwnd=hwnd,
                 pid=pid,
@@ -1070,9 +1134,18 @@ class WindowManager:
     ) -> Dict[str, Any] | None:
         if self._native_runtime is None:
             return None
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        target_app_context = self._benchmark_native_target_context(
+            benchmark_guidance=guidance_payload,
+            requested_app_name=app_name,
+            query=query,
+            window_title=window_title,
+        )
+        hint_query = str(target_app_context.get("hint_query", "") or "").strip()
         try:
             payload = self._native_runtime.reacquire_related_window(
                 query=query,
+                hint_query=hint_query,
                 window_title=window_title,
                 hwnd=hwnd,
                 pid=pid,
@@ -1100,6 +1173,7 @@ class WindowManager:
         candidates = self._enrich_owner_chain_metrics(candidates)
         initial_child_chain_trace = self._native_trace_related_window_chain(
             query=query,
+            hint_query=hint_query,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
             pid=int(candidate.get("pid", 0) or 0),
@@ -1112,7 +1186,6 @@ class WindowManager:
         )
         preferred_descendant_hwnd = int(initial_preferred_descendant.get("hwnd", 0) or 0)
         preferred_descendant_title = str(initial_preferred_descendant.get("title", "") or "").strip()
-        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
         benchmark_biases = (
             dict(guidance_payload.get("control_biases", {}))
             if isinstance(guidance_payload.get("control_biases", {}), dict)
@@ -1274,6 +1347,7 @@ class WindowManager:
         )
         child_chain_trace = self._native_trace_related_window_chain(
             query=query,
+            hint_query=hint_query,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
             pid=int(candidate.get("pid", 0) or 0),

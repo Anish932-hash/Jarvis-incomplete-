@@ -3489,8 +3489,14 @@ class DesktopActionRouter:
                 "benchmark_target_app_matched": False,
                 "benchmark_target_app_match_score": 0.0,
                 "benchmark_target_query_hints": [],
+                "benchmark_target_hint_query": "",
                 "benchmark_target_priority": 0.0,
                 "benchmark_target_max_horizon_steps": 0,
+                "benchmark_target_replay_pressure": 0.0,
+                "benchmark_target_replay_session_count": 0,
+                "benchmark_target_replay_pending_count": 0,
+                "benchmark_target_replay_failed_count": 0,
+                "benchmark_target_replay_completed_count": 0,
                 "benchmark_target_dialog_pressure": 0.0,
                 "benchmark_target_descendant_focus_pressure": 0.0,
                 "benchmark_target_navigation_pressure": 0.0,
@@ -3512,11 +3518,13 @@ class DesktopActionRouter:
         )
         best_row: Dict[str, Any] = {}
         best_score = 0.0
+        best_priority = 0.0
         for row in target_rows:
             target_app_name = self._normalize_probe_text(row.get("app_name", ""))
             if not target_app_name:
                 continue
             row_score = 0.0
+            row_hint_query = self._normalize_probe_text(row.get("hint_query", ""))
             if any(term and term == target_app_name for term in candidate_terms):
                 row_score = 1.0
             for term in candidate_terms:
@@ -3526,7 +3534,7 @@ class DesktopActionRouter:
                     row_score,
                     self._text_match_score(term, target_app_name),
                     self._text_match_score(target_app_name, term),
-                )
+                    )
             if requested_query:
                 for hint in row.get("query_hints", []) if isinstance(row.get("query_hints", []), list) else []:
                     clean_hint = self._normalize_probe_text(hint)
@@ -3537,8 +3545,28 @@ class DesktopActionRouter:
                         self._text_match_score(requested_query, clean_hint),
                         self._text_match_score(clean_hint, requested_query),
                     )
-            if row_score > best_score:
+                if row_hint_query:
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, row_hint_query),
+                        self._text_match_score(row_hint_query, requested_query),
+                    )
+            if row_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(term, row_hint_query),
+                        self._text_match_score(row_hint_query, term),
+                    )
+            row_priority = (
+                max(0.0, float(row.get("priority", 0.0) or 0.0))
+                + max(0.0, float(row.get("replay_pressure", 0.0) or 0.0))
+            )
+            if row_score > best_score or (abs(row_score - best_score) <= 1e-9 and row_priority > best_priority):
                 best_score = row_score
+                best_priority = row_priority
                 best_row = row
         target_biases = self._benchmark_target_biases(best_row)
         target_app_name = self._normalize_probe_text(best_row.get("app_name", ""))
@@ -3555,8 +3583,14 @@ class DesktopActionRouter:
             "benchmark_target_app_matched": matched,
             "benchmark_target_app_match_score": round(max(0.0, min(best_score, 1.0)), 4),
             "benchmark_target_query_hints": target_query_hints,
+            "benchmark_target_hint_query": str(best_row.get("hint_query", "") or "").strip(),
             "benchmark_target_priority": round(float(best_row.get("priority", 0.0) or 0.0), 6),
             "benchmark_target_max_horizon_steps": max(0, int(best_row.get("max_horizon_steps", 0) or 0)),
+            "benchmark_target_replay_pressure": round(float(best_row.get("replay_pressure", 0.0) or 0.0), 6),
+            "benchmark_target_replay_session_count": max(0, int(best_row.get("replay_session_count", 0) or 0)),
+            "benchmark_target_replay_pending_count": max(0, int(best_row.get("replay_pending_count", 0) or 0)),
+            "benchmark_target_replay_failed_count": max(0, int(best_row.get("replay_failed_count", 0) or 0)),
+            "benchmark_target_replay_completed_count": max(0, int(best_row.get("replay_completed_count", 0) or 0)),
             "benchmark_target_dialog_pressure": target_biases["dialog_resolution"] if matched else 0.0,
             "benchmark_target_descendant_focus_pressure": target_biases["descendant_focus"] if matched else 0.0,
             "benchmark_target_navigation_pressure": target_biases["navigation_branch"] if matched else 0.0,
@@ -10190,8 +10224,14 @@ class DesktopActionRouter:
                 for item in native_target_context.get("benchmark_target_query_hints", [])
                 if str(item).strip()
             ] if isinstance(native_target_context.get("benchmark_target_query_hints", []), list) else [],
+            "benchmark_target_hint_query": str(native_target_context.get("benchmark_target_hint_query", "") or "").strip(),
             "benchmark_target_priority": max(0.0, float(native_target_context.get("benchmark_target_priority", 0.0) or 0.0)),
             "benchmark_target_max_horizon_steps": max(0, int(native_target_context.get("benchmark_target_max_horizon_steps", 0) or 0)),
+            "benchmark_target_replay_pressure": max(0.0, float(native_target_context.get("benchmark_target_replay_pressure", 0.0) or 0.0)),
+            "benchmark_target_replay_session_count": max(0, int(native_target_context.get("benchmark_target_replay_session_count", 0) or 0)),
+            "benchmark_target_replay_pending_count": max(0, int(native_target_context.get("benchmark_target_replay_pending_count", 0) or 0)),
+            "benchmark_target_replay_failed_count": max(0, int(native_target_context.get("benchmark_target_replay_failed_count", 0) or 0)),
+            "benchmark_target_replay_completed_count": max(0, int(native_target_context.get("benchmark_target_replay_completed_count", 0) or 0)),
             "benchmark_target_dialog_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_dialog_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_target_descendant_focus_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_target_navigation_pressure": max(0.0, min(float(native_target_context.get("benchmark_target_navigation_pressure", 0.0) or 0.0), 1.0)),
@@ -10301,6 +10341,7 @@ class DesktopActionRouter:
             for item in branch_context.get("benchmark_target_query_hints", [])
             if str(item).strip()
         ] if isinstance(branch_context.get("benchmark_target_query_hints", []), list) else []
+        benchmark_target_hint_query = self._normalize_probe_text(branch_context.get("benchmark_target_hint_query", ""))
         benchmark_target_priority = max(
             0.0,
             float(branch_context.get("benchmark_target_priority", 0.0) or 0.0),
@@ -10308,6 +10349,26 @@ class DesktopActionRouter:
         benchmark_target_max_horizon_steps = max(
             0,
             int(branch_context.get("benchmark_target_max_horizon_steps", 0) or 0),
+        )
+        benchmark_target_replay_pressure = max(
+            0.0,
+            float(branch_context.get("benchmark_target_replay_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_replay_session_count = max(
+            0,
+            int(branch_context.get("benchmark_target_replay_session_count", 0) or 0),
+        )
+        benchmark_target_replay_pending_count = max(
+            0,
+            int(branch_context.get("benchmark_target_replay_pending_count", 0) or 0),
+        )
+        benchmark_target_replay_failed_count = max(
+            0,
+            int(branch_context.get("benchmark_target_replay_failed_count", 0) or 0),
+        )
+        benchmark_target_replay_completed_count = max(
+            0,
+            int(branch_context.get("benchmark_target_replay_completed_count", 0) or 0),
         )
         benchmark_target_dialog_pressure = max(
             0.0,
@@ -10373,9 +10434,17 @@ class DesktopActionRouter:
                 self._text_match_score(label, hint),
                 self._text_match_score(action_payload.get("window_title", ""), hint),
             )
+        target_hint_query_overlap = max(
+            self._text_match_score(label, benchmark_target_hint_query),
+            self._text_match_score(action_payload.get("window_title", ""), benchmark_target_hint_query),
+        ) if benchmark_target_hint_query else 0.0
         if benchmark_target_app_matched and target_query_hint_overlap > 0.0:
             score += min(0.14, 0.05 + (0.08 * target_query_hint_overlap))
             if kind == "hypothesis":
+                score += 0.02
+        if benchmark_target_app_matched and target_hint_query_overlap > 0.0:
+            score += min(0.12, 0.04 + (0.08 * target_hint_query_overlap))
+            if kind == "branch_action":
                 score += 0.02
         if native_descendant_chain_titles and self._normalize_probe_text(label) in native_descendant_chain_titles:
             score += 0.06
@@ -10433,6 +10502,21 @@ class DesktopActionRouter:
             score += 0.04 + (0.14 * benchmark_target_reacquire_pressure)
         if benchmark_target_app_matched and selected_action == "focus" and benchmark_target_native_focus_pressure > 0.0:
             score += 0.03 + (0.12 * benchmark_target_native_focus_pressure)
+        if benchmark_target_app_matched and benchmark_target_replay_pressure > 0.0:
+            replay_boost = min(
+                0.2,
+                (0.02 * min(benchmark_target_replay_pressure, 5.0))
+                + (0.025 * min(benchmark_target_replay_failed_count, 3))
+                + (0.015 * min(benchmark_target_replay_pending_count, 3))
+                + (0.01 * min(benchmark_target_replay_session_count, 3)),
+            )
+            if preferred_descendant_focus:
+                replay_boost += min(0.08, 0.03 + (0.06 * target_hint_query_overlap))
+            elif selected_action == "press_dialog_button":
+                replay_boost += min(0.06, 0.02 + (0.05 * target_query_hint_overlap))
+            elif selected_action == "focus":
+                replay_boost += min(0.05, 0.02 + (0.04 * target_hint_query_overlap))
+            score += min(0.26, replay_boost)
         if benchmark_target_app_matched and kind == "branch_action" and not preferred_descendant_focus and benchmark_target_loop_guard_pressure > 0.0:
             score -= 0.02 + (0.05 * benchmark_target_loop_guard_pressure)
         if benchmark_target_app_matched and benchmark_target_max_horizon_steps >= 4 and kind == "hypothesis":
@@ -10441,6 +10525,8 @@ class DesktopActionRouter:
             score += min(0.08, 0.01 + (0.01 * benchmark_target_priority))
         if benchmark_target_app_match_score >= 0.95:
             score += 0.03
+        if benchmark_target_app_matched and benchmark_target_replay_completed_count > 0 and kind == "hypothesis":
+            score += min(0.04, 0.01 * benchmark_target_replay_completed_count)
 
         last_branch_kind = str(branch_context.get("last_branch_kind", "") or "").strip().lower()
         if kind == "hypothesis":

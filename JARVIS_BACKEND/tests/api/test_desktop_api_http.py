@@ -867,6 +867,7 @@ class FakeDesktopService:
             },
         }
         self.desktop_evaluation_history_items: list[Dict[str, Any]] = [dict(self.desktop_evaluation_last_run)]
+        self.desktop_evaluation_lab_sessions_items: list[Dict[str, Any]] = []
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -13500,6 +13501,234 @@ class FakeDesktopService:
             "history_size": len(self.desktop_evaluation_history_items),
         }
 
+    def desktop_evaluation_lab_sessions(
+        self,
+        *,
+        limit: int = 12,
+        session_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        selected = [dict(item) for item in self.desktop_evaluation_lab_sessions_items]
+        if str(session_id or "").strip():
+            selected = [item for item in selected if str(item.get("session_id", "") or "").strip() == str(session_id or "").strip()]
+        if str(status or "").strip():
+            selected = [
+                item
+                for item in selected
+                if str(item.get("status", "") or "").strip().lower() == str(status or "").strip().lower()
+            ]
+        selected = selected[: max(1, int(limit))]
+        pending_replays = 0
+        failed_replays = 0
+        completed_replays = 0
+        for item in self.desktop_evaluation_lab_sessions_items:
+            pending_replays += int(item.get("pending_replay_count", 0) or 0)
+            failed_replays += int(item.get("failed_replay_count", 0) or 0)
+            completed_replays += int(item.get("completed_replay_count", 0) or 0)
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(self.desktop_evaluation_lab_sessions_items),
+            "limit": max(1, int(limit)),
+            "items": selected,
+            "latest_session": dict(selected[0]) if selected else {},
+            "summary": {
+                "pending_replays": pending_replays,
+                "failed_replays": failed_replays,
+                "completed_replays": completed_replays,
+            },
+        }
+
+    def desktop_evaluation_create_lab_session(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+    ) -> Dict[str, Any]:
+        lab = self.desktop_evaluation_lab(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        session_id = f"benchlab-test-{len(self.desktop_evaluation_lab_sessions_items) + 1}"
+        replay_candidates = [
+            {
+                **dict(item),
+                "replay_status": "pending",
+                "replay_count": 0,
+            }
+            for item in lab.get("replay_candidates", [])[:6]
+            if isinstance(item, dict)
+        ]
+        session = {
+            "session_id": session_id,
+            "status": "ready",
+            "label": str(label or pack or category or app_name or "benchmark lab session"),
+            "source": str(source or "action_control_panel"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "focus_summary": list(native_targets.get("focus_summary", [])),
+            "replay_candidates": replay_candidates,
+            "replay_candidate_count": len(replay_candidates),
+            "pending_replay_count": len(replay_candidates),
+            "failed_replay_count": 0,
+            "completed_replay_count": 0,
+            "target_app_count": len(native_targets.get("target_apps", [])),
+            "target_apps": [str(item.get("app_name", "") or "") for item in native_targets.get("target_apps", []) if isinstance(item, dict)],
+            "strongest_tactics": dict(native_targets.get("strongest_tactics", {})),
+            "coverage_gap_apps": list(native_targets.get("coverage_gap_apps", [])),
+            "history_direction": str(dict(lab.get("history_trend", {})).get("direction", "") or ""),
+            "latest_weighted_score": float(dict(lab.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0),
+            "latest_weighted_pass_rate": float(dict(lab.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0),
+            "filters": dict(lab.get("filters", {})),
+            "catalog_summary": dict(lab.get("catalog_summary", {})),
+            "coverage": dict(lab.get("coverage", {})),
+            "history_trend": dict(lab.get("history_trend", {})),
+            "lab_snapshot": dict(lab),
+            "native_targets_snapshot": dict(native_targets),
+            "guidance_snapshot": dict(guidance),
+        }
+        self.desktop_evaluation_lab_sessions_items.insert(0, session)
+        self.desktop_evaluation_lab_sessions_items = self.desktop_evaluation_lab_sessions_items[:12]
+        return {
+            "status": "success",
+            "session": dict(session),
+            "lab": dict(lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
+    def desktop_evaluation_replay_lab_session(
+        self,
+        *,
+        session_id: str = "",
+        scenario_name: str = "",
+    ) -> Dict[str, Any]:
+        selected = next(
+            (
+                item
+                for item in self.desktop_evaluation_lab_sessions_items
+                if str(item.get("session_id", "") or "").strip() == str(session_id or "").strip()
+            ),
+            None,
+        )
+        if not isinstance(selected, dict):
+            return {"status": "error", "message": "benchmark lab session not found"}
+        candidates = [
+            dict(item)
+            for item in selected.get("replay_candidates", [])
+            if isinstance(item, dict)
+        ]
+        chosen = next(
+            (
+                item
+                for item in candidates
+                if str(item.get("scenario", "") or "").strip() == str(scenario_name or "").strip()
+            ),
+            candidates[0] if candidates else None,
+        )
+        if not isinstance(chosen, dict):
+            return {"status": "error", "message": "benchmark lab session has no replay candidates"}
+        replay_query = dict(chosen.get("replay_query", {})) if isinstance(chosen.get("replay_query", {}), dict) else {}
+        replay_result = self.desktop_evaluation_run(
+            scenario_name=str(replay_query.get("scenario_name", chosen.get("scenario", "")) or ""),
+            pack=str(replay_query.get("pack", "") or ""),
+            category=str(replay_query.get("category", "") or ""),
+            capability=str(replay_query.get("capability", "") or ""),
+            risk_level=str(replay_query.get("risk_level", "") or ""),
+            autonomy_tier=str(replay_query.get("autonomy_tier", "") or ""),
+            mission_family=str(replay_query.get("mission_family", "") or ""),
+            app_name=str(replay_query.get("app", replay_query.get("app_name", "")) or ""),
+            limit=int(replay_query.get("limit", 1) or 1),
+        )
+        updated_candidates: list[Dict[str, Any]] = []
+        for item in candidates:
+            updated = dict(item)
+            if str(updated.get("scenario", "") or "").strip() == str(chosen.get("scenario", "") or "").strip():
+                updated["replay_status"] = "completed"
+                updated["replay_count"] = int(updated.get("replay_count", 0) or 0) + 1
+                updated["last_replayed_at"] = datetime.now(timezone.utc).isoformat()
+            updated_candidates.append(updated)
+        selected["replay_candidates"] = updated_candidates
+        selected["pending_replay_count"] = sum(
+            1
+            for item in updated_candidates
+            if str(item.get("replay_status", "pending") or "pending").strip().lower() == "pending"
+        )
+        selected["completed_replay_count"] = sum(
+            1
+            for item in updated_candidates
+            if str(item.get("replay_status", "") or "").strip().lower() == "completed"
+        )
+        selected["failed_replay_count"] = 0
+        selected["updated_at"] = datetime.now(timezone.utc).isoformat()
+        selected["latest_weighted_score"] = float(dict(replay_result.get("summary", {})).get("weighted_score", 0.0) or 0.0)
+        selected["latest_weighted_pass_rate"] = float(dict(replay_result.get("summary", {})).get("weighted_pass_rate", 0.0) or 0.0)
+        selected["status"] = "complete" if int(selected.get("pending_replay_count", 0) or 0) == 0 else "ready"
+        refreshed_lab = self.desktop_evaluation_lab(
+            pack=str(dict(selected.get("filters", {})).get("pack", "") or ""),
+            category=str(dict(selected.get("filters", {})).get("category", "") or ""),
+            capability=str(dict(selected.get("filters", {})).get("capability", "") or ""),
+            risk_level=str(dict(selected.get("filters", {})).get("risk_level", "") or ""),
+            autonomy_tier=str(dict(selected.get("filters", {})).get("autonomy_tier", "") or ""),
+            mission_family=str(dict(selected.get("filters", {})).get("mission_family", "") or ""),
+            app_name=str(dict(selected.get("filters", {})).get("app", "") or ""),
+            limit=int(dict(selected.get("filters", {})).get("limit", 200) or 200),
+            history_limit=8,
+        )
+        native_targets = self.desktop_evaluation_native_targets()
+        guidance = self.desktop_evaluation_guidance()
+        selected["lab_snapshot"] = dict(refreshed_lab)
+        selected["native_targets_snapshot"] = dict(native_targets)
+        selected["guidance_snapshot"] = dict(guidance)
+        return {
+            "status": "success",
+            "session": dict(selected),
+            "replay_candidate": dict(chosen),
+            "updated_candidate": next(
+                (
+                    dict(item)
+                    for item in updated_candidates
+                    if str(item.get("scenario", "") or "").strip() == str(chosen.get("scenario", "") or "").strip()
+                ),
+                {},
+            ),
+            "replay_result": dict(replay_result),
+            "lab": dict(refreshed_lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -17981,6 +18210,68 @@ def test_desktop_evaluation_lab_route(api_server: tuple[str, FakeDesktopService]
     assert payload["history_trend"]["run_count"] >= 1
     assert payload["replay_candidates"][0]["replay_query"]["scenario_name"] == "vscode_long_horizon_debug_loop"
     assert payload["installed_app_coverage"]["benchmarked_installed_app_count"] >= 1
+
+
+def test_desktop_evaluation_lab_sessions_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions",
+        payload={
+            "pack": "unsupported_and_recovery",
+            "mission_family": "exploration",
+            "app_name": "settings",
+            "history_limit": 4,
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+    assert created["session"]["session_id"].startswith("benchlab-test-")
+    assert created["session"]["replay_candidate_count"] >= 1
+    assert created["native_targets"]["target_apps"][0]["app_name"] == "settings"
+
+    status, sessions = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions?limit=4",
+    )
+    assert status == 200
+    assert sessions["status"] == "success"
+    assert sessions["count"] >= 1
+    assert sessions["latest_session"]["session_id"] == created["session"]["session_id"]
+    assert sessions["summary"]["pending_replays"] >= 1
+
+
+def test_desktop_evaluation_lab_session_replay_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "app_name": "vscode",
+        },
+    )
+    assert status == 200
+    session_id = str(created["session"]["session_id"])
+    scenario_name = str(created["session"]["replay_candidates"][0]["scenario"])
+
+    status, replayed = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions/replay",
+        payload={
+            "session_id": session_id,
+            "scenario_name": scenario_name,
+        },
+    )
+    assert status == 200
+    assert replayed["status"] == "success"
+    assert replayed["session"]["session_id"] == session_id
+    assert replayed["updated_candidate"]["scenario"] == scenario_name
+    assert replayed["updated_candidate"]["replay_status"] == "completed"
+    assert replayed["replay_result"]["status"] == "success"
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:
