@@ -19,10 +19,12 @@ class DesktopBenchmarkLabMemory:
         store_path: str = "data/desktop_benchmark_lab_memory.json",
         max_sessions: int = 200,
         max_replay_events: int = 16,
+        max_run_cycles: int = 24,
     ) -> None:
         self.store_path = Path(store_path)
         self.max_sessions = self._coerce_int(max_sessions, minimum=8, maximum=5000, default=200)
         self.max_replay_events = self._coerce_int(max_replay_events, minimum=2, maximum=128, default=16)
+        self.max_run_cycles = self._coerce_int(max_run_cycles, minimum=1, maximum=256, default=24)
         self._lock = RLock()
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._updates_since_save = 0
@@ -63,6 +65,12 @@ class DesktopBenchmarkLabMemory:
             source=source,
             label=label,
             replay_events=[],
+            run_cycles=self._seed_run_cycles(
+                recorded_at=now,
+                filters=clean_filters,
+                lab_snapshot=lab_snapshot,
+                native_targets_snapshot=native_snapshot,
+            ),
         )
         with self._lock:
             self._sessions[session_id] = row
@@ -104,8 +112,13 @@ class DesktopBenchmarkLabMemory:
         selected = rows[:normalized_limit]
         status_counts: Dict[str, int] = {}
         replay_status_counts: Dict[str, int] = {}
+        latest_cycle_status_counts: Dict[str, int] = {}
         for row in rows:
             self._increment_count(status_counts, str(row.get("status", "") or "ready"))
+            self._increment_count(
+                latest_cycle_status_counts,
+                str(row.get("latest_cycle_regression_status", row.get("latest_cycle_status", "")) or "idle"),
+            )
             for candidate in row.get("replay_candidates", []) if isinstance(row.get("replay_candidates", []), list) else []:
                 if isinstance(candidate, dict):
                     self._increment_count(replay_status_counts, str(candidate.get("replay_status", "") or "pending"))
@@ -120,9 +133,14 @@ class DesktopBenchmarkLabMemory:
             "summary": {
                 "status_counts": self._sorted_count_map(status_counts),
                 "replay_status_counts": self._sorted_count_map(replay_status_counts),
+                "latest_cycle_status_counts": self._sorted_count_map(latest_cycle_status_counts),
                 "pending_replays": sum(int(row.get("pending_replay_count", 0) or 0) for row in rows),
                 "failed_replays": sum(int(row.get("failed_replay_count", 0) or 0) for row in rows),
                 "completed_replays": sum(int(row.get("completed_replay_count", 0) or 0) for row in rows),
+                "cycle_count": sum(int(row.get("cycle_count", 0) or 0) for row in rows),
+                "completed_cycles": sum(int(row.get("completed_cycle_count", 0) or 0) for row in rows),
+                "regression_cycles": sum(int(row.get("regression_cycle_count", 0) or 0) for row in rows),
+                "long_horizon_pending_replays": sum(int(row.get("long_horizon_pending_count", 0) or 0) for row in rows),
             },
         }
 
@@ -215,12 +233,17 @@ class DesktopBenchmarkLabMemory:
                 }
             )
             replay_events = replay_events[-self.max_replay_events :]
+            lab_snapshot = dict(lab_payload) if isinstance(lab_payload, dict) else dict(existing.get("lab_snapshot", {}))
+            merged_candidates = self._merge_replay_candidates(
+                candidates,
+                self._normalize_replay_candidates(lab_snapshot.get("replay_candidates", [])),
+            )
             row = self._session_row(
                 session_id=clean_id,
                 created_at=str(existing.get("created_at", "") or now),
                 updated_at=now,
                 filters=dict(existing.get("filters", {})) if isinstance(existing.get("filters", {}), dict) else {},
-                lab_snapshot=dict(lab_payload) if isinstance(lab_payload, dict) else dict(existing.get("lab_snapshot", {})),
+                lab_snapshot=lab_snapshot,
                 native_targets_snapshot=(
                     dict(native_targets_payload)
                     if isinstance(native_targets_payload, dict)
@@ -233,8 +256,9 @@ class DesktopBenchmarkLabMemory:
                 ),
                 source=str(existing.get("source", "") or ""),
                 label=str(existing.get("label", "") or ""),
-                replay_candidates=candidates,
+                replay_candidates=merged_candidates,
                 replay_events=replay_events,
+                run_cycles=self._normalize_run_cycles(existing.get("run_cycles", [])),
             )
             self._sessions[clean_id] = row
             self._updates_since_save += 1
@@ -243,6 +267,77 @@ class DesktopBenchmarkLabMemory:
             "status": "success",
             "session": self._public_row(row),
             "updated_candidate": updated_candidate or {},
+        }
+
+    def record_run_cycle(
+        self,
+        *,
+        session_id: str,
+        cycle_payload: Dict[str, Any] | None,
+        cycle_query: Dict[str, Any] | None = None,
+        lab_payload: Dict[str, Any] | None = None,
+        native_targets_payload: Dict[str, Any] | None = None,
+        guidance_payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        clean_id = str(session_id or "").strip()
+        if not clean_id:
+            return {"status": "error", "message": "session_id required"}
+        cycle_snapshot = dict(cycle_payload) if isinstance(cycle_payload, dict) else {}
+        cycle_query_snapshot = dict(cycle_query) if isinstance(cycle_query, dict) else {}
+        with self._lock:
+            existing = self._sessions.get(clean_id)
+            if not isinstance(existing, dict):
+                return {"status": "error", "message": "benchmark lab session not found"}
+            now = datetime.now(timezone.utc).isoformat()
+            filters = dict(existing.get("filters", {})) if isinstance(existing.get("filters", {}), dict) else {}
+            lab_snapshot = dict(lab_payload) if isinstance(lab_payload, dict) else dict(existing.get("lab_snapshot", {}))
+            native_targets_snapshot = (
+                dict(native_targets_payload)
+                if isinstance(native_targets_payload, dict)
+                else dict(existing.get("native_targets_snapshot", {}))
+            )
+            guidance_snapshot = (
+                dict(guidance_payload)
+                if isinstance(guidance_payload, dict)
+                else dict(existing.get("guidance_snapshot", {}))
+            )
+            merged_candidates = self._merge_replay_candidates(
+                self._normalize_replay_candidates(existing.get("replay_candidates", [])),
+                self._normalize_replay_candidates(lab_snapshot.get("replay_candidates", [])),
+            )
+            run_cycles = self._normalize_run_cycles(existing.get("run_cycles", []))
+            run_cycles.append(
+                self._cycle_row(
+                    recorded_at=now,
+                    cycle_payload=cycle_snapshot,
+                    cycle_query=cycle_query_snapshot,
+                    filters=filters,
+                    lab_snapshot=lab_snapshot,
+                    native_targets_snapshot=native_targets_snapshot,
+                )
+            )
+            run_cycles = run_cycles[-self.max_run_cycles :]
+            row = self._session_row(
+                session_id=clean_id,
+                created_at=str(existing.get("created_at", "") or now),
+                updated_at=now,
+                filters=filters,
+                lab_snapshot=lab_snapshot,
+                native_targets_snapshot=native_targets_snapshot,
+                guidance_snapshot=guidance_snapshot,
+                source=str(existing.get("source", "") or ""),
+                label=str(existing.get("label", "") or ""),
+                replay_candidates=merged_candidates,
+                replay_events=list(existing.get("replay_events", [])) if isinstance(existing.get("replay_events", []), list) else [],
+                run_cycles=run_cycles,
+            )
+            self._sessions[clean_id] = row
+            self._updates_since_save += 1
+            self._maybe_save_locked(force=True)
+        return {
+            "status": "success",
+            "session": self._public_row(row),
+            "cycle": dict(run_cycles[-1]) if run_cycles else {},
         }
 
     def _session_row(
@@ -259,19 +354,37 @@ class DesktopBenchmarkLabMemory:
         label: str,
         replay_candidates: List[Dict[str, Any]] | None = None,
         replay_events: List[Dict[str, Any]] | None = None,
+        run_cycles: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         clean_candidates = (
             [dict(item) for item in replay_candidates]
             if isinstance(replay_candidates, list)
             else self._normalize_replay_candidates(lab_snapshot.get("replay_candidates", []))
         )
+        clean_run_cycles = self._normalize_run_cycles(run_cycles or [])
         pending_replay_count = sum(1 for item in clean_candidates if str(item.get("replay_status", "pending") or "pending").strip().lower() == "pending")
         failed_replay_count = sum(1 for item in clean_candidates if str(item.get("replay_status", "") or "").strip().lower() == "failed")
         completed_replay_count = sum(1 for item in clean_candidates if str(item.get("replay_status", "") or "").strip().lower() == "completed")
+        long_horizon_candidate_count = sum(1 for item in clean_candidates if int(item.get("horizon_steps", 1) or 1) >= 4)
+        long_horizon_pending_count = sum(
+            1
+            for item in clean_candidates
+            if int(item.get("horizon_steps", 1) or 1) >= 4
+            and str(item.get("replay_status", "pending") or "pending").strip().lower() == "pending"
+        )
+        latest_cycle = clean_run_cycles[-1] if clean_run_cycles else {}
+        latest_cycle_status = str(latest_cycle.get("status", "") or "").strip().lower()
+        latest_cycle_regression_status = str(latest_cycle.get("regression_status", "") or "").strip().lower()
+        completed_cycle_count = sum(
+            1 for item in clean_run_cycles if str(item.get("status", "") or "").strip().lower() in {"success", "completed"}
+        )
+        regression_cycle_count = sum(
+            1 for item in clean_run_cycles if str(item.get("regression_status", "") or "").strip().lower() in {"regression", "failed"}
+        )
         session_status = "ready"
-        if failed_replay_count > 0:
+        if failed_replay_count > 0 or latest_cycle_status in {"error", "failed"} or latest_cycle_regression_status in {"regression", "failed"}:
             session_status = "attention"
-        elif clean_candidates and pending_replay_count == 0:
+        elif pending_replay_count == 0 and (clean_candidates or clean_run_cycles):
             session_status = "complete"
         label_text = str(label or "").strip() or self._default_label(filters=filters, lab_snapshot=lab_snapshot, native_targets_snapshot=native_targets_snapshot)
         target_apps = [
@@ -311,6 +424,17 @@ class DesktopBenchmarkLabMemory:
             "pending_replay_count": pending_replay_count,
             "failed_replay_count": failed_replay_count,
             "completed_replay_count": completed_replay_count,
+            "long_horizon_candidate_count": long_horizon_candidate_count,
+            "long_horizon_pending_count": long_horizon_pending_count,
+            "run_cycles": clean_run_cycles[-self.max_run_cycles :],
+            "cycle_count": len(clean_run_cycles),
+            "completed_cycle_count": completed_cycle_count,
+            "regression_cycle_count": regression_cycle_count,
+            "latest_cycle_status": latest_cycle_status,
+            "latest_cycle_regression_status": latest_cycle_regression_status,
+            "latest_cycle_score": round(float(latest_cycle.get("weighted_score", 0.0) or 0.0), 6),
+            "latest_cycle_pass_rate": round(float(latest_cycle.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "latest_cycle_executed_at": str(latest_cycle.get("executed_at", "") or "").strip(),
             "target_app_count": len(target_apps),
             "target_apps": target_apps[:12],
             "strongest_tactics": dict(native_targets_snapshot.get("strongest_tactics", {})) if isinstance(native_targets_snapshot.get("strongest_tactics", {}), dict) else {},
@@ -379,6 +503,164 @@ class DesktopBenchmarkLabMemory:
                 }
             )
         return rows[:24]
+
+    def _merge_replay_candidates(
+        self,
+        existing_candidates: List[Dict[str, Any]] | Any,
+        latest_candidates: List[Dict[str, Any]] | Any,
+    ) -> List[Dict[str, Any]]:
+        existing_rows = self._normalize_replay_candidates(existing_candidates)
+        latest_rows = self._normalize_replay_candidates(latest_candidates)
+        existing_by_scenario = {
+            str(item.get("scenario", "") or "").strip(): dict(item)
+            for item in existing_rows
+            if str(item.get("scenario", "") or "").strip()
+        }
+        merged: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in latest_rows:
+            scenario_name = str(item.get("scenario", "") or "").strip()
+            current = dict(item)
+            preserved = existing_by_scenario.get(scenario_name)
+            if preserved:
+                for key in (
+                    "replay_status",
+                    "replay_count",
+                    "last_replayed_at",
+                    "last_result_status",
+                    "last_regression_status",
+                    "last_weighted_score",
+                    "last_weighted_pass_rate",
+                ):
+                    current[key] = preserved.get(key, current.get(key))
+                if not current.get("replay_query") and isinstance(preserved.get("replay_query", {}), dict):
+                    current["replay_query"] = dict(preserved.get("replay_query", {}))
+                current["reasons"] = self._dedupe_strings(
+                    [
+                        *(
+                            [str(reason).strip() for reason in preserved.get("reasons", [])]
+                            if isinstance(preserved.get("reasons", []), list)
+                            else []
+                        ),
+                        *(
+                            [str(reason).strip() for reason in current.get("reasons", [])]
+                            if isinstance(current.get("reasons", []), list)
+                            else []
+                        ),
+                    ]
+                )[:8]
+            merged.append(current)
+            if scenario_name:
+                seen.add(scenario_name)
+        for item in existing_rows:
+            scenario_name = str(item.get("scenario", "") or "").strip()
+            if scenario_name and scenario_name in seen:
+                continue
+            merged.append(dict(item))
+        return merged[:24]
+
+    def _normalize_run_cycles(self, cycles: Any) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if not isinstance(cycles, list):
+            return rows
+        for item in cycles:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                {
+                    "cycle_id": str(item.get("cycle_id", "") or "").strip() or f"cycle-{uuid.uuid4().hex[:10]}",
+                    "kind": str(item.get("kind", "") or "run_cycle").strip().lower() or "run_cycle",
+                    "recorded_at": str(item.get("recorded_at", "") or "").strip(),
+                    "executed_at": str(item.get("executed_at", "") or "").strip(),
+                    "status": str(item.get("status", "") or "success").strip().lower() or "success",
+                    "regression_status": str(item.get("regression_status", "") or "").strip().lower(),
+                    "weighted_score": round(float(item.get("weighted_score", 0.0) or 0.0), 6),
+                    "weighted_pass_rate": round(float(item.get("weighted_pass_rate", 0.0) or 0.0), 6),
+                    "scenario_count": self._coerce_int(item.get("scenario_count", 0), minimum=0, maximum=100_000, default=0),
+                    "history_direction": str(item.get("history_direction", "") or "").strip().lower(),
+                    "replay_candidate_count": self._coerce_int(item.get("replay_candidate_count", 0), minimum=0, maximum=100_000, default=0),
+                    "long_horizon_count": self._coerce_int(item.get("long_horizon_count", 0), minimum=0, maximum=100_000, default=0),
+                    "target_app_count": self._coerce_int(item.get("target_app_count", 0), minimum=0, maximum=100_000, default=0),
+                    "query": dict(item.get("query", {})) if isinstance(item.get("query", {}), dict) else {},
+                }
+            )
+        return rows[-self.max_run_cycles :]
+
+    def _seed_run_cycles(
+        self,
+        *,
+        recorded_at: str,
+        filters: Dict[str, Any],
+        lab_snapshot: Dict[str, Any],
+        native_targets_snapshot: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(lab_snapshot, dict) or (
+            not isinstance(lab_snapshot.get("latest_run", {}), dict)
+            and not isinstance(lab_snapshot.get("latest_summary", {}), dict)
+        ):
+            return []
+        return [
+            self._cycle_row(
+                recorded_at=recorded_at,
+                cycle_payload=dict(lab_snapshot.get("latest_run", {})) if isinstance(lab_snapshot.get("latest_run", {}), dict) else {},
+                cycle_query=dict(filters),
+                filters=filters,
+                lab_snapshot=lab_snapshot,
+                native_targets_snapshot=native_targets_snapshot,
+                kind="seed",
+            )
+        ]
+
+    def _cycle_row(
+        self,
+        *,
+        recorded_at: str,
+        cycle_payload: Dict[str, Any],
+        cycle_query: Dict[str, Any],
+        filters: Dict[str, Any],
+        lab_snapshot: Dict[str, Any],
+        native_targets_snapshot: Dict[str, Any],
+        kind: str = "run_cycle",
+    ) -> Dict[str, Any]:
+        summary = dict(cycle_payload.get("summary", {})) if isinstance(cycle_payload.get("summary", {}), dict) else {}
+        regression = dict(cycle_payload.get("regression", {})) if isinstance(cycle_payload.get("regression", {}), dict) else {}
+        latest_summary = dict(lab_snapshot.get("latest_summary", {})) if isinstance(lab_snapshot.get("latest_summary", {}), dict) else {}
+        latest_regression = dict(lab_snapshot.get("latest_regression", {})) if isinstance(lab_snapshot.get("latest_regression", {}), dict) else {}
+        history_trend = dict(lab_snapshot.get("history_trend", {})) if isinstance(lab_snapshot.get("history_trend", {}), dict) else {}
+        coverage = dict(lab_snapshot.get("coverage", {})) if isinstance(lab_snapshot.get("coverage", {}), dict) else {}
+        long_horizon = dict(coverage.get("long_horizon", {})) if isinstance(coverage.get("long_horizon", {}), dict) else {}
+        target_apps = native_targets_snapshot.get("target_apps", []) if isinstance(native_targets_snapshot.get("target_apps", []), list) else []
+        return {
+            "cycle_id": f"cycle-{uuid.uuid4().hex[:10]}",
+            "kind": str(kind or "run_cycle").strip().lower() or "run_cycle",
+            "recorded_at": recorded_at,
+            "executed_at": str(cycle_payload.get("executed_at", "") or dict(lab_snapshot.get("latest_run", {})).get("executed_at", "") or recorded_at).strip(),
+            "status": str(cycle_payload.get("status", "") or "success").strip().lower() or "success",
+            "regression_status": str(regression.get("status", "") or latest_regression.get("status", "") or "").strip().lower(),
+            "weighted_score": round(float(summary.get("weighted_score", latest_summary.get("weighted_score", 0.0)) or 0.0), 6),
+            "weighted_pass_rate": round(float(summary.get("weighted_pass_rate", latest_summary.get("weighted_pass_rate", 0.0)) or 0.0), 6),
+            "scenario_count": self._coerce_int(
+                cycle_payload.get(
+                    "scenario_count",
+                    summary.get(
+                        "count",
+                        dict(lab_snapshot.get("catalog_summary", {})).get("scenario_count", 0),
+                    ),
+                ),
+                minimum=0,
+                maximum=100_000,
+                default=0,
+            ),
+            "history_direction": str(history_trend.get("direction", "") or "").strip().lower(),
+            "replay_candidate_count": len(
+                self._normalize_replay_candidates(lab_snapshot.get("replay_candidates", []))
+            ),
+            "long_horizon_count": self._coerce_int(long_horizon.get("count", 0), minimum=0, maximum=100_000, default=0),
+            "target_app_count": sum(
+                1 for item in target_apps if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+            ),
+            "query": dict(cycle_query) if isinstance(cycle_query, dict) else dict(filters),
+        }
 
     @staticmethod
     def _replay_status_from_payload(payload: Dict[str, Any]) -> str:

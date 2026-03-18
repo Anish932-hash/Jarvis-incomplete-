@@ -8250,6 +8250,41 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_run_lab_session_cycle(
+        self,
+        *,
+        session_id: str = "",
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_session_cycle(session_id=session_id, history_limit=history_limit)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab cycle payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_advance_lab_session(
+        self,
+        *,
+        session_id: str = "",
+        max_replays: int = 2,
+        replay_status: str = "",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.advance_lab_session(
+                session_id=session_id,
+                max_replays=max_replays,
+                replay_status=replay_status,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab advance payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
         runner = getattr(self, "desktop_evaluation_runner", None)
         if runner is None:
@@ -44220,6 +44255,21 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     scenario_name=str(body.get("scenario_name", "") or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/sessions/run-cycle":
+                payload = self.server.service.desktop_evaluation_run_lab_session_cycle(
+                    session_id=str(body.get("session_id", "") or "").strip(),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/sessions/advance":
+                payload = self.server.service.desktop_evaluation_advance_lab_session(
+                    session_id=str(body.get("session_id", "") or "").strip(),
+                    max_replays=self._parse_int(body.get("max_replays", 2), 2, minimum=1, maximum=8),
+                    replay_status=str(body.get("replay_status", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
             if path == "/runtime/desktop-missions/reset":
                 payload = self.server.service.reset_desktop_missions(

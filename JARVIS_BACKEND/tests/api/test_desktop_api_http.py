@@ -13521,10 +13521,16 @@ class FakeDesktopService:
         pending_replays = 0
         failed_replays = 0
         completed_replays = 0
+        cycle_count = 0
+        regression_cycles = 0
+        long_horizon_pending_replays = 0
         for item in self.desktop_evaluation_lab_sessions_items:
             pending_replays += int(item.get("pending_replay_count", 0) or 0)
             failed_replays += int(item.get("failed_replay_count", 0) or 0)
             completed_replays += int(item.get("completed_replay_count", 0) or 0)
+            cycle_count += int(item.get("cycle_count", 0) or 0)
+            regression_cycles += int(item.get("regression_cycle_count", 0) or 0)
+            long_horizon_pending_replays += int(item.get("long_horizon_pending_count", 0) or 0)
         return {
             "status": "success",
             "count": len(selected),
@@ -13536,6 +13542,9 @@ class FakeDesktopService:
                 "pending_replays": pending_replays,
                 "failed_replays": failed_replays,
                 "completed_replays": completed_replays,
+                "cycle_count": cycle_count,
+                "regression_cycles": regression_cycles,
+                "long_horizon_pending_replays": long_horizon_pending_replays,
             },
         }
 
@@ -13581,6 +13590,7 @@ class FakeDesktopService:
         )
         guidance = self.desktop_evaluation_guidance()
         session_id = f"benchlab-test-{len(self.desktop_evaluation_lab_sessions_items) + 1}"
+        created_at = datetime.now(timezone.utc).isoformat()
         replay_candidates = [
             {
                 **dict(item),
@@ -13590,26 +13600,59 @@ class FakeDesktopService:
             for item in lab.get("replay_candidates", [])[:6]
             if isinstance(item, dict)
         ]
+        long_horizon_candidate_count = sum(
+            1 for item in replay_candidates if int(item.get("horizon_steps", 1) or 1) >= 4
+        )
+        latest_score = float(dict(lab.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0)
+        latest_pass_rate = float(dict(lab.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0)
         session = {
             "session_id": session_id,
             "status": "ready",
             "label": str(label or pack or category or app_name or "benchmark lab session"),
             "source": str(source or "action_control_panel"),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
+            "updated_at": created_at,
             "focus_summary": list(native_targets.get("focus_summary", [])),
             "replay_candidates": replay_candidates,
             "replay_candidate_count": len(replay_candidates),
             "pending_replay_count": len(replay_candidates),
             "failed_replay_count": 0,
             "completed_replay_count": 0,
+            "long_horizon_candidate_count": long_horizon_candidate_count,
+            "long_horizon_pending_count": long_horizon_candidate_count,
+            "run_cycles": [
+                {
+                    "cycle_id": f"{session_id}-cycle-1",
+                    "kind": "seed",
+                    "recorded_at": created_at,
+                    "executed_at": str(dict(lab.get("latest_run", {})).get("executed_at", created_at) or created_at),
+                    "status": "success",
+                    "regression_status": str(dict(lab.get("latest_regression", {})).get("status", "baseline") or "baseline"),
+                    "weighted_score": latest_score,
+                    "weighted_pass_rate": latest_pass_rate,
+                    "scenario_count": int(dict(lab.get("catalog_summary", {})).get("scenario_count", 0) or 0),
+                    "history_direction": str(dict(lab.get("history_trend", {})).get("direction", "") or ""),
+                    "replay_candidate_count": len(replay_candidates),
+                    "long_horizon_count": int(dict(dict(lab.get("coverage", {})).get("long_horizon", {})).get("count", 0) or 0),
+                    "target_app_count": len(native_targets.get("target_apps", [])),
+                    "query": dict(lab.get("filters", {})),
+                }
+            ],
+            "cycle_count": 1,
+            "completed_cycle_count": 1,
+            "regression_cycle_count": 0,
+            "latest_cycle_status": "success",
+            "latest_cycle_regression_status": str(dict(lab.get("latest_regression", {})).get("status", "baseline") or "baseline"),
+            "latest_cycle_score": latest_score,
+            "latest_cycle_pass_rate": latest_pass_rate,
+            "latest_cycle_executed_at": str(dict(lab.get("latest_run", {})).get("executed_at", created_at) or created_at),
             "target_app_count": len(native_targets.get("target_apps", [])),
             "target_apps": [str(item.get("app_name", "") or "") for item in native_targets.get("target_apps", []) if isinstance(item, dict)],
             "strongest_tactics": dict(native_targets.get("strongest_tactics", {})),
             "coverage_gap_apps": list(native_targets.get("coverage_gap_apps", [])),
             "history_direction": str(dict(lab.get("history_trend", {})).get("direction", "") or ""),
-            "latest_weighted_score": float(dict(lab.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0),
-            "latest_weighted_pass_rate": float(dict(lab.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0),
+            "latest_weighted_score": latest_score,
+            "latest_weighted_pass_rate": latest_pass_rate,
             "filters": dict(lab.get("filters", {})),
             "catalog_summary": dict(lab.get("catalog_summary", {})),
             "coverage": dict(lab.get("coverage", {})),
@@ -13694,6 +13737,12 @@ class FakeDesktopService:
         selected["updated_at"] = datetime.now(timezone.utc).isoformat()
         selected["latest_weighted_score"] = float(dict(replay_result.get("summary", {})).get("weighted_score", 0.0) or 0.0)
         selected["latest_weighted_pass_rate"] = float(dict(replay_result.get("summary", {})).get("weighted_pass_rate", 0.0) or 0.0)
+        selected["long_horizon_pending_count"] = sum(
+            1
+            for item in updated_candidates
+            if int(item.get("horizon_steps", 1) or 1) >= 4
+            and str(item.get("replay_status", "pending") or "pending").strip().lower() == "pending"
+        )
         selected["status"] = "complete" if int(selected.get("pending_replay_count", 0) or 0) == 0 else "ready"
         refreshed_lab = self.desktop_evaluation_lab(
             pack=str(dict(selected.get("filters", {})).get("pack", "") or ""),
@@ -13727,6 +13776,185 @@ class FakeDesktopService:
             "lab": dict(refreshed_lab),
             "native_targets": dict(native_targets),
             "guidance": dict(guidance),
+        }
+
+    def desktop_evaluation_run_lab_session_cycle(
+        self,
+        *,
+        session_id: str = "",
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        selected = next(
+            (
+                item
+                for item in self.desktop_evaluation_lab_sessions_items
+                if str(item.get("session_id", "") or "").strip() == str(session_id or "").strip()
+            ),
+            None,
+        )
+        if not isinstance(selected, dict):
+            return {"status": "error", "message": "benchmark lab session not found"}
+        filters = dict(selected.get("filters", {}))
+        cycle_result = self.desktop_evaluation_run(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+        )
+        refreshed_lab = self.desktop_evaluation_lab(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        cycle_recorded_at = datetime.now(timezone.utc).isoformat()
+        cycle = {
+            "cycle_id": f"{selected['session_id']}-cycle-{int(selected.get('cycle_count', 0) or 0) + 1}",
+            "kind": "run_cycle",
+            "recorded_at": cycle_recorded_at,
+            "executed_at": str(cycle_result.get("executed_at", "") or cycle_recorded_at),
+            "status": str(cycle_result.get("status", "") or "success"),
+            "regression_status": str(dict(cycle_result.get("regression", {})).get("status", "stable") or "stable"),
+            "weighted_score": float(dict(cycle_result.get("summary", {})).get("weighted_score", 0.0) or 0.0),
+            "weighted_pass_rate": float(dict(cycle_result.get("summary", {})).get("weighted_pass_rate", 0.0) or 0.0),
+            "scenario_count": int(cycle_result.get("scenario_count", len(cycle_result.get("items", []))) or 0),
+            "history_direction": str(dict(refreshed_lab.get("history_trend", {})).get("direction", "") or ""),
+            "replay_candidate_count": len(refreshed_lab.get("replay_candidates", [])),
+            "long_horizon_count": int(dict(dict(refreshed_lab.get("coverage", {})).get("long_horizon", {})).get("count", 0) or 0),
+            "target_app_count": len(native_targets.get("target_apps", [])),
+            "query": {
+                **filters,
+                "history_limit": history_limit,
+            },
+        }
+        run_cycles = [
+            dict(item)
+            for item in selected.get("run_cycles", [])
+            if isinstance(item, dict)
+        ]
+        run_cycles.append(cycle)
+        selected["run_cycles"] = run_cycles[-24:]
+        selected["cycle_count"] = len(selected["run_cycles"])
+        selected["completed_cycle_count"] = sum(
+            1 for item in selected["run_cycles"] if str(item.get("status", "") or "").strip().lower() in {"success", "completed"}
+        )
+        selected["regression_cycle_count"] = sum(
+            1 for item in selected["run_cycles"] if str(item.get("regression_status", "") or "").strip().lower() == "regression"
+        )
+        selected["latest_cycle_status"] = str(cycle["status"] or "")
+        selected["latest_cycle_regression_status"] = str(cycle["regression_status"] or "")
+        selected["latest_cycle_score"] = float(cycle["weighted_score"] or 0.0)
+        selected["latest_cycle_pass_rate"] = float(cycle["weighted_pass_rate"] or 0.0)
+        selected["latest_cycle_executed_at"] = str(cycle["executed_at"] or "")
+        selected["latest_weighted_score"] = float(cycle["weighted_score"] or 0.0)
+        selected["latest_weighted_pass_rate"] = float(cycle["weighted_pass_rate"] or 0.0)
+        selected["updated_at"] = cycle_recorded_at
+        selected["status"] = (
+            "attention"
+            if str(cycle["regression_status"] or "").strip().lower() == "regression"
+            else ("complete" if int(selected.get("pending_replay_count", 0) or 0) == 0 else "ready")
+        )
+        selected["lab_snapshot"] = dict(refreshed_lab)
+        selected["native_targets_snapshot"] = dict(native_targets)
+        selected["guidance_snapshot"] = dict(guidance)
+        return {
+            "status": "success",
+            "session": dict(selected),
+            "cycle": dict(cycle),
+            "cycle_result": dict(cycle_result),
+            "lab": dict(refreshed_lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
+    def desktop_evaluation_advance_lab_session(
+        self,
+        *,
+        session_id: str = "",
+        max_replays: int = 2,
+        replay_status: str = "",
+    ) -> Dict[str, Any]:
+        selected = next(
+            (
+                item
+                for item in self.desktop_evaluation_lab_sessions_items
+                if str(item.get("session_id", "") or "").strip() == str(session_id or "").strip()
+            ),
+            None,
+        )
+        if not isinstance(selected, dict):
+            return {"status": "error", "message": "benchmark lab session not found"}
+        candidates = [
+            dict(item)
+            for item in selected.get("replay_candidates", [])
+            if isinstance(item, dict)
+        ]
+        clean_replay_status = str(replay_status or "").strip().lower()
+        chosen: list[Dict[str, Any]] = []
+        for candidate in candidates:
+            candidate_status = str(candidate.get("replay_status", "pending") or "pending").strip().lower()
+            if clean_replay_status == "failed" and candidate_status != "failed":
+                continue
+            if clean_replay_status == "pending" and candidate_status not in {"pending", "ready", "queued", "staged"}:
+                continue
+            if not clean_replay_status and candidate_status == "completed":
+                continue
+            chosen.append(candidate)
+            if len(chosen) >= max(1, int(max_replays or 2)):
+                break
+        if not chosen:
+            return {"status": "error", "message": "benchmark lab session has no replay candidates for the requested batch"}
+        results: list[Dict[str, Any]] = []
+        final_payload: Dict[str, Any] = {"status": "success", "session": dict(selected)}
+        replayed_scenarios: list[str] = []
+        for candidate in chosen:
+            payload = self.desktop_evaluation_replay_lab_session(
+                session_id=session_id,
+                scenario_name=str(candidate.get("scenario", "") or ""),
+            )
+            results.append(
+                {
+                    "scenario": str(candidate.get("scenario", "") or ""),
+                    "status": str(payload.get("status", "") or "success"),
+                    "updated_candidate": dict(payload.get("updated_candidate", {})),
+                }
+            )
+            if payload.get("status") == "success":
+                replayed_scenarios.append(str(candidate.get("scenario", "") or ""))
+                final_payload = payload
+        return {
+            "status": "success",
+            "session": dict(final_payload.get("session", {})),
+            "results": results,
+            "batch_count": len(results),
+            "replayed_scenarios": replayed_scenarios,
+            "lab": dict(final_payload.get("lab", {})),
+            "native_targets": dict(final_payload.get("native_targets", {})),
+            "guidance": dict(final_payload.get("guidance", {})),
         }
 
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
@@ -18272,6 +18500,50 @@ def test_desktop_evaluation_lab_session_replay_route(api_server: tuple[str, Fake
     assert replayed["updated_candidate"]["scenario"] == scenario_name
     assert replayed["updated_candidate"]["replay_status"] == "completed"
     assert replayed["replay_result"]["status"] == "success"
+
+
+def test_desktop_evaluation_lab_session_cycle_and_advance_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions",
+        payload={
+            "pack": "unsupported_and_recovery",
+            "app_name": "settings",
+            "history_limit": 6,
+        },
+    )
+    assert status == 200
+    session_id = str(created["session"]["session_id"])
+
+    status, cycled = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions/run-cycle",
+        payload={
+            "session_id": session_id,
+            "history_limit": 6,
+        },
+    )
+    assert status == 200
+    assert cycled["status"] == "success"
+    assert cycled["session"]["session_id"] == session_id
+    assert cycled["session"]["cycle_count"] >= 2
+    assert cycled["cycle"]["scenario_count"] >= 1
+
+    status, advanced = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/sessions/advance",
+        payload={
+            "session_id": session_id,
+            "max_replays": 2,
+        },
+    )
+    assert status == 200
+    assert advanced["status"] == "success"
+    assert advanced["session"]["session_id"] == session_id
+    assert advanced["batch_count"] >= 1
+    assert len(advanced["replayed_scenarios"]) >= 1
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:

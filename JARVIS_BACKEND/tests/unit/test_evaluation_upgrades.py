@@ -558,6 +558,7 @@ def test_evaluation_runner_persists_lab_sessions_and_replays_them(monkeypatch, t
     session = created["session"]
     assert session["replay_candidate_count"] >= 1
     assert session["target_app_count"] >= 1
+    assert session["cycle_count"] == 1
 
     history = runner.lab_sessions(limit=4)
     assert history["status"] == "success"
@@ -584,6 +585,85 @@ def test_evaluation_runner_persists_lab_sessions_and_replays_them(monkeypatch, t
     assert int(target_row["replay_pending_count"]) >= 0
     assert int(target_row["replay_failed_count"]) >= 0
     assert "unsupported_child_dialog_chain" in list(target_row["replay_scenarios"])
+
+
+def test_evaluation_runner_runs_lab_session_cycles_and_batches(monkeypatch, tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_cycles.json"))
+    runner = EvaluationRunner(history_limit=8, lab_memory=memory)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        return ExecutionPlan(
+            plan_id="plan-1",
+            goal_id=goal.goal_id,
+            intent="test",
+            steps=[PlanStep(step_id="s1", action="desktop_interact")],
+        )
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+    scenarios = [
+        Scenario(
+            "settings_privacy_long_horizon",
+            "Open settings and continue through a longer privacy workflow",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="settings",
+            capabilities=["settings_control", "recovery"],
+            risk_level="guarded",
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=6,
+        ),
+        Scenario(
+            "settings_bluetooth_chain",
+            "Explore the bluetooth child dialog chain in settings",
+            ["desktop_interact"],
+            strict_order=False,
+            required_actions=["desktop_interact"],
+            category="unsupported_app",
+            capabilities=["surface_exploration", "child_window_adoption"],
+            risk_level="guarded",
+            pack="unsupported_and_recovery",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            recovery_expected=True,
+            native_hybrid_focus=True,
+            replayable=True,
+            horizon_steps=5,
+        ),
+    ]
+
+    payload = runner.run_with_summary(scenarios)
+    assert payload["status"] == "success"
+    created = runner.create_lab_session(app="settings", limit=12, history_limit=6)
+    session = created["session"]
+
+    cycled = runner.run_lab_session_cycle(session_id=str(session["session_id"]), history_limit=6)
+    assert cycled["status"] == "success"
+    assert cycled["session"]["cycle_count"] == 2
+    assert cycled["session"]["latest_cycle_score"] >= 0.0
+    assert cycled["cycle"]["scenario_count"] >= 2
+
+    advanced = runner.advance_lab_session(session_id=str(session["session_id"]), max_replays=2)
+    assert advanced["status"] == "success"
+    assert advanced["batch_count"] >= 1
+    assert len(advanced["replayed_scenarios"]) >= 1
+    assert advanced["session"]["cycle_count"] == 2
+    assert int(advanced["session"]["pending_replay_count"]) >= 0
+
+    native_targets = runner.native_control_targets(app="settings", history_limit=6)
+    assert native_targets["status"] == "success"
+    assert native_targets["replay_session_summary"]["cycle_count"] >= 2
+    assert native_targets["replay_session_summary"]["long_horizon_pending_count"] >= 0
+    settings_row = next(item for item in native_targets["target_apps"] if str(item.get("app_name", "")) == "settings")
+    assert int(settings_row["session_cycle_count"]) >= 2
 
 
 def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -> None:

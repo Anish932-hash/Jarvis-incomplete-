@@ -65,6 +65,8 @@ import {
   type DesktopEvaluationGuidanceResponse,
   type DesktopEvaluationHistoryResponse,
   type DesktopEvaluationLabResponse,
+  type DesktopEvaluationLabSessionAdvanceResponse,
+  type DesktopEvaluationLabSessionCycleResponse,
   type DesktopEvaluationLabSessionCreateResponse,
   type DesktopEvaluationLabSessionRecord,
   type DesktopEvaluationLabSessionReplayResponse,
@@ -1170,6 +1172,10 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabSessionCreateResponse | null>(null);
   const [desktopEvaluationLabSessionReplayState, setDesktopEvaluationLabSessionReplayState] =
     useState<DesktopEvaluationLabSessionReplayResponse | null>(null);
+  const [, setDesktopEvaluationLabSessionCycleState] =
+    useState<DesktopEvaluationLabSessionCycleResponse | null>(null);
+  const [, setDesktopEvaluationLabSessionAdvanceState] =
+    useState<DesktopEvaluationLabSessionAdvanceResponse | null>(null);
   const [desktopEvaluationNativeTargetsState, setDesktopEvaluationNativeTargetsState] =
     useState<DesktopEvaluationNativeTargetsResponse | null>(null);
   const [desktopEvaluationCatalogBusy, setDesktopEvaluationCatalogBusy] = useState(false);
@@ -1180,6 +1186,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabSessionsBusy, setDesktopEvaluationLabSessionsBusy] = useState(false);
   const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
   const [desktopEvaluationLabSessionReplayBusy, setDesktopEvaluationLabSessionReplayBusy] = useState(false);
+  const [desktopEvaluationLabSessionCycleBusy, setDesktopEvaluationLabSessionCycleBusy] = useState(false);
+  const [desktopEvaluationLabSessionAdvanceBusy, setDesktopEvaluationLabSessionAdvanceBusy] = useState(false);
   const [desktopEvaluationNativeTargetsBusy, setDesktopEvaluationNativeTargetsBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
   const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
@@ -13454,6 +13462,93 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [refreshDesktopEvaluationHistory, refreshDesktopEvaluationLabSessions, toast]
   );
 
+  const runDesktopEvaluationLabSessionCycle = useCallback(
+    async (sessionId: string) => {
+      setDesktopEvaluationLabSessionCycleBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationRunLabSessionCycle({
+          session_id: sessionId,
+          history_limit: 8,
+        });
+        setDesktopEvaluationLabSessionCycleState(payload);
+        if (payload.cycle_result && isObjectRecord(payload.cycle_result)) {
+          setDesktopEvaluationRunState(payload.cycle_result as DesktopEvaluationRunResponse);
+        }
+        if (payload.lab && isObjectRecord(payload.lab)) {
+          setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+        }
+        if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+          setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+        }
+        if (payload.guidance && isObjectRecord(payload.guidance)) {
+          setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+        }
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
+        toast({
+          title: 'Lab Session Cycle Ran',
+          description:
+            `${String(asObjectRecord(payload.session).label ?? 'benchmark lab session')}` +
+            ` • reg:${String(asObjectRecord(payload.cycle).regression_status ?? asObjectRecord(payload.session).latest_cycle_regression_status ?? 'stable')}` +
+            ` • score:${Number(asObjectRecord(payload.cycle).weighted_score ?? asObjectRecord(payload.session).latest_cycle_score ?? 0).toFixed(2)}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Lab Session Cycle Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationLabSessionCycleBusy(false);
+      }
+    },
+    [refreshDesktopEvaluationHistory, refreshDesktopEvaluationLabSessions, toast]
+  );
+
+  const advanceDesktopEvaluationLabSession = useCallback(
+    async (sessionId: string) => {
+      setDesktopEvaluationLabSessionAdvanceBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationAdvanceLabSession({
+          session_id: sessionId,
+          max_replays: 2,
+        });
+        setDesktopEvaluationLabSessionAdvanceState(payload);
+        if (payload.lab && isObjectRecord(payload.lab)) {
+          setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+        }
+        if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+          setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+        }
+        if (payload.guidance && isObjectRecord(payload.guidance)) {
+          setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+        }
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
+        toast({
+          title: 'Lab Session Replay Batch Ran',
+          description:
+            `${Number(payload.batch_count ?? 0)} replay(s)` +
+            ` • pending:${Number(asObjectRecord(payload.session).pending_replay_count ?? 0)}` +
+            ` • failed:${Number(asObjectRecord(payload.session).failed_replay_count ?? 0)}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Lab Session Replay Batch Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationLabSessionAdvanceBusy(false);
+      }
+    },
+    [refreshDesktopEvaluationHistory, refreshDesktopEvaluationLabSessions, toast]
+  );
+
   const refreshDesktopEvaluationNativeTargets = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationNativeTargetsBusy(true);
@@ -18160,6 +18255,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             sessions:{desktopEvaluationLabSessionRows.length}
                                             {' • '}pending:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).pending_replays ?? 0)}
                                             {' • '}failed:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).failed_replays ?? 0)}
+                                            {' • '}cycles:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).cycle_count ?? 0)}
+                                            {' • '}reg cycles:{Number(asObjectRecord(desktopEvaluationLabSessions.summary).regression_cycles ?? 0)}
                                           </p>
                                           <div className="rounded border border-primary/10 bg-black/10 p-2">
                                             <p className="font-semibold uppercase tracking-wider text-primary/70">Latest Session</p>
@@ -18177,6 +18274,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             <p className="mt-1 text-[10px] text-muted-foreground">
                                               trend:{String(desktopEvaluationLatestLabSession.history_direction ?? 'stable')}
                                               {' • '}score:{Number(desktopEvaluationLatestLabSession.latest_weighted_score ?? 0).toFixed(2)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              cycles:{Number(desktopEvaluationLatestLabSession.cycle_count ?? 0)}
+                                              {' • '}reg:{Number(desktopEvaluationLatestLabSession.regression_cycle_count ?? 0)}
+                                              {' • '}long pending:{Number(desktopEvaluationLatestLabSession.long_horizon_pending_count ?? 0)}
                                             </p>
                                           </div>
                                           <ScrollArea className="h-[138px] rounded border border-primary/10 bg-black/10 p-2">
@@ -18197,36 +18299,70 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       <p className="text-[11px] text-primary/90">
                                                         {String(session.label ?? session.session_id ?? 'session')}
                                                       </p>
-                                                      <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
-                                                        onClick={() =>
-                                                          void replayDesktopEvaluationLabSessionScenario(
-                                                            String(session.session_id ?? ''),
-                                                            nextCandidate
-                                                              ? String(nextCandidate.scenario ?? '')
-                                                              : undefined
-                                                          )
-                                                        }
-                                                        disabled={
-                                                          desktopEvaluationLabSessionReplayBusy ||
-                                                          !String(session.session_id ?? '').trim() ||
-                                                          !nextCandidate
-                                                        }
-                                                      >
-                                                        Replay Next
-                                                      </Button>
+                                                      <div className="flex flex-wrap items-center gap-2">
+                                                        <Button
+                                                          type="button"
+                                                          variant="outline"
+                                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                          onClick={() => void runDesktopEvaluationLabSessionCycle(String(session.session_id ?? ''))}
+                                                          disabled={
+                                                            desktopEvaluationLabSessionCycleBusy ||
+                                                            !String(session.session_id ?? '').trim()
+                                                          }
+                                                        >
+                                                          Run Cycle
+                                                        </Button>
+                                                        <Button
+                                                          type="button"
+                                                          variant="outline"
+                                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                          onClick={() => void advanceDesktopEvaluationLabSession(String(session.session_id ?? ''))}
+                                                          disabled={
+                                                            desktopEvaluationLabSessionAdvanceBusy ||
+                                                            !String(session.session_id ?? '').trim() ||
+                                                            candidates.length === 0
+                                                          }
+                                                        >
+                                                          Replay 2
+                                                        </Button>
+                                                        <Button
+                                                          type="button"
+                                                          variant="outline"
+                                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                          onClick={() =>
+                                                            void replayDesktopEvaluationLabSessionScenario(
+                                                              String(session.session_id ?? ''),
+                                                              nextCandidate
+                                                                ? String(nextCandidate.scenario ?? '')
+                                                                : undefined
+                                                            )
+                                                          }
+                                                          disabled={
+                                                            desktopEvaluationLabSessionReplayBusy ||
+                                                            !String(session.session_id ?? '').trim() ||
+                                                            !nextCandidate
+                                                          }
+                                                        >
+                                                          Replay Next
+                                                        </Button>
+                                                      </div>
                                                     </div>
                                                     <p className="mt-1">
                                                       pending:{Number(session.pending_replay_count ?? 0)}
                                                       {' • '}failed:{Number(session.failed_replay_count ?? 0)}
+                                                      {' • '}cycles:{Number(session.cycle_count ?? 0)}
+                                                      {' • '}reg:{Number(session.regression_cycle_count ?? 0)}
                                                       {' • '}apps:{Number(session.target_app_count ?? 0)}
                                                     </p>
                                                     <p className="mt-1 text-[10px] text-muted-foreground">
                                                       {nextCandidate
                                                         ? `${String(nextCandidate.scenario ?? 'scenario')} • ${String(nextCandidate.replay_status ?? 'pending')}`
                                                         : 'no replay candidates'}
+                                                    </p>
+                                                    <p className="mt-1 text-[10px] text-muted-foreground">
+                                                      cycle:{String(session.latest_cycle_regression_status ?? session.latest_cycle_status ?? 'idle')}
+                                                      {' • '}score:{Number(session.latest_cycle_score ?? 0).toFixed(2)}
+                                                      {' • '}long pending:{Number(session.long_horizon_pending_count ?? 0)}
                                                     </p>
                                                   </div>
                                                 );

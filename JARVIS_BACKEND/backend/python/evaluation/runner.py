@@ -309,15 +309,10 @@ class EvaluationRunner:
             if isinstance(session.get("filters", {}), dict)
             else {}
         )
-        refreshed_lab = self.lab(
-            **self._filters_to_run_kwargs(session_filters),
-            history_limit=8,
-        )
-        refreshed_native_targets = self.native_control_targets(
-            **self._filters_to_run_kwargs(session_filters),
-            history_limit=8,
-        )
-        refreshed_guidance = self.control_guidance()
+        refreshed_payloads = self._lab_session_refresh_payloads(session_filters=session_filters, history_limit=8)
+        refreshed_lab = refreshed_payloads["lab"]
+        refreshed_native_targets = refreshed_payloads["native_targets"]
+        refreshed_guidance = refreshed_payloads["guidance"]
         update_payload = memory.record_replay_result(
             session_id=str(session.get("session_id", session_id) or session_id).strip(),
             scenario_name=str(selected_candidate.get("scenario", "") or "").strip(),
@@ -336,6 +331,148 @@ class EvaluationRunner:
             "lab": refreshed_lab,
             "native_targets": refreshed_native_targets,
             "guidance": refreshed_guidance,
+        }
+
+    def run_lab_session_cycle(
+        self,
+        *,
+        session_id: str,
+        history_limit: int = 8,
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        session_payload = memory.get_session(session_id)
+        session = dict(session_payload.get("session", {})) if isinstance(session_payload.get("session", {}), dict) else {}
+        if not session:
+            return {"status": "error", "message": str(session_payload.get("message", "") or "benchmark lab session not found")}
+        session_filters = dict(session.get("filters", {})) if isinstance(session.get("filters", {}), dict) else {}
+        run_kwargs = self._filters_to_run_kwargs(session_filters)
+        normalized_history_limit = max(1, min(int(history_limit or 8), 64))
+        cycle_result = self.run_with_summary(**run_kwargs)
+        refreshed_payloads = self._lab_session_refresh_payloads(
+            session_filters=session_filters,
+            history_limit=normalized_history_limit,
+        )
+        update_payload = memory.record_run_cycle(
+            session_id=str(session.get("session_id", session_id) or session_id).strip(),
+            cycle_payload=cycle_result,
+            cycle_query={**run_kwargs, "history_limit": normalized_history_limit},
+            lab_payload=refreshed_payloads["lab"],
+            native_targets_payload=refreshed_payloads["native_targets"],
+            guidance_payload=refreshed_payloads["guidance"],
+        )
+        return {
+            "status": str(update_payload.get("status", "success") or "success"),
+            "session": dict(update_payload.get("session", {})) if isinstance(update_payload.get("session", {}), dict) else {},
+            "cycle": dict(update_payload.get("cycle", {})) if isinstance(update_payload.get("cycle", {}), dict) else {},
+            "cycle_result": cycle_result,
+            "lab": refreshed_payloads["lab"],
+            "native_targets": refreshed_payloads["native_targets"],
+            "guidance": refreshed_payloads["guidance"],
+        }
+
+    def advance_lab_session(
+        self,
+        *,
+        session_id: str,
+        max_replays: int = 2,
+        replay_status: str = "",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        session_payload = memory.get_session(session_id)
+        session = dict(session_payload.get("session", {})) if isinstance(session_payload.get("session", {}), dict) else {}
+        if not session:
+            return {"status": "error", "message": str(session_payload.get("message", "") or "benchmark lab session not found")}
+        normalized_max = max(1, min(int(max_replays or 2), 8))
+        clean_replay_status = str(replay_status or "").strip().lower()
+        candidates = [
+            dict(item)
+            for item in session.get("replay_candidates", [])
+            if isinstance(session.get("replay_candidates", []), list) and isinstance(item, dict)
+        ]
+        selected_candidates: List[Dict[str, object]] = []
+        for candidate in candidates:
+            candidate_status = str(candidate.get("replay_status", "pending") or "pending").strip().lower()
+            if not str(candidate.get("scenario", "") or "").strip():
+                continue
+            if clean_replay_status == "failed" and candidate_status != "failed":
+                continue
+            if clean_replay_status == "pending" and candidate_status not in {"pending", "ready", "queued", "staged"}:
+                continue
+            if not clean_replay_status and candidate_status == "completed":
+                continue
+            selected_candidates.append(candidate)
+            if len(selected_candidates) >= normalized_max:
+                break
+        if not selected_candidates:
+            return {
+                "status": "error",
+                "message": "benchmark lab session has no replay candidates for the requested batch",
+            }
+        results: List[Dict[str, object]] = []
+        final_session: Dict[str, object] = dict(session)
+        final_lab: Dict[str, object] = {}
+        final_native_targets: Dict[str, object] = {}
+        final_guidance: Dict[str, object] = {}
+        replayed_scenarios: List[str] = []
+        for candidate in selected_candidates:
+            scenario_name_value = str(candidate.get("scenario", "") or "").strip()
+            replay_payload = self.replay_lab_session(
+                session_id=str(session.get("session_id", session_id) or session_id).strip(),
+                scenario_name=scenario_name_value,
+            )
+            results.append(
+                {
+                    "scenario": scenario_name_value,
+                    "status": str(replay_payload.get("status", "") or "").strip() or "success",
+                    "updated_candidate": dict(replay_payload.get("updated_candidate", {}))
+                    if isinstance(replay_payload.get("updated_candidate", {}), dict)
+                    else {},
+                    "replay_result": dict(replay_payload.get("replay_result", {}))
+                    if isinstance(replay_payload.get("replay_result", {}), dict)
+                    else {},
+                }
+            )
+            if str(replay_payload.get("status", "") or "").strip().lower() != "success":
+                final_session = dict(replay_payload.get("session", {})) if isinstance(replay_payload.get("session", {}), dict) else final_session
+                break
+            replayed_scenarios.append(scenario_name_value)
+            if isinstance(replay_payload.get("session", {}), dict):
+                final_session = dict(replay_payload.get("session", {}))
+            if isinstance(replay_payload.get("lab", {}), dict):
+                final_lab = dict(replay_payload.get("lab", {}))
+            if isinstance(replay_payload.get("native_targets", {}), dict):
+                final_native_targets = dict(replay_payload.get("native_targets", {}))
+            if isinstance(replay_payload.get("guidance", {}), dict):
+                final_guidance = dict(replay_payload.get("guidance", {}))
+        batch_status = "success"
+        if any(str(item.get("status", "") or "").strip().lower() != "success" for item in results):
+            batch_status = "partial"
+        return {
+            "status": batch_status,
+            "session": final_session,
+            "results": results,
+            "batch_count": len(results),
+            "replayed_scenarios": replayed_scenarios,
+            "lab": final_lab,
+            "native_targets": final_native_targets,
+            "guidance": final_guidance,
+        }
+
+    def _lab_session_refresh_payloads(
+        self,
+        *,
+        session_filters: Dict[str, object],
+        history_limit: int,
+    ) -> Dict[str, Dict[str, object]]:
+        run_kwargs = self._filters_to_run_kwargs(session_filters)
+        return {
+            "lab": self.lab(**run_kwargs, history_limit=history_limit),
+            "native_targets": self.native_control_targets(**run_kwargs, history_limit=history_limit),
+            "guidance": self.control_guidance(),
         }
 
     def control_guidance(self) -> Dict[str, object]:
@@ -485,8 +622,12 @@ class EvaluationRunner:
             "failed_replays": 0,
             "completed_replays": 0,
             "replayable_candidates": 0,
+            "cycle_count": 0,
+            "regression_cycle_count": 0,
+            "long_horizon_pending_count": 0,
             "latest_session_id": "",
             "latest_session_label": "",
+            "latest_cycle_regression_status": "",
         }
 
         def _ensure_target_entry(app_name_value: str) -> Dict[str, object]:
@@ -508,6 +649,9 @@ class EvaluationRunner:
                     "replay_pending_count": 0,
                     "replay_failed_count": 0,
                     "replay_completed_count": 0,
+                    "session_cycle_count": 0,
+                    "session_regression_cycle_count": 0,
+                    "session_long_horizon_pending_count": 0,
                     "control_biases": {
                         "dialog_resolution": 0.0,
                         "descendant_focus": 0.0,
@@ -569,12 +713,19 @@ class EvaluationRunner:
             )
             session_id = str(session.get("session_id", "") or "").strip() if isinstance(session, dict) else ""
             session_label = str(session.get("label", "") or "").strip() if isinstance(session, dict) else ""
+            session_cycle_count = int(session.get("cycle_count", 0) or 0) if isinstance(session, dict) else 0
+            session_regression_cycle_count = int(session.get("regression_cycle_count", 0) or 0) if isinstance(session, dict) else 0
+            session_long_horizon_pending_count = int(session.get("long_horizon_pending_count", 0) or 0) if isinstance(session, dict) else 0
             candidate_priority = float(candidate.get("weight", candidate.get("score", 0.0)) or 0.0) + max(
                 0.0,
                 1.0 - float(candidate.get("score", 0.0) or 0.0),
             )
             if session_id:
                 candidate_priority += 0.08
+            if session_regression_cycle_count > 0:
+                candidate_priority += min(0.16, session_regression_cycle_count * 0.03)
+            if max_horizon_steps >= 4 and session_long_horizon_pending_count > 0:
+                candidate_priority += min(0.12, session_long_horizon_pending_count * 0.02)
             if failed_replay:
                 candidate_priority += 0.18
             elif pending_replay:
@@ -631,6 +782,18 @@ class EvaluationRunner:
                     entry["replay_failed_count"] = int(entry.get("replay_failed_count", 0) or 0) + 1
                 if completed_replay:
                     entry["replay_completed_count"] = int(entry.get("replay_completed_count", 0) or 0) + 1
+                entry["session_cycle_count"] = max(
+                    int(entry.get("session_cycle_count", 0) or 0),
+                    session_cycle_count,
+                )
+                entry["session_regression_cycle_count"] = max(
+                    int(entry.get("session_regression_cycle_count", 0) or 0),
+                    session_regression_cycle_count,
+                )
+                entry["session_long_horizon_pending_count"] = max(
+                    int(entry.get("session_long_horizon_pending_count", 0) or 0),
+                    session_long_horizon_pending_count,
+                )
                 control_biases = (
                     dict(entry.get("control_biases", {}))
                     if isinstance(entry.get("control_biases", {}), dict)
@@ -660,6 +823,13 @@ class EvaluationRunner:
             replay_session_summary["pending_replays"] = int(replay_session_summary["pending_replays"]) + int(session.get("pending_replay_count", 0) or 0)
             replay_session_summary["failed_replays"] = int(replay_session_summary["failed_replays"]) + int(session.get("failed_replay_count", 0) or 0)
             replay_session_summary["completed_replays"] = int(replay_session_summary["completed_replays"]) + int(session.get("completed_replay_count", 0) or 0)
+            replay_session_summary["cycle_count"] = int(replay_session_summary["cycle_count"]) + int(session.get("cycle_count", 0) or 0)
+            replay_session_summary["regression_cycle_count"] = int(replay_session_summary["regression_cycle_count"]) + int(session.get("regression_cycle_count", 0) or 0)
+            replay_session_summary["long_horizon_pending_count"] = int(replay_session_summary["long_horizon_pending_count"]) + int(session.get("long_horizon_pending_count", 0) or 0)
+            if not replay_session_summary["latest_cycle_regression_status"]:
+                replay_session_summary["latest_cycle_regression_status"] = str(
+                    session.get("latest_cycle_regression_status", session.get("latest_cycle_status", "")) or ""
+                ).strip()
             replay_candidate_rows = [
                 dict(item)
                 for item in session.get("replay_candidates", [])
@@ -701,6 +871,9 @@ class EvaluationRunner:
                     "replay_pending_count": int(row.get("replay_pending_count", 0) or 0),
                     "replay_failed_count": int(row.get("replay_failed_count", 0) or 0),
                     "replay_completed_count": int(row.get("replay_completed_count", 0) or 0),
+                    "session_cycle_count": int(row.get("session_cycle_count", 0) or 0),
+                    "session_regression_cycle_count": int(row.get("session_regression_cycle_count", 0) or 0),
+                    "session_long_horizon_pending_count": int(row.get("session_long_horizon_pending_count", 0) or 0),
                     "replay_scenarios": replay_scenarios,
                     "replay_session_labels": replay_session_labels,
                     "control_biases": {
