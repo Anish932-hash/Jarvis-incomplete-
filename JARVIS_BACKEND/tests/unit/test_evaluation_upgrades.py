@@ -744,4 +744,7 @@ def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -
     assert payload["benchmark_ready"] is True
     vscode_row = next(item for item in payload["target_apps"] if str(item.get("app_name", "")) == "vscode")
     assert str(vscode_row["hint_query"]).strip()
+    assert vscode_row["descendant_title_hints"]
+    assert str(vscode_row["descendant_hint_query"]).strip()
+    assert str(vscode_row["preferred_window_title"]).strip()
     assert float(vscode_row["replay_pressure"]) > 0.0

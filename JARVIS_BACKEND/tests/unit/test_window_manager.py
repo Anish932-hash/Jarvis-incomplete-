@@ -205,12 +205,14 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
             *,
             query: str = "",
             hint_query: str = "",
+            descendant_hint_query: str = "",
+            preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 120,
         ) -> dict:
-            del query, hint_query, window_title, pid
+            del query, hint_query, descendant_hint_query, preferred_title, window_title, pid
             assert limit >= 3
             if int(hwnd or 0) == 5001:
                 return {
@@ -363,12 +365,16 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             *,
             query: str = "",
             hint_query: str = "",
+            descendant_hint_query: str = "",
+            preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 80,
         ) -> dict:
             calls["reacquire_hint_query"] = str(hint_query or "")
+            calls["reacquire_descendant_hint_query"] = str(descendant_hint_query or "")
+            calls["reacquire_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
                 "status": "success",
@@ -436,12 +442,16 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             *,
             query: str = "",
             hint_query: str = "",
+            descendant_hint_query: str = "",
+            preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 80,
         ) -> dict:
             calls["trace_hint_query"] = str(hint_query or "")
+            calls["trace_descendant_hint_query"] = str(descendant_hint_query or "")
+            calls["trace_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
                 "status": "success",
@@ -479,12 +489,18 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "app_name": "systemsettings",
                         "priority": 2.5,
                         "query_hints": ["pair device", "confirm pairing"],
+                        "descendant_title_hints": ["Pair device", "Confirm pairing"],
+                        "descendant_hint_query": "Pair device | Confirm pairing",
+                        "preferred_window_title": "Pair device",
                         "hint_query": "pair device | confirm pairing",
                         "replay_pressure": 1.65,
                         "replay_session_count": 1,
                         "replay_pending_count": 1,
                         "replay_failed_count": 1,
                         "replay_completed_count": 0,
+                        "session_cycle_count": 3,
+                        "session_regression_cycle_count": 2,
+                        "session_long_horizon_pending_count": 1,
                         "control_biases": {
                             "dialog_resolution": 0.92,
                             "descendant_focus": 0.96,
@@ -502,13 +518,20 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["status"] == "success"
     assert payload["candidate"]["hwnd"] == 5002
     assert calls["reacquire_hint_query"] == "pair device | confirm pairing"
+    assert calls["reacquire_descendant_hint_query"] == "Pair device | Confirm pairing"
+    assert calls["reacquire_preferred_title"] == "Pair device"
     assert calls["trace_hint_query"] == "pair device | confirm pairing"
+    assert calls["trace_descendant_hint_query"] == "Pair device | Confirm pairing"
+    assert calls["trace_preferred_title"] == "Pair device"
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
     assert "benchmark_target_app_match" in payload["candidate"]["match_reasons"]
     assert "benchmark_target_query_hint" in payload["candidate"]["match_reasons"]
     assert "benchmark_target_hint_query" in payload["candidate"]["match_reasons"]
     assert "benchmark_replay_pressure" in payload["candidate"]["match_reasons"]
+    assert "benchmark_descendant_title_hint" in payload["candidate"]["match_reasons"]
+    assert "benchmark_preferred_window_title" in payload["candidate"]["match_reasons"]
+    assert "benchmark_regression_cycle_rerank" in payload["candidate"]["match_reasons"]
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:

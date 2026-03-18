@@ -144,6 +144,12 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub benchmark_target_query_hints: Vec<String>,
     #[serde(default)]
+    pub benchmark_target_descendant_title_hints: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_descendant_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_preferred_window_title: String,
+    #[serde(default)]
     pub benchmark_target_hint_query: String,
     #[serde(default)]
     pub benchmark_target_priority: f64,
@@ -159,6 +165,12 @@ pub struct SurfaceExplorationRouterInput {
     pub benchmark_target_replay_failed_count: u32,
     #[serde(default)]
     pub benchmark_target_replay_completed_count: u32,
+    #[serde(default)]
+    pub benchmark_target_session_cycle_count: u32,
+    #[serde(default)]
+    pub benchmark_target_regression_cycle_count: u32,
+    #[serde(default)]
+    pub benchmark_target_long_horizon_pending_count: u32,
     #[serde(default)]
     pub benchmark_target_dialog_pressure: f64,
     #[serde(default)]
@@ -587,6 +599,19 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         .iter()
         .flat_map(|value| tokenize(value))
         .collect::<Vec<_>>();
+    let benchmark_target_descendant_title_hint_tokens = input
+        .benchmark_target_descendant_title_hints
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_descendant_hint_query =
+        normalize_text(&input.benchmark_target_descendant_hint_query);
+    let benchmark_target_descendant_hint_query_tokens =
+        tokenize(&benchmark_target_descendant_hint_query);
+    let benchmark_target_preferred_window_title =
+        normalize_text(&input.benchmark_target_preferred_window_title);
+    let benchmark_target_preferred_window_tokens =
+        tokenize(&benchmark_target_preferred_window_title);
     let benchmark_target_hint_query = normalize_text(&input.benchmark_target_hint_query);
     let benchmark_target_hint_query_tokens = tokenize(&benchmark_target_hint_query);
     let benchmark_target_priority = input.benchmark_target_priority.max(0.0);
@@ -596,6 +621,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let benchmark_target_replay_pending_count = input.benchmark_target_replay_pending_count;
     let benchmark_target_replay_failed_count = input.benchmark_target_replay_failed_count;
     let benchmark_target_replay_completed_count = input.benchmark_target_replay_completed_count;
+    let benchmark_target_session_cycle_count = input.benchmark_target_session_cycle_count;
+    let benchmark_target_regression_cycle_count =
+        input.benchmark_target_regression_cycle_count;
+    let benchmark_target_long_horizon_pending_count =
+        input.benchmark_target_long_horizon_pending_count;
     let benchmark_target_dialog_pressure = input.benchmark_target_dialog_pressure.clamp(0.0, 1.0);
     let benchmark_target_descendant_focus_pressure =
         input.benchmark_target_descendant_focus_pressure.clamp(0.0, 1.0);
@@ -670,8 +700,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             + token_overlap(&benchmark_target_app_tokens, &current_window_app_tokens)
             + token_overlap(&benchmark_target_app_tokens, &current_reacquired_app_tokens);
         let target_hint_overlap = token_overlap(&benchmark_target_query_hint_tokens, &label_tokens);
+        let target_descendant_hint_overlap =
+            token_overlap(&benchmark_target_descendant_title_hint_tokens, &label_tokens)
+                + token_overlap(&benchmark_target_descendant_hint_query_tokens, &label_tokens);
         let target_hint_query_overlap =
             token_overlap(&benchmark_target_hint_query_tokens, &label_tokens);
+        let target_preferred_window_overlap =
+            token_overlap(&benchmark_target_preferred_window_tokens, &label_tokens);
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
@@ -686,10 +721,24 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             rust_score += (target_hint_overlap as f64 * 0.04).min(0.14);
             reasons.push(format!("benchmark_target_query_hint:{target_hint_overlap}"));
         }
+        if benchmark_target_app_matched && target_descendant_hint_overlap > 0 {
+            rust_score += (target_descendant_hint_overlap as f64 * 0.045).min(0.16);
+            reasons.push(format!(
+                "benchmark_target_descendant_hint:{}",
+                target_descendant_hint_overlap
+            ));
+        }
         if benchmark_target_app_matched && target_hint_query_overlap > 0 {
             rust_score += (target_hint_query_overlap as f64 * 0.045).min(0.14);
             reasons.push(format!(
                 "benchmark_target_hint_query:{target_hint_query_overlap}"
+            ));
+        }
+        if benchmark_target_app_matched && target_preferred_window_overlap > 0 {
+            rust_score += (target_preferred_window_overlap as f64 * 0.04).min(0.12);
+            reasons.push(format!(
+                "benchmark_target_preferred_window:{}",
+                target_preferred_window_overlap
             ));
         }
         let preferred_descendant_overlap =
@@ -841,6 +890,51 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push(format!(
                 "benchmark_target_replay_pressure:{:.2}",
                 benchmark_target_replay_pressure
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_session_cycle_count > 0
+            && target_descendant_hint_overlap > 0
+        {
+            rust_score += (benchmark_target_session_cycle_count.min(4) as f64 * 0.015).min(0.06);
+            reasons.push(format!(
+                "benchmark_target_session_cycles:{}",
+                benchmark_target_session_cycle_count
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_regression_cycle_count > 0
+            && (preferred_descendant_focus || target_descendant_hint_overlap > 0)
+        {
+            let regression_boost =
+                (benchmark_target_regression_cycle_count.min(4) as f64 * 0.02).min(0.08);
+            rust_score += regression_boost;
+            reasons.push(format!(
+                "benchmark_target_regression_cycles:{}",
+                benchmark_target_regression_cycle_count
+            ));
+        }
+        if benchmark_target_app_matched && benchmark_target_long_horizon_pending_count > 0 {
+            if preferred_descendant_focus || selected_action == "press_dialog_button" {
+                rust_score +=
+                    (benchmark_target_long_horizon_pending_count.min(3) as f64 * 0.02).min(0.06)
+                        + 0.02;
+            } else if matches!(
+                selected_action.as_str(),
+                "select_sidebar_item"
+                    | "select_tab_page"
+                    | "select_list_item"
+                    | "select_tree_item"
+                    | "focus_input_field"
+                    | "open_dropdown"
+            ) {
+                rust_score +=
+                    (benchmark_target_long_horizon_pending_count.min(3) as f64 * 0.015).min(0.045)
+                        + 0.01;
+            }
+            reasons.push(format!(
+                "benchmark_target_long_horizon_pending:{}",
+                benchmark_target_long_horizon_pending_count
             ));
         }
         if benchmark_target_app_matched
@@ -1860,6 +1954,9 @@ mod tests {
             "benchmark_target_app_matched": true,
             "benchmark_target_app_match_score": 1.0,
             "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+            "benchmark_target_descendant_title_hints": ["Pair device", "Confirm pairing"],
+            "benchmark_target_descendant_hint_query": "pair device | confirm pairing",
+            "benchmark_target_preferred_window_title": "Pair device",
             "benchmark_target_hint_query": "pair device | confirm pairing",
             "benchmark_target_priority": 2.4,
             "benchmark_target_max_horizon_steps": 5,
@@ -1868,6 +1965,9 @@ mod tests {
             "benchmark_target_replay_pending_count": 1,
             "benchmark_target_replay_failed_count": 1,
             "benchmark_target_replay_completed_count": 0,
+            "benchmark_target_session_cycle_count": 3,
+            "benchmark_target_regression_cycle_count": 2,
+            "benchmark_target_long_horizon_pending_count": 1,
             "benchmark_target_descendant_focus_pressure": 0.94,
             "benchmark_target_native_focus_pressure": 0.91,
             "benchmark_target_reacquire_pressure": 0.88,
@@ -1925,6 +2025,15 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("benchmark_target_replay_pressure:1.65")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_descendant_hint:4")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_regression_cycles:2")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_target_long_horizon_pending:1")));
     }
 
     #[test]

@@ -640,6 +640,9 @@ class EvaluationRunner:
                     "packs": set(),
                     "mission_families": set(),
                     "query_hints": [],
+                    "descendant_title_hints": [],
+                    "descendant_hint_query": "",
+                    "preferred_window_title": "",
                     "max_horizon_steps": 0,
                     "hint_query": "",
                     "replay_pressure": 0.0,
@@ -711,6 +714,19 @@ class EvaluationRunner:
                 query_hints=query_hints,
                 replay_scenarios=[scenario_name_value] if scenario_name_value else [],
             )
+            descendant_title_hints = self._native_target_descendant_title_hints(
+                query_hints=query_hints,
+                replay_scenarios=[scenario_name_value] if scenario_name_value else [],
+            )
+            descendant_hint_query = self._native_target_hint_query(
+                query_hints=descendant_title_hints or query_hints,
+                replay_scenarios=[scenario_name_value] if scenario_name_value else [],
+            )
+            preferred_window_title = self._native_target_preferred_window_title(
+                descendant_title_hints=descendant_title_hints,
+                query_hints=query_hints,
+                replay_scenarios=[scenario_name_value] if scenario_name_value else [],
+            )
             session_id = str(session.get("session_id", "") or "").strip() if isinstance(session, dict) else ""
             session_label = str(session.get("label", "") or "").strip() if isinstance(session, dict) else ""
             session_cycle_count = int(session.get("cycle_count", 0) or 0) if isinstance(session, dict) else 0
@@ -759,9 +775,18 @@ class EvaluationRunner:
                     if hint not in hints:
                         hints.append(hint)
                 entry["query_hints"] = hints[:8]
+                descendant_hints = entry["descendant_title_hints"] if isinstance(entry.get("descendant_title_hints"), list) else []
+                for hint in descendant_title_hints:
+                    if hint not in descendant_hints:
+                        descendant_hints.append(hint)
+                entry["descendant_title_hints"] = descendant_hints[:8]
                 entry["max_horizon_steps"] = max(int(entry.get("max_horizon_steps", 0) or 0), max_horizon_steps)
                 if replay_hint_query and not str(entry.get("hint_query", "") or "").strip():
                     entry["hint_query"] = replay_hint_query
+                if descendant_hint_query and not str(entry.get("descendant_hint_query", "") or "").strip():
+                    entry["descendant_hint_query"] = descendant_hint_query
+                if preferred_window_title and not str(entry.get("preferred_window_title", "") or "").strip():
+                    entry["preferred_window_title"] = preferred_window_title
                 entry["replay_pressure"] = float(entry.get("replay_pressure", 0.0) or 0.0) + replay_pressure
                 replay_scenarios = entry["replay_scenarios"] if isinstance(entry.get("replay_scenarios"), list) else []
                 if scenario_name_value and scenario_name_value not in replay_scenarios:
@@ -850,7 +875,17 @@ class EvaluationRunner:
             replay_scenarios = list(row.get("replay_scenarios", []))[:8] if isinstance(row.get("replay_scenarios", []), list) else []
             replay_session_labels = list(row.get("replay_session_labels", []))[:6] if isinstance(row.get("replay_session_labels", []), list) else []
             query_hints = list(row.get("query_hints", []))[:8]
+            descendant_title_hints = list(row.get("descendant_title_hints", []))[:8] if isinstance(row.get("descendant_title_hints", []), list) else []
             hint_query = str(row.get("hint_query", "") or "").strip() or self._native_target_hint_query(
+                query_hints=query_hints,
+                replay_scenarios=replay_scenarios,
+            )
+            descendant_hint_query = str(row.get("descendant_hint_query", "") or "").strip() or self._native_target_hint_query(
+                query_hints=descendant_title_hints or query_hints,
+                replay_scenarios=replay_scenarios,
+            )
+            preferred_window_title = str(row.get("preferred_window_title", "") or "").strip() or self._native_target_preferred_window_title(
+                descendant_title_hints=descendant_title_hints,
                 query_hints=query_hints,
                 replay_scenarios=replay_scenarios,
             )
@@ -864,6 +899,9 @@ class EvaluationRunner:
                         str(item).strip() for item in row.get("mission_families", set()) if str(item).strip()
                     )[:6],
                     "query_hints": query_hints,
+                    "descendant_title_hints": descendant_title_hints,
+                    "descendant_hint_query": descendant_hint_query,
+                    "preferred_window_title": preferred_window_title,
                     "hint_query": hint_query,
                     "max_horizon_steps": int(row.get("max_horizon_steps", 0) or 0),
                     "replay_pressure": round(float(row.get("replay_pressure", 0.0) or 0.0), 6),
@@ -975,6 +1013,48 @@ class EvaluationRunner:
             if len(terms) >= 2:
                 break
         return " | ".join(terms[:2])
+
+    @staticmethod
+    def _native_target_descendant_title_hints(
+        *,
+        query_hints: List[str],
+        replay_scenarios: List[str],
+    ) -> List[str]:
+        hints: List[str] = []
+        for value in [*query_hints, *replay_scenarios]:
+            clean = " ".join(
+                str(value or "")
+                .replace("_", " ")
+                .replace("-", " ")
+                .replace("|", " ")
+                .split()
+            ).strip()
+            if not clean:
+                continue
+            formatted = f"{clean[:1].upper()}{clean[1:]}" if clean.islower() else clean
+            if formatted not in hints:
+                hints.append(formatted)
+        return hints[:8]
+
+    @staticmethod
+    def _native_target_preferred_window_title(
+        *,
+        descendant_title_hints: List[str],
+        query_hints: List[str],
+        replay_scenarios: List[str],
+    ) -> str:
+        for value in [*descendant_title_hints, *query_hints, *replay_scenarios]:
+            clean = " ".join(
+                str(value or "")
+                .replace("_", " ")
+                .replace("-", " ")
+                .replace("|", " ")
+                .split()
+            ).strip()
+            if not clean:
+                continue
+            return f"{clean[:1].upper()}{clean[1:]}" if clean.islower() else clean
+        return ""
 
     def run(self, scenarios: List[Scenario] | None = None) -> List[Dict[str, object]]:
         try:

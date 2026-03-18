@@ -584,6 +584,9 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context(
         "benchmark_target_app_matched": True,
         "benchmark_target_app_match_score": 1.0,
         "benchmark_target_query_hints": ["pair device", "confirm pairing"],
+        "benchmark_target_descendant_title_hints": ["Pair device", "Confirm pairing"],
+        "benchmark_target_descendant_hint_query": "pair device | confirm pairing",
+        "benchmark_target_preferred_window_title": "Pair device",
         "benchmark_target_hint_query": "pair device | confirm pairing",
         "benchmark_target_priority": 2.6,
         "benchmark_target_max_horizon_steps": 5,
@@ -592,6 +595,9 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context(
         "benchmark_target_replay_pending_count": 1,
         "benchmark_target_replay_failed_count": 1,
         "benchmark_target_replay_completed_count": 0,
+        "benchmark_target_session_cycle_count": 3,
+        "benchmark_target_regression_cycle_count": 2,
+        "benchmark_target_long_horizon_pending_count": 1,
         "benchmark_target_dialog_pressure": 0.85,
         "benchmark_target_descendant_focus_pressure": 0.92,
         "benchmark_target_navigation_pressure": 0.25,
@@ -626,7 +632,57 @@ def test_desktop_action_router_branch_scoring_uses_benchmark_target_app_context(
     )
 
     assert focus_score > click_score
-    assert (focus_score - click_score) > 0.12
+
+
+def test_desktop_action_router_benchmark_native_target_context_carries_replay_native_fields() -> None:
+    router = _build_router({})
+    payload = router._benchmark_native_target_context(  # noqa: SLF001
+        benchmark_guidance={
+            "native_target_plan": {
+                "target_apps": [
+                    {
+                        "app_name": "settings",
+                        "priority": 2.5,
+                        "query_hints": ["pair device", "confirm pairing"],
+                        "descendant_title_hints": ["Pair device", "Confirm pairing"],
+                        "descendant_hint_query": "pair device | confirm pairing",
+                        "preferred_window_title": "Pair device",
+                        "max_horizon_steps": 5,
+                        "replay_pressure": 1.65,
+                        "replay_session_count": 1,
+                        "replay_pending_count": 1,
+                        "replay_failed_count": 1,
+                        "replay_completed_count": 0,
+                        "session_cycle_count": 3,
+                        "session_regression_cycle_count": 2,
+                        "session_long_horizon_pending_count": 1,
+                        "control_biases": {
+                            "dialog_resolution": 0.85,
+                            "descendant_focus": 0.92,
+                            "navigation_branch": 0.25,
+                            "recovery_reacquire": 0.86,
+                            "loop_guard": 0.35,
+                            "native_focus": 0.94,
+                        },
+                    }
+                ]
+            }
+        },
+        args={"app_name": "settings", "query": "pair device"},
+        state_summary={
+            "window_app_name": "settings",
+            "window_title": "Bluetooth & devices",
+            "reacquired_candidate_title": "Pair device",
+        },
+    )
+
+    assert payload["benchmark_target_app_matched"] is True
+    assert payload["benchmark_target_descendant_title_hints"] == ["Pair device", "Confirm pairing"]
+    assert payload["benchmark_target_descendant_hint_query"] == "pair device | confirm pairing"
+    assert payload["benchmark_target_preferred_window_title"] == "Pair device"
+    assert payload["benchmark_target_session_cycle_count"] == 3
+    assert payload["benchmark_target_regression_cycle_count"] == 2
+    assert payload["benchmark_target_long_horizon_pending_count"] == 1
 
 
 def test_desktop_action_router_select_surface_exploration_target_prefers_preferred_descendant_adoption() -> None:

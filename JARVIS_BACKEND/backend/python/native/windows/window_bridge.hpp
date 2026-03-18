@@ -10,6 +10,8 @@ std::string focus_window_json(const std::string& title_contains_utf8, long long 
 std::string reacquire_related_window_json(
     const std::string& query_utf8,
     const std::string& hint_query_utf8,
+    const std::string& descendant_hint_query_utf8,
+    const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,
@@ -18,6 +20,8 @@ std::string reacquire_related_window_json(
 std::string trace_related_window_chain_json(
     const std::string& query_utf8,
     const std::string& hint_query_utf8,
+    const std::string& descendant_hint_query_utf8,
+    const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,

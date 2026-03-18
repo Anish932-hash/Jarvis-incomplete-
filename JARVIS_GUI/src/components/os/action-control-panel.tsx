@@ -18123,10 +18123,25 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                               : 'no query hints'}
                                                         </p>
                                                         <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          preferred:
+                                                          {String(item.preferred_window_title ?? '').trim()
+                                                            ? ` ${String(item.preferred_window_title ?? '').trim()}`
+                                                            : ' n/a'}
+                                                          {' • '}desc:
+                                                          {Array.isArray(item.descendant_title_hints) && item.descendant_title_hints.length > 0
+                                                            ? ` ${item.descendant_title_hints.slice(0, 2).join(' • ')}`
+                                                            : ' n/a'}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
                                                           sessions:{Number(item.replay_session_count ?? 0)}
                                                           {' • '}pending:{Number(item.replay_pending_count ?? 0)}
                                                           {' • '}failed:{Number(item.replay_failed_count ?? 0)}
                                                           {' • '}done:{Number(item.replay_completed_count ?? 0)}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          cycles:{Number(item.session_cycle_count ?? 0)}
+                                                          {' • '}regressions:{Number(item.session_regression_cycle_count ?? 0)}
+                                                          {' • '}long-horizon:{Number(item.session_long_horizon_pending_count ?? 0)}
                                                         </p>
                                                         <div className="mt-2 flex flex-wrap items-center gap-2">
                                                           {Object.entries(biases)

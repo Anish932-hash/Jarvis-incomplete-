@@ -219,6 +219,9 @@ class WindowManager:
                 "matched": False,
                 "match_score": 0.0,
                 "query_hints": [],
+                "descendant_title_hints": [],
+                "descendant_hint_query": "",
+                "preferred_window_title": "",
                 "hint_query": "",
                 "priority": 0.0,
                 "replay_pressure": 0.0,
@@ -226,6 +229,9 @@ class WindowManager:
                 "replay_pending_count": 0,
                 "replay_failed_count": 0,
                 "replay_completed_count": 0,
+                "session_cycle_count": 0,
+                "session_regression_cycle_count": 0,
+                "session_long_horizon_pending_count": 0,
                 "control_biases": {
                     "dialog_resolution": 0.0,
                     "descendant_focus": 0.0,
@@ -256,6 +262,8 @@ class WindowManager:
                 continue
             row_score = 0.0
             row_hint_query = cls._normalize_text(row.get("hint_query", ""))
+            row_descendant_hint_query = cls._normalize_text(row.get("descendant_hint_query", ""))
+            row_preferred_window_title = cls._normalize_text(row.get("preferred_window_title", ""))
             if any(term == target_app_name for term in candidate_terms):
                 row_score = 1.0
             for term in candidate_terms:
@@ -280,6 +288,18 @@ class WindowManager:
                         cls._text_match_score(query, row_hint_query),
                         cls._text_match_score(row_hint_query, query),
                     )
+                if row_descendant_hint_query:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_descendant_hint_query),
+                        cls._text_match_score(row_descendant_hint_query, query),
+                    )
+                if row_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_preferred_window_title),
+                        cls._text_match_score(row_preferred_window_title, query),
+                    )
             if row_hint_query:
                 for term in candidate_terms:
                     if not term:
@@ -288,6 +308,24 @@ class WindowManager:
                         row_score,
                         cls._text_match_score(term, row_hint_query),
                         cls._text_match_score(row_hint_query, term),
+                    )
+            if row_descendant_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_descendant_hint_query),
+                        cls._text_match_score(row_descendant_hint_query, term),
+                    )
+            if row_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_preferred_window_title),
+                        cls._text_match_score(row_preferred_window_title, term),
                     )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
@@ -308,6 +346,13 @@ class WindowManager:
                 for item in best_row.get("query_hints", [])
                 if str(item).strip()
             ][:8] if isinstance(best_row.get("query_hints", []), list) else [],
+            "descendant_title_hints": [
+                str(item).strip()
+                for item in best_row.get("descendant_title_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("descendant_title_hints", []), list) else [],
+            "descendant_hint_query": str(best_row.get("descendant_hint_query", "") or "").strip(),
+            "preferred_window_title": str(best_row.get("preferred_window_title", "") or "").strip(),
             "hint_query": str(best_row.get("hint_query", "") or "").strip(),
             "priority": round(float(best_row.get("priority", 0.0) or 0.0), 6),
             "replay_pressure": round(float(best_row.get("replay_pressure", 0.0) or 0.0), 6),
@@ -315,6 +360,9 @@ class WindowManager:
             "replay_pending_count": max(0, int(best_row.get("replay_pending_count", 0) or 0)),
             "replay_failed_count": max(0, int(best_row.get("replay_failed_count", 0) or 0)),
             "replay_completed_count": max(0, int(best_row.get("replay_completed_count", 0) or 0)),
+            "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
+            "session_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
+            "session_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
             "control_biases": {
                 "dialog_resolution": max(0.0, min(float(control_biases.get("dialog_resolution", 0.0) or 0.0), 1.0)),
                 "descendant_focus": max(0.0, min(float(control_biases.get("descendant_focus", 0.0) or 0.0), 1.0)),
@@ -781,10 +829,20 @@ class WindowManager:
         reacquire_pressure = max(0.0, min(float(benchmark_biases.get("recovery_reacquire", 0.0) or 0.0), 1.0))
         native_focus_pressure = max(0.0, min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0))
         target_hint_query = str(target_app_context.get("hint_query", "") or "").strip()
+        target_descendant_title_hints = [
+            str(item).strip()
+            for item in target_app_context.get("descendant_title_hints", [])
+            if str(item).strip()
+        ] if isinstance(target_app_context.get("descendant_title_hints", []), list) else []
+        target_descendant_hint_query = str(target_app_context.get("descendant_hint_query", "") or "").strip()
+        target_preferred_window_title = str(target_app_context.get("preferred_window_title", "") or "").strip()
         target_replay_pressure = max(0.0, float(target_app_context.get("replay_pressure", 0.0) or 0.0))
         target_replay_pending_count = max(0, int(target_app_context.get("replay_pending_count", 0) or 0))
         target_replay_failed_count = max(0, int(target_app_context.get("replay_failed_count", 0) or 0))
         target_replay_completed_count = max(0, int(target_app_context.get("replay_completed_count", 0) or 0))
+        target_session_cycle_count = max(0, int(target_app_context.get("session_cycle_count", 0) or 0))
+        target_regression_cycle_count = max(0, int(target_app_context.get("session_regression_cycle_count", 0) or 0))
+        target_long_horizon_pending_count = max(0, int(target_app_context.get("session_long_horizon_pending_count", 0) or 0))
         if bool(target_app_context.get("matched", False)):
             dialog_pressure = max(dialog_pressure, float(target_biases.get("dialog_resolution", 0.0) or 0.0))
             descendant_pressure = max(descendant_pressure, float(target_biases.get("descendant_focus", 0.0) or 0.0))
@@ -816,6 +874,24 @@ class WindowManager:
                 self._text_match_score(candidate_process, target_hint_query),
                 self._text_match_score(candidate_app_name, target_hint_query),
             )
+        candidate_descendant_hint_score = 0.0
+        for hint in target_descendant_title_hints:
+            candidate_descendant_hint_score = max(
+                candidate_descendant_hint_score,
+                self._text_match_score(candidate_title, hint),
+                self._text_match_score(candidate_signature, hint),
+            )
+        if target_descendant_hint_query:
+            candidate_descendant_hint_score = max(
+                candidate_descendant_hint_score,
+                self._text_match_score(candidate_title, target_descendant_hint_query),
+                self._text_match_score(candidate_signature, target_descendant_hint_query),
+                self._text_match_score(candidate_process, target_descendant_hint_query),
+            )
+        preferred_window_title_score = max(
+            self._text_match_score(candidate_title, target_preferred_window_title),
+            self._text_match_score(candidate_signature, target_preferred_window_title),
+        ) if target_preferred_window_title else 0.0
         if bool(target_app_context.get("matched", False)):
             score += min(0.28, 0.08 + (0.2 * float(target_app_context.get("match_score", 0.0) or 0.0)))
             reasons.append("benchmark_target_app_match")
@@ -825,6 +901,12 @@ class WindowManager:
             if target_hint_query and candidate_target_hint_score > 0.0:
                 score += min(0.12, 0.03 + (0.08 * candidate_target_hint_score))
                 reasons.append("benchmark_target_hint_query")
+            if candidate_descendant_hint_score > 0.0:
+                score += min(0.18, 0.05 + (0.13 * candidate_descendant_hint_score))
+                reasons.append("benchmark_target_descendant_hint")
+            if preferred_window_title_score > 0.0:
+                score += min(0.14, 0.04 + (0.1 * preferred_window_title_score))
+                reasons.append("benchmark_target_preferred_title")
             target_priority = max(0.0, float(target_app_context.get("priority", 0.0) or 0.0))
             if target_priority > 0.0:
                 score += min(0.08, 0.01 + (0.01 * target_priority))
@@ -841,6 +923,19 @@ class WindowManager:
                     replay_boost += min(0.08, 0.05 * candidate_target_hint_score)
                 score += min(0.24, replay_boost)
                 reasons.append("benchmark_replay_pressure")
+            if target_session_cycle_count > 0 and candidate_descendant_hint_score > 0.0:
+                score += min(0.08, 0.015 * min(target_session_cycle_count, 4) + (0.04 * candidate_descendant_hint_score))
+                reasons.append("benchmark_session_cycle_pressure")
+            if target_regression_cycle_count > 0 and (candidate_descendant_hint_score > 0.0 or preferred_window_title_score > 0.0):
+                score += min(
+                    0.12,
+                    0.02 * min(target_regression_cycle_count, 4)
+                    + (0.05 * max(candidate_descendant_hint_score, preferred_window_title_score)),
+                )
+                reasons.append("benchmark_regression_cycle_pressure")
+            if target_long_horizon_pending_count > 0 and candidate_owner_chain_depth > owner_chain_depth:
+                score += min(0.1, 0.02 * min(target_long_horizon_pending_count, 3) + 0.02)
+                reasons.append("benchmark_long_horizon_pressure")
         if hwnd and candidate_hwnd and candidate_hwnd == int(hwnd):
             score += 2.4
             reasons.append("exact_hwnd")
@@ -942,6 +1037,12 @@ class WindowManager:
                     0.12 * descendant_cluster_pressure * max(1, candidate_owner_chain_depth - owner_chain_depth),
                 )
                 reasons.append("benchmark_deeper_owner_chain")
+        if preferred_window_title_score >= 0.95 and hwnd and candidate_owner_hwnd and candidate_owner_hwnd == int(hwnd):
+            score += 0.95
+            reasons.append("benchmark_preferred_title_owned_child")
+        elif preferred_window_title_score >= 0.95 and root_owner_hwnd and candidate_root_owner_hwnd and candidate_root_owner_hwnd == int(root_owner_hwnd):
+            score += 0.55
+            reasons.append("benchmark_preferred_title_same_root_owner")
 
         if bool(window.get("is_foreground", False)):
             score += 0.08
@@ -1068,6 +1169,8 @@ class WindowManager:
         *,
         query: str = "",
         hint_query: str = "",
+        descendant_hint_query: str = "",
+        preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
@@ -1079,6 +1182,8 @@ class WindowManager:
             payload = self._native_runtime.trace_related_window_chain(
                 query=query,
                 hint_query=hint_query,
+                descendant_hint_query=descendant_hint_query,
+                preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
                 pid=pid,
@@ -1142,10 +1247,14 @@ class WindowManager:
             window_title=window_title,
         )
         hint_query = str(target_app_context.get("hint_query", "") or "").strip()
+        descendant_hint_query = str(target_app_context.get("descendant_hint_query", "") or "").strip()
+        preferred_window_title = str(target_app_context.get("preferred_window_title", "") or "").strip()
         try:
             payload = self._native_runtime.reacquire_related_window(
                 query=query,
                 hint_query=hint_query,
+                descendant_hint_query=descendant_hint_query,
+                preferred_title=preferred_window_title,
                 window_title=window_title,
                 hwnd=hwnd,
                 pid=pid,
@@ -1174,6 +1283,8 @@ class WindowManager:
         initial_child_chain_trace = self._native_trace_related_window_chain(
             query=query,
             hint_query=hint_query,
+            descendant_hint_query=descendant_hint_query,
+            preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
             pid=int(candidate.get("pid", 0) or 0),
@@ -1203,10 +1314,25 @@ class WindowManager:
             0.0,
             min(float(benchmark_biases.get("native_focus", 0.0) or 0.0), 1.0),
         )
+        target_descendant_title_hints = [
+            str(item).strip()
+            for item in target_app_context.get("descendant_title_hints", [])
+            if str(item).strip()
+        ] if isinstance(target_app_context.get("descendant_title_hints", []), list) else []
+        target_session_cycle_count = max(0, int(target_app_context.get("session_cycle_count", 0) or 0))
+        target_regression_cycle_count = max(0, int(target_app_context.get("session_regression_cycle_count", 0) or 0))
+        target_long_horizon_pending_count = max(0, int(target_app_context.get("session_long_horizon_pending_count", 0) or 0))
+        replay_session_pressure = min(
+            1.0,
+            (0.18 * min(target_regression_cycle_count, 3))
+            + (0.12 * min(target_long_horizon_pending_count, 3))
+            + (0.06 * min(target_session_cycle_count, 4)),
+        )
         descendant_rerank_pressure = max(
             descendant_focus_pressure,
             dialog_resolution_pressure,
             native_focus_pressure,
+            replay_session_pressure,
         )
         anchor_window = next(
             (
@@ -1243,6 +1369,17 @@ class WindowManager:
             if descendant_rerank_pressure > 0.0:
                 row_hwnd = int(row.get("hwnd", 0) or 0)
                 row_title = str(row.get("title", "") or "").strip()
+                row_descendant_hint_score = 0.0
+                for hint in target_descendant_title_hints:
+                    row_descendant_hint_score = max(
+                        row_descendant_hint_score,
+                        self._text_match_score(row_title, hint),
+                    )
+                if descendant_hint_query:
+                    row_descendant_hint_score = max(
+                        row_descendant_hint_score,
+                        self._text_match_score(row_title, descendant_hint_query),
+                    )
                 if preferred_descendant_hwnd and row_hwnd and row_hwnd == preferred_descendant_hwnd:
                     relation_score += 0.95 * descendant_rerank_pressure
                     relation_reasons.append("benchmark_preferred_descendant_focus")
@@ -1253,6 +1390,21 @@ class WindowManager:
                 ):
                     relation_score += 0.62 * descendant_rerank_pressure
                     relation_reasons.append("benchmark_preferred_descendant_title")
+                if row_descendant_hint_score > 0.0:
+                    relation_score += min(
+                        0.52,
+                        (0.18 + (0.34 * row_descendant_hint_score)) * max(0.45, descendant_rerank_pressure),
+                    )
+                    relation_reasons.append("benchmark_descendant_title_hint")
+                if preferred_window_title and row_title and self._text_match_score(row_title, preferred_window_title) >= 0.95:
+                    relation_score += 0.54 * descendant_rerank_pressure
+                    relation_reasons.append("benchmark_preferred_window_title")
+                if target_regression_cycle_count > 0 and row_descendant_hint_score > 0.0:
+                    relation_score += min(0.22, 0.05 * min(target_regression_cycle_count, 4))
+                    relation_reasons.append("benchmark_regression_cycle_rerank")
+                if target_long_horizon_pending_count > 0 and int(row.get("owner_chain_depth", 0) or 0) > anchor_owner_chain_depth:
+                    relation_score += min(0.16, 0.04 * min(target_long_horizon_pending_count, 3))
+                    relation_reasons.append("benchmark_long_horizon_rerank")
             if native_match_score > 0.0:
                 enriched["native_match_score"] = round(native_match_score, 4)
             enriched["match_score"] = round(relation_score, 4)
@@ -1348,6 +1500,8 @@ class WindowManager:
         child_chain_trace = self._native_trace_related_window_chain(
             query=query,
             hint_query=hint_query,
+            descendant_hint_query=descendant_hint_query,
+            preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
             pid=int(candidate.get("pid", 0) or 0),

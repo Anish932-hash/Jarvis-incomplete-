@@ -14017,8 +14017,14 @@ class FakeDesktopService:
                     "priority": 2.4,
                     "scenario_names": ["unsupported_child_dialog_chain"],
                     "query_hints": ["pair device", "confirm pairing"],
+                    "descendant_title_hints": ["Pair device", "Confirm pairing"],
+                    "descendant_hint_query": "Pair device | Confirm pairing",
+                    "preferred_window_title": "Pair device",
                     "mission_families": ["exploration"],
                     "max_horizon_steps": 5,
+                    "session_cycle_count": 3,
+                    "session_regression_cycle_count": 1,
+                    "session_long_horizon_pending_count": 1,
                     "control_biases": {
                         "dialog_resolution": 0.82,
                         "descendant_focus": 0.91,
@@ -18417,6 +18423,8 @@ def test_desktop_evaluation_native_targets_route(api_server: tuple[str, FakeDesk
     assert payload["status"] == "success"
     assert payload["benchmark_ready"] is True
     assert payload["target_apps"][0]["app_name"] == "settings"
+    assert payload["target_apps"][0]["descendant_title_hints"]
+    assert str(payload["target_apps"][0]["preferred_window_title"]).strip()
     assert payload["filters"]["pack"] == "unsupported_and_recovery"
     assert payload["strongest_tactics"]["descendant_focus"] > 0.8
 
