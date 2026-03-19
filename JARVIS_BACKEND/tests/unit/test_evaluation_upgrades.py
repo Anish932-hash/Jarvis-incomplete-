@@ -666,6 +666,82 @@ def test_evaluation_runner_runs_lab_session_cycles_and_batches(monkeypatch, tmp_
     assert int(settings_row["session_cycle_count"]) >= 2
 
 
+def test_evaluation_runner_creates_lab_campaigns_and_sweeps(monkeypatch, tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_campaigns.json"))
+    runner = EvaluationRunner(history_limit=8, lab_memory=memory)
+
+    async def _build_plan(goal, context):  # noqa: ANN001
+        del context
+        text = str(goal.request.text).lower()
+        action = "desktop_interact" if "settings" in text or "vscode" in text else "time_now"
+        return ExecutionPlan(
+            plan_id="plan-1",
+            goal_id=goal.goal_id,
+            intent="test",
+            steps=[PlanStep(step_id="s1", action=action)],
+        )
+
+    monkeypatch.setattr(runner.planner, "build_plan", _build_plan)
+
+    scenarios = [
+        Scenario(
+            "settings_long_horizon_replay",
+            "Continue settings exploration through a long horizon flow",
+            ["desktop_interact"],
+            required_actions=["desktop_interact"],
+            category="settings",
+            capabilities=["surface_exploration", "desktop_recovery"],
+            pack="long_horizon_and_replay",
+            mission_family="exploration",
+            autonomy_tier="autonomous",
+            apps=["settings"],
+            horizon_steps=5,
+            replayable=True,
+            recovery_expected=True,
+            native_hybrid_focus=True,
+        ),
+        Scenario(
+            "vscode_long_horizon_debug_loop",
+            "Recover VS Code workflow and continue a debug loop",
+            ["desktop_interact"],
+            required_actions=["desktop_interact"],
+            category="editor_workflow",
+            capabilities=["desktop_workflow", "quick_open"],
+            pack="long_horizon_and_replay",
+            mission_family="workflow",
+            autonomy_tier="autonomous",
+            apps=["vscode"],
+            horizon_steps=6,
+            replayable=True,
+            recovery_expected=True,
+            native_hybrid_focus=True,
+        ),
+    ]
+
+    runner.run_with_summary(scenarios)
+    created = runner.create_lab_campaign(pack="long_horizon_and_replay", limit=12, history_limit=6, max_sessions=2)
+    assert created["status"] == "success"
+    campaign = created["campaign"]
+    assert int(campaign["session_count"]) >= 1
+    assert int(created["created_session_count"]) >= 1
+
+    history = runner.lab_campaigns(limit=4)
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_campaign"]["campaign_id"] == campaign["campaign_id"]
+
+    swept = runner.run_lab_campaign_sweep(
+        campaign_id=str(campaign["campaign_id"]),
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+    )
+    assert swept["status"] == "success"
+    assert swept["campaign"]["campaign_id"] == campaign["campaign_id"]
+    assert int(swept["campaign"]["sweep_count"]) >= 1
+    assert isinstance(swept["results"], list)
+
+
 def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=4)
 

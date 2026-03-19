@@ -8197,6 +8197,22 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_lab_campaigns(
+        self,
+        *,
+        limit: int = 12,
+        campaign_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.lab_campaigns(limit=limit, campaign_id=campaign_id, status=status)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaigns payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -8235,6 +8251,46 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_create_lab_campaign(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_sessions: int = 4,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.create_lab_campaign(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app_name,
+                limit=limit,
+                history_limit=history_limit,
+                source=source,
+                label=label,
+                max_sessions=max_sessions,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaign create payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_replay_lab_session(
         self,
         *,
@@ -8247,6 +8303,28 @@ class DesktopBackendService:
         try:
             payload = runner.replay_lab_session(session_id=session_id, scenario_name=scenario_name)
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab replay payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_run_lab_campaign_sweep(
+        self,
+        *,
+        campaign_id: str = "",
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_campaign_sweep(
+                campaign_id=campaign_id,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaign sweep payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -42074,6 +42152,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaigns":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=256)
+                payload = self.server.service.desktop_evaluation_lab_campaigns(
+                    limit=limit,
+                    campaign_id=str(query.get("campaign_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/history":
                 limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
                 payload = self.server.service.desktop_evaluation_history(limit=limit)
@@ -44249,6 +44336,24 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaigns":
+                payload = self.server.service.desktop_evaluation_create_lab_campaign(
+                    scenario_name=str(body.get("scenario_name", "") or "").strip(),
+                    pack=str(body.get("pack", "") or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                    capability=str(body.get("capability", "") or "").strip(),
+                    risk_level=str(body.get("risk_level", "") or "").strip(),
+                    autonomy_tier=str(body.get("autonomy_tier", "") or "").strip(),
+                    mission_family=str(body.get("mission_family", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    limit=self._parse_int(body.get("limit", 200), 200, minimum=1, maximum=5000),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    source=str(body.get("source", "") or "").strip(),
+                    label=str(body.get("label", "") or "").strip(),
+                    max_sessions=self._parse_int(body.get("max_sessions", 4), 4, minimum=1, maximum=8),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/sessions/replay":
                 payload = self.server.service.desktop_evaluation_replay_lab_session(
                     session_id=str(body.get("session_id", "") or "").strip(),
@@ -44268,6 +44373,20 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     session_id=str(body.get("session_id", "") or "").strip(),
                     max_replays=self._parse_int(body.get("max_replays", 2), 2, minimum=1, maximum=8),
                     replay_status=str(body.get("replay_status", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaigns/run-sweep":
+                payload = self.server.service.desktop_evaluation_run_lab_campaign_sweep(
+                    campaign_id=str(body.get("campaign_id", "") or "").strip(),
+                    max_sessions=self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8),
+                    max_replays_per_session=self._parse_int(
+                        body.get("max_replays_per_session", 2),
+                        2,
+                        minimum=1,
+                        maximum=8,
+                    ),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return

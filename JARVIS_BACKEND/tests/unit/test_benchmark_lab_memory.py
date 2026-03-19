@@ -139,3 +139,80 @@ def test_benchmark_lab_memory_records_run_cycles(tmp_path) -> None:
     assert updated["session"]["latest_cycle_regression_status"] == "stable"
     assert updated["session"]["long_horizon_pending_count"] == 1
     assert updated["cycle"]["scenario_count"] == 4
+
+
+def test_benchmark_lab_memory_records_campaigns(tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    first_session = memory.record_session(
+        filters={"pack": "long_horizon_and_replay", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.8}, "replay_candidates": [{"scenario": "settings_long_horizon", "apps": ["settings"]}]},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+    )["session"]
+    second_session = memory.record_session(
+        filters={"pack": "long_horizon_and_replay", "app": "vscode", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.76}, "replay_candidates": [{"scenario": "vscode_long_horizon", "apps": ["vscode"]}]},
+        native_targets_payload={"target_apps": [{"app_name": "vscode"}]},
+    )["session"]
+
+    created = memory.record_campaign(
+        filters={"pack": "long_horizon_and_replay", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.78}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        session_ids=[str(first_session["session_id"]), str(second_session["session_id"])],
+        app_targets=["settings", "vscode"],
+        session_rows=[dict(first_session), dict(second_session)],
+        source="unit_test",
+        label="desktop replay campaign",
+    )
+
+    assert created["status"] == "success"
+    campaign = created["campaign"]
+    assert campaign["label"] == "desktop replay campaign"
+    assert campaign["session_count"] == 2
+    assert campaign["target_app_count"] == 2
+    assert campaign["pending_app_target_count"] == 0
+
+    history = memory.campaign_history(limit=5)
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_campaign"]["campaign_id"] == campaign["campaign_id"]
+    assert history["summary"]["pending_sessions"] >= 1
+
+
+def test_benchmark_lab_memory_records_campaign_sweeps(tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    session = memory.record_session(
+        filters={"pack": "unsupported_and_recovery", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.72}, "replay_candidates": [{"scenario": "unsupported_child_dialog_chain", "apps": ["settings"], "horizon_steps": 5}]},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+    )["session"]
+    campaign = memory.record_campaign(
+        filters={"pack": "unsupported_and_recovery", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.72}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_ids=[str(session["session_id"])],
+        app_targets=["settings"],
+        session_rows=[dict(session)],
+    )["campaign"]
+
+    updated = memory.record_campaign_sweep(
+        campaign_id=str(campaign["campaign_id"]),
+        sweep_payload={
+            "status": "success",
+            "regression_status": "stable",
+            "executed_session_count": 1,
+            "created_session_count": 0,
+            "pending_session_count": 1,
+            "attention_session_count": 0,
+            "long_horizon_pending_count": 1,
+            "pending_app_target_count": 0,
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.81}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_rows=[dict(session)],
+    )
+
+    assert updated["status"] == "success"
+    assert updated["campaign"]["sweep_count"] == 1
+    assert updated["campaign"]["latest_sweep_status"] == "success"
+    assert updated["sweep"]["executed_session_count"] == 1

@@ -164,6 +164,375 @@ class EvaluationRunner:
             return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
         return memory.session_history(limit=limit, session_id=session_id, status=status)
 
+    def lab_campaigns(
+        self,
+        *,
+        limit: int = 12,
+        campaign_id: str = "",
+        status: str = "",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        return memory.campaign_history(limit=limit, campaign_id=campaign_id, status=status)
+
+    def create_lab_campaign(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_sessions: int = 4,
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        normalized_max_sessions = max(1, min(int(max_sessions or 4), 8))
+        effective_pack = str(pack or "").strip()
+        if (
+            not effective_pack
+            and not str(scenario_name or "").strip()
+            and not str(category or "").strip()
+            and not str(capability or "").strip()
+            and not str(risk_level or "").strip()
+            and not str(autonomy_tier or "").strip()
+            and not str(mission_family or "").strip()
+        ):
+            effective_pack = "long_horizon_and_replay"
+        filters = self._filters_payload(
+            scenario_name=scenario_name,
+            pack=effective_pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+        )
+        lab_payload = self.lab(
+            scenario_name=scenario_name,
+            pack=effective_pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        native_targets_payload = self.native_control_targets(
+            scenario_name=scenario_name,
+            pack=effective_pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app=app,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        guidance_payload = self.control_guidance()
+        target_app_rows = [
+            dict(item)
+            for item in native_targets_payload.get("target_apps", [])
+            if isinstance(item, dict)
+        ] if isinstance(native_targets_payload.get("target_apps", []), list) else []
+        target_apps = self._unique_strings(
+            [
+                *([str(app).strip()] if str(app or "").strip() else []),
+                *(
+                    str(item.get("app_name", "") or "").strip()
+                    for item in target_app_rows
+                    if str(item.get("app_name", "") or "").strip()
+                ),
+            ]
+        )[: max(normalized_max_sessions, 1)]
+        created_sessions: List[Dict[str, object]] = []
+        session_ids: List[str] = []
+        session_rows: List[Dict[str, object]] = []
+        if not target_apps:
+            session_payload = self.create_lab_session(
+                scenario_name=scenario_name,
+                pack=effective_pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app,
+                limit=limit,
+                history_limit=history_limit,
+                source=source or "benchmark_campaign",
+                label=str(label or "").strip(),
+            )
+            if str(session_payload.get("status", "") or "").strip().lower() == "success":
+                session = dict(session_payload.get("session", {})) if isinstance(session_payload.get("session", {}), dict) else {}
+                if session:
+                    created_sessions.append(dict(session_payload))
+                    session_rows.append(session)
+                    session_id = str(session.get("session_id", "") or "").strip()
+                    if session_id:
+                        session_ids.append(session_id)
+        else:
+            base_label = str(label or "").strip()
+            for target_app in target_apps[:normalized_max_sessions]:
+                session_label = (
+                    f"{base_label} / {target_app}"
+                    if base_label and len(target_apps) > 1
+                    else (base_label or f"{target_app} replay lab")
+                )
+                session_payload = self.create_lab_session(
+                    scenario_name=scenario_name,
+                    pack=effective_pack,
+                    category=category,
+                    capability=capability,
+                    risk_level=risk_level,
+                    autonomy_tier=autonomy_tier,
+                    mission_family=mission_family,
+                    app=target_app,
+                    limit=limit,
+                    history_limit=history_limit,
+                    source=source or "benchmark_campaign",
+                    label=session_label,
+                )
+                if str(session_payload.get("status", "") or "").strip().lower() != "success":
+                    continue
+                session = dict(session_payload.get("session", {})) if isinstance(session_payload.get("session", {}), dict) else {}
+                if not session:
+                    continue
+                created_sessions.append(dict(session_payload))
+                session_rows.append(session)
+                session_id = str(session.get("session_id", "") or "").strip()
+                if session_id:
+                    session_ids.append(session_id)
+        campaign_payload = memory.record_campaign(
+            filters=filters,
+            lab_payload=lab_payload,
+            native_targets_payload=native_targets_payload,
+            guidance_payload=guidance_payload,
+            source=source or "benchmark_campaign",
+            label=label,
+            session_ids=session_ids,
+            app_targets=target_apps,
+            session_rows=session_rows,
+        )
+        return {
+            "status": str(campaign_payload.get("status", "success") or "success"),
+            "campaign": dict(campaign_payload.get("campaign", {})) if isinstance(campaign_payload.get("campaign", {}), dict) else {},
+            "created_sessions": created_sessions,
+            "created_session_count": len(created_sessions),
+            "lab": lab_payload,
+            "native_targets": native_targets_payload,
+            "guidance": guidance_payload,
+        }
+
+    def run_lab_campaign_sweep(
+        self,
+        *,
+        campaign_id: str,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        campaign_payload = memory.get_campaign(campaign_id)
+        campaign = dict(campaign_payload.get("campaign", {})) if isinstance(campaign_payload.get("campaign", {}), dict) else {}
+        if not campaign:
+            return {"status": "error", "message": str(campaign_payload.get("message", "") or "benchmark lab campaign not found")}
+        filters = dict(campaign.get("filters", {})) if isinstance(campaign.get("filters", {}), dict) else {}
+        normalized_max_sessions = max(1, min(int(max_sessions or 3), 8))
+        normalized_max_replays = max(1, min(int(max_replays_per_session or 2), 8))
+        normalized_history_limit = max(1, min(int(history_limit or 8), 64))
+        campaign_session_ids = self._unique_strings(
+            [
+                str(item).strip()
+                for item in campaign.get("session_ids", [])
+                if str(item).strip()
+            ]
+        ) if isinstance(campaign.get("session_ids", []), list) else []
+        current_sessions: List[Dict[str, object]] = []
+        for session_id in campaign_session_ids:
+            session_payload = memory.get_session(session_id)
+            if isinstance(session_payload.get("session", {}), dict):
+                current_sessions.append(dict(session_payload["session"]))
+        represented_apps = {
+            str(session.get("filters", {}).get("app", session.get("filters", {}).get("app_name", "")) or "").strip().lower()
+            for session in current_sessions
+            if isinstance(session.get("filters", {}), dict)
+            and str(session.get("filters", {}).get("app", session.get("filters", {}).get("app_name", "")) or "").strip()
+        }
+        app_targets = self._unique_strings(
+            [
+                str(item).strip()
+                for item in campaign.get("app_targets", campaign.get("target_apps", []))
+                if str(item).strip()
+            ]
+        ) if isinstance(campaign.get("app_targets", campaign.get("target_apps", [])), list) else []
+        created_sessions: List[Dict[str, object]] = []
+        for target_app in app_targets:
+            if target_app.strip().lower() in represented_apps:
+                continue
+            if len(current_sessions) + len(created_sessions) >= max(normalized_max_sessions, len(current_sessions)):
+                break
+            create_payload = self.create_lab_session(
+                scenario_name=str(filters.get("scenario_name", "") or "").strip(),
+                pack=str(filters.get("pack", "") or "").strip(),
+                category=str(filters.get("category", "") or "").strip(),
+                capability=str(filters.get("capability", "") or "").strip(),
+                risk_level=str(filters.get("risk_level", "") or "").strip(),
+                autonomy_tier=str(filters.get("autonomy_tier", "") or "").strip(),
+                mission_family=str(filters.get("mission_family", "") or "").strip(),
+                app=target_app,
+                limit=int(filters.get("limit", 200) or 200),
+                history_limit=normalized_history_limit,
+                source="benchmark_campaign_sweep",
+                label=f"{str(campaign.get('label', '') or 'replay campaign').strip()} / {target_app}",
+            )
+            if str(create_payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            created_sessions.append(dict(create_payload))
+            if isinstance(create_payload.get("session", {}), dict):
+                current_sessions.append(dict(create_payload["session"]))
+                represented_apps.add(target_app.strip().lower())
+                session_id = str(create_payload["session"].get("session_id", "") or "").strip()
+                if session_id and session_id not in campaign_session_ids:
+                    campaign_session_ids.append(session_id)
+        ranked_sessions = sorted(
+            current_sessions,
+            key=lambda session: (
+                1 if str(session.get("status", "") or "").strip().lower() == "attention" else 0,
+                int(session.get("failed_replay_count", 0) or 0),
+                int(session.get("pending_replay_count", 0) or 0),
+                int(session.get("long_horizon_pending_count", 0) or 0),
+                int(session.get("regression_cycle_count", 0) or 0),
+                -int(session.get("cycle_count", 0) or 0),
+            ),
+            reverse=True,
+        )
+        selected_sessions = ranked_sessions[:normalized_max_sessions]
+        session_results: List[Dict[str, object]] = []
+        for session in selected_sessions:
+            session_id = str(session.get("session_id", "") or "").strip()
+            if not session_id:
+                continue
+            cycle_payload = self.run_lab_session_cycle(session_id=session_id, history_limit=normalized_history_limit)
+            latest_session = dict(cycle_payload.get("session", {})) if isinstance(cycle_payload.get("session", {}), dict) else dict(session)
+            advance_payload: Dict[str, object] = {}
+            if int(latest_session.get("pending_replay_count", 0) or 0) > 0:
+                advance_payload = self.advance_lab_session(session_id=session_id, max_replays=normalized_max_replays)
+                if isinstance(advance_payload.get("session", {}), dict):
+                    latest_session = dict(advance_payload["session"])
+            session_results.append(
+                {
+                    "session_id": session_id,
+                    "label": str(latest_session.get("label", session.get("label", "")) or "").strip(),
+                    "status": str(advance_payload.get("status", cycle_payload.get("status", latest_session.get("status", "success"))) or latest_session.get("status", "success")).strip() or "success",
+                    "cycle_status": str(cycle_payload.get("status", "") or "success").strip() or "success",
+                    "advance_status": str(advance_payload.get("status", "") or "").strip(),
+                    "pending_replay_count": int(latest_session.get("pending_replay_count", 0) or 0),
+                    "failed_replay_count": int(latest_session.get("failed_replay_count", 0) or 0),
+                    "regression_cycle_count": int(latest_session.get("regression_cycle_count", 0) or 0),
+                    "latest_cycle_regression_status": str(latest_session.get("latest_cycle_regression_status", latest_session.get("latest_cycle_status", "")) or "").strip(),
+                }
+            )
+        refreshed_sessions: List[Dict[str, object]] = []
+        for session_id in campaign_session_ids:
+            session_payload = memory.get_session(session_id)
+            if isinstance(session_payload.get("session", {}), dict):
+                refreshed_sessions.append(dict(session_payload["session"]))
+        lab_payload = self.lab(
+            scenario_name=str(filters.get("scenario_name", "") or "").strip(),
+            pack=str(filters.get("pack", "") or "").strip(),
+            category=str(filters.get("category", "") or "").strip(),
+            capability=str(filters.get("capability", "") or "").strip(),
+            risk_level=str(filters.get("risk_level", "") or "").strip(),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or "").strip(),
+            mission_family=str(filters.get("mission_family", "") or "").strip(),
+            app=str(filters.get("app", filters.get("app_name", "")) or "").strip(),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=normalized_history_limit,
+        )
+        native_targets_payload = self.native_control_targets(
+            scenario_name=str(filters.get("scenario_name", "") or "").strip(),
+            pack=str(filters.get("pack", "") or "").strip(),
+            category=str(filters.get("category", "") or "").strip(),
+            capability=str(filters.get("capability", "") or "").strip(),
+            risk_level=str(filters.get("risk_level", "") or "").strip(),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or "").strip(),
+            mission_family=str(filters.get("mission_family", "") or "").strip(),
+            app=str(filters.get("app", filters.get("app_name", "")) or "").strip(),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=normalized_history_limit,
+        )
+        guidance_payload = self.control_guidance()
+        regression_status = (
+            "regression"
+            if any(str(item.get("latest_cycle_regression_status", "") or "").strip().lower() in {"regression", "failed"} for item in session_results)
+            else "stable"
+        )
+        sweep_update = memory.record_campaign_sweep(
+            campaign_id=str(campaign.get("campaign_id", campaign_id) or campaign_id).strip(),
+            sweep_payload={
+                "status": "success",
+                "regression_status": regression_status,
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+                "executed_session_count": len(session_results),
+                "created_session_count": len(created_sessions),
+                "pending_session_count": sum(1 for item in refreshed_sessions if str(item.get("status", "") or "").strip().lower() != "complete"),
+                "attention_session_count": sum(1 for item in refreshed_sessions if str(item.get("status", "") or "").strip().lower() == "attention"),
+                "long_horizon_pending_count": sum(int(item.get("long_horizon_pending_count", 0) or 0) for item in refreshed_sessions),
+                "pending_app_target_count": max(
+                    0,
+                    len(app_targets)
+                    - len(
+                        {
+                            str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "").strip().lower()
+                            for item in refreshed_sessions
+                            if isinstance(item.get("filters", {}), dict)
+                            and str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "").strip()
+                        }
+                    ),
+                ),
+                "query": {
+                    **filters,
+                    "history_limit": normalized_history_limit,
+                    "max_sessions": normalized_max_sessions,
+                    "max_replays_per_session": normalized_max_replays,
+                },
+            },
+            lab_payload=lab_payload,
+            native_targets_payload=native_targets_payload,
+            guidance_payload=guidance_payload,
+            session_ids=campaign_session_ids,
+            app_targets=app_targets,
+            session_rows=refreshed_sessions,
+        )
+        return {
+            "status": str(sweep_update.get("status", "success") or "success"),
+            "campaign": dict(sweep_update.get("campaign", {})) if isinstance(sweep_update.get("campaign", {}), dict) else {},
+            "sweep": dict(sweep_update.get("sweep", {})) if isinstance(sweep_update.get("sweep", {}), dict) else {},
+            "results": session_results,
+            "created_sessions": created_sessions,
+            "created_session_count": len(created_sessions),
+            "lab": lab_payload,
+            "native_targets": native_targets_payload,
+            "guidance": guidance_payload,
+        }
+
     def create_lab_session(
         self,
         *,
@@ -1055,6 +1424,21 @@ class EvaluationRunner:
                 continue
             return f"{clean[:1].upper()}{clean[1:]}" if clean.islower() else clean
         return ""
+
+    @staticmethod
+    def _unique_strings(values: List[str]) -> List[str]:
+        seen: set[str] = set()
+        result: List[str] = []
+        for value in values:
+            clean = str(value or "").strip()
+            if not clean:
+                continue
+            lowered = clean.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            result.append(clean)
+        return result
 
     def run(self, scenarios: List[Scenario] | None = None) -> List[Dict[str, object]]:
         try:
