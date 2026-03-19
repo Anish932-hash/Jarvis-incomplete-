@@ -1398,6 +1398,7 @@ class WindowManager:
             "backend": backend,
             "focus_applied": bool(payload.get("focus_applied", False)),
             "adoption_source": str(payload.get("adoption_source", "") or "").strip(),
+            "adoption_transition_kind": str(payload.get("adoption_transition_kind", "") or "").strip(),
             "window": adopted_window,
             "candidate": candidate,
             "preferred_descendant": preferred_descendant,
@@ -1411,6 +1412,26 @@ class WindowManager:
             "descendant_chain_depth": max(0, int(payload.get("descendant_chain_depth", 0) or 0)),
             "descendant_dialog_chain_depth": max(0, int(payload.get("descendant_dialog_chain_depth", 0) or 0)),
             "descendant_query_match_count": max(0, int(payload.get("descendant_query_match_count", 0) or 0)),
+            "descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("descendant_hint_title_match_count", 0) or 0),
+            ),
+            "campaign_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "preferred_descendant_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "descendant_focus_strength": max(
+                0.0,
+                min(float(payload.get("descendant_focus_strength", 0.0) or 0.0), 1.0),
+            ),
+            "adopted_descendant_depth": max(0, int(payload.get("adopted_descendant_depth", 0) or 0)),
+            "adopted_matches_preferred_descendant": bool(
+                payload.get("adopted_matches_preferred_descendant", False)
+            ),
             "descendant_chain_titles": [
                 str(item).strip()
                 for item in payload.get("descendant_chain_titles", [])
@@ -1473,6 +1494,22 @@ class WindowManager:
             "descendant_chain_depth": max(0, int(payload.get("descendant_chain_depth", 0) or 0)),
             "descendant_dialog_chain_depth": max(0, int(payload.get("descendant_dialog_chain_depth", 0) or 0)),
             "descendant_query_match_count": max(0, int(payload.get("descendant_query_match_count", 0) or 0)),
+            "descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("descendant_hint_title_match_count", 0) or 0),
+            ),
+            "campaign_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "preferred_descendant_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "descendant_focus_strength": max(
+                0.0,
+                min(float(payload.get("descendant_focus_strength", 0.0) or 0.0), 1.0),
+            ),
             "descendant_chain_titles": [
                 str(item).strip()
                 for item in payload.get("descendant_chain_titles", [])
@@ -1902,6 +1939,22 @@ class WindowManager:
             else {},
             "descendant_adoption_available": descendant_adoption_available,
             "descendant_adoption_match_score": round(descendant_adoption_match_score, 4),
+            "descendant_focus_strength": max(
+                0.0,
+                min(float(child_chain_trace.get("descendant_focus_strength", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_descendant_match_score": max(
+                0.0,
+                min(float(child_chain_trace.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "descendant_hint_title_match_count": max(
+                0,
+                int(child_chain_trace.get("descendant_hint_title_match_count", 0) or 0),
+            ),
+            "campaign_descendant_hint_title_match_count": max(
+                0,
+                int(child_chain_trace.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
 

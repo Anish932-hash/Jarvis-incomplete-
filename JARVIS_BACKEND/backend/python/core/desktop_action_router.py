@@ -9319,6 +9319,18 @@ class DesktopActionRouter:
             "native_descendant_adoption_match_score": float(
                 window_reacquisition.get("descendant_adoption_match_score", 0.0) or 0.0
             ),
+            "native_descendant_focus_strength": float(
+                window_reacquisition.get("descendant_focus_strength", 0.0) or 0.0
+            ),
+            "native_preferred_descendant_match_score": float(
+                window_reacquisition.get("preferred_descendant_match_score", 0.0) or 0.0
+            ),
+            "native_descendant_hint_title_match_count": int(
+                window_reacquisition.get("descendant_hint_title_match_count", 0) or 0
+            ),
+            "native_campaign_descendant_hint_title_match_count": int(
+                window_reacquisition.get("campaign_descendant_hint_title_match_count", 0) or 0
+            ),
             "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
             "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(
@@ -10244,6 +10256,22 @@ class DesktopActionRouter:
             0.0,
             min(float(state_summary.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0),
         )
+        native_descendant_focus_strength = max(
+            0.0,
+            min(float(state_summary.get("native_descendant_focus_strength", 0.0) or 0.0), 1.0),
+        )
+        native_preferred_descendant_match_score = max(
+            0.0,
+            min(float(state_summary.get("native_preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_descendant_hint_title_match_count = max(
+            0,
+            int(state_summary.get("native_descendant_hint_title_match_count", 0) or 0),
+        )
+        native_campaign_descendant_hint_title_match_count = max(
+            0,
+            int(state_summary.get("native_campaign_descendant_hint_title_match_count", 0) or 0),
+        )
         native_descendant_chain_titles = [
             str(item).strip()
             for item in state_summary.get("native_descendant_chain_titles", [])
@@ -10318,6 +10346,10 @@ class DesktopActionRouter:
             "native_descendant_chain_titles": native_descendant_chain_titles,
             "native_descendant_adoption_available": native_descendant_adoption_available,
             "native_descendant_adoption_match_score": native_descendant_adoption_match_score,
+            "native_descendant_focus_strength": native_descendant_focus_strength,
+            "native_preferred_descendant_match_score": native_preferred_descendant_match_score,
+            "native_descendant_hint_title_match_count": native_descendant_hint_title_match_count,
+            "native_campaign_descendant_hint_title_match_count": native_campaign_descendant_hint_title_match_count,
             "preferred_descendant_title": preferred_descendant_title,
             "preferred_descendant_hwnd": preferred_descendant_hwnd,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
@@ -10462,6 +10494,22 @@ class DesktopActionRouter:
         native_descendant_adoption_match_score = max(
             0.0,
             min(float(branch_context.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_descendant_focus_strength = max(
+            0.0,
+            min(float(branch_context.get("native_descendant_focus_strength", 0.0) or 0.0), 1.0),
+        )
+        native_preferred_descendant_match_score = max(
+            0.0,
+            min(float(branch_context.get("native_preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_descendant_hint_title_match_count = max(
+            0,
+            int(branch_context.get("native_descendant_hint_title_match_count", 0) or 0),
+        )
+        native_campaign_descendant_hint_title_match_count = max(
+            0,
+            int(branch_context.get("native_campaign_descendant_hint_title_match_count", 0) or 0),
         )
         native_descendant_chain_titles = {
             self._normalize_probe_text(item)
@@ -10686,6 +10734,14 @@ class DesktopActionRouter:
                 score += min(0.08, native_descendant_dialog_chain_depth * 0.02)
             if native_descendant_query_match_count > 0:
                 score += min(0.06, native_descendant_query_match_count * 0.02)
+            if native_descendant_focus_strength > 0.0:
+                score += min(0.12, 0.03 + (native_descendant_focus_strength * 0.09))
+            if native_preferred_descendant_match_score > 0.0:
+                score += min(0.08, 0.02 + (native_preferred_descendant_match_score * 0.06))
+            if native_descendant_hint_title_match_count > 0:
+                score += min(0.06, native_descendant_hint_title_match_count * 0.02)
+            if native_campaign_descendant_hint_title_match_count > 0:
+                score += min(0.05, native_campaign_descendant_hint_title_match_count * 0.02)
             if native_child_chain_signature:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
@@ -14294,6 +14350,22 @@ class DesktopActionRouter:
             0.0,
             min(float(window_reacquisition.get("descendant_adoption_match_score", 0.0) or 0.0), 1.0),
         )
+        descendant_focus_strength = max(
+            0.0,
+            min(float(window_reacquisition.get("descendant_focus_strength", 0.0) or 0.0), 1.0),
+        )
+        preferred_descendant_match_score = max(
+            0.0,
+            min(float(window_reacquisition.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
+        )
+        descendant_hint_title_match_count = max(
+            0,
+            int(window_reacquisition.get("descendant_hint_title_match_count", 0) or 0),
+        )
+        campaign_descendant_hint_title_match_count = max(
+            0,
+            int(window_reacquisition.get("campaign_descendant_hint_title_match_count", 0) or 0),
+        )
         benchmark_hint_query = str(native_target_context.get("benchmark_target_hint_query", "") or "").strip()
         benchmark_descendant_hint_query = str(
             native_target_context.get("benchmark_target_descendant_hint_query", "") or ""
@@ -14357,6 +14429,14 @@ class DesktopActionRouter:
                 descendant_focus_confidence += 0.03
             if descendant_adoption_available:
                 descendant_focus_confidence += min(0.08, 0.03 + (descendant_adoption_match_score * 0.05))
+            if descendant_focus_strength > 0.0:
+                descendant_focus_confidence += min(0.08, 0.02 + (descendant_focus_strength * 0.06))
+            if preferred_descendant_match_score > 0.0:
+                descendant_focus_confidence += min(0.06, preferred_descendant_match_score * 0.05)
+            if descendant_hint_title_match_count > 0:
+                descendant_focus_confidence += min(0.04, descendant_hint_title_match_count * 0.015)
+            if campaign_descendant_hint_title_match_count > 0:
+                descendant_focus_confidence += min(0.03, campaign_descendant_hint_title_match_count * 0.012)
             descendant_focus_confidence = min(0.96, descendant_focus_confidence)
             descendant_reason = (
                 "Native window topology found a deeper child surface in the current modal chain."

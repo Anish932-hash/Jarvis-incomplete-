@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.python.native.windows.native_window_runtime import NativeWindowRuntime
 from backend.python.pc_control.window_manager import WindowManager
 
@@ -139,6 +141,7 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
                 "backend": "cpp_cython",
                 "focus_applied": True,
                 "adoption_source": "preferred_descendant",
+                "adoption_transition_kind": "descendant_focus",
                 "match_score": 0.91,
                 "candidate": {
                     "hwnd": 5001,
@@ -197,6 +200,12 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
                 "descendant_chain_depth": 1,
                 "descendant_dialog_chain_depth": 1,
                 "descendant_query_match_count": 1,
+                "descendant_hint_title_match_count": 1,
+                "campaign_descendant_hint_title_match_count": 0,
+                "preferred_descendant_match_score": 0.97,
+                "descendant_focus_strength": 0.91,
+                "adopted_descendant_depth": 1,
+                "adopted_matches_preferred_descendant": True,
                 "descendant_chain_titles": ["Pair device"],
                 "child_chain_signature": "5001|1|1|Pair device",
             }
@@ -216,12 +225,17 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
     assert payload["status"] == "success"
     assert payload["focus_applied"] is True
     assert payload["adoption_source"] == "preferred_descendant"
+    assert payload["adoption_transition_kind"] == "descendant_focus"
     assert payload["window"]["hwnd"] == 5002
     assert payload["window"]["app_name"] == "systemsettings"
     assert payload["candidate"]["hwnd"] == 5001
     assert payload["preferred_descendant"]["hwnd"] == 5002
     assert payload["direct_child_window_count"] == 1
     assert payload["descendant_chain_depth"] == 1
+    assert payload["descendant_focus_strength"] == pytest.approx(0.91)
+    assert payload["preferred_descendant_match_score"] == pytest.approx(0.97)
+    assert payload["adopted_descendant_depth"] == 1
+    assert payload["adopted_matches_preferred_descendant"] is True
     assert payload["child_chain_signature"] == "5001|1|1|Pair device"
 
 
@@ -588,6 +602,10 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                 "descendant_chain_depth": 1,
                 "descendant_dialog_chain_depth": 1,
                 "descendant_query_match_count": 0,
+                "descendant_hint_title_match_count": 2,
+                "campaign_descendant_hint_title_match_count": 2,
+                "preferred_descendant_match_score": 0.94,
+                "descendant_focus_strength": 0.88,
                 "descendant_chain_titles": ["Pair device"],
                 "child_chain_signature": "5001|1|1|Pair device",
                 "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
@@ -679,6 +697,10 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert "benchmark_campaign_descendant_hint" in payload["candidate"]["match_reasons"]
     assert "benchmark_campaign_pressure" in payload["candidate"]["match_reasons"]
     assert "benchmark_campaign_regression_pressure" in payload["candidate"]["match_reasons"]
+    assert payload["descendant_focus_strength"] == pytest.approx(0.88)
+    assert payload["preferred_descendant_match_score"] == pytest.approx(0.94)
+    assert payload["descendant_hint_title_match_count"] == 2
+    assert payload["campaign_descendant_hint_title_match_count"] == 2
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:

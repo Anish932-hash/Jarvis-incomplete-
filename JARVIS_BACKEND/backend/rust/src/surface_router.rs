@@ -92,6 +92,14 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_descendant_adoption_match_score: f64,
     #[serde(default)]
+    pub native_descendant_focus_strength: f64,
+    #[serde(default)]
+    pub native_preferred_descendant_match_score: f64,
+    #[serde(default)]
+    pub native_descendant_hint_title_match_count: u32,
+    #[serde(default)]
+    pub native_campaign_descendant_hint_title_match_count: u32,
+    #[serde(default)]
     pub native_descendant_chain_titles: Vec<String>,
     #[serde(default)]
     pub preferred_descendant_title: String,
@@ -557,6 +565,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let native_descendant_adoption_available = input.native_descendant_adoption_available;
     let native_descendant_adoption_match_score =
         input.native_descendant_adoption_match_score.clamp(0.0, 1.0);
+    let native_descendant_focus_strength =
+        input.native_descendant_focus_strength.clamp(0.0, 1.0);
+    let native_preferred_descendant_match_score =
+        input.native_preferred_descendant_match_score.clamp(0.0, 1.0);
+    let native_descendant_hint_title_match_count = input.native_descendant_hint_title_match_count;
+    let native_campaign_descendant_hint_title_match_count =
+        input.native_campaign_descendant_hint_title_match_count;
     let native_descendant_chain_titles = input
         .native_descendant_chain_titles
         .iter()
@@ -858,6 +873,35 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 reasons.push(format!(
                     "preferred_descendant_overlap:{}",
                     preferred_descendant_overlap
+                ));
+            }
+            if native_descendant_focus_strength > 0.0 {
+                rust_score += (0.03 + (native_descendant_focus_strength * 0.09)).min(0.12);
+                reasons.push(format!(
+                    "native_descendant_focus_strength:{:.2}",
+                    native_descendant_focus_strength
+                ));
+            }
+            if native_preferred_descendant_match_score > 0.0 {
+                rust_score += (0.02 + (native_preferred_descendant_match_score * 0.06)).min(0.08);
+                reasons.push(format!(
+                    "native_preferred_descendant_match_score:{:.2}",
+                    native_preferred_descendant_match_score
+                ));
+            }
+            if native_descendant_hint_title_match_count > 0 {
+                rust_score += (native_descendant_hint_title_match_count as f64 * 0.02).min(0.06);
+                reasons.push(format!(
+                    "native_descendant_hint_title_matches:{}",
+                    native_descendant_hint_title_match_count
+                ));
+            }
+            if native_campaign_descendant_hint_title_match_count > 0 {
+                rust_score +=
+                    (native_campaign_descendant_hint_title_match_count as f64 * 0.02).min(0.05);
+                reasons.push(format!(
+                    "native_campaign_descendant_hint_title_matches:{}",
+                    native_campaign_descendant_hint_title_match_count
                 ));
             }
         }
@@ -1672,6 +1716,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "native_descendant_query_match_count": native_descendant_query_match_count,
         "native_descendant_adoption_available": native_descendant_adoption_available,
         "native_descendant_adoption_match_score": native_descendant_adoption_match_score,
+        "native_descendant_focus_strength": native_descendant_focus_strength,
+        "native_preferred_descendant_match_score": native_preferred_descendant_match_score,
+        "native_descendant_hint_title_match_count": native_descendant_hint_title_match_count,
+        "native_campaign_descendant_hint_title_match_count":
+            native_campaign_descendant_hint_title_match_count,
         "native_descendant_chain_titles": native_descendant_chain_titles,
         "native_modal_chain_signature": native_modal_chain_signature,
         "native_child_chain_signature": native_child_chain_signature,
@@ -2018,6 +2067,10 @@ mod tests {
             "native_descendant_query_match_count": 1,
             "native_descendant_adoption_available": true,
             "native_descendant_adoption_match_score": 0.84,
+            "native_descendant_focus_strength": 0.92,
+            "native_preferred_descendant_match_score": 0.95,
+            "native_descendant_hint_title_match_count": 2,
+            "native_campaign_descendant_hint_title_match_count": 1,
             "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
             "preferred_descendant_title": "Pair device",
             "preferred_descendant_hwnd": 5002,
@@ -2083,6 +2136,18 @@ mod tests {
             value
                 .as_str()
                 .map(|reason| reason.starts_with("native_descendant_adoption_ready:"))
+                .unwrap_or(false)
+        }));
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("native_descendant_focus_strength:"))
+                .unwrap_or(false)
+        }));
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("native_preferred_descendant_match_score:"))
                 .unwrap_or(false)
         }));
     }
