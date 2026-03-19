@@ -109,6 +109,122 @@ def test_window_manager_focus_window_prefers_native_runtime() -> None:
     assert payload["window"]["observation_backend"] == "cpp_cython"
 
 
+def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
+    class _FakeNativeRuntime:
+        def focus_related_window(
+            self,
+            *,
+            query: str = "",
+            hint_query: str = "",
+            descendant_hint_query: str = "",
+            campaign_hint_query: str = "",
+            campaign_preferred_title: str = "",
+            preferred_title: str = "",
+            window_title: str = "",
+            hwnd: int | None = None,
+            pid: int | None = None,
+            limit: int = 80,
+        ) -> dict:
+            assert query == "Pair device"
+            assert hint_query == "Pair device"
+            assert descendant_hint_query == "Pair device"
+            assert preferred_title == "Pair device"
+            assert window_title == "Bluetooth & devices"
+            assert hwnd == 5001
+            assert pid == 777
+            assert limit == 80
+            del campaign_hint_query, campaign_preferred_title
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "focus_applied": True,
+                "adoption_source": "preferred_descendant",
+                "match_score": 0.91,
+                "candidate": {
+                    "hwnd": 5001,
+                    "title": "Bluetooth & devices",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": False,
+                    "left": 120,
+                    "top": 80,
+                    "right": 1100,
+                    "bottom": 760,
+                },
+                "preferred_descendant": {
+                    "hwnd": 5002,
+                    "title": "Pair device",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": True,
+                    "left": 280,
+                    "top": 160,
+                    "right": 980,
+                    "bottom": 640,
+                },
+                "adopted_window": {
+                    "hwnd": 5002,
+                    "title": "Pair device",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": True,
+                    "left": 280,
+                    "top": 160,
+                    "right": 980,
+                    "bottom": 640,
+                },
+                "direct_child_window_count": 1,
+                "direct_child_dialog_like_count": 1,
+                "direct_child_titles": ["Pair device"],
+                "descendant_chain_depth": 1,
+                "descendant_dialog_chain_depth": 1,
+                "descendant_query_match_count": 1,
+                "descendant_chain_titles": ["Pair device"],
+                "child_chain_signature": "5001|1|1|Pair device",
+            }
+
+    manager = WindowManager(native_runtime=_FakeNativeRuntime())
+    payload = manager.focus_related_window(
+        query="Pair device",
+        app_name="settings",
+        window_title="Bluetooth & devices",
+        hint_query="Pair device",
+        descendant_hint_query="Pair device",
+        preferred_title="Pair device",
+        hwnd=5001,
+        pid=777,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["focus_applied"] is True
+    assert payload["adoption_source"] == "preferred_descendant"
+    assert payload["window"]["hwnd"] == 5002
+    assert payload["window"]["app_name"] == "systemsettings"
+    assert payload["candidate"]["hwnd"] == 5001
+    assert payload["preferred_descendant"]["hwnd"] == 5002
+    assert payload["direct_child_window_count"] == 1
+    assert payload["descendant_chain_depth"] == 1
+    assert payload["child_chain_signature"] == "5001|1|1|Pair device"
+
+
 def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None:
     class _FakeNativeRuntime:
         @staticmethod

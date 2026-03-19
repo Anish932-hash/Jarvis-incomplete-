@@ -284,6 +284,44 @@ def _focus_window(payload: Dict[str, Any]) -> Dict[str, Any]:
     return WindowManager().focus_window(title_contains=title, hwnd=hwnd)
 
 
+def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.python.pc_control.window_manager import WindowManager
+
+    hwnd_raw = payload.get("hwnd")
+    pid_raw = payload.get("pid")
+    hwnd = None if hwnd_raw in {None, ""} else _to_int(hwnd_raw, -1)
+    pid = None if pid_raw in {None, ""} else _to_int(pid_raw, -1)
+    if hwnd is not None and hwnd <= 0:
+        return {"status": "error", "message": "hwnd must be a positive integer"}
+    if pid is not None and pid <= 0:
+        return {"status": "error", "message": "pid must be a positive integer"}
+    benchmark_guidance = (
+        dict(payload.get("benchmark_guidance", {}))
+        if isinstance(payload.get("benchmark_guidance", {}), dict)
+        else {}
+    )
+    preferred_title = str(
+        payload.get("preferred_title", "")
+        or payload.get("title", "")
+        or ""
+    ).strip()
+    return WindowManager().focus_related_window(
+        query=str(payload.get("query", "")).strip(),
+        app_name=str(payload.get("app_name", "")).strip(),
+        window_title=str(payload.get("window_title", "")).strip(),
+        title_contains=str(payload.get("title", "")).strip(),
+        hint_query=str(payload.get("hint_query", "")).strip(),
+        descendant_hint_query=str(payload.get("descendant_hint_query", "")).strip(),
+        campaign_hint_query=str(payload.get("campaign_hint_query", "")).strip(),
+        campaign_preferred_title=str(payload.get("campaign_preferred_title", "")).strip(),
+        preferred_title=preferred_title,
+        hwnd=hwnd,
+        pid=pid,
+        benchmark_guidance=benchmark_guidance,
+        limit=max(1, min(_to_int(payload.get("limit", 80), 80), 240)),
+    )
+
+
 async def _media_info(_: Dict[str, Any]) -> Dict[str, Any]:
     from backend.python.pc_control.media_control import MediaController
 
@@ -2706,6 +2744,11 @@ def focus_window_route(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _focus_window(payload)
 
 
+@route("focus_related_window")
+def focus_related_window_route(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return _focus_related_window(payload)
+
+
 @route("media_info")
 async def media_info_route(payload: Dict[str, Any]) -> Dict[str, Any]:
     return await _media_info(payload)
@@ -3102,6 +3145,12 @@ def register_tools(registry: ToolRegistry) -> None:
     registry.register("list_windows", _list_windows, description="List visible top-level windows.", risk="low")
     registry.register("active_window", _active_window, description="Get active foreground window details.", risk="low")
     registry.register("focus_window", _focus_window, description="Focus a window by title substring or hwnd.", risk="medium")
+    registry.register(
+        "focus_related_window",
+        _focus_related_window,
+        description="Focus the best related child or descendant window using native topology hints.",
+        risk="medium",
+    )
     registry.register("media_info", _media_info, description="Get current media playback metadata.", risk="low")
     registry.register("media_play_pause", _media_play_pause, description="Toggle play/pause for active media session.", risk="medium")
     registry.register("media_play", _media_play, description="Play active media session.", risk="medium")

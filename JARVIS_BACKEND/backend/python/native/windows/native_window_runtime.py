@@ -130,6 +130,38 @@ class NativeWindowRuntime:
         hwnd_value = 0 if hwnd is None else int(hwnd)
         return self._call("focus_window", "focus_window", title, hwnd_value)
 
+    def focus_related_window(
+        self,
+        *,
+        query: str = "",
+        hint_query: str = "",
+        descendant_hint_query: str = "",
+        campaign_hint_query: str = "",
+        campaign_preferred_title: str = "",
+        preferred_title: str = "",
+        window_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        limit: int = 120,
+    ) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        hwnd_value = 0 if hwnd is None else int(hwnd)
+        pid_value = 0 if pid is None else int(pid)
+        return self._call(
+            "focus_related_window",
+            "focus_related_window",
+            str(query or ""),
+            str(hint_query or ""),
+            str(descendant_hint_query or ""),
+            str(campaign_hint_query or ""),
+            str(campaign_preferred_title or ""),
+            str(preferred_title or ""),
+            str(window_title or ""),
+            hwnd_value,
+            pid_value,
+            safe_limit,
+        )
+
     def reacquire_related_window(
         self,
         *,

@@ -7521,7 +7521,9 @@ class DesktopActionRouter:
         post_probe = post_context.get("workflow_probe", {}) if isinstance(post_context.get("workflow_probe", {}), dict) else {}
         checks: List[Dict[str, Any]] = []
         warnings: List[str] = []
-        focus_step = self._find_step_result(results, "focus_window")
+        focus_step = self._find_step_result(results, "focus_related_window")
+        if not focus_step:
+            focus_step = self._find_step_result(results, "focus_window")
         if not post_active and isinstance(focus_step.get("window", {}), dict):
             post_active = focus_step.get("window", {})
 
@@ -9311,6 +9313,12 @@ class DesktopActionRouter:
             "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
             "native_descendant_query_match_count": native_descendant_query_match_count,
             "native_descendant_chain_titles": native_descendant_chain_titles,
+            "native_descendant_adoption_available": bool(
+                window_reacquisition.get("descendant_adoption_available", False)
+            ),
+            "native_descendant_adoption_match_score": float(
+                window_reacquisition.get("descendant_adoption_match_score", 0.0) or 0.0
+            ),
             "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
             "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(
@@ -10229,6 +10237,13 @@ class DesktopActionRouter:
             0,
             int(state_summary.get("native_descendant_query_match_count", 0) or 0),
         )
+        native_descendant_adoption_available = bool(
+            state_summary.get("native_descendant_adoption_available", False)
+        )
+        native_descendant_adoption_match_score = max(
+            0.0,
+            min(float(state_summary.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0),
+        )
         native_descendant_chain_titles = [
             str(item).strip()
             for item in state_summary.get("native_descendant_chain_titles", [])
@@ -10301,6 +10316,8 @@ class DesktopActionRouter:
             "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
             "native_descendant_query_match_count": native_descendant_query_match_count,
             "native_descendant_chain_titles": native_descendant_chain_titles,
+            "native_descendant_adoption_available": native_descendant_adoption_available,
+            "native_descendant_adoption_match_score": native_descendant_adoption_match_score,
             "preferred_descendant_title": preferred_descendant_title,
             "preferred_descendant_hwnd": preferred_descendant_hwnd,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
@@ -10438,6 +10455,13 @@ class DesktopActionRouter:
         native_descendant_query_match_count = max(
             0,
             int(branch_context.get("native_descendant_query_match_count", 0) or 0),
+        )
+        native_descendant_adoption_available = bool(
+            branch_context.get("native_descendant_adoption_available", False)
+        )
+        native_descendant_adoption_match_score = max(
+            0.0,
+            min(float(branch_context.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0),
         )
         native_descendant_chain_titles = {
             self._normalize_probe_text(item)
@@ -10577,6 +10601,7 @@ class DesktopActionRouter:
             selected_action=selected_action,
             label=label,
         )
+        focus_like_action = selected_action in {"focus", "focus_related_window"}
         if selection_key in recent_selection_keys:
             repeat_penalty = 0.16 if latest_occurrences < 2 else 0.24
             repeat_penalty += 0.12 * benchmark_loop_guard_pressure
@@ -10645,7 +10670,7 @@ class DesktopActionRouter:
             score += 0.05
         preferred_descendant_focus = bool(
             kind == "branch_action"
-            and selected_action == "focus"
+            and focus_like_action
             and (
                 (preferred_descendant_title and self._normalize_probe_text(action_payload.get("window_title", "")) == preferred_descendant_title)
                 or (preferred_descendant_title and self._normalize_probe_text(label) == preferred_descendant_title)
@@ -10665,6 +10690,8 @@ class DesktopActionRouter:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
                 score += 0.04
+        if native_descendant_adoption_available and focus_like_action:
+            score += min(0.1, 0.03 + (native_descendant_adoption_match_score * 0.08))
         navigation_actions = {
             "select_tree_item",
             "select_list_item",
@@ -10681,9 +10708,9 @@ class DesktopActionRouter:
             score += 0.05 + (0.16 * benchmark_descendant_focus_pressure)
         if selected_action in navigation_actions and benchmark_navigation_pressure > 0.0:
             score += 0.04 + (0.14 * benchmark_navigation_pressure)
-        if selected_action == "focus" and benchmark_reacquire_pressure > 0.0:
+        if focus_like_action and benchmark_reacquire_pressure > 0.0:
             score += 0.04 + (0.16 * benchmark_reacquire_pressure)
-        if selected_action == "focus" and benchmark_native_focus_pressure > 0.0:
+        if focus_like_action and benchmark_native_focus_pressure > 0.0:
             score += 0.03 + (0.12 * benchmark_native_focus_pressure)
         if benchmark_target_app_matched and selected_action == "press_dialog_button" and benchmark_target_dialog_pressure > 0.0:
             score += 0.04 + (0.16 * benchmark_target_dialog_pressure)
@@ -10691,9 +10718,9 @@ class DesktopActionRouter:
             score += 0.04 + (0.14 * benchmark_target_descendant_focus_pressure)
         if benchmark_target_app_matched and selected_action in navigation_actions and benchmark_target_navigation_pressure > 0.0:
             score += 0.03 + (0.14 * benchmark_target_navigation_pressure)
-        if benchmark_target_app_matched and selected_action == "focus" and benchmark_target_reacquire_pressure > 0.0:
+        if benchmark_target_app_matched and focus_like_action and benchmark_target_reacquire_pressure > 0.0:
             score += 0.04 + (0.14 * benchmark_target_reacquire_pressure)
-        if benchmark_target_app_matched and selected_action == "focus" and benchmark_target_native_focus_pressure > 0.0:
+        if benchmark_target_app_matched and focus_like_action and benchmark_target_native_focus_pressure > 0.0:
             score += 0.03 + (0.12 * benchmark_target_native_focus_pressure)
         if benchmark_target_app_matched and benchmark_target_replay_pressure > 0.0:
             replay_boost = min(
@@ -10707,7 +10734,7 @@ class DesktopActionRouter:
                 replay_boost += min(0.08, 0.03 + (0.06 * target_hint_query_overlap))
             elif selected_action == "press_dialog_button":
                 replay_boost += min(0.06, 0.02 + (0.05 * target_query_hint_overlap))
-            elif selected_action == "focus":
+            elif focus_like_action:
                 replay_boost += min(0.05, 0.02 + (0.04 * target_hint_query_overlap))
             score += min(0.26, replay_boost)
         if benchmark_target_app_matched and benchmark_target_session_cycle_count > 0 and target_descendant_hint_overlap > 0.0:
@@ -10957,6 +10984,8 @@ class DesktopActionRouter:
             "native_descendant_chain_depth": max(0, int(branch_context.get("native_descendant_chain_depth", 0) or 0)),
             "native_descendant_dialog_chain_depth": max(0, int(branch_context.get("native_descendant_dialog_chain_depth", 0) or 0)),
             "native_descendant_query_match_count": max(0, int(branch_context.get("native_descendant_query_match_count", 0) or 0)),
+            "native_descendant_adoption_available": bool(branch_context.get("native_descendant_adoption_available", False)),
+            "native_descendant_adoption_match_score": max(0.0, min(float(branch_context.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0)),
             "native_descendant_chain_titles": [
                 str(item).strip()
                 for item in branch_context.get("native_descendant_chain_titles", [])
@@ -14110,6 +14139,22 @@ class DesktopActionRouter:
         ).strip()
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        benchmark_guidance = self._benchmark_control_guidance()
+        state_summary = self._surface_exploration_state_summary(
+            exploration_plan={
+                "surface_snapshot": snapshot,
+                "surface_mode": str(snapshot.get("surface_mode", "") or "").strip(),
+            }
+        )
+        native_target_context = self._benchmark_native_target_context(
+            benchmark_guidance=benchmark_guidance,
+            args={
+                "app_name": app_hint,
+                "window_title": window_hint,
+                "query": query,
+            },
+            state_summary=state_summary,
+        )
         window_reacquisition = (
             snapshot.get("window_reacquisition", {})
             if isinstance(snapshot.get("window_reacquisition", {}), dict)
@@ -14236,6 +14281,32 @@ class DesktopActionRouter:
             or native_window_topology.get("child_chain_signature", "")
             or ""
         ).strip()
+        anchor_window = (
+            window_reacquisition.get("candidate", {})
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else {}
+        ) or target_window or active_window
+        anchor_hwnd = int(anchor_window.get("hwnd", 0) or 0)
+        anchor_pid = int(anchor_window.get("pid", 0) or 0)
+        anchor_title = str(anchor_window.get("title", "") or window_hint or "").strip()
+        descendant_adoption_available = bool(window_reacquisition.get("descendant_adoption_available", False))
+        descendant_adoption_match_score = max(
+            0.0,
+            min(float(window_reacquisition.get("descendant_adoption_match_score", 0.0) or 0.0), 1.0),
+        )
+        benchmark_hint_query = str(native_target_context.get("benchmark_target_hint_query", "") or "").strip()
+        benchmark_descendant_hint_query = str(
+            native_target_context.get("benchmark_target_descendant_hint_query", "") or ""
+        ).strip()
+        benchmark_campaign_hint_query = str(
+            native_target_context.get("benchmark_target_campaign_hint_query", "") or ""
+        ).strip()
+        benchmark_campaign_preferred_title = str(
+            native_target_context.get("benchmark_target_campaign_preferred_window_title", "") or ""
+        ).strip()
+        benchmark_preferred_title = str(
+            native_target_context.get("benchmark_target_preferred_window_title", "") or ""
+        ).strip()
         preferred_descendant_label = preferred_descendant_title or (
             f"Child surface {preferred_descendant_hwnd}" if preferred_descendant_hwnd > 0 else ""
         )
@@ -14245,21 +14316,47 @@ class DesktopActionRouter:
         )
         if preferred_descendant_label and not preferred_descendant_current:
             adoption_payload: Dict[str, Any] = {
-                "action": "focus",
+                "action": "focus_related_window",
                 "focus_first": False,
+                "query": query,
             }
             if app_hint:
                 adoption_payload["app_name"] = app_hint
+            if anchor_title:
+                adoption_payload["window_title"] = anchor_title
+            if anchor_hwnd > 0:
+                adoption_payload["hwnd"] = anchor_hwnd
+            if anchor_pid > 0:
+                adoption_payload["pid"] = anchor_pid
             if preferred_descendant_title:
-                adoption_payload["window_title"] = preferred_descendant_title
-            if preferred_descendant_hwnd > 0:
-                adoption_payload["hwnd"] = preferred_descendant_hwnd
+                adoption_payload["title"] = preferred_descendant_title
+                adoption_payload["preferred_title"] = preferred_descendant_title
+            elif benchmark_preferred_title:
+                adoption_payload["preferred_title"] = benchmark_preferred_title
+            resolved_hint_query = benchmark_hint_query or query or preferred_descendant_title
+            resolved_descendant_hint_query = (
+                benchmark_descendant_hint_query
+                or preferred_descendant_title
+                or query
+            )
+            if resolved_hint_query:
+                adoption_payload["hint_query"] = resolved_hint_query
+            if resolved_descendant_hint_query:
+                adoption_payload["descendant_hint_query"] = resolved_descendant_hint_query
+            if benchmark_campaign_hint_query:
+                adoption_payload["campaign_hint_query"] = benchmark_campaign_hint_query
+            if benchmark_campaign_preferred_title:
+                adoption_payload["campaign_preferred_title"] = benchmark_campaign_preferred_title
+            if benchmark_guidance:
+                adoption_payload["benchmark_guidance"] = benchmark_guidance
             descendant_focus_confidence = 0.78
             descendant_focus_confidence += min(0.08, max(0, descendant_chain_depth) * 0.02)
             descendant_focus_confidence += min(0.05, max(0, descendant_dialog_chain_depth) * 0.015)
             descendant_focus_confidence += min(0.05, max(0, descendant_query_match_count) * 0.02)
             if child_chain_signature:
                 descendant_focus_confidence += 0.03
+            if descendant_adoption_available:
+                descendant_focus_confidence += min(0.08, 0.03 + (descendant_adoption_match_score * 0.05))
             descendant_focus_confidence = min(0.96, descendant_focus_confidence)
             descendant_reason = (
                 "Native window topology found a deeper child surface in the current modal chain."
@@ -19185,6 +19282,11 @@ class DesktopActionRouter:
 
             return focus_window_impl(payload)
 
+        def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import _focus_related_window as focus_related_window_impl
+
+            return focus_related_window_impl(payload)
+
         def _keyboard_type(payload: Dict[str, Any]) -> Dict[str, Any]:
             from backend.python.tools.route_handlers import _keyboard_type as keyboard_type_impl
 
@@ -19242,6 +19344,7 @@ class DesktopActionRouter:
             "window_topology": _window_topology,
             "reacquire_window": _reacquire_window,
             "focus_window": _focus_window,
+            "focus_related_window": _focus_related_window,
             "keyboard_type": _keyboard_type,
             "keyboard_hotkey": _keyboard_hotkey,
             "computer_click_target": _computer_click_target,

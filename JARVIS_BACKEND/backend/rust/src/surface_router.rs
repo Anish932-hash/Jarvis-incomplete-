@@ -88,6 +88,10 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_descendant_query_match_count: u32,
     #[serde(default)]
+    pub native_descendant_adoption_available: bool,
+    #[serde(default)]
+    pub native_descendant_adoption_match_score: f64,
+    #[serde(default)]
     pub native_descendant_chain_titles: Vec<String>,
     #[serde(default)]
     pub preferred_descendant_title: String,
@@ -550,6 +554,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let native_descendant_chain_depth = input.native_descendant_chain_depth;
     let native_descendant_dialog_chain_depth = input.native_descendant_dialog_chain_depth;
     let native_descendant_query_match_count = input.native_descendant_query_match_count;
+    let native_descendant_adoption_available = input.native_descendant_adoption_available;
+    let native_descendant_adoption_match_score =
+        input.native_descendant_adoption_match_score.clamp(0.0, 1.0);
     let native_descendant_chain_titles = input
         .native_descendant_chain_titles
         .iter()
@@ -711,6 +718,8 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     for row in &input.selection_rows {
         let label_tokens = tokenize(&row.label);
         let selected_action = normalize_text(&row.selected_action);
+        let focus_like_action =
+            matches!(selected_action.as_str(), "focus" | "focus_related_window");
         let kind = normalize_text(&row.kind);
         let mut rust_score = 0.0_f64;
         let mut reasons: Vec<String> = Vec::new();
@@ -837,7 +846,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
         let preferred_descendant_focus = kind == "branch_action"
-            && selected_action == "focus"
+            && focus_like_action
             && ((!preferred_descendant_title.is_empty() && preferred_descendant_overlap > 0)
                 || (preferred_descendant_hwnd > 0
                     && row.candidate_id.trim() == preferred_descendant_hwnd.to_string()));
@@ -888,7 +897,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 benchmark_navigation_pressure
             ));
         }
-        if benchmark_reacquire_pressure > 0.0 && selected_action == "focus" {
+        if benchmark_reacquire_pressure > 0.0 && focus_like_action {
             let boost = 0.04 + (benchmark_reacquire_pressure * 0.16);
             rust_score += boost;
             reasons.push(format!(
@@ -947,7 +956,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         }
         if benchmark_target_app_matched
             && benchmark_target_reacquire_pressure > 0.0
-            && selected_action == "focus"
+            && focus_like_action
         {
             let boost = 0.04 + (benchmark_target_reacquire_pressure * 0.14);
             rust_score += boost;
@@ -976,7 +985,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 replay_boost += (0.03 + (target_hint_query_overlap as f64 * 0.05)).min(0.09);
             } else if selected_action == "press_dialog_button" {
                 replay_boost += (0.02 + (target_hint_overlap as f64 * 0.04)).min(0.07);
-            } else if selected_action == "focus" {
+            } else if focus_like_action {
                 replay_boost += (0.02 + (target_hint_query_overlap as f64 * 0.03)).min(0.06);
             }
             rust_score += replay_boost.min(0.26);
@@ -999,7 +1008,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             } else if selected_action == "press_dialog_button" {
                 campaign_boost +=
                     (0.02 + (campaign_hint_overlap as f64 * 0.04)).min(0.07);
-            } else if selected_action == "focus" {
+            } else if focus_like_action {
                 campaign_boost +=
                     (0.02 + (campaign_preferred_window_overlap as f64 * 0.03)).min(0.06);
             }
@@ -1056,7 +1065,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             ));
         }
         if benchmark_target_app_matched && benchmark_target_campaign_pending_app_target_count > 0 {
-            if preferred_descendant_focus || selected_action == "focus" {
+            if preferred_descendant_focus || focus_like_action {
                 rust_score +=
                     (benchmark_target_campaign_pending_app_target_count.min(3) as f64 * 0.02)
                         .min(0.06);
@@ -1065,6 +1074,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     benchmark_target_campaign_pending_app_target_count
                 ));
             }
+        }
+        if native_descendant_adoption_available && focus_like_action {
+            rust_score += (0.03 + (native_descendant_adoption_match_score * 0.08)).min(0.1);
+            reasons.push(format!(
+                "native_descendant_adoption_ready:{:.2}",
+                native_descendant_adoption_match_score
+            ));
         }
         if benchmark_target_app_matched
             && benchmark_target_campaign_long_horizon_pending_count > 0
@@ -1654,6 +1670,8 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "native_descendant_chain_depth": native_descendant_chain_depth,
         "native_descendant_dialog_chain_depth": native_descendant_dialog_chain_depth,
         "native_descendant_query_match_count": native_descendant_query_match_count,
+        "native_descendant_adoption_available": native_descendant_adoption_available,
+        "native_descendant_adoption_match_score": native_descendant_adoption_match_score,
         "native_descendant_chain_titles": native_descendant_chain_titles,
         "native_modal_chain_signature": native_modal_chain_signature,
         "native_child_chain_signature": native_child_chain_signature,
@@ -1998,17 +2016,19 @@ mod tests {
             "native_descendant_chain_depth": 2,
             "native_descendant_dialog_chain_depth": 1,
             "native_descendant_query_match_count": 1,
+            "native_descendant_adoption_available": true,
+            "native_descendant_adoption_match_score": 0.84,
             "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
             "preferred_descendant_title": "Pair device",
             "preferred_descendant_hwnd": 5002,
             "native_child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
             "selection_rows": [
                 {
-                    "selection_key": "branch_action|5002|focus|adopt child surface: pair device",
+                    "selection_key": "branch_action|5002|focus_related_window|adopt child surface: pair device",
                     "kind": "branch_action",
                     "candidate_id": "5002",
                     "label": "Adopt child surface: Pair device",
-                    "selected_action": "focus",
+                    "selected_action": "focus_related_window",
                     "confidence": 0.79
                 },
                 {
@@ -2047,7 +2067,7 @@ mod tests {
             rows.first()
                 .and_then(|row| row.get("selected_action"))
                 .and_then(Value::as_str),
-            Some("focus")
+            Some("focus_related_window")
         );
         assert_eq!(
             result.get("router_hint").and_then(Value::as_str),
@@ -2059,6 +2079,12 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("preferred_descendant_child_chain")));
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("native_descendant_adoption_ready:"))
+                .unwrap_or(false)
+        }));
     }
 
     #[test]

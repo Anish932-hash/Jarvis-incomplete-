@@ -173,6 +173,34 @@ std::string snapshot_to_json(const WindowSnapshot& snapshot) {
     return output.str();
 }
 
+bool collect_window_snapshot(HWND hwnd, HWND foreground, WindowSnapshot& snapshot);
+
+bool focus_snapshot_target(
+    const WindowSnapshot& target_snapshot,
+    WindowSnapshot& refreshed_snapshot,
+    bool& focus_applied
+) {
+    if (target_snapshot.hwnd <= 0) {
+        focus_applied = false;
+        return false;
+    }
+    const HWND target = reinterpret_cast<HWND>(static_cast<intptr_t>(target_snapshot.hwnd));
+    if (target == nullptr || !IsWindow(target)) {
+        focus_applied = false;
+        return false;
+    }
+    if (IsIconic(target)) {
+        ShowWindow(target, SW_RESTORE);
+    } else {
+        ShowWindow(target, SW_SHOW);
+    }
+    BringWindowToTop(target);
+    const BOOL focus_result = SetForegroundWindow(target);
+    const HWND foreground = GetForegroundWindow();
+    focus_applied = (focus_result != FALSE || foreground == target);
+    return collect_window_snapshot(target, foreground, refreshed_snapshot);
+}
+
 bool collect_window_snapshot(HWND hwnd, HWND foreground, WindowSnapshot& snapshot) {
     if (hwnd == nullptr || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
         return false;
@@ -838,24 +866,248 @@ std::string focus_window_json(const std::string& title_contains_utf8, long long 
         return build_error_json("Window not found.");
     }
 
-    if (IsIconic(target)) {
-        ShowWindow(target, SW_RESTORE);
-    } else {
-        ShowWindow(target, SW_SHOW);
-    }
-    BringWindowToTop(target);
-    const BOOL focus_result = SetForegroundWindow(target);
-
-    const HWND foreground = GetForegroundWindow();
+    WindowSnapshot target_snapshot;
+    target_snapshot.hwnd = static_cast<long long>(reinterpret_cast<intptr_t>(target));
     WindowSnapshot snapshot;
-    if (!collect_window_snapshot(target, foreground, snapshot)) {
+    bool focus_applied = false;
+    if (!focus_snapshot_target(target_snapshot, snapshot, focus_applied)) {
         return build_error_json("Window was focused but could not be inspected.");
     }
 
     std::ostringstream output;
     output << "{\"status\":\"success\",\"backend\":\"cpp_cython\",\"focus_applied\":"
-           << ((focus_result != FALSE || foreground == target) ? "true" : "false")
+           << (focus_applied ? "true" : "false")
            << ",\"window\":" << snapshot_to_json(snapshot) << "}";
+    return output.str();
+}
+
+std::string focus_related_window_json(
+    const std::string& query_utf8,
+    const std::string& hint_query_utf8,
+    const std::string& descendant_hint_query_utf8,
+    const std::string& campaign_hint_query_utf8,
+    const std::string& campaign_preferred_title_utf8,
+    const std::string& preferred_title_utf8,
+    const std::string& window_title_utf8,
+    long long hwnd_value,
+    long pid_value,
+    int limit
+) {
+    const int safe_limit = std::max(1, std::min(limit, 500));
+    const HWND foreground = GetForegroundWindow();
+
+    std::vector<WindowSnapshot> rows;
+    rows.reserve(static_cast<std::size_t>(safe_limit));
+    EnumWindowsContext context{&rows, foreground, safe_limit};
+    EnumWindows(EnumWindowsListProc, reinterpret_cast<LPARAM>(&context));
+
+    WindowSnapshot anchor;
+    bool anchor_found = false;
+    if (hwnd_value > 0) {
+        for (const WindowSnapshot& row : rows) {
+            if (row.hwnd == hwnd_value) {
+                anchor = row;
+                anchor_found = true;
+                break;
+            }
+        }
+    }
+    if (!anchor_found && foreground != nullptr) {
+        collect_window_snapshot(foreground, foreground, anchor);
+        anchor_found = anchor.hwnd > 0;
+    }
+
+    const std::wstring query = utf8_to_wide(query_utf8);
+    const std::wstring hint_query = utf8_to_wide(hint_query_utf8);
+    const std::wstring descendant_hint_query = utf8_to_wide(descendant_hint_query_utf8);
+    const std::wstring campaign_hint_query = utf8_to_wide(campaign_hint_query_utf8);
+    const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
+    const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
+    const std::wstring window_title = utf8_to_wide(window_title_utf8);
+    const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
+    const long anchor_pid = pid_value > 0 ? pid_value : (anchor_found ? anchor.pid : 0);
+    const long long anchor_root_owner_hwnd =
+        anchor_found && anchor.root_owner_hwnd > 0 ? anchor.root_owner_hwnd : (anchor_hwnd > 0 ? anchor_hwnd : 0);
+    const int anchor_owner_chain_depth = anchor_found ? anchor.owner_chain_depth : 0;
+
+    std::vector<std::pair<double, WindowSnapshot>> scored_rows;
+    for (const WindowSnapshot& row : rows) {
+        const RelatedWindowScore relation = score_related_window(
+            row,
+            query,
+            hint_query,
+            descendant_hint_query,
+            campaign_hint_query,
+            campaign_preferred_title,
+            preferred_title,
+            window_title,
+            anchor_hwnd,
+            anchor_pid,
+            anchor_root_owner_hwnd,
+            anchor_owner_chain_depth
+        );
+        if (relation.score <= 0.0) {
+            continue;
+        }
+        scored_rows.push_back({relation.score, row});
+    }
+
+    std::sort(scored_rows.begin(), scored_rows.end(), [](const auto& left, const auto& right) {
+        if (left.first != right.first) {
+            return left.first > right.first;
+        }
+        if (left.second.is_foreground != right.second.is_foreground) {
+            return left.second.is_foreground;
+        }
+        const int left_area = std::max(0, left.second.right - left.second.left) * std::max(0, left.second.bottom - left.second.top);
+        const int right_area = std::max(0, right.second.right - right.second.left) * std::max(0, right.second.bottom - right.second.top);
+        if (left_area != right_area) {
+            return left_area > right_area;
+        }
+        return left.second.title < right.second.title;
+    });
+
+    if (scored_rows.empty()) {
+        return "{\"status\":\"missing\",\"backend\":\"cpp_cython\",\"message\":\"no matching related window candidate found\"}";
+    }
+
+    const WindowSnapshot& candidate = scored_rows.front().second;
+    const double top_score = std::round(scored_rows.front().first * 1000.0) / 1000.0;
+    if (top_score < 0.42) {
+        return "{\"status\":\"missing\",\"backend\":\"cpp_cython\",\"message\":\"no matching related window candidate found\"}";
+    }
+
+    std::vector<WindowSnapshot> direct_children;
+    std::vector<std::pair<int, WindowSnapshot>> descendant_depth_rows;
+    int direct_child_dialog_like_count = 0;
+    int descendant_chain_depth = 0;
+    int descendant_dialog_chain_depth = 0;
+    int descendant_query_match_count = 0;
+
+    for (const WindowSnapshot& row : rows) {
+        if (row.hwnd == candidate.hwnd) {
+            continue;
+        }
+        if (candidate.hwnd > 0 && row.owner_hwnd == candidate.hwnd) {
+            direct_children.push_back(row);
+            if (snapshot_is_dialog_like(row)) {
+                ++direct_child_dialog_like_count;
+            }
+        }
+        int relative_depth = 0;
+        if (!snapshot_is_descendant_of(rows, row, candidate.hwnd, &relative_depth)) {
+            continue;
+        }
+        descendant_depth_rows.push_back({relative_depth, row});
+        descendant_chain_depth = std::max(descendant_chain_depth, relative_depth);
+        if (snapshot_is_dialog_like(row)) {
+            descendant_dialog_chain_depth = std::max(descendant_dialog_chain_depth, relative_depth);
+        }
+        if (snapshot_matches_chain_query(
+                row,
+                query,
+                hint_query,
+                descendant_hint_query,
+                campaign_hint_query,
+                campaign_preferred_title,
+                preferred_title,
+                window_title
+            )) {
+            ++descendant_query_match_count;
+        }
+    }
+
+    std::sort(direct_children.begin(), direct_children.end(), [](const WindowSnapshot& left, const WindowSnapshot& right) {
+        if (left.owner_chain_depth != right.owner_chain_depth) {
+            return left.owner_chain_depth < right.owner_chain_depth;
+        }
+        return left.title < right.title;
+    });
+    std::sort(descendant_depth_rows.begin(), descendant_depth_rows.end(), [&](const auto& left, const auto& right) {
+        const bool left_query_match = snapshot_matches_chain_query(left.second, query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title);
+        const bool right_query_match = snapshot_matches_chain_query(right.second, query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title);
+        if (left_query_match != right_query_match) {
+            return left_query_match;
+        }
+        if (left.first != right.first) {
+            return left.first > right.first;
+        }
+        if (snapshot_is_dialog_like(left.second) != snapshot_is_dialog_like(right.second)) {
+            return snapshot_is_dialog_like(left.second);
+        }
+        return left.second.title < right.second.title;
+    });
+
+    std::vector<std::string> direct_child_titles;
+    for (const WindowSnapshot& row : direct_children) {
+        if (!row.title.empty()) {
+            direct_child_titles.push_back(row.title);
+        }
+        if (direct_child_titles.size() >= 8) {
+            break;
+        }
+    }
+
+    WindowSnapshot preferred_descendant;
+    bool preferred_descendant_found = false;
+    std::vector<std::string> descendant_titles;
+    if (!descendant_depth_rows.empty()) {
+        preferred_descendant = descendant_depth_rows.front().second;
+        preferred_descendant_found = preferred_descendant.hwnd > 0;
+        descendant_titles = descendant_chain_titles(rows, candidate, preferred_descendant);
+    }
+
+    const WindowSnapshot& adoption_target =
+        preferred_descendant_found ? preferred_descendant : candidate;
+    WindowSnapshot adopted_window;
+    bool focus_applied = false;
+    if (!focus_snapshot_target(adoption_target, adopted_window, focus_applied)) {
+        return build_error_json("Related window candidate was found but could not be focused.");
+    }
+
+    const std::string chain_signature = child_chain_signature(
+        candidate.hwnd,
+        static_cast<int>(direct_children.size()),
+        descendant_chain_depth,
+        descendant_titles
+    );
+
+    std::ostringstream output;
+    output << "{"
+           << "\"status\":\"success\","
+           << "\"backend\":\"cpp_cython\","
+           << "\"focus_applied\":" << (focus_applied ? "true" : "false") << ","
+           << "\"adoption_source\":\"" << (preferred_descendant_found ? "preferred_descendant" : "candidate") << "\","
+           << "\"candidate\":" << snapshot_to_json(candidate) << ","
+           << "\"adopted_window\":" << snapshot_to_json(adopted_window) << ","
+           << "\"match_score\":" << top_score << ","
+           << "\"direct_child_window_count\":" << direct_children.size() << ","
+           << "\"direct_child_dialog_like_count\":" << direct_child_dialog_like_count << ","
+           << "\"descendant_chain_depth\":" << descendant_chain_depth << ","
+           << "\"descendant_dialog_chain_depth\":" << descendant_dialog_chain_depth << ","
+           << "\"descendant_query_match_count\":" << descendant_query_match_count << ","
+           << "\"child_chain_signature\":\"" << json_escape(chain_signature) << "\","
+           << "\"direct_child_titles\":[";
+    for (std::size_t index = 0; index < direct_child_titles.size(); ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(direct_child_titles[index]) << "\"";
+    }
+    output << "],\"descendant_chain_titles\":[";
+    for (std::size_t index = 0; index < descendant_titles.size(); ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(descendant_titles[index]) << "\"";
+    }
+    output << "],\"preferred_descendant\":";
+    if (preferred_descendant_found) {
+        output << snapshot_to_json(preferred_descendant);
+    } else {
+        output << "null";
+    }
+    output << "}";
     return output.str();
 }
 

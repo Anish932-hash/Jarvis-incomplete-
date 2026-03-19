@@ -1348,6 +1348,78 @@ class WindowManager:
             "window": window,
         }
 
+    def _native_focus_related_window(
+        self,
+        *,
+        query: str = "",
+        hint_query: str = "",
+        descendant_hint_query: str = "",
+        campaign_hint_query: str = "",
+        campaign_preferred_title: str = "",
+        preferred_title: str = "",
+        window_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        limit: int = 80,
+    ) -> Dict[str, Any] | None:
+        if self._native_runtime is None:
+            return None
+        try:
+            payload = self._native_runtime.focus_related_window(
+                query=query,
+                hint_query=hint_query,
+                descendant_hint_query=descendant_hint_query,
+                campaign_hint_query=campaign_hint_query,
+                campaign_preferred_title=campaign_preferred_title,
+                preferred_title=preferred_title,
+                window_title=window_title,
+                hwnd=hwnd,
+                pid=pid,
+                limit=limit,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        backend = str(payload.get("backend", "cpp_cython") or "cpp_cython")
+        candidate = self._compose_window_info(payload.get("candidate", {}), observation_backend=backend)
+        preferred_descendant = self._compose_window_info(
+            payload.get("preferred_descendant", {}),
+            observation_backend=backend,
+        )
+        adopted_window = self._compose_window_info(
+            payload.get("adopted_window", {}),
+            observation_backend=backend,
+        )
+        if not adopted_window:
+            return None
+        return {
+            "status": "success",
+            "backend": backend,
+            "focus_applied": bool(payload.get("focus_applied", False)),
+            "adoption_source": str(payload.get("adoption_source", "") or "").strip(),
+            "window": adopted_window,
+            "candidate": candidate,
+            "preferred_descendant": preferred_descendant,
+            "direct_child_window_count": max(0, int(payload.get("direct_child_window_count", 0) or 0)),
+            "direct_child_dialog_like_count": max(0, int(payload.get("direct_child_dialog_like_count", 0) or 0)),
+            "direct_child_titles": [
+                str(item).strip()
+                for item in payload.get("direct_child_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("direct_child_titles", []), list) else [],
+            "descendant_chain_depth": max(0, int(payload.get("descendant_chain_depth", 0) or 0)),
+            "descendant_dialog_chain_depth": max(0, int(payload.get("descendant_dialog_chain_depth", 0) or 0)),
+            "descendant_query_match_count": max(0, int(payload.get("descendant_query_match_count", 0) or 0)),
+            "descendant_chain_titles": [
+                str(item).strip()
+                for item in payload.get("descendant_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("descendant_chain_titles", []), list) else [],
+            "child_chain_signature": str(payload.get("child_chain_signature", "") or "").strip(),
+            "match_score": float(payload.get("match_score", 0.0) or 0.0),
+        }
+
     def _native_trace_related_window_chain(
         self,
         *,
@@ -1753,6 +1825,38 @@ class WindowManager:
             query=query,
             window_title=window_title,
         )
+        descendant_adoption_available = bool(
+            isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
+            and (
+                int(child_chain_trace.get("preferred_descendant", {}).get("hwnd", 0) or 0) > 0
+                or str(child_chain_trace.get("preferred_descendant", {}).get("title", "") or "").strip()
+            )
+        )
+        descendant_adoption_match_score = 0.0
+        if descendant_adoption_available:
+            preferred_descendant_title = str(
+                child_chain_trace.get("preferred_descendant", {}).get("title", "")
+                if isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
+                else ""
+            ).strip()
+            descendant_adoption_match_score = 0.52
+            if preferred_descendant_title and descendant_hint_query:
+                descendant_adoption_match_score += min(
+                    0.2,
+                    self._text_match_score(preferred_descendant_title, descendant_hint_query) * 0.2,
+                )
+            if preferred_descendant_title and preferred_window_title:
+                descendant_adoption_match_score += min(
+                    0.16,
+                    self._text_match_score(preferred_descendant_title, preferred_window_title) * 0.16,
+                )
+            if preferred_descendant_title and campaign_preferred_window_title:
+                descendant_adoption_match_score += min(
+                    0.12,
+                    self._text_match_score(preferred_descendant_title, campaign_preferred_window_title) * 0.12,
+                )
+            descendant_adoption_match_score += min(0.12, descendant_rerank_pressure * 0.12)
+            descendant_adoption_match_score = min(1.0, descendant_adoption_match_score)
         return {
             "status": "success",
             "backend": backend,
@@ -1796,6 +1900,8 @@ class WindowManager:
             "preferred_descendant": dict(child_chain_trace.get("preferred_descendant", {}))
             if isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
             else {},
+            "descendant_adoption_available": descendant_adoption_available,
+            "descendant_adoption_match_score": round(descendant_adoption_match_score, 4),
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
 
@@ -2429,3 +2535,111 @@ class WindowManager:
             return {"status": "success", "window": self._get_hwnd_info(target_hwnd)}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def focus_related_window(
+        self,
+        *,
+        query: str = "",
+        app_name: str = "",
+        window_title: str = "",
+        title_contains: str = "",
+        hint_query: str = "",
+        descendant_hint_query: str = "",
+        campaign_hint_query: str = "",
+        campaign_preferred_title: str = "",
+        preferred_title: str = "",
+        hwnd: int | None = None,
+        pid: int | None = None,
+        benchmark_guidance: Dict[str, Any] | None = None,
+        limit: int = 80,
+    ) -> Dict[str, Any]:
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        target_context = self._benchmark_native_target_context(
+            benchmark_guidance=guidance_payload,
+            requested_app_name=app_name,
+            query=query,
+            window_title=window_title or title_contains,
+        )
+        resolved_hint_query = str(hint_query or target_context.get("hint_query", "") or "").strip()
+        resolved_descendant_hint_query = str(
+            descendant_hint_query or target_context.get("descendant_hint_query", "") or preferred_title or title_contains or ""
+        ).strip()
+        resolved_campaign_hint_query = str(
+            campaign_hint_query
+            or target_context.get("campaign_hint_query", target_context.get("campaign_descendant_hint_query", ""))
+            or ""
+        ).strip()
+        resolved_campaign_preferred_title = str(
+            campaign_preferred_title or target_context.get("campaign_preferred_window_title", "") or ""
+        ).strip()
+        resolved_preferred_title = str(
+            preferred_title or target_context.get("preferred_window_title", "") or title_contains or ""
+        ).strip()
+        resolved_window_title = str(window_title or title_contains or "").strip()
+
+        native_result = self._native_focus_related_window(
+            query=query,
+            hint_query=resolved_hint_query,
+            descendant_hint_query=resolved_descendant_hint_query,
+            campaign_hint_query=resolved_campaign_hint_query,
+            campaign_preferred_title=resolved_campaign_preferred_title,
+            preferred_title=resolved_preferred_title,
+            window_title=resolved_window_title,
+            hwnd=hwnd,
+            pid=pid,
+            limit=limit,
+        )
+        if native_result is not None:
+            return native_result
+
+        reacquired = self.reacquire_window(
+            app_name=app_name,
+            window_title=resolved_window_title,
+            query=query,
+            hwnd=hwnd,
+            pid=pid,
+            benchmark_guidance=benchmark_guidance,
+            include_candidates=False,
+            limit=limit,
+        )
+        if not isinstance(reacquired, dict) or str(reacquired.get("status", "") or "").strip().lower() != "success":
+            return reacquired if isinstance(reacquired, dict) else {"status": "error", "message": "related window focus failed"}
+        candidate = dict(reacquired.get("candidate", {})) if isinstance(reacquired.get("candidate", {}), dict) else {}
+        target_hwnd = int(candidate.get("hwnd", 0) or 0)
+        target_title = str(candidate.get("title", "") or title_contains or "").strip()
+        focus_result = self.focus_window(
+            title_contains=target_title if target_hwnd <= 0 else "",
+            hwnd=target_hwnd if target_hwnd > 0 else None,
+        )
+        if not isinstance(focus_result, dict):
+            return {"status": "error", "message": "related window focus failed"}
+        if str(focus_result.get("status", "") or "").strip().lower() != "success":
+            return focus_result
+        return {
+            "status": "success",
+            "backend": "pywin32",
+            "focus_applied": True,
+            "adoption_source": "fallback_reacquired_candidate",
+            "window": dict(focus_result.get("window", {})) if isinstance(focus_result.get("window", {}), dict) else {},
+            "candidate": candidate,
+            "preferred_descendant": dict(reacquired.get("preferred_descendant", {}))
+            if isinstance(reacquired.get("preferred_descendant", {}), dict)
+            else {},
+            "direct_child_window_count": int(reacquired.get("direct_child_window_count", 0) or 0),
+            "direct_child_dialog_like_count": int(reacquired.get("direct_child_dialog_like_count", 0) or 0),
+            "direct_child_titles": [
+                str(item).strip()
+                for item in reacquired.get("direct_child_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(reacquired.get("direct_child_titles", []), list) else [],
+            "descendant_chain_depth": int(reacquired.get("descendant_chain_depth", 0) or 0),
+            "descendant_dialog_chain_depth": int(reacquired.get("descendant_dialog_chain_depth", 0) or 0),
+            "descendant_query_match_count": int(reacquired.get("descendant_query_match_count", 0) or 0),
+            "descendant_chain_titles": [
+                str(item).strip()
+                for item in reacquired.get("descendant_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(reacquired.get("descendant_chain_titles", []), list) else [],
+            "child_chain_signature": str(reacquired.get("child_chain_signature", "") or "").strip(),
+            "match_score": float(candidate.get("match_score", 0.0) or 0.0),
+        }

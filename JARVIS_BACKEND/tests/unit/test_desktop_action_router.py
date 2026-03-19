@@ -443,9 +443,131 @@ def test_desktop_action_router_surface_exploration_adds_preferred_descendant_ado
     assert payload["branch_actions"]
     assert payload["branch_actions"][0]["action"] == "focus"
     assert payload["branch_actions"][0]["candidate_id"] == "5002"
-    assert payload["branch_actions"][0]["action_payload"]["window_title"] == "Pair device"
-    assert payload["branch_actions"][0]["action_payload"]["hwnd"] == 5002
+    assert payload["branch_actions"][0]["action_payload"]["action"] == "focus_related_window"
+    assert payload["branch_actions"][0]["action_payload"]["window_title"] == "Bluetooth & devices"
+    assert payload["branch_actions"][0]["action_payload"]["title"] == "Pair device"
+    assert payload["branch_actions"][0]["action_payload"]["preferred_title"] == "Pair device"
+    assert payload["branch_actions"][0]["action_payload"]["hwnd"] == 5001
     assert "deeper child surface" in payload["branch_actions"][0]["reason"].lower()
+
+
+def test_desktop_action_router_branch_scoring_prefers_native_descendant_adoption_focus() -> None:
+    router = _build_router({})
+    branch_context = {
+        "active": True,
+        "current_window_title": "Bluetooth & devices",
+        "current_window_app_name": "settings",
+        "current_surface_path": ["Devices", "Bluetooth"],
+        "current_reacquired_title": "Bluetooth & devices",
+        "current_reacquired_app_name": "settings",
+        "current_reacquired_hwnd": 5001,
+        "native_same_process_window_count": 2,
+        "native_related_window_count": 2,
+        "native_owner_link_count": 2,
+        "native_owner_chain_visible": True,
+        "native_same_root_owner_window_count": 2,
+        "native_same_root_owner_dialog_like_count": 1,
+        "native_direct_child_window_count": 1,
+        "native_direct_child_dialog_like_count": 1,
+        "native_active_owner_chain_depth": 1,
+        "native_max_owner_chain_depth": 2,
+        "native_descendant_chain_depth": 2,
+        "native_descendant_dialog_chain_depth": 1,
+        "native_descendant_query_match_count": 1,
+        "native_descendant_adoption_available": True,
+        "native_descendant_adoption_match_score": 0.84,
+        "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
+        "preferred_descendant_title": "Pair device",
+        "preferred_descendant_hwnd": 5002,
+        "native_child_dialog_like_visible": True,
+        "native_modal_chain_signature": "5000|2|1|2",
+        "native_child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+        "native_branch_family_signature": "5000|2|Pair device|Confirm pairing",
+        "latest_branch_occurrences": 1,
+        "latest_branch_family_signature": "5000|2|Pair device|Confirm pairing",
+        "branch_family_repeat_count": 1,
+        "branch_family_switch_count": 0,
+        "branch_family_continuity": True,
+        "branch_cascade_count": 1,
+        "branch_cascade_kind_count": 1,
+        "branch_cascade_signature": "child_window_chain",
+        "benchmark_dialog_pressure": 0.2,
+        "benchmark_descendant_focus_pressure": 0.8,
+        "benchmark_navigation_pressure": 0.1,
+        "benchmark_reacquire_pressure": 0.7,
+        "benchmark_loop_guard_pressure": 0.1,
+        "benchmark_native_focus_pressure": 0.7,
+        "benchmark_target_app_name": "settings",
+        "benchmark_target_app_matched": True,
+        "benchmark_target_app_match_score": 1.0,
+        "benchmark_target_query_hints": ["pair device"],
+        "benchmark_target_descendant_title_hints": ["Pair device", "Confirm pairing"],
+        "benchmark_target_descendant_hint_query": "pair device",
+        "benchmark_target_preferred_window_title": "Pair device",
+        "benchmark_target_hint_query": "pair device",
+        "benchmark_target_priority": 0.9,
+        "benchmark_target_max_horizon_steps": 6,
+        "benchmark_target_replay_pressure": 1.2,
+        "benchmark_target_replay_session_count": 1,
+        "benchmark_target_replay_pending_count": 1,
+        "benchmark_target_replay_failed_count": 1,
+        "benchmark_target_replay_completed_count": 0,
+        "benchmark_target_session_cycle_count": 1,
+        "benchmark_target_regression_cycle_count": 1,
+        "benchmark_target_long_horizon_pending_count": 1,
+        "benchmark_target_dialog_pressure": 0.2,
+        "benchmark_target_descendant_focus_pressure": 0.9,
+        "benchmark_target_navigation_pressure": 0.1,
+        "benchmark_target_reacquire_pressure": 0.8,
+        "benchmark_target_loop_guard_pressure": 0.1,
+        "benchmark_target_native_focus_pressure": 0.8,
+        "benchmark_target_campaign_count": 1,
+        "benchmark_target_campaign_sweep_count": 1,
+        "benchmark_target_campaign_pending_session_count": 1,
+        "benchmark_target_campaign_attention_session_count": 1,
+        "benchmark_target_campaign_pending_app_target_count": 1,
+        "benchmark_target_campaign_regression_cycle_count": 1,
+        "benchmark_target_campaign_long_horizon_pending_count": 1,
+        "benchmark_target_campaign_pressure": 1.1,
+        "benchmark_target_campaign_hint_query": "pair device",
+        "benchmark_target_campaign_descendant_title_hints": ["Pair device"],
+        "benchmark_target_campaign_descendant_hint_query": "pair device",
+        "benchmark_target_campaign_preferred_window_title": "Pair device",
+        "benchmark_target_campaign_latest_sweep_status": "failed",
+        "benchmark_target_campaign_latest_sweep_regression_status": "regression",
+        "recent_selection_keys": set(),
+    }
+    focus_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window",
+        "candidate_id": "5002",
+        "label": "Adopt child surface: Pair device",
+        "action_payload": {
+            "action": "focus_related_window",
+            "window_title": "Bluetooth & devices",
+            "title": "Pair device",
+            "preferred_title": "Pair device",
+            "hwnd": 5001,
+        },
+    }
+    click_row = {
+        "kind": "branch_action",
+        "selected_action": "click",
+        "candidate_id": "list_pair_device",
+        "label": "Open Pair device row",
+        "action_payload": {"action": "click", "window_title": "Bluetooth & devices"},
+    }
+
+    focus_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=focus_row,
+        branch_context=branch_context,
+    )
+    click_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=click_row,
+        branch_context=branch_context,
+    )
+
+    assert focus_score > click_score
 
 
 def test_desktop_action_router_branch_scoring_uses_benchmark_dialog_pressure() -> None:
@@ -811,10 +933,12 @@ def test_desktop_action_router_select_surface_exploration_target_prefers_preferr
     )
 
     assert selected["status"] == "success"
-    assert selected["selected_action"] == "focus"
+    assert selected["selected_action"] == "focus_related_window"
     assert selected["candidate_id"] == "5002"
-    assert selected["action_payload"]["window_title"] == "Pair device"
-    assert selected["action_payload"]["hwnd"] == 5002
+    assert selected["action_payload"]["window_title"] == "Bluetooth & devices"
+    assert selected["action_payload"]["title"] == "Pair device"
+    assert selected["action_payload"]["preferred_title"] == "Pair device"
+    assert selected["action_payload"]["hwnd"] == 5001
     assert selected["confidence"] > 0.8
 
 
