@@ -31,6 +31,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
         enabled: bool = False,
         interval_s: float = 180.0,
         max_campaigns: int = 2,
+        max_sweeps_per_campaign: int = 2,
         max_sessions: int = 3,
         max_replays_per_session: int = 2,
         history_limit: int = 8,
@@ -48,6 +49,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
             enabled=enabled,
             interval_s=interval_s,
             max_campaigns=max_campaigns,
+            max_sweeps_per_campaign=max_sweeps_per_campaign,
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
@@ -114,6 +116,35 @@ class DesktopBenchmarkLabCampaignSupervisor:
             ]
             limited = items[-normalized_limit:]
             latest = dict(limited[-1]) if limited else {}
+            status_counts: Dict[str, int] = {}
+            source_counts: Dict[str, int] = {}
+            trend_direction_counts: Dict[str, int] = {}
+            cycle_stop_reason_counts: Dict[str, int] = {}
+            executed_campaign_total = 0
+            executed_sweep_total = 0
+            stable_campaign_total = 0
+            for item in items:
+                self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
+                self._increment_count(source_counts, str(item.get("source", "") or "unknown"))
+                executed_campaign_total += self._coerce_int(
+                    item.get("executed_campaign_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                executed_sweep_total += self._coerce_int(
+                    item.get("executed_sweep_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                stable_campaign_total += self._coerce_int(
+                    item.get("stable_campaign_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                for key, value in dict(item.get("trend_direction_counts", {})).items() if isinstance(item.get("trend_direction_counts", {}), dict) else []:
+                    trend_direction_counts[str(key or "").strip().lower() or "unknown"] = (
+                        int(trend_direction_counts.get(str(key or "").strip().lower() or "unknown", 0))
+                        + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    )
+                for key, value in dict(item.get("cycle_stop_reason_counts", {})).items() if isinstance(item.get("cycle_stop_reason_counts", {}), dict) else []:
+                    cycle_stop_reason_counts[str(key or "").strip().lower() or "unknown"] = (
+                        int(cycle_stop_reason_counts.get(str(key or "").strip().lower() or "unknown", 0))
+                        + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    )
             return {
                 "status": "success",
                 "count": len(limited),
@@ -125,6 +156,15 @@ class DesktopBenchmarkLabCampaignSupervisor:
                 },
                 "items": limited,
                 "latest_run": latest,
+                "summary": {
+                    "status_counts": self._sorted_count_map(status_counts),
+                    "source_counts": self._sorted_count_map(source_counts),
+                    "executed_campaign_total": executed_campaign_total,
+                    "executed_sweep_total": executed_sweep_total,
+                    "stable_campaign_total": stable_campaign_total,
+                    "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+                    "cycle_stop_reason_counts": self._sorted_count_map(cycle_stop_reason_counts),
+                },
             }
 
     def reset_history(
@@ -175,6 +215,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
         enabled: Optional[bool] = None,
         interval_s: Optional[float] = None,
         max_campaigns: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
@@ -190,6 +231,10 @@ class DesktopBenchmarkLabCampaignSupervisor:
                 self._config["interval_s"] = self._coerce_float(interval_s, minimum=5.0, maximum=3600.0, default=180.0)
             if max_campaigns is not None:
                 self._config["max_campaigns"] = self._coerce_int(max_campaigns, minimum=1, maximum=32, default=2)
+            if max_sweeps_per_campaign is not None:
+                self._config["max_sweeps_per_campaign"] = self._coerce_int(
+                    max_sweeps_per_campaign, minimum=1, maximum=8, default=2
+                )
             if max_sessions is not None:
                 self._config["max_sessions"] = self._coerce_int(max_sessions, minimum=1, maximum=8, default=3)
             if max_replays_per_session is not None:
@@ -216,6 +261,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
         *,
         source: str = "manual",
         max_campaigns: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
@@ -225,6 +271,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
     ) -> Dict[str, Any]:
         overrides = {
             "max_campaigns": max_campaigns,
+            "max_sweeps_per_campaign": max_sweeps_per_campaign,
             "max_sessions": max_sessions,
             "max_replays_per_session": max_replays_per_session,
             "history_limit": history_limit,
@@ -283,6 +330,9 @@ class DesktopBenchmarkLabCampaignSupervisor:
         try:
             result = callback(
                 max_campaigns=self._coerce_int(effective.get("max_campaigns", 2), minimum=1, maximum=32, default=2),
+                max_sweeps_per_campaign=self._coerce_int(
+                    effective.get("max_sweeps_per_campaign", 2), minimum=1, maximum=8, default=2
+                ),
                 max_sessions=self._coerce_int(effective.get("max_sessions", 3), minimum=1, maximum=8, default=3),
                 max_replays_per_session=self._coerce_int(
                     effective.get("max_replays_per_session", 2), minimum=1, maximum=8, default=2
@@ -356,6 +406,9 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "inflight": bool(self._runtime.get("inflight", False)),
             "interval_s": interval_s,
             "max_campaigns": self._coerce_int(self._config.get("max_campaigns", 2), minimum=1, maximum=32, default=2),
+            "max_sweeps_per_campaign": self._coerce_int(
+                self._config.get("max_sweeps_per_campaign", 2), minimum=1, maximum=8, default=2
+            ),
             "max_sessions": self._coerce_int(self._config.get("max_sessions", 3), minimum=1, maximum=8, default=3),
             "max_replays_per_session": self._coerce_int(
                 self._config.get("max_replays_per_session", 2), minimum=1, maximum=8, default=2
@@ -424,6 +477,12 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "executed_campaign_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
                 payload.get("executed_campaign_count", 0), minimum=0, maximum=100_000, default=0
             ),
+            "executed_sweep_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
+                payload.get("executed_sweep_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "stable_campaign_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
+                payload.get("stable_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
             "regression_campaign_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
                 payload.get("regression_campaign_count", 0), minimum=0, maximum=100_000, default=0
             ),
@@ -446,6 +505,12 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "auto_created_campaign_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
                 payload.get("auto_created_campaign_count", 0), minimum=0, maximum=100_000, default=0
             ),
+            "cycle_stop_reason_counts": copy.deepcopy(payload.get("cycle_stop_reason_counts", {}))
+            if isinstance(payload.get("cycle_stop_reason_counts", {}), dict)
+            else {},
+            "trend_direction_counts": copy.deepcopy(payload.get("trend_direction_counts", {}))
+            if isinstance(payload.get("trend_direction_counts", {}), dict)
+            else {},
         }
 
     @staticmethod
@@ -454,6 +519,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
         enabled: bool,
         interval_s: float,
         max_campaigns: int,
+        max_sweeps_per_campaign: int,
         max_sessions: int,
         max_replays_per_session: int,
         history_limit: int,
@@ -468,6 +534,9 @@ class DesktopBenchmarkLabCampaignSupervisor:
             ),
             "max_campaigns": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
                 max_campaigns, minimum=1, maximum=32, default=2
+            ),
+            "max_sweeps_per_campaign": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
+                max_sweeps_per_campaign, minimum=1, maximum=8, default=2
             ),
             "max_sessions": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
                 max_sessions, minimum=1, maximum=8, default=3
@@ -524,6 +593,9 @@ class DesktopBenchmarkLabCampaignSupervisor:
                 "campaign_status": str(effective.get("campaign_status", "") or "").strip(),
                 "pack": str(effective.get("pack", "") or "").strip(),
                 "app_name": str(effective.get("app_name", "") or "").strip(),
+                "max_sweeps_per_campaign": self._coerce_int(
+                    effective.get("max_sweeps_per_campaign", 2), minimum=1, maximum=8, default=2
+                ),
             },
             **summary,
         }
@@ -540,6 +612,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "enabled",
             "interval_s",
             "max_campaigns",
+            "max_sweeps_per_campaign",
             "max_sessions",
             "max_replays_per_session",
             "history_limit",
@@ -558,6 +631,16 @@ class DesktopBenchmarkLabCampaignSupervisor:
         except Exception:  # noqa: BLE001
             return default
         return max(minimum, min(maximum, result))
+
+    @staticmethod
+    def _increment_count(counts: Dict[str, int], key: str) -> None:
+        clean = str(key or "").strip().lower() or "unknown"
+        counts[clean] = int(counts.get(clean, 0)) + 1
+
+    @staticmethod
+    def _sorted_count_map(source: Dict[str, int]) -> Dict[str, int]:
+        items = sorted(source.items(), key=lambda item: (-int(item[1]), item[0]))
+        return {key: int(value) for key, value in items}
 
     @staticmethod
     def _coerce_float(value: Any, *, minimum: float, maximum: float, default: float) -> float:

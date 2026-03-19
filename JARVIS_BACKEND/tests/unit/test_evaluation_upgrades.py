@@ -756,6 +756,73 @@ def test_evaluation_runner_creates_lab_campaigns_and_sweeps(monkeypatch, tmp_pat
     assert str(settings_like_row["campaign_preferred_window_title"]).strip()
 
 
+def test_evaluation_runner_campaign_cycle_runs_multiple_sweeps_until_stable(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    sweep_calls: list[str] = []
+    states = [
+        {
+            "campaign_id": "camp-settings",
+            "label": "Settings replay campaign",
+            "pending_session_count": 2,
+            "attention_session_count": 1,
+            "pending_app_target_count": 1,
+            "long_horizon_pending_count": 2,
+            "latest_sweep_regression_status": "stable",
+            "campaign_priority": "elevated",
+            "trend_summary": {"direction": "improving"},
+            "history_direction": "improving",
+        },
+        {
+            "campaign_id": "camp-settings",
+            "label": "Settings replay campaign",
+            "pending_session_count": 0,
+            "attention_session_count": 0,
+            "pending_app_target_count": 0,
+            "long_horizon_pending_count": 1,
+            "latest_sweep_regression_status": "stable",
+            "campaign_priority": "stable",
+            "trend_summary": {"direction": "improving"},
+            "history_direction": "improving",
+        },
+    ]
+
+    def _run_lab_campaign_sweep(**kwargs):  # noqa: ANN001
+        sweep_calls.append(str(kwargs.get("campaign_id", "") or ""))
+        current = dict(states[min(len(sweep_calls) - 1, len(states) - 1)])
+        current["sweep_count"] = len(sweep_calls)
+        return {
+            "status": "success",
+            "campaign": current,
+            "sweep": {
+                "executed_session_count": 1,
+                "weighted_score": 0.81 + (0.05 * (len(sweep_calls) - 1)),
+                "weighted_pass_rate": 0.78 + (0.1 * (len(sweep_calls) - 1)),
+            },
+            "created_session_count": 0,
+            "lab": {"latest_summary": {"weighted_score": 0.86, "weighted_pass_rate": 0.88}},
+            "native_targets": {"status": "success"},
+            "guidance": {"status": "success"},
+        }
+
+    monkeypatch.setattr(runner, "run_lab_campaign_sweep", _run_lab_campaign_sweep)
+
+    payload = runner.run_lab_campaign_cycle(
+        campaign_id="camp-settings",
+        max_sweeps=3,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        stop_on_stable=True,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["cycle"]["executed_sweep_count"] == 2
+    assert payload["cycle"]["stop_reason"] == "stable"
+    assert payload["cycle"]["stable"] is True
+    assert len(payload["results"]) == 2
+    assert sweep_calls == ["camp-settings", "camp-settings"]
+
+
 def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=4)
 
@@ -842,7 +909,7 @@ def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -
 
 def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressions(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
-    sweep_calls: list[str] = []
+    cycle_calls: list[str] = []
 
     campaigns_payload = {
         "status": "success",
@@ -892,9 +959,9 @@ def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressio
 
     monkeypatch.setattr(runner, "lab_campaigns", lambda **_: campaigns_payload)
 
-    def _run_lab_campaign_sweep(**kwargs):  # noqa: ANN001
+    def _run_lab_campaign_cycle(**kwargs):  # noqa: ANN001
         campaign_id = str(kwargs.get("campaign_id", "") or "")
-        sweep_calls.append(campaign_id)
+        cycle_calls.append(campaign_id)
         if campaign_id == "camp-settings":
             return {
                 "status": "success",
@@ -906,9 +973,10 @@ def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressio
                     "pending_app_target_count": 1,
                     "long_horizon_pending_count": 2,
                     "latest_sweep_regression_status": "stable",
+                    "campaign_priority": "elevated",
+                    "trend_summary": {"direction": "improving"},
                 },
-                "sweep": {"executed_session_count": 2, "regression_status": "stable"},
-                "created_session_count": 0,
+                "cycle": {"executed_sweep_count": 2, "executed_session_count": 2, "created_session_count": 0, "stop_reason": "stable", "stable": True},
             }
         return {
             "status": "success",
@@ -920,17 +988,19 @@ def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressio
                 "pending_app_target_count": 1,
                 "long_horizon_pending_count": 1,
                 "latest_sweep_regression_status": "regression",
+                "campaign_priority": "critical",
+                "trend_summary": {"direction": "regressing"},
             },
-            "sweep": {"executed_session_count": 1, "regression_status": "regression"},
-            "created_session_count": 1,
+            "cycle": {"executed_sweep_count": 2, "executed_session_count": 1, "created_session_count": 1, "stop_reason": "max_sweeps_reached", "stable": False},
         }
 
-    monkeypatch.setattr(runner, "run_lab_campaign_sweep", _run_lab_campaign_sweep)
+    monkeypatch.setattr(runner, "run_lab_campaign_cycle", _run_lab_campaign_cycle)
     monkeypatch.setattr(runner, "native_control_targets", lambda **_: {"status": "success", "target_apps": []})
     monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["campaign_watchdog"]})
 
     payload = runner.run_lab_campaign_watchdog(
         max_campaigns=2,
+        max_sweeps_per_campaign=2,
         max_sessions=2,
         max_replays_per_session=2,
         history_limit=6,
@@ -940,8 +1010,14 @@ def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressio
     assert payload["status"] == "success"
     assert payload["targeted_campaign_count"] == 2
     assert payload["executed_campaign_count"] == 2
+    assert payload["executed_sweep_count"] == 4
+    assert payload["stable_campaign_count"] == 1
     assert payload["regression_campaign_count"] == 1
-    assert sweep_calls == ["camp-settings", "camp-installer"]
+    assert payload["cycle_stop_reason_counts"]["stable"] == 1
+    assert payload["cycle_stop_reason_counts"]["max_sweeps_reached"] == 1
+    assert payload["trend_direction_counts"]["improving"] == 1
+    assert payload["trend_direction_counts"]["regressing"] == 1
+    assert cycle_calls == ["camp-settings", "camp-installer"]
     assert payload["results"][0]["campaign_id"] == "camp-settings"
     assert payload["results"][1]["campaign_id"] == "camp-installer"
 
@@ -980,7 +1056,7 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
     runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
     campaign_rows: list[dict] = []
     create_calls: list[dict] = []
-    sweep_calls: list[str] = []
+    cycle_calls: list[str] = []
 
     def _lab_campaigns(**kwargs):  # noqa: ANN001
         normalized_status = str(kwargs.get("status", "") or "").strip().lower()
@@ -1013,9 +1089,9 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
         campaign_rows.append(campaign)
         return {"status": "success", "campaign": campaign, "created_session_count": 1}
 
-    def _run_lab_campaign_sweep(**kwargs):  # noqa: ANN001
+    def _run_lab_campaign_cycle(**kwargs):  # noqa: ANN001
         campaign_id = str(kwargs.get("campaign_id", "") or "").strip()
-        sweep_calls.append(campaign_id)
+        cycle_calls.append(campaign_id)
         updated = next(
             dict(item)
             for item in campaign_rows
@@ -1033,13 +1109,12 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
         return {
             "status": "success",
             "campaign": updated,
-            "sweep": {"executed_session_count": 1, "regression_status": "stable"},
-            "created_session_count": 0,
+            "cycle": {"executed_sweep_count": 1, "executed_session_count": 1, "created_session_count": 0, "stop_reason": "stable", "stable": True},
         }
 
     monkeypatch.setattr(runner, "lab_campaigns", _lab_campaigns)
     monkeypatch.setattr(runner, "create_lab_campaign", _create_lab_campaign)
-    monkeypatch.setattr(runner, "run_lab_campaign_sweep", _run_lab_campaign_sweep)
+    monkeypatch.setattr(runner, "run_lab_campaign_cycle", _run_lab_campaign_cycle)
     monkeypatch.setattr(
         runner,
         "native_control_targets",
@@ -1070,7 +1145,9 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
     assert payload["status"] == "success"
     assert payload["auto_created_campaign_count"] == 1
     assert payload["executed_campaign_count"] == 1
+    assert payload["executed_sweep_count"] == 1
+    assert payload["stable_campaign_count"] == 1
     assert payload["auto_created_app_names"] == ["settings"]
     assert "auto-created 1 replay campaign(s)" in str(payload.get("message", ""))
     assert create_calls and create_calls[0]["app"] == "settings"
-    assert sweep_calls == ["camp-settings"]
+    assert cycle_calls == ["camp-settings"]

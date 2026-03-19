@@ -507,6 +507,23 @@ class EvaluationRunner:
                         }
                     ),
                 ),
+                "weighted_score": round(
+                    float(dict(lab_payload.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0)
+                    if isinstance(lab_payload.get("latest_summary", {}), dict)
+                    else 0.0,
+                    6,
+                ),
+                "weighted_pass_rate": round(
+                    float(dict(lab_payload.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0)
+                    if isinstance(lab_payload.get("latest_summary", {}), dict)
+                    else 0.0,
+                    6,
+                ),
+                "history_direction": str(
+                    dict(lab_payload.get("history_trend", {})).get("direction", "")
+                    if isinstance(lab_payload.get("history_trend", {}), dict)
+                    else ""
+                ).strip().lower(),
                 "query": {
                     **filters,
                     "history_limit": normalized_history_limit,
@@ -533,10 +550,129 @@ class EvaluationRunner:
             "guidance": guidance_payload,
         }
 
+    def run_lab_campaign_cycle(
+        self,
+        *,
+        campaign_id: str,
+        max_sweeps: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, object]:
+        normalized_max_sweeps = max(1, min(int(max_sweeps or 2), 8))
+        normalized_max_sessions = max(1, min(int(max_sessions or 3), 8))
+        normalized_max_replays = max(1, min(int(max_replays_per_session or 2), 8))
+        normalized_history_limit = max(1, min(int(history_limit or 8), 64))
+        cycle_results: List[Dict[str, object]] = []
+        stop_reason = "max_sweeps_reached"
+        final_payload: Dict[str, object] = {}
+        previous_signature: tuple[int, int, int, int, str] | None = None
+
+        for sweep_index in range(normalized_max_sweeps):
+            sweep_payload = self.run_lab_campaign_sweep(
+                campaign_id=campaign_id,
+                max_sessions=normalized_max_sessions,
+                max_replays_per_session=normalized_max_replays,
+                history_limit=normalized_history_limit,
+            )
+            final_payload = dict(sweep_payload)
+            campaign_row = (
+                dict(sweep_payload.get("campaign", {}))
+                if isinstance(sweep_payload.get("campaign", {}), dict)
+                else {}
+            )
+            sweep_row = dict(sweep_payload.get("sweep", {})) if isinstance(sweep_payload.get("sweep", {}), dict) else {}
+            trend_summary = (
+                dict(campaign_row.get("trend_summary", {}))
+                if isinstance(campaign_row.get("trend_summary", {}), dict)
+                else {}
+            )
+            latest_regression = str(
+                campaign_row.get("latest_sweep_regression_status", campaign_row.get("latest_sweep_status", ""))
+                or ""
+            ).strip().lower()
+            cycle_results.append(
+                {
+                    "index": sweep_index + 1,
+                    "status": str(sweep_payload.get("status", campaign_row.get("status", "success")) or "success").strip() or "success",
+                    "campaign_id": str(campaign_row.get("campaign_id", campaign_id) or campaign_id).strip(),
+                    "label": str(campaign_row.get("label", "") or "").strip(),
+                    "pending_session_count": int(campaign_row.get("pending_session_count", 0) or 0),
+                    "attention_session_count": int(campaign_row.get("attention_session_count", 0) or 0),
+                    "pending_app_target_count": int(campaign_row.get("pending_app_target_count", 0) or 0),
+                    "long_horizon_pending_count": int(campaign_row.get("long_horizon_pending_count", 0) or 0),
+                    "latest_sweep_status": latest_regression,
+                    "weighted_score": round(float(sweep_row.get("weighted_score", campaign_row.get("latest_sweep_score", 0.0)) or 0.0), 6),
+                    "weighted_pass_rate": round(float(sweep_row.get("weighted_pass_rate", campaign_row.get("latest_sweep_pass_rate", 0.0)) or 0.0), 6),
+                    "trend_direction": str(trend_summary.get("direction", campaign_row.get("history_direction", "")) or "").strip().lower(),
+                    "campaign_priority": str(campaign_row.get("campaign_priority", "") or "").strip().lower(),
+                    "created_session_count": int(sweep_payload.get("created_session_count", 0) or 0),
+                    "executed_session_count": int(sweep_row.get("executed_session_count", 0) or 0),
+                }
+            )
+            if str(sweep_payload.get("status", "") or "").strip().lower() == "error":
+                stop_reason = "error"
+                break
+            signature = (
+                int(campaign_row.get("pending_session_count", 0) or 0),
+                int(campaign_row.get("attention_session_count", 0) or 0),
+                int(campaign_row.get("pending_app_target_count", 0) or 0),
+                int(campaign_row.get("long_horizon_pending_count", 0) or 0),
+                latest_regression,
+            )
+            if (
+                stop_on_stable
+                and signature[0] <= 0
+                and signature[1] <= 0
+                and signature[2] <= 0
+                and latest_regression not in {"regression", "failed", "error"}
+            ):
+                stop_reason = "stable"
+                break
+            if previous_signature is not None and signature == previous_signature:
+                stop_reason = "no_additional_progress"
+                break
+            previous_signature = signature
+
+        final_campaign = (
+            dict(final_payload.get("campaign", {}))
+            if isinstance(final_payload.get("campaign", {}), dict)
+            else {}
+        )
+        cycle_summary = {
+            "cycle_count": len(cycle_results),
+            "max_sweeps": normalized_max_sweeps,
+            "stop_reason": stop_reason,
+            "stable": stop_reason == "stable",
+            "executed_sweep_count": len(cycle_results),
+            "executed_session_count": sum(int(item.get("executed_session_count", 0) or 0) for item in cycle_results),
+            "created_session_count": sum(int(item.get("created_session_count", 0) or 0) for item in cycle_results),
+            "trend_direction": str(
+                dict(final_campaign.get("trend_summary", {})).get("direction", final_campaign.get("history_direction", ""))
+                if isinstance(final_campaign.get("trend_summary", {}), dict)
+                else final_campaign.get("history_direction", "")
+            ).strip().lower(),
+            "campaign_priority": str(final_campaign.get("campaign_priority", "") or "").strip().lower(),
+        }
+        return {
+            "status": str(final_payload.get("status", "success") or "success"),
+            "message": f"campaign cycle executed {len(cycle_results)} sweep(s) | stop:{stop_reason}",
+            "campaign": final_campaign,
+            "cycle": cycle_summary,
+            "results": cycle_results,
+            "lab": dict(final_payload.get("lab", {})) if isinstance(final_payload.get("lab", {}), dict) else {},
+            "native_targets": dict(final_payload.get("native_targets", {}))
+            if isinstance(final_payload.get("native_targets", {}), dict)
+            else {},
+            "guidance": dict(final_payload.get("guidance", {})) if isinstance(final_payload.get("guidance", {}), dict) else {},
+        }
+
     def run_lab_campaign_watchdog(
         self,
         *,
         max_campaigns: int = 2,
+        max_sweeps_per_campaign: int = 2,
         max_sessions: int = 3,
         max_replays_per_session: int = 2,
         history_limit: int = 8,
@@ -549,6 +685,7 @@ class EvaluationRunner:
         if memory is None:
             return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
         normalized_max_campaigns = max(1, min(int(max_campaigns or 2), 32))
+        normalized_max_sweeps = max(1, min(int(max_sweeps_per_campaign or 2), 8))
         normalized_max_sessions = max(1, min(int(max_sessions or 3), 8))
         normalized_max_replays = max(1, min(int(max_replays_per_session or 2), 8))
         normalized_history_limit = max(1, min(int(history_limit or 8), 64))
@@ -624,6 +761,8 @@ class EvaluationRunner:
                 },
                 "targeted_campaign_count": 0,
                 "executed_campaign_count": 0,
+                "executed_sweep_count": 0,
+                "stable_campaign_count": 0,
                 "regression_campaign_count": 0,
                 "pending_session_count": 0,
                 "attention_session_count": 0,
@@ -631,6 +770,8 @@ class EvaluationRunner:
                 "long_horizon_pending_count": 0,
                 "error_count": 0,
                 "latest_campaign_label": "",
+                "cycle_stop_reason_counts": {},
+                "trend_direction_counts": {},
                 "auto_created_campaign_count": len(auto_created_campaigns),
                 "auto_created_campaigns": auto_created_campaigns,
                 "auto_created_app_names": self._unique_strings(
@@ -654,46 +795,62 @@ class EvaluationRunner:
         selected_campaigns = ranked_campaigns[:normalized_max_campaigns]
         results: List[Dict[str, object]] = []
         error_count = 0
+        executed_sweep_count = 0
+        stable_campaign_count = 0
         regression_campaign_count = 0
         pending_session_count = 0
         attention_session_count = 0
         pending_app_target_count = 0
         long_horizon_pending_count = 0
         latest_campaign_label = ""
+        cycle_stop_reason_counts: Dict[str, int] = {}
+        trend_direction_counts: Dict[str, int] = {}
 
         for campaign in selected_campaigns:
             campaign_id = str(campaign.get("campaign_id", "") or "").strip()
             if not campaign_id:
                 continue
-            sweep_payload = self.run_lab_campaign_sweep(
+            cycle_payload = self.run_lab_campaign_cycle(
                 campaign_id=campaign_id,
+                max_sweeps=normalized_max_sweeps,
                 max_sessions=normalized_max_sessions,
                 max_replays_per_session=normalized_max_replays,
                 history_limit=normalized_history_limit,
             )
             campaign_row = (
-                dict(sweep_payload.get("campaign", {}))
-                if isinstance(sweep_payload.get("campaign", {}), dict)
+                dict(cycle_payload.get("campaign", {}))
+                if isinstance(cycle_payload.get("campaign", {}), dict)
                 else dict(campaign)
             )
-            sweep_row = dict(sweep_payload.get("sweep", {})) if isinstance(sweep_payload.get("sweep", {}), dict) else {}
+            cycle_row = dict(cycle_payload.get("cycle", {})) if isinstance(cycle_payload.get("cycle", {}), dict) else {}
             latest_campaign_label = latest_campaign_label or str(campaign_row.get("label", campaign.get("label", "")) or "").strip()
-            if str(sweep_payload.get("status", "") or "").strip().lower() == "error":
+            if str(cycle_payload.get("status", "") or "").strip().lower() == "error":
                 error_count += 1
-            if str(sweep_row.get("regression_status", campaign_row.get("latest_sweep_regression_status", "")) or "").strip().lower() in {
+            if str(campaign_row.get("latest_sweep_regression_status", campaign_row.get("latest_sweep_status", "")) or "").strip().lower() in {
                 "regression",
                 "failed",
             }:
                 regression_campaign_count += 1
+            executed_sweep_count += int(cycle_row.get("executed_sweep_count", 0) or 0)
+            if bool(cycle_row.get("stable", False)):
+                stable_campaign_count += 1
             pending_session_count += int(campaign_row.get("pending_session_count", 0) or 0)
             attention_session_count += int(campaign_row.get("attention_session_count", 0) or 0)
             pending_app_target_count += int(campaign_row.get("pending_app_target_count", 0) or 0)
             long_horizon_pending_count += int(campaign_row.get("long_horizon_pending_count", 0) or 0)
+            stop_reason = str(cycle_row.get("stop_reason", "") or "unknown").strip().lower() or "unknown"
+            cycle_stop_reason_counts[stop_reason] = int(cycle_stop_reason_counts.get(stop_reason, 0)) + 1
+            trend_direction = str(
+                dict(campaign_row.get("trend_summary", {})).get("direction", campaign_row.get("history_direction", ""))
+                if isinstance(campaign_row.get("trend_summary", {}), dict)
+                else campaign_row.get("history_direction", "")
+            ).strip().lower() or "unknown"
+            trend_direction_counts[trend_direction] = int(trend_direction_counts.get(trend_direction, 0)) + 1
             results.append(
                 {
                     "campaign_id": campaign_id,
                     "label": str(campaign_row.get("label", campaign.get("label", "")) or "").strip(),
-                    "status": str(sweep_payload.get("status", campaign_row.get("status", "success")) or "success").strip() or "success",
+                    "status": str(cycle_payload.get("status", campaign_row.get("status", "success")) or "success").strip() or "success",
                     "pending_session_count": int(campaign_row.get("pending_session_count", 0) or 0),
                     "attention_session_count": int(campaign_row.get("attention_session_count", 0) or 0),
                     "pending_app_target_count": int(campaign_row.get("pending_app_target_count", 0) or 0),
@@ -702,8 +859,12 @@ class EvaluationRunner:
                         campaign_row.get("latest_sweep_regression_status", campaign_row.get("latest_sweep_status", ""))
                         or ""
                     ).strip(),
-                    "executed_session_count": int(sweep_row.get("executed_session_count", 0) or 0),
-                    "created_session_count": int(sweep_payload.get("created_session_count", 0) or 0),
+                    "executed_session_count": int(cycle_row.get("executed_session_count", 0) or 0),
+                    "created_session_count": int(cycle_row.get("created_session_count", 0) or 0),
+                    "executed_sweep_count": int(cycle_row.get("executed_sweep_count", 0) or 0),
+                    "cycle_stop_reason": stop_reason,
+                    "trend_direction": trend_direction,
+                    "campaign_priority": str(campaign_row.get("campaign_priority", "") or "").strip().lower(),
                 }
             )
 
@@ -733,9 +894,12 @@ class EvaluationRunner:
                 "pack": normalized_pack,
                 "app_name": normalized_app,
                 "history_limit": normalized_history_limit,
+                "max_sweeps_per_campaign": normalized_max_sweeps,
             },
             "targeted_campaign_count": len(selected_campaigns),
             "executed_campaign_count": executed_campaign_count,
+            "executed_sweep_count": executed_sweep_count,
+            "stable_campaign_count": stable_campaign_count,
             "regression_campaign_count": regression_campaign_count,
             "pending_session_count": pending_session_count,
             "attention_session_count": attention_session_count,
@@ -743,6 +907,8 @@ class EvaluationRunner:
             "long_horizon_pending_count": long_horizon_pending_count,
             "error_count": error_count,
             "latest_campaign_label": latest_campaign_label,
+            "cycle_stop_reason_counts": cycle_stop_reason_counts,
+            "trend_direction_counts": trend_direction_counts,
             "auto_created_campaign_count": len(auto_created_campaigns),
             "auto_created_campaigns": auto_created_campaigns,
             "auto_created_app_names": self._unique_strings(
@@ -1979,13 +2145,13 @@ class EvaluationRunner:
             or ""
         ).strip().lower()
         return (
+            int(float(campaign.get("campaign_pressure_score", 0.0) or 0.0) * 100),
             int(campaign.get("attention_session_count", 0) or 0),
             1 if latest_regression in {"regression", "failed"} else 0,
             int(campaign.get("pending_session_count", 0) or 0),
             int(campaign.get("pending_app_target_count", 0) or 0),
             int(campaign.get("long_horizon_pending_count", 0) or 0),
-            int(campaign.get("regression_cycle_count", 0) or 0),
-            -int(campaign.get("sweep_count", 0) or 0),
+            int(campaign.get("regression_cycle_count", 0) or 0) + int(campaign.get("regression_sweep_streak", 0) or 0),
         )
 
     def _native_target_hint_query(

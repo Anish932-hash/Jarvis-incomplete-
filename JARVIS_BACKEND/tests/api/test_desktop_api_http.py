@@ -876,6 +876,7 @@ class FakeDesktopService:
             "inflight": False,
             "interval_s": 180.0,
             "max_campaigns": 2,
+            "max_sweeps_per_campaign": 2,
             "max_sessions": 3,
             "max_replays_per_session": 2,
             "history_limit": 8,
@@ -14355,6 +14356,61 @@ class FakeDesktopService:
             "guidance": dict(guidance),
         }
 
+    def desktop_evaluation_run_lab_campaign_cycle(
+        self,
+        *,
+        campaign_id: str = "",
+        max_sweeps: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_max_sweeps = max(1, int(max_sweeps or 2))
+        results: list[Dict[str, Any]] = []
+        final_payload: Dict[str, Any] = {}
+        stop_reason = "max_sweeps_reached"
+        for _ in range(normalized_max_sweeps):
+            sweep = self.desktop_evaluation_run_lab_campaign_sweep(
+                campaign_id=campaign_id,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+            )
+            final_payload = dict(sweep)
+            campaign = dict(sweep.get("campaign", {})) if isinstance(sweep.get("campaign", {}), dict) else {}
+            results.append(
+                {
+                    "campaign_id": str(campaign.get("campaign_id", campaign_id) or campaign_id),
+                    "status": str(sweep.get("status", "") or "success"),
+                    "pending_session_count": int(campaign.get("pending_session_count", 0) or 0),
+                    "attention_session_count": int(campaign.get("attention_session_count", 0) or 0),
+                    "pending_app_target_count": int(campaign.get("pending_app_target_count", 0) or 0),
+                }
+            )
+            if (
+                stop_on_stable
+                and int(campaign.get("pending_session_count", 0) or 0) <= 0
+                and int(campaign.get("attention_session_count", 0) or 0) <= 0
+                and int(campaign.get("pending_app_target_count", 0) or 0) <= 0
+            ):
+                stop_reason = "stable"
+                break
+        return {
+            "status": str(final_payload.get("status", "") or "success"),
+            "message": f"campaign cycle executed {len(results)} sweep(s) | stop:{stop_reason}",
+            "campaign": dict(final_payload.get("campaign", {})) if isinstance(final_payload.get("campaign", {}), dict) else {},
+            "cycle": {
+                "executed_sweep_count": len(results),
+                "stop_reason": stop_reason,
+                "stable": stop_reason == "stable",
+            },
+            "results": results,
+            "lab": dict(final_payload.get("lab", {})) if isinstance(final_payload.get("lab", {}), dict) else {},
+            "native_targets": dict(final_payload.get("native_targets", {})) if isinstance(final_payload.get("native_targets", {}), dict) else {},
+            "guidance": dict(final_payload.get("guidance", {})) if isinstance(final_payload.get("guidance", {}), dict) else {},
+        }
+
     def desktop_evaluation_campaign_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
         payload = dict(self.desktop_evaluation_campaign_daemon_state)
         payload["campaigns"] = self.desktop_evaluation_lab_campaigns(
@@ -14449,6 +14505,7 @@ class FakeDesktopService:
         enabled: bool | None = None,
         interval_s: float | None = None,
         max_campaigns: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
         max_sessions: int | None = None,
         max_replays_per_session: int | None = None,
         history_limit: int | None = None,
@@ -14464,6 +14521,8 @@ class FakeDesktopService:
             self.desktop_evaluation_campaign_daemon_state["interval_s"] = float(interval_s)
         if max_campaigns is not None:
             self.desktop_evaluation_campaign_daemon_state["max_campaigns"] = int(max_campaigns)
+        if max_sweeps_per_campaign is not None:
+            self.desktop_evaluation_campaign_daemon_state["max_sweeps_per_campaign"] = int(max_sweeps_per_campaign)
         if max_sessions is not None:
             self.desktop_evaluation_campaign_daemon_state["max_sessions"] = int(max_sessions)
         if max_replays_per_session is not None:
@@ -14484,6 +14543,7 @@ class FakeDesktopService:
         self,
         *,
         max_campaigns: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
         max_sessions: int | None = None,
         max_replays_per_session: int | None = None,
         history_limit: int | None = None,
@@ -14494,6 +14554,9 @@ class FakeDesktopService:
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
         effective_max_campaigns = int(max_campaigns or self.desktop_evaluation_campaign_daemon_state.get("max_campaigns", 2) or 2)
+        effective_max_sweeps = int(
+            max_sweeps_per_campaign or self.desktop_evaluation_campaign_daemon_state.get("max_sweeps_per_campaign", 2) or 2
+        )
         effective_max_sessions = int(max_sessions or self.desktop_evaluation_campaign_daemon_state.get("max_sessions", 3) or 3)
         effective_max_replays = int(
             max_replays_per_session
@@ -14553,8 +14616,9 @@ class FakeDesktopService:
         )[: max(1, effective_max_campaigns)]
         results: list[Dict[str, Any]] = []
         for campaign in ranked:
-            sweep = self.desktop_evaluation_run_lab_campaign_sweep(
+            sweep = self.desktop_evaluation_run_lab_campaign_cycle(
                 campaign_id=str(campaign.get("campaign_id", "") or "").strip(),
+                max_sweeps=effective_max_sweeps,
                 max_sessions=effective_max_sessions,
                 max_replays_per_session=effective_max_replays,
                 history_limit=effective_history_limit,
@@ -14579,10 +14643,14 @@ class FakeDesktopService:
             "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
             "targeted_campaign_count": len(ranked),
             "executed_campaign_count": len(results),
+            "executed_sweep_count": sum(
+                int(dict(item.get("cycle", {})).get("executed_sweep_count", 0) or 0) for item in results
+            ),
+            "stable_campaign_count": sum(1 for item in results if bool(dict(item.get("cycle", {})).get("stable", False))),
             "regression_campaign_count": sum(
                 1
                 for item in results
-                if str(dict(item.get("sweep", {})).get("regression_status", "") or "").strip().lower() == "regression"
+                if str(dict(item.get("campaign", {})).get("latest_sweep_regression_status", "") or "").strip().lower() == "regression"
             ),
             "pending_session_count": sum(
                 int(dict(item.get("campaign", {})).get("pending_session_count", 0) or 0) for item in results
@@ -14599,6 +14667,10 @@ class FakeDesktopService:
             "error_count": 0,
             "latest_campaign_label": str(dict(results[0].get("campaign", {})).get("label", "") or "").strip() if results else "",
             "auto_created_campaign_count": 0,
+            "cycle_stop_reason_counts": {
+                str(dict(item.get("cycle", {})).get("stop_reason", "unknown") or "unknown"): 1
+                for item in results
+            },
         }
         history_entry = {
             "recorded_at": now_iso,
@@ -19300,6 +19372,41 @@ def test_desktop_evaluation_lab_campaign_sweep_route(api_server: tuple[str, Fake
     assert isinstance(swept["results"], list)
 
 
+def test_desktop_evaluation_lab_campaign_cycle_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaigns",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "app_name": "settings",
+            "history_limit": 6,
+            "max_sessions": 2,
+        },
+    )
+    assert status == 200
+    campaign_id = str(created["campaign"]["campaign_id"])
+
+    status, cycled = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaigns/run-cycle",
+        payload={
+            "campaign_id": campaign_id,
+            "max_sweeps": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "stop_on_stable": True,
+        },
+    )
+    assert status == 200
+    assert cycled["status"] == "success"
+    assert cycled["campaign"]["campaign_id"] == campaign_id
+    assert int(cycled["cycle"]["executed_sweep_count"]) >= 1
+    assert isinstance(cycled["results"], list)
+
+
 def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
     base_url, _ = api_server
 
@@ -19332,6 +19439,7 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
             "enabled": True,
             "interval_s": 240,
             "max_campaigns": 3,
+            "max_sweeps_per_campaign": 2,
             "max_sessions": 2,
             "max_replays_per_session": 2,
             "history_limit": 6,
@@ -19343,6 +19451,7 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
     assert configured["status"] == "success"
     assert configured["enabled"] is True
     assert int(configured["max_campaigns"]) == 3
+    assert int(configured["max_sweeps_per_campaign"]) == 2
     assert str(configured["pack"]) == "long_horizon_and_replay"
 
     status, triggered = request_json(
@@ -19350,6 +19459,7 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
         f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/trigger",
         payload={
             "max_campaigns": 2,
+            "max_sweeps_per_campaign": 2,
             "max_sessions": 2,
             "max_replays_per_session": 2,
             "history_limit": 6,
@@ -19362,6 +19472,7 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
     assert isinstance(triggered.get("result"), dict)
     assert isinstance(triggered.get("supervisor"), dict)
     assert int(triggered["supervisor"]["run_count"]) >= 1
+    assert int(triggered["supervisor"]["max_sweeps_per_campaign"]) == 2
     assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
 
     status, history = request_json(

@@ -12,6 +12,7 @@ def test_benchmark_campaign_supervisor_persists_configuration(tmp_path) -> None:
         enabled=True,
         interval_s=240.0,
         max_campaigns=4,
+        max_sweeps_per_campaign=3,
         max_sessions=3,
         max_replays_per_session=2,
         history_limit=10,
@@ -23,6 +24,7 @@ def test_benchmark_campaign_supervisor_persists_configuration(tmp_path) -> None:
     assert status["enabled"] is True
     assert status["interval_s"] == 240.0
     assert status["max_campaigns"] == 4
+    assert status["max_sweeps_per_campaign"] == 3
     assert status["pack"] == "long_horizon_and_replay"
     assert status["app_name"] == "settings"
 
@@ -31,6 +33,7 @@ def test_benchmark_campaign_supervisor_persists_configuration(tmp_path) -> None:
     assert reloaded_status["enabled"] is True
     assert reloaded_status["interval_s"] == 240.0
     assert reloaded_status["max_campaigns"] == 4
+    assert reloaded_status["max_sweeps_per_campaign"] == 3
     assert reloaded_status["campaign_status"] == "ready"
     assert reloaded_status["pack"] == "long_horizon_and_replay"
     assert reloaded_status["app_name"] == "settings"
@@ -47,6 +50,8 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
             "message": "campaign watchdog executed 2 campaign(s)",
             "targeted_campaign_count": 2,
             "executed_campaign_count": 2,
+            "executed_sweep_count": 4,
+            "stable_campaign_count": 1,
             "regression_campaign_count": 1,
             "pending_session_count": 3,
             "attention_session_count": 1,
@@ -55,6 +60,8 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
             "error_count": 0,
             "latest_campaign_label": "settings replay campaign",
             "auto_created_campaign_count": 1,
+            "cycle_stop_reason_counts": {"stable": 1, "max_sweeps_reached": 1},
+            "trend_direction_counts": {"improving": 1, "regressing": 1},
         }
 
     supervisor = DesktopBenchmarkLabCampaignSupervisor(state_path=str(state_path), enabled=False, interval_s=30.0)
@@ -63,6 +70,7 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
         payload = supervisor.trigger_now(
             source="manual_test",
             max_campaigns=3,
+            max_sweeps_per_campaign=4,
             max_sessions=2,
             max_replays_per_session=2,
             history_limit=6,
@@ -71,12 +79,15 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
         )
         assert payload["status"] == "success"
         assert calls[0]["max_campaigns"] == 3
+        assert calls[0]["max_sweeps_per_campaign"] == 4
         assert calls[0]["pack"] == "long_horizon_and_replay"
         status = supervisor.status()
         assert status["run_count"] == 1
         assert status["manual_trigger_count"] == 1
         assert status["last_result_status"] == "success"
         assert status["last_summary"]["executed_campaign_count"] == 2
+        assert status["last_summary"]["executed_sweep_count"] == 4
+        assert status["last_summary"]["stable_campaign_count"] == 1
         assert status["last_summary"]["latest_campaign_label"] == "settings replay campaign"
         assert status["last_summary"]["auto_created_campaign_count"] == 1
     finally:
@@ -118,6 +129,8 @@ def test_benchmark_campaign_supervisor_history_persists_and_resets(tmp_path) -> 
             "message": f"campaign watchdog executed 1 campaign(s) from {trigger_source}",
             "targeted_campaign_count": 1,
             "executed_campaign_count": 1,
+            "executed_sweep_count": 2,
+            "stable_campaign_count": 1,
             "regression_campaign_count": 0,
             "pending_session_count": 1,
             "attention_session_count": 0,
@@ -142,6 +155,8 @@ def test_benchmark_campaign_supervisor_history_persists_and_resets(tmp_path) -> 
         assert history["status"] == "success"
         assert history["count"] == 2
         assert history["latest_run"]["source"] == "ops_test"
+        assert history["summary"]["executed_sweep_total"] == 4
+        assert history["summary"]["stable_campaign_total"] == 2
 
         filtered = supervisor.history(limit=4, source="manual_test")
         assert filtered["count"] == 1

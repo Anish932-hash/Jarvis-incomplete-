@@ -8370,10 +8370,37 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_run_lab_campaign_cycle(
+        self,
+        *,
+        campaign_id: str = "",
+        max_sweeps: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_campaign_cycle(
+                campaign_id=campaign_id,
+                max_sweeps=max_sweeps,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaign cycle payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def _execute_desktop_evaluation_campaign_supervisor_tick(
         self,
         *,
         max_campaigns: int = 2,
+        max_sweeps_per_campaign: int = 2,
         max_sessions: int = 3,
         max_replays_per_session: int = 2,
         history_limit: int = 8,
@@ -8388,6 +8415,7 @@ class DesktopBackendService:
         try:
             payload = runner.run_lab_campaign_watchdog(
                 max_campaigns=max_campaigns,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
                 max_sessions=max_sessions,
                 max_replays_per_session=max_replays_per_session,
                 history_limit=history_limit,
@@ -8456,6 +8484,7 @@ class DesktopBackendService:
         enabled: Optional[bool] = None,
         interval_s: Optional[float] = None,
         max_campaigns: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
@@ -8472,6 +8501,7 @@ class DesktopBackendService:
             enabled=enabled,
             interval_s=interval_s,
             max_campaigns=max_campaigns,
+            max_sweeps_per_campaign=max_sweeps_per_campaign,
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
@@ -8486,6 +8516,7 @@ class DesktopBackendService:
         self,
         *,
         max_campaigns: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
@@ -8501,6 +8532,7 @@ class DesktopBackendService:
         payload = supervisor.trigger_now(
             source=source,
             max_campaigns=max_campaigns,
+            max_sweeps_per_campaign=max_sweeps_per_campaign,
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
@@ -44590,6 +44622,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if body.get("max_campaigns") is not None
                         else None
                     ),
+                    max_sweeps_per_campaign=(
+                        self._parse_int(body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_sweeps_per_campaign") is not None
+                        else None
+                    ),
                     max_sessions=(
                         self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8)
                         if body.get("max_sessions") is not None
@@ -44648,11 +44685,32 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaigns/run-cycle":
+                payload = self.server.service.desktop_evaluation_run_lab_campaign_cycle(
+                    campaign_id=str(body.get("campaign_id", "") or "").strip(),
+                    max_sweeps=self._parse_int(body.get("max_sweeps", 2), 2, minimum=1, maximum=8),
+                    max_sessions=self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8),
+                    max_replays_per_session=self._parse_int(
+                        body.get("max_replays_per_session", 2),
+                        2,
+                        minimum=1,
+                        maximum=8,
+                    ),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    stop_on_stable=self._parse_bool(str(body.get("stop_on_stable", "1") or "1"), default=True),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/trigger":
                 payload = self.server.service.trigger_desktop_evaluation_campaign_supervisor(
                     max_campaigns=(
                         self._parse_int(body.get("max_campaigns", 2), 2, minimum=1, maximum=32)
                         if body.get("max_campaigns") is not None
+                        else None
+                    ),
+                    max_sweeps_per_campaign=(
+                        self._parse_int(body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_sweeps_per_campaign") is not None
                         else None
                     ),
                     max_sessions=(

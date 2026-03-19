@@ -230,13 +230,22 @@ class DesktopBenchmarkLabMemory:
         selected = rows[:normalized_limit]
         status_counts: Dict[str, int] = {}
         latest_sweep_status_counts: Dict[str, int] = {}
+        trend_direction_counts: Dict[str, int] = {}
+        priority_counts: Dict[str, int] = {}
         for row in rows:
             self._increment_count(status_counts, str(row.get("status", "") or "ready"))
             self._increment_count(
                 latest_sweep_status_counts,
                 str(row.get("latest_sweep_regression_status", row.get("latest_sweep_status", "")) or "idle"),
             )
+            trend_summary = dict(row.get("trend_summary", {})) if isinstance(row.get("trend_summary", {}), dict) else {}
+            self._increment_count(
+                trend_direction_counts,
+                str(trend_summary.get("direction", row.get("history_direction", "")) or "stable"),
+            )
+            self._increment_count(priority_counts, str(row.get("campaign_priority", "") or "steady"))
         latest = selected[0] if selected else {}
+        pressure_total = sum(float(row.get("campaign_pressure_score", 0.0) or 0.0) for row in rows)
         return {
             "status": "success",
             "count": len(selected),
@@ -257,7 +266,13 @@ class DesktopBenchmarkLabMemory:
                 "regression_cycles": sum(int(row.get("regression_cycle_count", 0) or 0) for row in rows),
                 "long_horizon_pending_replays": sum(int(row.get("long_horizon_pending_count", 0) or 0) for row in rows),
                 "sweep_count": sum(int(row.get("sweep_count", 0) or 0) for row in rows),
+                "completed_sweep_count": sum(int(row.get("completed_sweep_count", 0) or 0) for row in rows),
+                "regression_sweep_count": sum(int(row.get("regression_sweep_count", 0) or 0) for row in rows),
                 "pending_app_targets": sum(int(row.get("pending_app_target_count", 0) or 0) for row in rows),
+                "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+                "priority_counts": self._sorted_count_map(priority_counts),
+                "campaign_pressure_total": round(pressure_total, 6),
+                "campaign_pressure_avg": round(pressure_total / len(rows), 6) if rows else 0.0,
             },
         }
 
@@ -590,6 +605,20 @@ class DesktopBenchmarkLabMemory:
         latest_sweep = clean_sweep_runs[-1] if clean_sweep_runs else {}
         latest_sweep_status = str(latest_sweep.get("status", "") or "").strip().lower()
         latest_sweep_regression_status = str(latest_sweep.get("regression_status", "") or "").strip().lower()
+        trend_summary = self._campaign_trend_summary(clean_sweep_runs, clean_sessions)
+        campaign_pressure_score = self._campaign_pressure_score(
+            pending_session_count=pending_session_count,
+            attention_session_count=attention_session_count,
+            pending_app_target_count=sum(
+                1
+                for app_name in target_apps
+                if str(app_name).strip().lower() not in session_target_apps
+            ),
+            long_horizon_pending_count=long_horizon_pending_count,
+            regression_cycle_count=regression_cycle_count,
+            regression_sweep_streak=int(trend_summary.get("regression_sweep_streak", 0) or 0),
+        )
+        campaign_priority = self._campaign_priority(campaign_pressure_score, trend_summary)
         campaign_status = "ready"
         if attention_session_count > 0 or latest_sweep_status in {"error", "failed"} or latest_sweep_regression_status in {"regression", "failed"}:
             campaign_status = "attention"
@@ -634,6 +663,10 @@ class DesktopBenchmarkLabMemory:
             "cycle_count": cycle_count,
             "regression_cycle_count": regression_cycle_count,
             "long_horizon_pending_count": long_horizon_pending_count,
+            "completed_sweep_count": int(trend_summary.get("completed_sweep_count", 0) or 0),
+            "regression_sweep_count": int(trend_summary.get("regression_sweep_count", 0) or 0),
+            "stable_sweep_streak": int(trend_summary.get("stable_sweep_streak", 0) or 0),
+            "regression_sweep_streak": int(trend_summary.get("regression_sweep_streak", 0) or 0),
             "target_app_count": len(target_apps),
             "target_apps": target_apps,
             "app_targets": target_apps,
@@ -647,6 +680,13 @@ class DesktopBenchmarkLabMemory:
             "latest_sweep_status": latest_sweep_status,
             "latest_sweep_regression_status": latest_sweep_regression_status,
             "latest_sweep_executed_at": str(latest_sweep.get("executed_at", "") or "").strip(),
+            "latest_sweep_score": round(float(latest_sweep.get("weighted_score", 0.0) or 0.0), 6),
+            "latest_sweep_pass_rate": round(float(latest_sweep.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "latest_sweep_history_direction": str(latest_sweep.get("history_direction", "") or "").strip().lower(),
+            "history_direction": str(trend_summary.get("direction", "") or "").strip().lower(),
+            "trend_summary": trend_summary,
+            "campaign_pressure_score": campaign_pressure_score,
+            "campaign_priority": campaign_priority,
             "lab_snapshot": dict(lab_snapshot),
             "native_targets_snapshot": dict(native_targets_snapshot),
             "guidance_snapshot": dict(guidance_snapshot),
@@ -1228,6 +1268,9 @@ class DesktopBenchmarkLabMemory:
                     "attention_session_count": self._coerce_int(item.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0),
                     "long_horizon_pending_count": self._coerce_int(item.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0),
                     "pending_app_target_count": self._coerce_int(item.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0),
+                    "weighted_score": round(float(item.get("weighted_score", 0.0) or 0.0), 6),
+                    "weighted_pass_rate": round(float(item.get("weighted_pass_rate", 0.0) or 0.0), 6),
+                    "history_direction": str(item.get("history_direction", "") or "").strip().lower(),
                     "query": dict(item.get("query", {})) if isinstance(item.get("query", {}), dict) else {},
                 }
             )
@@ -1251,5 +1294,143 @@ class DesktopBenchmarkLabMemory:
             "attention_session_count": self._coerce_int(sweep_payload.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0),
             "long_horizon_pending_count": self._coerce_int(sweep_payload.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0),
             "pending_app_target_count": self._coerce_int(sweep_payload.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0),
+            "weighted_score": round(float(sweep_payload.get("weighted_score", 0.0) or 0.0), 6),
+            "weighted_pass_rate": round(float(sweep_payload.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "history_direction": str(sweep_payload.get("history_direction", "") or "").strip().lower(),
             "query": dict(sweep_payload.get("query", {})) if isinstance(sweep_payload.get("query", {}), dict) else {},
         }
+
+    def _campaign_trend_summary(
+        self,
+        sweep_runs: List[Dict[str, Any]],
+        session_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        latest = dict(sweep_runs[-1]) if sweep_runs else {}
+        previous = dict(sweep_runs[-2]) if len(sweep_runs) >= 2 else {}
+        latest_score = round(float(latest.get("weighted_score", 0.0) or 0.0), 6)
+        previous_score = round(float(previous.get("weighted_score", latest_score) or latest_score), 6)
+        latest_pass_rate = round(float(latest.get("weighted_pass_rate", 0.0) or 0.0), 6)
+        previous_pass_rate = round(float(previous.get("weighted_pass_rate", latest_pass_rate) or latest_pass_rate), 6)
+        latest_pending = self._coerce_int(latest.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0)
+        previous_pending = self._coerce_int(previous.get("pending_session_count", latest_pending), minimum=0, maximum=100_000, default=latest_pending)
+        latest_attention = self._coerce_int(latest.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0)
+        previous_attention = self._coerce_int(previous.get("attention_session_count", latest_attention), minimum=0, maximum=100_000, default=latest_attention)
+        latest_long_horizon = self._coerce_int(latest.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0)
+        previous_long_horizon = self._coerce_int(previous.get("long_horizon_pending_count", latest_long_horizon), minimum=0, maximum=100_000, default=latest_long_horizon)
+        latest_regression_status = str(latest.get("regression_status", "") or "").strip().lower()
+        completed_sweep_count = sum(
+            1 for item in sweep_runs if str(item.get("status", "") or "").strip().lower() in {"success", "completed"}
+        )
+        regression_sweep_count = sum(
+            1 for item in sweep_runs if str(item.get("regression_status", "") or "").strip().lower() in {"regression", "failed"}
+        )
+        stable_sweep_streak = 0
+        regression_sweep_streak = 0
+        for item in reversed(sweep_runs):
+            item_regression = str(item.get("regression_status", item.get("status", "")) or "").strip().lower()
+            if item_regression in {"stable", "success", "completed", ""}:
+                if regression_sweep_streak == 0:
+                    stable_sweep_streak += 1
+                else:
+                    break
+            else:
+                break
+        for item in reversed(sweep_runs):
+            item_regression = str(item.get("regression_status", item.get("status", "")) or "").strip().lower()
+            if item_regression in {"regression", "failed", "error"}:
+                if stable_sweep_streak == 0:
+                    regression_sweep_streak += 1
+                else:
+                    break
+            else:
+                break
+        score_delta = round(latest_score - previous_score, 6)
+        pass_rate_delta = round(latest_pass_rate - previous_pass_rate, 6)
+        pending_delta = latest_pending - previous_pending
+        attention_delta = latest_attention - previous_attention
+        long_horizon_delta = latest_long_horizon - previous_long_horizon
+        improve_signals = 0
+        regress_signals = 0
+        if score_delta >= 0.02:
+            improve_signals += 1
+        elif score_delta <= -0.02:
+            regress_signals += 1
+        if pass_rate_delta >= 0.02:
+            improve_signals += 1
+        elif pass_rate_delta <= -0.02:
+            regress_signals += 1
+        if pending_delta < 0:
+            improve_signals += 1
+        elif pending_delta > 0:
+            regress_signals += 1
+        if attention_delta < 0:
+            improve_signals += 1
+        elif attention_delta > 0:
+            regress_signals += 1
+        if latest_regression_status in {"regression", "failed", "error"}:
+            regress_signals += 2
+        direction = "stable"
+        if improve_signals > 0 and regress_signals > 0:
+            direction = "volatile"
+        elif regress_signals > 0:
+            direction = "regressing"
+        elif improve_signals > 0:
+            direction = "improving"
+        elif sweep_runs:
+            direction = "stable"
+        elif session_rows:
+            direction = "warming"
+        return {
+            "direction": direction,
+            "run_count": len(sweep_runs),
+            "latest_score": latest_score,
+            "previous_score": previous_score,
+            "score_delta": score_delta,
+            "latest_pass_rate": latest_pass_rate,
+            "previous_pass_rate": previous_pass_rate,
+            "pass_rate_delta": pass_rate_delta,
+            "latest_pending_session_count": latest_pending,
+            "pending_session_delta": pending_delta,
+            "latest_attention_session_count": latest_attention,
+            "attention_session_delta": attention_delta,
+            "latest_long_horizon_pending_count": latest_long_horizon,
+            "long_horizon_pending_delta": long_horizon_delta,
+            "completed_sweep_count": completed_sweep_count,
+            "regression_sweep_count": regression_sweep_count,
+            "stable_sweep_streak": stable_sweep_streak,
+            "regression_sweep_streak": regression_sweep_streak,
+            "latest_regression_status": latest_regression_status,
+            "history_direction": str(latest.get("history_direction", "") or "").strip().lower(),
+        }
+
+    @staticmethod
+    def _campaign_pressure_score(
+        *,
+        pending_session_count: int,
+        attention_session_count: int,
+        pending_app_target_count: int,
+        long_horizon_pending_count: int,
+        regression_cycle_count: int,
+        regression_sweep_streak: int,
+    ) -> float:
+        return round(
+            (attention_session_count * 3.0)
+            + (pending_session_count * 1.35)
+            + (pending_app_target_count * 2.1)
+            + (long_horizon_pending_count * 0.55)
+            + (regression_cycle_count * 0.8)
+            + (regression_sweep_streak * 2.4),
+            6,
+        )
+
+    @staticmethod
+    def _campaign_priority(campaign_pressure_score: float, trend_summary: Dict[str, Any]) -> str:
+        direction = str(trend_summary.get("direction", "") or "").strip().lower()
+        regression_streak = int(trend_summary.get("regression_sweep_streak", 0) or 0)
+        if campaign_pressure_score >= 12.0 or regression_streak >= 2 or direction == "regressing":
+            return "critical"
+        if campaign_pressure_score >= 7.0 or direction == "volatile":
+            return "elevated"
+        if campaign_pressure_score >= 3.0 or direction == "warming":
+            return "steady"
+        return "stable"

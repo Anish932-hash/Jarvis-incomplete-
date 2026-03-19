@@ -216,3 +216,64 @@ def test_benchmark_lab_memory_records_campaign_sweeps(tmp_path) -> None:
     assert updated["campaign"]["sweep_count"] == 1
     assert updated["campaign"]["latest_sweep_status"] == "success"
     assert updated["sweep"]["executed_session_count"] == 1
+
+
+def test_benchmark_lab_memory_tracks_campaign_trends_and_priority(tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    session = memory.record_session(
+        filters={"pack": "long_horizon_and_replay", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.72}, "replay_candidates": [{"scenario": "settings_long_horizon", "apps": ["settings"], "horizon_steps": 6}]},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+    )["session"]
+    campaign = memory.record_campaign(
+        filters={"pack": "long_horizon_and_replay", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.72}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_ids=[str(session["session_id"])],
+        app_targets=["settings"],
+        session_rows=[dict(session)],
+    )["campaign"]
+
+    memory.record_campaign_sweep(
+        campaign_id=str(campaign["campaign_id"]),
+        sweep_payload={
+            "status": "success",
+            "regression_status": "regression",
+            "executed_session_count": 1,
+            "pending_session_count": 2,
+            "attention_session_count": 1,
+            "long_horizon_pending_count": 2,
+            "pending_app_target_count": 1,
+            "weighted_score": 0.63,
+            "weighted_pass_rate": 0.58,
+            "history_direction": "regressing",
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.63, "weighted_pass_rate": 0.58}, "history_trend": {"direction": "regressing"}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_rows=[{**dict(session), "status": "attention", "pending_replay_count": 2, "failed_replay_count": 1}],
+    )
+    updated = memory.record_campaign_sweep(
+        campaign_id=str(campaign["campaign_id"]),
+        sweep_payload={
+            "status": "success",
+            "regression_status": "stable",
+            "executed_session_count": 1,
+            "pending_session_count": 0,
+            "attention_session_count": 0,
+            "long_horizon_pending_count": 1,
+            "pending_app_target_count": 0,
+            "weighted_score": 0.84,
+            "weighted_pass_rate": 0.87,
+            "history_direction": "improving",
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.84, "weighted_pass_rate": 0.87}, "history_trend": {"direction": "improving"}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_rows=[{**dict(session), "status": "complete", "pending_replay_count": 0, "failed_replay_count": 0}],
+    )
+
+    trend_summary = updated["campaign"]["trend_summary"]
+    assert updated["campaign"]["sweep_count"] == 2
+    assert updated["campaign"]["completed_sweep_count"] == 2
+    assert updated["campaign"]["latest_sweep_score"] == 0.84
+    assert trend_summary["direction"] in {"improving", "volatile"}
+    assert updated["campaign"]["campaign_priority"] in {"stable", "steady", "elevated", "critical"}
