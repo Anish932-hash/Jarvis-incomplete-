@@ -142,11 +142,14 @@ class NativeWindowRuntime:
         window_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
+        follow_descendant_chain: bool = False,
+        max_descendant_focus_steps: int = 1,
         limit: int = 120,
     ) -> Dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))
         hwnd_value = 0 if hwnd is None else int(hwnd)
         pid_value = 0 if pid is None else int(pid)
+        safe_max_descendant_focus_steps = max(1, min(int(max_descendant_focus_steps), 6))
         return self._call(
             "focus_related_window",
             "focus_related_window",
@@ -159,6 +162,8 @@ class NativeWindowRuntime:
             str(window_title or ""),
             hwnd_value,
             pid_value,
+            bool(follow_descendant_chain),
+            safe_max_descendant_focus_steps,
             safe_limit,
         )
 

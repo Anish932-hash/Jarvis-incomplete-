@@ -125,6 +125,8 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
+            follow_descendant_chain: bool = False,
+            max_descendant_focus_steps: int = 1,
             limit: int = 80,
         ) -> dict:
             assert query == "Pair device"
@@ -134,6 +136,8 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
             assert window_title == "Bluetooth & devices"
             assert hwnd == 5001
             assert pid == 777
+            assert follow_descendant_chain is False
+            assert max_descendant_focus_steps == 1
             assert limit == 80
             del campaign_hint_query, campaign_preferred_title
             return {
@@ -206,6 +210,17 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
                 "descendant_focus_strength": 0.91,
                 "adopted_descendant_depth": 1,
                 "adopted_matches_preferred_descendant": True,
+                "follow_descendant_chain_requested": False,
+                "max_descendant_focus_steps": 1,
+                "descendant_focus_chain_applied": False,
+                "executed_descendant_focus_steps": 1,
+                "descendant_focus_chain_hops": 0,
+                "descendant_focus_chain_stable": False,
+                "descendant_focus_chain_stop_reason": "not_requested",
+                "descendant_focus_chain_quality": 0.71,
+                "descendant_focus_chain_signature": "5001|1|1|Pair device",
+                "descendant_focus_chain_titles": ["Pair device"],
+                "descendant_focus_chain_hwnds": [5002],
                 "descendant_chain_titles": ["Pair device"],
                 "child_chain_signature": "5001|1|1|Pair device",
             }
@@ -236,7 +251,157 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
     assert payload["preferred_descendant_match_score"] == pytest.approx(0.97)
     assert payload["adopted_descendant_depth"] == 1
     assert payload["adopted_matches_preferred_descendant"] is True
+    assert payload["follow_descendant_chain_requested"] is False
+    assert payload["descendant_focus_chain_applied"] is False
+    assert payload["executed_descendant_focus_steps"] == 1
+    assert payload["descendant_focus_chain_stop_reason"] == "not_requested"
     assert payload["child_chain_signature"] == "5001|1|1|Pair device"
+
+
+def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> None:
+    class _FakeNativeRuntime:
+        def focus_related_window(
+            self,
+            *,
+            query: str = "",
+            hint_query: str = "",
+            descendant_hint_query: str = "",
+            campaign_hint_query: str = "",
+            campaign_preferred_title: str = "",
+            preferred_title: str = "",
+            window_title: str = "",
+            hwnd: int | None = None,
+            pid: int | None = None,
+            follow_descendant_chain: bool = False,
+            max_descendant_focus_steps: int = 1,
+            limit: int = 80,
+        ) -> dict:
+            assert query == "Pair device"
+            assert hint_query == "Pair device"
+            assert descendant_hint_query == "Pair device"
+            assert preferred_title == "Pair device"
+            assert window_title == "Bluetooth & devices"
+            assert hwnd == 5001
+            assert pid == 777
+            assert follow_descendant_chain is True
+            assert max_descendant_focus_steps == 3
+            assert limit == 80
+            del campaign_hint_query, campaign_preferred_title
+            return {
+                "status": "success",
+                "backend": "cpp_cython",
+                "focus_applied": True,
+                "adoption_source": "preferred_descendant_chain",
+                "adoption_transition_kind": "descendant_focus_chain",
+                "match_score": 0.94,
+                "candidate": {
+                    "hwnd": 5001,
+                    "title": "Bluetooth & devices",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": False,
+                    "left": 120,
+                    "top": 80,
+                    "right": 1100,
+                    "bottom": 760,
+                },
+                "preferred_descendant": {
+                    "hwnd": 5003,
+                    "title": "Confirm pairing",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": True,
+                    "left": 320,
+                    "top": 200,
+                    "right": 940,
+                    "bottom": 600,
+                },
+                "adopted_window": {
+                    "hwnd": 5003,
+                    "title": "Confirm pairing",
+                    "pid": 777,
+                    "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                    "process_name": "SystemSettings.exe",
+                    "class_name": "#32770",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "is_foreground": True,
+                    "left": 320,
+                    "top": 200,
+                    "right": 940,
+                    "bottom": 600,
+                },
+                "direct_child_window_count": 1,
+                "direct_child_dialog_like_count": 1,
+                "direct_child_titles": ["Confirm pairing"],
+                "descendant_chain_depth": 1,
+                "descendant_dialog_chain_depth": 1,
+                "descendant_query_match_count": 1,
+                "descendant_hint_title_match_count": 1,
+                "campaign_descendant_hint_title_match_count": 1,
+                "preferred_descendant_match_score": 0.95,
+                "descendant_focus_strength": 0.93,
+                "adopted_descendant_depth": 1,
+                "adopted_matches_preferred_descendant": True,
+                "follow_descendant_chain_requested": True,
+                "max_descendant_focus_steps": 3,
+                "descendant_focus_chain_applied": True,
+                "executed_descendant_focus_steps": 2,
+                "descendant_focus_chain_hops": 1,
+                "descendant_focus_chain_stable": True,
+                "descendant_focus_chain_stop_reason": "stable_no_further_descendant",
+                "descendant_focus_chain_quality": 0.88,
+                "descendant_focus_chain_signature": "5001|2|2|Pair device|Confirm pairing",
+                "descendant_focus_chain_titles": ["Pair device", "Confirm pairing"],
+                "descendant_focus_chain_hwnds": [5002, 5003],
+                "descendant_chain_titles": ["Confirm pairing"],
+                "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
+            }
+
+    manager = WindowManager(native_runtime=_FakeNativeRuntime())
+    payload = manager.focus_related_window(
+        query="Pair device",
+        app_name="settings",
+        window_title="Bluetooth & devices",
+        hint_query="Pair device",
+        descendant_hint_query="Pair device",
+        preferred_title="Pair device",
+        hwnd=5001,
+        pid=777,
+        follow_descendant_chain=True,
+        max_descendant_focus_steps=3,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["adoption_source"] == "preferred_descendant_chain"
+    assert payload["adoption_transition_kind"] == "descendant_focus_chain"
+    assert payload["window"]["hwnd"] == 5003
+    assert payload["preferred_descendant"]["hwnd"] == 5003
+    assert payload["follow_descendant_chain_requested"] is True
+    assert payload["max_descendant_focus_steps"] == 3
+    assert payload["descendant_focus_chain_applied"] is True
+    assert payload["executed_descendant_focus_steps"] == 2
+    assert payload["descendant_focus_chain_hops"] == 1
+    assert payload["descendant_focus_chain_stable"] is True
+    assert payload["descendant_focus_chain_stop_reason"] == "stable_no_further_descendant"
+    assert payload["descendant_focus_chain_quality"] == pytest.approx(0.88)
+    assert payload["descendant_focus_chain_signature"] == "5001|2|2|Pair device|Confirm pairing"
+    assert payload["descendant_focus_chain_titles"] == ["Pair device", "Confirm pairing"]
+    assert payload["descendant_focus_chain_hwnds"] == [5002, 5003]
 
 
 def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None:

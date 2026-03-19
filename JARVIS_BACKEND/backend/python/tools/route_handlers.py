@@ -284,7 +284,7 @@ def _focus_window(payload: Dict[str, Any]) -> Dict[str, Any]:
     return WindowManager().focus_window(title_contains=title, hwnd=hwnd)
 
 
-def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _focus_related_window_impl(payload: Dict[str, Any], *, force_chain: bool = False) -> Dict[str, Any]:
     from backend.python.pc_control.window_manager import WindowManager
 
     hwnd_raw = payload.get("hwnd")
@@ -305,6 +305,11 @@ def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
         or payload.get("title", "")
         or ""
     ).strip()
+    requested_chain = _to_bool(payload.get("follow_descendant_chain", False), default=False)
+    requested_max_chain_steps = max(
+        1,
+        min(_to_int(payload.get("max_descendant_focus_steps", 1), 1), 6),
+    )
     return WindowManager().focus_related_window(
         query=str(payload.get("query", "")).strip(),
         app_name=str(payload.get("app_name", "")).strip(),
@@ -317,9 +322,23 @@ def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
         preferred_title=preferred_title,
         hwnd=hwnd,
         pid=pid,
+        follow_descendant_chain=force_chain or requested_chain,
+        max_descendant_focus_steps=(
+            max(2, requested_max_chain_steps)
+            if force_chain
+            else requested_max_chain_steps
+        ),
         benchmark_guidance=benchmark_guidance,
         limit=max(1, min(_to_int(payload.get("limit", 80), 80), 240)),
     )
+
+
+def _focus_related_window(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return _focus_related_window_impl(payload, force_chain=False)
+
+
+def _focus_related_window_chain(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return _focus_related_window_impl(payload, force_chain=True)
 
 
 async def _media_info(_: Dict[str, Any]) -> Dict[str, Any]:
@@ -2749,6 +2768,11 @@ def focus_related_window_route(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _focus_related_window(payload)
 
 
+@route("focus_related_window_chain")
+def focus_related_window_chain_route(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return _focus_related_window_chain(payload)
+
+
 @route("media_info")
 async def media_info_route(payload: Dict[str, Any]) -> Dict[str, Any]:
     return await _media_info(payload)
@@ -3149,6 +3173,12 @@ def register_tools(registry: ToolRegistry) -> None:
         "focus_related_window",
         _focus_related_window,
         description="Focus the best related child or descendant window using native topology hints.",
+        risk="medium",
+    )
+    registry.register(
+        "focus_related_window_chain",
+        _focus_related_window_chain,
+        description="Follow a related child-window chain through bounded native descendant adoption.",
         risk="medium",
     )
     registry.register("media_info", _media_info, description="Get current media playback metadata.", risk="low")

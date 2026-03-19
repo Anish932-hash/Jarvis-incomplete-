@@ -733,8 +733,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     for row in &input.selection_rows {
         let label_tokens = tokenize(&row.label);
         let selected_action = normalize_text(&row.selected_action);
-        let focus_like_action =
-            matches!(selected_action.as_str(), "focus" | "focus_related_window");
+        let focus_like_action = matches!(
+            selected_action.as_str(),
+            "focus" | "focus_related_window" | "focus_related_window_chain"
+        );
+        let requested_descendant_chain = selected_action == "focus_related_window_chain";
         let kind = normalize_text(&row.kind);
         let mut rust_score = 0.0_f64;
         let mut reasons: Vec<String> = Vec::new();
@@ -902,6 +905,17 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 reasons.push(format!(
                     "native_campaign_descendant_hint_title_matches:{}",
                     native_campaign_descendant_hint_title_match_count
+                ));
+            }
+            if requested_descendant_chain && native_descendant_chain_depth > 1 {
+                let chain_boost = (0.05
+                    + (native_descendant_chain_depth.min(3) as f64 * 0.03)
+                    + (benchmark_target_descendant_focus_pressure * 0.08))
+                    .min(0.2);
+                rust_score += chain_boost;
+                reasons.push(format!(
+                    "descendant_focus_chain_request:{}",
+                    native_descendant_chain_depth
                 ));
             }
         }
@@ -1612,6 +1626,8 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             && selected_action == "press_dialog_button"
         {
             "prefer_branch_family_dialog"
+        } else if requested_descendant_chain && preferred_descendant_focus {
+            "prefer_descendant_surface_chain_adoption"
         } else if preferred_descendant_focus {
             "prefer_descendant_surface_adoption"
         } else if native_descendant_dialog_chain_depth > 0
@@ -2148,6 +2164,80 @@ mod tests {
             value
                 .as_str()
                 .map(|reason| reason.starts_with("native_preferred_descendant_match_score:"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn route_surface_exploration_prefers_preferred_descendant_chain_adoption() {
+        let payload = json!({
+            "query": "Pair device",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Bluetooth & devices",
+            "current_reacquired_app_name": "settings",
+            "native_direct_child_window_count": 1,
+            "native_descendant_chain_depth": 3,
+            "native_descendant_dialog_chain_depth": 2,
+            "native_descendant_query_match_count": 2,
+            "native_descendant_adoption_available": true,
+            "native_descendant_adoption_match_score": 0.88,
+            "native_descendant_focus_strength": 0.94,
+            "native_preferred_descendant_match_score": 0.96,
+            "native_descendant_hint_title_match_count": 2,
+            "native_campaign_descendant_hint_title_match_count": 2,
+            "preferred_descendant_title": "Pair device",
+            "preferred_descendant_hwnd": 5002,
+            "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_descendant_focus_pressure": 0.94,
+            "benchmark_target_campaign_pressure": 1.8,
+            "benchmark_target_replay_pressure": 1.2,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5002|focus_related_window_chain|adopt child surface chain: pair device",
+                    "kind": "branch_action",
+                    "candidate_id": "5002",
+                    "label": "Adopt child surface chain: Pair device",
+                    "selected_action": "focus_related_window_chain",
+                    "confidence": 0.83
+                },
+                {
+                    "selection_key": "branch_action|5002|focus_related_window|adopt child surface: pair device",
+                    "kind": "branch_action",
+                    "candidate_id": "5002",
+                    "label": "Adopt child surface: Pair device",
+                    "selected_action": "focus_related_window",
+                    "confidence": 0.82
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus_related_window_chain")
+        );
+        assert_eq!(
+            result.get("router_hint").and_then(Value::as_str),
+            Some("prefer_descendant_surface_chain_adoption")
+        );
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("descendant_focus_chain_request:"))
                 .unwrap_or(false)
         }));
     }

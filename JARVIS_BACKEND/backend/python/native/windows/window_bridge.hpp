@@ -17,6 +17,8 @@ std::string focus_related_window_json(
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,
+    int follow_descendant_chain_value,
+    int max_descendant_focus_steps,
     int limit
 );
 std::string reacquire_related_window_json(

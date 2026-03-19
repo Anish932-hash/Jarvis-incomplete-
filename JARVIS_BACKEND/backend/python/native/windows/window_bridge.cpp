@@ -685,6 +685,50 @@ DescendantChainMetrics analyze_descendant_chain(
     return metrics;
 }
 
+std::vector<WindowSnapshot> enumerate_window_snapshots(int limit) {
+    const HWND foreground = GetForegroundWindow();
+    std::vector<WindowSnapshot> rows;
+    rows.reserve(static_cast<std::size_t>(std::max(1, std::min(limit, 500))));
+    EnumWindowsContext context{&rows, foreground, std::max(1, std::min(limit, 500))};
+    EnumWindows(EnumWindowsListProc, reinterpret_cast<LPARAM>(&context));
+    return rows;
+}
+
+double descendant_chain_follow_quality(const DescendantChainMetrics& metrics) {
+    if (!metrics.preferred_descendant_found) {
+        return 0.0;
+    }
+    double quality = 0.22;
+    quality += std::min(0.26, metrics.descendant_focus_strength * 0.3);
+    quality += std::min(0.18, metrics.preferred_descendant_match_score * 0.18);
+    quality += std::min(0.12, 0.04 * metrics.descendant_chain_depth);
+    quality += std::min(0.1, 0.04 * metrics.descendant_dialog_chain_depth);
+    quality += std::min(0.12, 0.03 * metrics.descendant_query_match_count);
+    quality += std::min(0.08, 0.03 * metrics.descendant_hint_title_match_count);
+    quality += std::min(0.06, 0.025 * metrics.campaign_descendant_hint_title_match_count);
+    if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
+        quality += 0.05;
+    }
+    if (metrics.preferred_descendant.owner_hwnd > 0) {
+        quality += 0.04;
+    }
+    return std::clamp(quality, 0.0, 1.0);
+}
+
+bool descendant_chain_follow_allowed(const DescendantChainMetrics& metrics) {
+    if (!metrics.preferred_descendant_found) {
+        return false;
+    }
+    const double quality = descendant_chain_follow_quality(metrics);
+    return quality >= 0.56
+        && (
+            metrics.descendant_query_match_count > 0
+            || metrics.preferred_descendant_match_score >= 0.72
+            || metrics.descendant_dialog_chain_depth > 0
+            || metrics.direct_child_dialog_like_count > 0
+        );
+}
+
 BOOL CALLBACK EnumWindowsFindProc(HWND hwnd, LPARAM lparam) {
     auto* context = reinterpret_cast<FindWindowContext*>(lparam);
     if (context == nullptr) {
@@ -1111,6 +1155,8 @@ std::string focus_related_window_json(
     const std::string& window_title_utf8,
     long long hwnd_value,
     long pid_value,
+    int follow_descendant_chain_value,
+    int max_descendant_focus_steps,
     int limit
 ) {
     const int safe_limit = std::max(1, std::min(limit, 500));
@@ -1144,6 +1190,8 @@ std::string focus_related_window_json(
     const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
+    const bool follow_descendant_chain_requested = follow_descendant_chain_value != 0;
+    const int safe_max_descendant_focus_steps = std::max(1, std::min(max_descendant_focus_steps, 6));
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
     const long anchor_pid = pid_value > 0 ? pid_value : (anchor_found ? anchor.pid : 0);
     const long long anchor_root_owner_hwnd =
@@ -1269,57 +1317,238 @@ std::string focus_related_window_json(
         candidate.hwnd,
         &adopted_descendant_depth
     );
-    const bool adopted_matches_preferred_descendant = bool(
-        descendant_metrics.preferred_descendant_found
-        && adopted_window.hwnd > 0
-        && adopted_window.hwnd == descendant_metrics.preferred_descendant.hwnd
-    );
     const std::string chain_signature = child_chain_signature(
         candidate.hwnd,
         static_cast<int>(descendant_metrics.direct_children.size()),
         descendant_metrics.descendant_chain_depth,
         descendant_metrics.descendant_titles
     );
+    DescendantChainMetrics reported_descendant_metrics = descendant_metrics;
+    WindowSnapshot reported_preferred_descendant =
+        descendant_metrics.preferred_descendant_found ? descendant_metrics.preferred_descendant : WindowSnapshot{};
+    int reported_adopted_descendant_depth = adopted_is_descendant ? adopted_descendant_depth : 0;
+    int executed_descendant_focus_steps = adopted_is_descendant ? 1 : 0;
+    int descendant_focus_chain_hops = 0;
+    bool descendant_focus_chain_applied = false;
+    bool descendant_focus_chain_stable = false;
+    double descendant_focus_chain_quality = descendant_chain_follow_quality(descendant_metrics);
+    std::string descendant_focus_chain_stop_reason =
+        follow_descendant_chain_requested ? "" : "not_requested";
+    std::vector<std::string> descendant_focus_chain_titles;
+    std::vector<long long> descendant_focus_chain_hwnds;
+    std::vector<long long> visited_descendant_hwnds;
+    std::vector<std::string> visited_chain_signatures;
+    if (adopted_is_descendant) {
+        if (!adopted_window.title.empty()) {
+            descendant_focus_chain_titles.push_back(adopted_window.title);
+        }
+        if (adopted_window.hwnd > 0) {
+            descendant_focus_chain_hwnds.push_back(adopted_window.hwnd);
+            visited_descendant_hwnds.push_back(adopted_window.hwnd);
+        }
+        visited_chain_signatures.push_back(chain_signature);
+        reported_preferred_descendant = adopted_window;
+    }
+
+    if (follow_descendant_chain_requested) {
+        if (!adopted_is_descendant) {
+            descendant_focus_chain_stop_reason =
+                descendant_metrics.preferred_descendant_found
+                    ? "initial_focus_not_descendant"
+                    : "no_initial_descendant_focus";
+        } else if (safe_max_descendant_focus_steps <= executed_descendant_focus_steps) {
+            descendant_focus_chain_stop_reason = "max_descendant_focus_steps_reached";
+        } else {
+            WindowSnapshot chain_anchor = adopted_window;
+            while (executed_descendant_focus_steps < safe_max_descendant_focus_steps) {
+                const std::vector<WindowSnapshot> chain_rows = enumerate_window_snapshots(safe_limit);
+                const WindowSnapshot* refreshed_anchor =
+                    find_snapshot_by_hwnd(chain_rows, chain_anchor.hwnd);
+                if (refreshed_anchor == nullptr) {
+                    descendant_focus_chain_stop_reason = "anchor_window_missing";
+                    break;
+                }
+                const DescendantChainMetrics chain_metrics = analyze_descendant_chain(
+                    chain_rows,
+                    *refreshed_anchor,
+                    query,
+                    hint_query,
+                    descendant_hint_query,
+                    campaign_hint_query,
+                    campaign_preferred_title,
+                    preferred_title,
+                    window_title
+                );
+                reported_descendant_metrics = chain_metrics;
+                descendant_focus_chain_quality = descendant_chain_follow_quality(chain_metrics);
+                if (!chain_metrics.preferred_descendant_found) {
+                    descendant_focus_chain_stable = true;
+                    descendant_focus_chain_stop_reason = "stable_no_further_descendant";
+                    break;
+                }
+                const std::string next_chain_signature = child_chain_signature(
+                    refreshed_anchor->hwnd,
+                    static_cast<int>(chain_metrics.direct_children.size()),
+                    chain_metrics.descendant_chain_depth,
+                    chain_metrics.descendant_titles
+                );
+                if (std::find(
+                        visited_chain_signatures.begin(),
+                        visited_chain_signatures.end(),
+                        next_chain_signature
+                    ) != visited_chain_signatures.end()) {
+                    descendant_focus_chain_stop_reason = "repeat_child_chain_signature";
+                    break;
+                }
+                if (!descendant_chain_follow_allowed(chain_metrics)) {
+                    descendant_focus_chain_stop_reason = "chain_quality_drop";
+                    break;
+                }
+
+                const WindowSnapshot& next_target = chain_metrics.preferred_descendant;
+                if (std::find(
+                        visited_descendant_hwnds.begin(),
+                        visited_descendant_hwnds.end(),
+                        next_target.hwnd
+                    ) != visited_descendant_hwnds.end()) {
+                    descendant_focus_chain_stop_reason = "repeat_descendant_hwnd";
+                    break;
+                }
+
+                WindowSnapshot next_adopted_window;
+                bool next_focus_applied = false;
+                if (!focus_snapshot_target(next_target, next_adopted_window, next_focus_applied)) {
+                    descendant_focus_chain_stop_reason = "follow_focus_failed";
+                    break;
+                }
+
+                const std::vector<WindowSnapshot> after_focus_rows = enumerate_window_snapshots(safe_limit);
+                int next_descendant_depth = 0;
+                const bool next_is_descendant = snapshot_is_descendant_of(
+                    after_focus_rows,
+                    next_adopted_window,
+                    refreshed_anchor->hwnd,
+                    &next_descendant_depth
+                );
+                if (!next_is_descendant) {
+                    descendant_focus_chain_stop_reason = "follow_focus_not_descendant";
+                    break;
+                }
+
+                focus_applied = focus_applied || next_focus_applied;
+                adopted_window = next_adopted_window;
+                chain_anchor = next_adopted_window;
+                reported_preferred_descendant = next_adopted_window;
+                reported_adopted_descendant_depth = next_descendant_depth;
+                ++executed_descendant_focus_steps;
+                ++descendant_focus_chain_hops;
+                descendant_focus_chain_applied = true;
+                if (!next_adopted_window.title.empty()) {
+                    descendant_focus_chain_titles.push_back(next_adopted_window.title);
+                }
+                if (next_adopted_window.hwnd > 0) {
+                    descendant_focus_chain_hwnds.push_back(next_adopted_window.hwnd);
+                    visited_descendant_hwnds.push_back(next_adopted_window.hwnd);
+                }
+                visited_chain_signatures.push_back(next_chain_signature);
+            }
+            if (descendant_focus_chain_stop_reason.empty()) {
+                descendant_focus_chain_stop_reason =
+                    executed_descendant_focus_steps >= safe_max_descendant_focus_steps
+                        ? "max_descendant_focus_steps_reached"
+                        : "stable_no_further_descendant";
+            }
+        }
+    }
+
+    if (!reported_preferred_descendant.hwnd && adopted_window.hwnd > 0 && adopted_is_descendant) {
+        reported_preferred_descendant = adopted_window;
+    }
+    const bool adopted_matches_preferred_descendant = bool(
+        reported_preferred_descendant.hwnd > 0
+        && adopted_window.hwnd > 0
+        && adopted_window.hwnd == reported_preferred_descendant.hwnd
+    );
+    const std::string descendant_focus_chain_signature = child_chain_signature(
+        candidate.hwnd,
+        static_cast<int>(descendant_focus_chain_titles.size()),
+        executed_descendant_focus_steps,
+        descendant_focus_chain_titles
+    );
+    const std::string adoption_source = descendant_focus_chain_applied
+        ? "preferred_descendant_chain"
+        : (descendant_metrics.preferred_descendant_found ? "preferred_descendant" : "candidate");
+    const std::string adoption_transition_kind = descendant_focus_chain_applied
+        ? "descendant_focus_chain"
+        : (adopted_is_descendant ? "descendant_focus" : "candidate_focus");
 
     std::ostringstream output;
     output << "{"
            << "\"status\":\"success\","
            << "\"backend\":\"cpp_cython\","
            << "\"focus_applied\":" << (focus_applied ? "true" : "false") << ","
-           << "\"adoption_source\":\"" << (descendant_metrics.preferred_descendant_found ? "preferred_descendant" : "candidate") << "\","
-           << "\"adoption_transition_kind\":\"" << (adopted_is_descendant ? "descendant_focus" : "candidate_focus") << "\","
+           << "\"adoption_source\":\"" << adoption_source << "\","
+           << "\"adoption_transition_kind\":\"" << adoption_transition_kind << "\","
            << "\"candidate\":" << snapshot_to_json(candidate) << ","
            << "\"adopted_window\":" << snapshot_to_json(adopted_window) << ","
            << "\"match_score\":" << top_score << ","
-           << "\"direct_child_window_count\":" << descendant_metrics.direct_children.size() << ","
-           << "\"direct_child_dialog_like_count\":" << descendant_metrics.direct_child_dialog_like_count << ","
-           << "\"descendant_chain_depth\":" << descendant_metrics.descendant_chain_depth << ","
-           << "\"descendant_dialog_chain_depth\":" << descendant_metrics.descendant_dialog_chain_depth << ","
-           << "\"descendant_query_match_count\":" << descendant_metrics.descendant_query_match_count << ","
-           << "\"descendant_hint_title_match_count\":" << descendant_metrics.descendant_hint_title_match_count << ","
-           << "\"campaign_descendant_hint_title_match_count\":" << descendant_metrics.campaign_descendant_hint_title_match_count << ","
-           << "\"preferred_descendant_match_score\":" << descendant_metrics.preferred_descendant_match_score << ","
-           << "\"descendant_focus_strength\":" << descendant_metrics.descendant_focus_strength << ","
-           << "\"adopted_descendant_depth\":" << (adopted_is_descendant ? adopted_descendant_depth : 0) << ","
+           << "\"direct_child_window_count\":" << reported_descendant_metrics.direct_children.size() << ","
+           << "\"direct_child_dialog_like_count\":" << reported_descendant_metrics.direct_child_dialog_like_count << ","
+           << "\"descendant_chain_depth\":" << reported_descendant_metrics.descendant_chain_depth << ","
+           << "\"descendant_dialog_chain_depth\":" << reported_descendant_metrics.descendant_dialog_chain_depth << ","
+           << "\"descendant_query_match_count\":" << reported_descendant_metrics.descendant_query_match_count << ","
+           << "\"descendant_hint_title_match_count\":" << reported_descendant_metrics.descendant_hint_title_match_count << ","
+           << "\"campaign_descendant_hint_title_match_count\":" << reported_descendant_metrics.campaign_descendant_hint_title_match_count << ","
+           << "\"preferred_descendant_match_score\":" << reported_descendant_metrics.preferred_descendant_match_score << ","
+           << "\"descendant_focus_strength\":" << reported_descendant_metrics.descendant_focus_strength << ","
+           << "\"adopted_descendant_depth\":" << reported_adopted_descendant_depth << ","
            << "\"adopted_matches_preferred_descendant\":" << (adopted_matches_preferred_descendant ? "true" : "false") << ","
+           << "\"follow_descendant_chain_requested\":"
+           << (follow_descendant_chain_requested ? "true" : "false") << ","
+           << "\"max_descendant_focus_steps\":" << safe_max_descendant_focus_steps << ","
+           << "\"descendant_focus_chain_applied\":"
+           << (descendant_focus_chain_applied ? "true" : "false") << ","
+           << "\"executed_descendant_focus_steps\":" << executed_descendant_focus_steps << ","
+           << "\"descendant_focus_chain_hops\":" << descendant_focus_chain_hops << ","
+           << "\"descendant_focus_chain_stable\":"
+           << (descendant_focus_chain_stable ? "true" : "false") << ","
+           << "\"descendant_focus_chain_stop_reason\":\""
+           << json_escape(descendant_focus_chain_stop_reason) << "\","
+           << "\"descendant_focus_chain_quality\":" << descendant_focus_chain_quality << ","
+           << "\"descendant_focus_chain_signature\":\""
+           << json_escape(descendant_focus_chain_signature) << "\","
            << "\"child_chain_signature\":\"" << json_escape(chain_signature) << "\","
            << "\"direct_child_titles\":[";
-    for (std::size_t index = 0; index < descendant_metrics.direct_child_titles.size(); ++index) {
+    for (std::size_t index = 0; index < reported_descendant_metrics.direct_child_titles.size(); ++index) {
         if (index > 0) {
             output << ",";
         }
-        output << "\"" << json_escape(descendant_metrics.direct_child_titles[index]) << "\"";
+        output << "\"" << json_escape(reported_descendant_metrics.direct_child_titles[index]) << "\"";
     }
     output << "],\"descendant_chain_titles\":[";
-    for (std::size_t index = 0; index < descendant_metrics.descendant_titles.size(); ++index) {
+    for (std::size_t index = 0; index < reported_descendant_metrics.descendant_titles.size(); ++index) {
         if (index > 0) {
             output << ",";
         }
-        output << "\"" << json_escape(descendant_metrics.descendant_titles[index]) << "\"";
+        output << "\"" << json_escape(reported_descendant_metrics.descendant_titles[index]) << "\"";
+    }
+    output << "],\"descendant_focus_chain_titles\":[";
+    for (std::size_t index = 0; index < descendant_focus_chain_titles.size(); ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << "\"" << json_escape(descendant_focus_chain_titles[index]) << "\"";
+    }
+    output << "],\"descendant_focus_chain_hwnds\":[";
+    for (std::size_t index = 0; index < descendant_focus_chain_hwnds.size(); ++index) {
+        if (index > 0) {
+            output << ",";
+        }
+        output << descendant_focus_chain_hwnds[index];
     }
     output << "],\"preferred_descendant\":";
-    if (descendant_metrics.preferred_descendant_found) {
-        output << snapshot_to_json(descendant_metrics.preferred_descendant);
+    if (reported_preferred_descendant.hwnd > 0) {
+        output << snapshot_to_json(reported_preferred_descendant);
     } else {
         output << "null";
     }

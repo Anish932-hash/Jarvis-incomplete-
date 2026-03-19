@@ -1360,6 +1360,8 @@ class WindowManager:
         window_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
+        follow_descendant_chain: bool = False,
+        max_descendant_focus_steps: int = 1,
         limit: int = 80,
     ) -> Dict[str, Any] | None:
         if self._native_runtime is None:
@@ -1375,6 +1377,8 @@ class WindowManager:
                 window_title=window_title,
                 hwnd=hwnd,
                 pid=pid,
+                follow_descendant_chain=follow_descendant_chain,
+                max_descendant_focus_steps=max_descendant_focus_steps,
                 limit=limit,
             )
         except Exception:  # noqa: BLE001
@@ -1432,6 +1436,47 @@ class WindowManager:
             "adopted_matches_preferred_descendant": bool(
                 payload.get("adopted_matches_preferred_descendant", False)
             ),
+            "follow_descendant_chain_requested": bool(
+                payload.get("follow_descendant_chain_requested", False)
+            ),
+            "max_descendant_focus_steps": max(
+                1,
+                int(payload.get("max_descendant_focus_steps", 1) or 1),
+            ),
+            "descendant_focus_chain_applied": bool(
+                payload.get("descendant_focus_chain_applied", False)
+            ),
+            "executed_descendant_focus_steps": max(
+                0,
+                int(payload.get("executed_descendant_focus_steps", 0) or 0),
+            ),
+            "descendant_focus_chain_hops": max(
+                0,
+                int(payload.get("descendant_focus_chain_hops", 0) or 0),
+            ),
+            "descendant_focus_chain_stable": bool(
+                payload.get("descendant_focus_chain_stable", False)
+            ),
+            "descendant_focus_chain_stop_reason": str(
+                payload.get("descendant_focus_chain_stop_reason", "") or ""
+            ).strip(),
+            "descendant_focus_chain_quality": max(
+                0.0,
+                min(float(payload.get("descendant_focus_chain_quality", 0.0) or 0.0), 1.0),
+            ),
+            "descendant_focus_chain_signature": str(
+                payload.get("descendant_focus_chain_signature", "") or ""
+            ).strip(),
+            "descendant_focus_chain_titles": [
+                str(item).strip()
+                for item in payload.get("descendant_focus_chain_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("descendant_focus_chain_titles", []), list) else [],
+            "descendant_focus_chain_hwnds": [
+                int(item or 0)
+                for item in payload.get("descendant_focus_chain_hwnds", [])
+                if int(item or 0) > 0
+            ][:8] if isinstance(payload.get("descendant_focus_chain_hwnds", []), list) else [],
             "descendant_chain_titles": [
                 str(item).strip()
                 for item in payload.get("descendant_chain_titles", [])
@@ -2603,6 +2648,8 @@ class WindowManager:
         preferred_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
+        follow_descendant_chain: bool = False,
+        max_descendant_focus_steps: int = 1,
         benchmark_guidance: Dict[str, Any] | None = None,
         limit: int = 80,
     ) -> Dict[str, Any]:
@@ -2629,6 +2676,54 @@ class WindowManager:
             preferred_title or target_context.get("preferred_window_title", "") or title_contains or ""
         ).strip()
         resolved_window_title = str(window_title or title_contains or "").strip()
+        strong_campaign_pressure = max(
+            0.0,
+            float(target_context.get("campaign_pressure", 0.0) or 0.0),
+            float(target_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0),
+        )
+        strong_replay_pressure = max(
+            0.0,
+            float(target_context.get("replay_pressure", 0.0) or 0.0),
+            float(target_context.get("benchmark_target_replay_pressure", 0.0) or 0.0),
+        )
+        long_horizon_pressure = max(
+            0,
+            int(target_context.get("benchmark_target_long_horizon_pending_count", 0) or 0),
+            int(target_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0),
+        )
+        regression_cycle_pressure = max(
+            0,
+            int(target_context.get("benchmark_target_regression_cycle_count", 0) or 0),
+            int(target_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0),
+        )
+        session_cycle_pressure = max(
+            0,
+            int(target_context.get("benchmark_target_session_cycle_count", 0) or 0),
+            int(target_context.get("benchmark_target_campaign_sweep_count", 0) or 0),
+        )
+        target_descendant_pressure = max(
+            0.0,
+            float(target_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0),
+        )
+        auto_follow_descendant_chain = bool(
+            target_context.get("benchmark_target_app_matched", False)
+        ) and (
+            strong_campaign_pressure >= 0.75
+            or strong_replay_pressure >= 0.75
+            or regression_cycle_pressure > 0
+            or long_horizon_pressure > 0
+            or (session_cycle_pressure > 0 and target_descendant_pressure >= 0.55)
+        )
+        resolved_max_descendant_focus_steps = max(1, min(int(max_descendant_focus_steps or 1), 6))
+        if auto_follow_descendant_chain and resolved_max_descendant_focus_steps <= 1:
+            horizon_budget = max(0, int(target_context.get("benchmark_target_max_horizon_steps", 0) or 0))
+            if horizon_budget >= 4 or regression_cycle_pressure > 0 or long_horizon_pressure > 0:
+                resolved_max_descendant_focus_steps = 3
+            else:
+                resolved_max_descendant_focus_steps = 2
+        resolved_follow_descendant_chain = bool(
+            follow_descendant_chain or (auto_follow_descendant_chain and resolved_max_descendant_focus_steps > 1)
+        )
 
         native_result = self._native_focus_related_window(
             query=query,
@@ -2640,6 +2735,8 @@ class WindowManager:
             window_title=resolved_window_title,
             hwnd=hwnd,
             pid=pid,
+            follow_descendant_chain=resolved_follow_descendant_chain,
+            max_descendant_focus_steps=resolved_max_descendant_focus_steps,
             limit=limit,
         )
         if native_result is not None:
@@ -2678,6 +2775,21 @@ class WindowManager:
             "preferred_descendant": dict(reacquired.get("preferred_descendant", {}))
             if isinstance(reacquired.get("preferred_descendant", {}), dict)
             else {},
+            "follow_descendant_chain_requested": resolved_follow_descendant_chain,
+            "max_descendant_focus_steps": resolved_max_descendant_focus_steps,
+            "descendant_focus_chain_applied": False,
+            "executed_descendant_focus_steps": 0,
+            "descendant_focus_chain_hops": 0,
+            "descendant_focus_chain_stable": False,
+            "descendant_focus_chain_stop_reason": (
+                "fallback_single_focus"
+                if resolved_follow_descendant_chain
+                else "not_requested"
+            ),
+            "descendant_focus_chain_quality": 0.0,
+            "descendant_focus_chain_signature": "",
+            "descendant_focus_chain_titles": [],
+            "descendant_focus_chain_hwnds": [],
             "direct_child_window_count": int(reacquired.get("direct_child_window_count", 0) or 0),
             "direct_child_dialog_like_count": int(reacquired.get("direct_child_dialog_like_count", 0) or 0),
             "direct_child_titles": [

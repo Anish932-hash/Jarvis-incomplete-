@@ -7521,7 +7521,9 @@ class DesktopActionRouter:
         post_probe = post_context.get("workflow_probe", {}) if isinstance(post_context.get("workflow_probe", {}), dict) else {}
         checks: List[Dict[str, Any]] = []
         warnings: List[str] = []
-        focus_step = self._find_step_result(results, "focus_related_window")
+        focus_step = self._find_step_result(results, "focus_related_window_chain")
+        if not focus_step:
+            focus_step = self._find_step_result(results, "focus_related_window")
         if not focus_step:
             focus_step = self._find_step_result(results, "focus_window")
         if not post_active and isinstance(focus_step.get("window", {}), dict):
@@ -10602,6 +10604,18 @@ class DesktopActionRouter:
             0,
             int(branch_context.get("benchmark_target_replay_completed_count", 0) or 0),
         )
+        benchmark_target_campaign_pressure = max(
+            0.0,
+            float(branch_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_campaign_regression_cycle_count = max(
+            0,
+            int(branch_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0),
+        )
+        benchmark_target_campaign_long_horizon_pending_count = max(
+            0,
+            int(branch_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0),
+        )
         benchmark_target_session_cycle_count = max(
             0,
             int(branch_context.get("benchmark_target_session_cycle_count", 0) or 0),
@@ -10649,7 +10663,20 @@ class DesktopActionRouter:
             selected_action=selected_action,
             label=label,
         )
-        focus_like_action = selected_action in {"focus", "focus_related_window"}
+        focus_like_action = selected_action in {"focus", "focus_related_window", "focus_related_window_chain"}
+        requested_descendant_chain = bool(
+            selected_action == "focus_related_window_chain"
+            or action_payload.get("follow_descendant_chain", False)
+        )
+        requested_descendant_chain_steps = max(
+            1,
+            min(int(action_payload.get("max_descendant_focus_steps", 1) or 1), 6),
+        )
+        descendant_chain_pressure = max(
+            benchmark_target_descendant_focus_pressure,
+            min(1.0, benchmark_target_campaign_pressure / 2.0),
+            min(1.0, benchmark_target_replay_pressure / 2.0),
+        )
         if selection_key in recent_selection_keys:
             repeat_penalty = 0.16 if latest_occurrences < 2 else 0.24
             repeat_penalty += 0.12 * benchmark_loop_guard_pressure
@@ -10746,6 +10773,15 @@ class DesktopActionRouter:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
                 score += 0.04
+            if requested_descendant_chain and native_descendant_chain_depth > 1:
+                score += min(
+                    0.18,
+                    0.05
+                    + (0.03 * min(native_descendant_chain_depth, 3))
+                    + (0.02 * min(requested_descendant_chain_steps, 4)),
+                )
+                if benchmark_target_app_matched and descendant_chain_pressure > 0.0:
+                    score += 0.03 + (0.08 * descendant_chain_pressure)
         if native_descendant_adoption_available and focus_like_action:
             score += min(0.1, 0.03 + (native_descendant_adoption_match_score * 0.08))
         navigation_actions = {
@@ -14379,6 +14415,75 @@ class DesktopActionRouter:
         benchmark_preferred_title = str(
             native_target_context.get("benchmark_target_preferred_window_title", "") or ""
         ).strip()
+        benchmark_target_app_matched = bool(native_target_context.get("benchmark_target_app_matched", False))
+        benchmark_target_campaign_pressure = max(
+            0.0,
+            float(native_target_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_replay_pressure = max(
+            0.0,
+            float(native_target_context.get("benchmark_target_replay_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_descendant_focus_pressure = max(
+            0.0,
+            min(float(native_target_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0),
+        )
+        benchmark_target_session_cycle_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_session_cycle_count", 0) or 0),
+        )
+        benchmark_target_regression_cycle_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_regression_cycle_count", 0) or 0),
+        )
+        benchmark_target_long_horizon_pending_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_long_horizon_pending_count", 0) or 0),
+        )
+        benchmark_target_campaign_regression_cycle_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0),
+        )
+        benchmark_target_campaign_long_horizon_pending_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0),
+        )
+        prefer_descendant_chain = bool(
+            benchmark_target_app_matched
+            and descendant_chain_depth >= 2
+            and (
+                benchmark_target_campaign_pressure >= 0.75
+                or benchmark_target_replay_pressure >= 0.75
+                or benchmark_target_regression_cycle_count > 0
+                or benchmark_target_campaign_regression_cycle_count > 0
+                or benchmark_target_long_horizon_pending_count > 0
+                or benchmark_target_campaign_long_horizon_pending_count > 0
+                or (
+                    benchmark_target_session_cycle_count > 0
+                    and benchmark_target_descendant_focus_pressure >= 0.55
+                )
+            )
+        )
+        descendant_chain_step_budget = 1
+        if prefer_descendant_chain:
+            descendant_chain_step_budget = min(
+                4,
+                max(
+                    2,
+                    descendant_chain_depth,
+                    3 if (
+                        benchmark_target_regression_cycle_count > 0
+                        or benchmark_target_campaign_regression_cycle_count > 0
+                        or benchmark_target_long_horizon_pending_count > 0
+                        or benchmark_target_campaign_long_horizon_pending_count > 0
+                    ) else 2,
+                ),
+            )
+        descendant_chain_pressure = max(
+            benchmark_target_descendant_focus_pressure,
+            min(1.0, benchmark_target_campaign_pressure / 2.0),
+            min(1.0, benchmark_target_replay_pressure / 2.0),
+        )
         preferred_descendant_label = preferred_descendant_title or (
             f"Child surface {preferred_descendant_hwnd}" if preferred_descendant_hwnd > 0 else ""
         )
@@ -14387,8 +14492,13 @@ class DesktopActionRouter:
             or (preferred_descendant_hwnd > 0 and preferred_descendant_hwnd in current_window_hwnds)
         )
         if preferred_descendant_label and not preferred_descendant_current:
+            selected_focus_action = (
+                "focus_related_window_chain"
+                if prefer_descendant_chain
+                else "focus_related_window"
+            )
             adoption_payload: Dict[str, Any] = {
-                "action": "focus_related_window",
+                "action": selected_focus_action,
                 "focus_first": False,
                 "query": query,
             }
@@ -14421,6 +14531,9 @@ class DesktopActionRouter:
                 adoption_payload["campaign_preferred_title"] = benchmark_campaign_preferred_title
             if benchmark_guidance:
                 adoption_payload["benchmark_guidance"] = benchmark_guidance
+            if prefer_descendant_chain:
+                adoption_payload["follow_descendant_chain"] = True
+                adoption_payload["max_descendant_focus_steps"] = descendant_chain_step_budget
             descendant_focus_confidence = 0.78
             descendant_focus_confidence += min(0.08, max(0, descendant_chain_depth) * 0.02)
             descendant_focus_confidence += min(0.05, max(0, descendant_dialog_chain_depth) * 0.015)
@@ -14437,6 +14550,8 @@ class DesktopActionRouter:
                 descendant_focus_confidence += min(0.04, descendant_hint_title_match_count * 0.015)
             if campaign_descendant_hint_title_match_count > 0:
                 descendant_focus_confidence += min(0.03, campaign_descendant_hint_title_match_count * 0.012)
+            if prefer_descendant_chain:
+                descendant_focus_confidence += 0.05 + (0.06 * descendant_chain_pressure)
             descendant_focus_confidence = min(0.96, descendant_focus_confidence)
             descendant_reason = (
                 "Native window topology found a deeper child surface in the current modal chain."
@@ -14445,10 +14560,22 @@ class DesktopActionRouter:
                 descendant_reason = (
                     "Native window topology found a deeper child surface that still matches the active exploration query."
                 )
+            if prefer_descendant_chain:
+                descendant_reason = (
+                    "Native window topology found a deeper child-window chain, and stored campaign pressure says this app benefits from bounded multi-hop descendant adoption."
+                )
+                if descendant_query_match_count > 0:
+                    descendant_reason = (
+                        "Native window topology found a deeper child-window chain that still matches the active exploration query, and benchmark campaign pressure favors following that chain natively."
+                    )
             rows.append(
                 {
                     "action": "focus",
-                    "title": f"Adopt child surface: {preferred_descendant_label}",
+                    "title": (
+                        f"Adopt child surface chain: {preferred_descendant_label}"
+                        if prefer_descendant_chain
+                        else f"Adopt child surface: {preferred_descendant_label}"
+                    ),
                     "candidate_id": str(preferred_descendant_hwnd) if preferred_descendant_hwnd > 0 else preferred_descendant_title,
                     "matched": descendant_query_match_count > 0,
                     "supported": True,
@@ -14457,6 +14584,7 @@ class DesktopActionRouter:
                     "action_payload": adoption_payload,
                     "recommended_followups": [],
                     "child_chain_signature": child_chain_signature,
+                    "max_descendant_focus_steps": descendant_chain_step_budget if prefer_descendant_chain else 1,
                 }
             )
         rows.sort(key=lambda row: (-float(row.get("confidence", 0.0) or 0.0), str(row.get("action", "") or "")))
@@ -19367,6 +19495,13 @@ class DesktopActionRouter:
 
             return focus_related_window_impl(payload)
 
+        def _focus_related_window_chain(payload: Dict[str, Any]) -> Dict[str, Any]:
+            from backend.python.tools.route_handlers import (
+                _focus_related_window_chain as focus_related_window_chain_impl,
+            )
+
+            return focus_related_window_chain_impl(payload)
+
         def _keyboard_type(payload: Dict[str, Any]) -> Dict[str, Any]:
             from backend.python.tools.route_handlers import _keyboard_type as keyboard_type_impl
 
@@ -19425,6 +19560,7 @@ class DesktopActionRouter:
             "reacquire_window": _reacquire_window,
             "focus_window": _focus_window,
             "focus_related_window": _focus_related_window,
+            "focus_related_window_chain": _focus_related_window_chain,
             "keyboard_type": _keyboard_type,
             "keyboard_hotkey": _keyboard_hotkey,
             "computer_click_target": _computer_click_target,
