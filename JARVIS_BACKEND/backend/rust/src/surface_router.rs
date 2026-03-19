@@ -166,6 +166,34 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub benchmark_target_replay_completed_count: u32,
     #[serde(default)]
+    pub benchmark_target_campaign_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_sweep_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_pending_session_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_attention_session_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_pending_app_target_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_regression_cycle_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_long_horizon_pending_count: u32,
+    #[serde(default)]
+    pub benchmark_target_campaign_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_campaign_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_campaign_descendant_title_hints: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_campaign_descendant_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_campaign_preferred_window_title: String,
+    #[serde(default)]
+    pub benchmark_target_campaign_latest_sweep_status: String,
+    #[serde(default)]
+    pub benchmark_target_campaign_latest_sweep_regression_status: String,
+    #[serde(default)]
     pub benchmark_target_session_cycle_count: u32,
     #[serde(default)]
     pub benchmark_target_regression_cycle_count: u32,
@@ -621,6 +649,41 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let benchmark_target_replay_pending_count = input.benchmark_target_replay_pending_count;
     let benchmark_target_replay_failed_count = input.benchmark_target_replay_failed_count;
     let benchmark_target_replay_completed_count = input.benchmark_target_replay_completed_count;
+    let benchmark_target_campaign_count = input.benchmark_target_campaign_count;
+    let benchmark_target_campaign_sweep_count = input.benchmark_target_campaign_sweep_count;
+    let benchmark_target_campaign_pending_session_count =
+        input.benchmark_target_campaign_pending_session_count;
+    let benchmark_target_campaign_attention_session_count =
+        input.benchmark_target_campaign_attention_session_count;
+    let benchmark_target_campaign_pending_app_target_count =
+        input.benchmark_target_campaign_pending_app_target_count;
+    let benchmark_target_campaign_regression_cycle_count =
+        input.benchmark_target_campaign_regression_cycle_count;
+    let benchmark_target_campaign_long_horizon_pending_count =
+        input.benchmark_target_campaign_long_horizon_pending_count;
+    let benchmark_target_campaign_pressure =
+        input.benchmark_target_campaign_pressure.max(0.0);
+    let benchmark_target_campaign_hint_query =
+        normalize_text(&input.benchmark_target_campaign_hint_query);
+    let benchmark_target_campaign_hint_query_tokens =
+        tokenize(&benchmark_target_campaign_hint_query);
+    let benchmark_target_campaign_descendant_title_hint_tokens = input
+        .benchmark_target_campaign_descendant_title_hints
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_campaign_descendant_hint_query =
+        normalize_text(&input.benchmark_target_campaign_descendant_hint_query);
+    let benchmark_target_campaign_descendant_hint_query_tokens =
+        tokenize(&benchmark_target_campaign_descendant_hint_query);
+    let benchmark_target_campaign_preferred_window_title =
+        normalize_text(&input.benchmark_target_campaign_preferred_window_title);
+    let benchmark_target_campaign_preferred_window_tokens =
+        tokenize(&benchmark_target_campaign_preferred_window_title);
+    let benchmark_target_campaign_latest_sweep_status =
+        normalize_text(&input.benchmark_target_campaign_latest_sweep_status);
+    let benchmark_target_campaign_latest_sweep_regression_status =
+        normalize_text(&input.benchmark_target_campaign_latest_sweep_regression_status);
     let benchmark_target_session_cycle_count = input.benchmark_target_session_cycle_count;
     let benchmark_target_regression_cycle_count =
         input.benchmark_target_regression_cycle_count;
@@ -707,6 +770,18 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             token_overlap(&benchmark_target_hint_query_tokens, &label_tokens);
         let target_preferred_window_overlap =
             token_overlap(&benchmark_target_preferred_window_tokens, &label_tokens);
+        let campaign_hint_overlap =
+            token_overlap(&benchmark_target_campaign_hint_query_tokens, &label_tokens);
+        let campaign_descendant_hint_overlap =
+            token_overlap(
+                &benchmark_target_campaign_descendant_title_hint_tokens,
+                &label_tokens,
+            ) + token_overlap(
+                &benchmark_target_campaign_descendant_hint_query_tokens,
+                &label_tokens,
+            );
+        let campaign_preferred_window_overlap =
+            token_overlap(&benchmark_target_campaign_preferred_window_tokens, &label_tokens);
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
@@ -739,6 +814,24 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push(format!(
                 "benchmark_target_preferred_window:{}",
                 target_preferred_window_overlap
+            ));
+        }
+        if benchmark_target_app_matched && campaign_hint_overlap > 0 {
+            rust_score += (campaign_hint_overlap as f64 * 0.04).min(0.14);
+            reasons.push(format!("benchmark_campaign_hint:{}", campaign_hint_overlap));
+        }
+        if benchmark_target_app_matched && campaign_descendant_hint_overlap > 0 {
+            rust_score += (campaign_descendant_hint_overlap as f64 * 0.045).min(0.16);
+            reasons.push(format!(
+                "benchmark_campaign_descendant_hint:{}",
+                campaign_descendant_hint_overlap
+            ));
+        }
+        if benchmark_target_app_matched && campaign_preferred_window_overlap > 0 {
+            rust_score += (campaign_preferred_window_overlap as f64 * 0.04).min(0.12);
+            reasons.push(format!(
+                "benchmark_campaign_preferred_window:{}",
+                campaign_preferred_window_overlap
             ));
         }
         let preferred_descendant_overlap =
@@ -892,6 +985,30 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 benchmark_target_replay_pressure
             ));
         }
+        if benchmark_target_app_matched && benchmark_target_campaign_pressure > 0.0 {
+            let mut campaign_boost = (0.02 * benchmark_target_campaign_pressure.min(5.0))
+                + (0.02 * benchmark_target_campaign_attention_session_count.min(3) as f64)
+                + (0.015 * benchmark_target_campaign_pending_session_count.min(3) as f64)
+                + (0.02 * benchmark_target_campaign_pending_app_target_count.min(3) as f64)
+                + (0.02 * benchmark_target_campaign_regression_cycle_count.min(3) as f64)
+                + (0.012 * benchmark_target_campaign_sweep_count.min(4) as f64)
+                + (0.008 * benchmark_target_campaign_count.min(4) as f64);
+            if preferred_descendant_focus {
+                campaign_boost +=
+                    (0.03 + (campaign_descendant_hint_overlap as f64 * 0.05)).min(0.09);
+            } else if selected_action == "press_dialog_button" {
+                campaign_boost +=
+                    (0.02 + (campaign_hint_overlap as f64 * 0.04)).min(0.07);
+            } else if selected_action == "focus" {
+                campaign_boost +=
+                    (0.02 + (campaign_preferred_window_overlap as f64 * 0.03)).min(0.06);
+            }
+            rust_score += campaign_boost.min(0.28);
+            reasons.push(format!(
+                "benchmark_campaign_pressure:{:.2}",
+                benchmark_target_campaign_pressure
+            ));
+        }
         if benchmark_target_app_matched
             && benchmark_target_session_cycle_count > 0
             && target_descendant_hint_overlap > 0
@@ -913,6 +1030,70 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 "benchmark_target_regression_cycles:{}",
                 benchmark_target_regression_cycle_count
             ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_campaign_attention_session_count > 0
+            && (campaign_descendant_hint_overlap > 0 || campaign_preferred_window_overlap > 0)
+        {
+            rust_score +=
+                (benchmark_target_campaign_attention_session_count.min(4) as f64 * 0.018)
+                    .min(0.08);
+            reasons.push(format!(
+                "benchmark_campaign_attention:{}",
+                benchmark_target_campaign_attention_session_count
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_campaign_regression_cycle_count > 0
+            && (preferred_descendant_focus || campaign_descendant_hint_overlap > 0)
+        {
+            rust_score +=
+                (benchmark_target_campaign_regression_cycle_count.min(4) as f64 * 0.02)
+                    .min(0.08);
+            reasons.push(format!(
+                "benchmark_campaign_regression:{}",
+                benchmark_target_campaign_regression_cycle_count
+            ));
+        }
+        if benchmark_target_app_matched && benchmark_target_campaign_pending_app_target_count > 0 {
+            if preferred_descendant_focus || selected_action == "focus" {
+                rust_score +=
+                    (benchmark_target_campaign_pending_app_target_count.min(3) as f64 * 0.02)
+                        .min(0.06);
+                reasons.push(format!(
+                    "benchmark_campaign_pending_apps:{}",
+                    benchmark_target_campaign_pending_app_target_count
+                ));
+            }
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_campaign_long_horizon_pending_count > 0
+            && (preferred_descendant_focus || selected_action == "press_dialog_button")
+        {
+            rust_score +=
+                (benchmark_target_campaign_long_horizon_pending_count.min(3) as f64 * 0.02)
+                    .min(0.06);
+            reasons.push(format!(
+                "benchmark_campaign_long_horizon:{}",
+                benchmark_target_campaign_long_horizon_pending_count
+            ));
+        }
+        if benchmark_target_app_matched
+            && benchmark_target_campaign_latest_sweep_status == "failed"
+            && (campaign_descendant_hint_overlap > 0 || campaign_preferred_window_overlap > 0)
+        {
+            rust_score += 0.05;
+            reasons.push("benchmark_campaign_latest_sweep_failed".to_string());
+        }
+        if benchmark_target_app_matched
+            && matches!(
+                benchmark_target_campaign_latest_sweep_regression_status.as_str(),
+                "regression" | "failed"
+            )
+            && (campaign_descendant_hint_overlap > 0 || campaign_preferred_window_overlap > 0)
+        {
+            rust_score += 0.06;
+            reasons.push("benchmark_campaign_latest_regression".to_string());
         }
         if benchmark_target_app_matched && benchmark_target_long_horizon_pending_count > 0 {
             if preferred_descendant_focus || selected_action == "press_dialog_button" {
@@ -2112,5 +2293,87 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|value| value.as_str() == Some("branch_family_dialog_continuity:2")));
+    }
+
+    #[test]
+    fn route_surface_exploration_uses_campaign_pressure_for_descendant_focus() {
+        let payload = json!({
+            "query": "Confirm pairing",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Pair device",
+            "current_reacquired_app_name": "settings",
+            "preferred_descendant_title": "Confirm pairing",
+            "preferred_descendant_hwnd": 5003,
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_app_match_score": 1.0,
+            "benchmark_target_campaign_pressure": 1.9,
+            "benchmark_target_campaign_count": 1,
+            "benchmark_target_campaign_sweep_count": 2,
+            "benchmark_target_campaign_attention_session_count": 1,
+            "benchmark_target_campaign_pending_app_target_count": 1,
+            "benchmark_target_campaign_regression_cycle_count": 2,
+            "benchmark_target_campaign_long_horizon_pending_count": 1,
+            "benchmark_target_campaign_hint_query": "pair device | confirm pairing",
+            "benchmark_target_campaign_descendant_title_hints": ["Pair device", "Confirm pairing"],
+            "benchmark_target_campaign_descendant_hint_query": "pair device | confirm pairing",
+            "benchmark_target_campaign_preferred_window_title": "Confirm pairing",
+            "benchmark_target_campaign_latest_sweep_regression_status": "regression",
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5003|focus|adopt child surface: confirm pairing",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface: Confirm pairing",
+                    "selected_action": "focus",
+                    "confidence": 0.74
+                },
+                {
+                    "selection_key": "branch_action||click|back to bluetooth",
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": "Back to Bluetooth",
+                    "selected_action": "click",
+                    "confidence": 0.8
+                }
+            ],
+            "branch_history": [
+                {
+                    "transition_kind": "child_window_chain",
+                    "selected_action": "press_dialog_button",
+                    "selected_candidate_id": "dialog_continue",
+                    "selected_candidate_label": "Continue",
+                    "window_title": "Pair device",
+                    "occurrences": 1
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus")
+        );
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_campaign_pressure:1.90")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_campaign_descendant_hint:4")));
+        assert!(reasons
+            .iter()
+            .any(|value| value.as_str() == Some("benchmark_campaign_regression:2")));
     }
 }

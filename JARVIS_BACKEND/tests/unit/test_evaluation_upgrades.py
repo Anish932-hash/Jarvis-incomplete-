@@ -741,6 +741,20 @@ def test_evaluation_runner_creates_lab_campaigns_and_sweeps(monkeypatch, tmp_pat
     assert int(swept["campaign"]["sweep_count"]) >= 1
     assert isinstance(swept["results"], list)
 
+    native_targets = runner.native_control_targets(pack="long_horizon_and_replay", history_limit=6)
+    assert native_targets["status"] == "success"
+    assert int(native_targets["replay_campaign_summary"]["campaign_count"]) >= 1
+    assert int(native_targets["replay_campaign_summary"]["sweep_count"]) >= 1
+    settings_like_row = next(
+        item
+        for item in native_targets["target_apps"]
+        if str(item.get("app_name", "")) in {"settings", "vscode"}
+    )
+    assert int(settings_like_row["campaign_count"]) >= 1
+    assert float(settings_like_row["campaign_pressure"]) > 0.0
+    assert str(settings_like_row["campaign_hint_query"]).strip()
+    assert str(settings_like_row["campaign_preferred_window_title"]).strip()
+
 
 def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=4)

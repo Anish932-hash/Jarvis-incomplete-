@@ -18254,6 +18254,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}failed:
                                             {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_session_summary).failed_replays ?? 0)}
                                           </p>
+                                          <p>
+                                            campaigns:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_campaign_summary).campaign_count ?? 0)}
+                                            {' • '}sweeps:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_campaign_summary).sweep_count ?? 0)}
+                                            {' • '}attention:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_campaign_summary).attention_session_count ?? 0)}
+                                            {' • '}pending apps:
+                                            {Number(asObjectRecord(desktopEvaluationNativeTargets.replay_campaign_summary).pending_app_target_count ?? 0)}
+                                          </p>
                                           {Object.keys(asObjectRecord(desktopEvaluationNativeTargets.strongest_tactics)).length > 0 ? (
                                             <div className="flex flex-wrap items-center gap-2">
                                               {Object.entries(asObjectRecord(desktopEvaluationNativeTargets.strongest_tactics))
@@ -18293,6 +18303,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                             : 'n/a'}
                                                           {' • '}replay:
                                                           {Number(item.replay_pressure ?? 0).toFixed(2)}
+                                                          {' • '}campaign:
+                                                          {Number(item.campaign_pressure ?? 0).toFixed(2)}
                                                         </p>
                                                         <p className="mt-1 text-[10px] text-muted-foreground">
                                                           {String(item.hint_query ?? '').trim()
@@ -18312,10 +18324,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                             : ' n/a'}
                                                         </p>
                                                         <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          campaign preferred:
+                                                          {String(item.campaign_preferred_window_title ?? '').trim()
+                                                            ? ` ${String(item.campaign_preferred_window_title ?? '').trim()}`
+                                                            : ' n/a'}
+                                                          {' • '}campaign desc:
+                                                          {Array.isArray(item.campaign_descendant_title_hints) && item.campaign_descendant_title_hints.length > 0
+                                                            ? ` ${item.campaign_descendant_title_hints.slice(0, 2).join(' • ')}`
+                                                            : ' n/a'}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
                                                           sessions:{Number(item.replay_session_count ?? 0)}
                                                           {' • '}pending:{Number(item.replay_pending_count ?? 0)}
                                                           {' • '}failed:{Number(item.replay_failed_count ?? 0)}
                                                           {' • '}done:{Number(item.replay_completed_count ?? 0)}
+                                                        </p>
+                                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                                          campaigns:{Number(item.campaign_count ?? 0)}
+                                                          {' • '}sweeps:{Number(item.campaign_sweep_count ?? 0)}
+                                                          {' • '}attention:{Number(item.campaign_attention_session_count ?? 0)}
+                                                          {' • '}pending apps:{Number(item.campaign_pending_app_target_count ?? 0)}
                                                         </p>
                                                         <p className="mt-1 text-[10px] text-muted-foreground">
                                                           cycles:{Number(item.session_cycle_count ?? 0)}

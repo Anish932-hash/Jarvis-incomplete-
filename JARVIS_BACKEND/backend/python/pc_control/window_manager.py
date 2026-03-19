@@ -229,6 +229,20 @@ class WindowManager:
                 "replay_pending_count": 0,
                 "replay_failed_count": 0,
                 "replay_completed_count": 0,
+                "campaign_count": 0,
+                "campaign_sweep_count": 0,
+                "campaign_pending_session_count": 0,
+                "campaign_attention_session_count": 0,
+                "campaign_pending_app_target_count": 0,
+                "campaign_regression_cycle_count": 0,
+                "campaign_long_horizon_pending_count": 0,
+                "campaign_pressure": 0.0,
+                "campaign_hint_query": "",
+                "campaign_descendant_title_hints": [],
+                "campaign_descendant_hint_query": "",
+                "campaign_preferred_window_title": "",
+                "campaign_latest_sweep_status": "",
+                "campaign_latest_sweep_regression_status": "",
                 "session_cycle_count": 0,
                 "session_regression_cycle_count": 0,
                 "session_long_horizon_pending_count": 0,
@@ -264,6 +278,12 @@ class WindowManager:
             row_hint_query = cls._normalize_text(row.get("hint_query", ""))
             row_descendant_hint_query = cls._normalize_text(row.get("descendant_hint_query", ""))
             row_preferred_window_title = cls._normalize_text(row.get("preferred_window_title", ""))
+            row_campaign_hint_query = cls._normalize_text(
+                row.get("campaign_hint_query", row.get("campaign_descendant_hint_query", ""))
+            )
+            row_campaign_preferred_window_title = cls._normalize_text(
+                row.get("campaign_preferred_window_title", "")
+            )
             if any(term == target_app_name for term in candidate_terms):
                 row_score = 1.0
             for term in candidate_terms:
@@ -300,6 +320,18 @@ class WindowManager:
                         cls._text_match_score(query, row_preferred_window_title),
                         cls._text_match_score(row_preferred_window_title, query),
                     )
+                if row_campaign_hint_query:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_campaign_hint_query),
+                        cls._text_match_score(row_campaign_hint_query, query),
+                    )
+                if row_campaign_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_campaign_preferred_window_title),
+                        cls._text_match_score(row_campaign_preferred_window_title, query),
+                    )
             if row_hint_query:
                 for term in candidate_terms:
                     if not term:
@@ -327,9 +359,28 @@ class WindowManager:
                         cls._text_match_score(term, row_preferred_window_title),
                         cls._text_match_score(row_preferred_window_title, term),
                     )
+            if row_campaign_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_campaign_hint_query),
+                        cls._text_match_score(row_campaign_hint_query, term),
+                    )
+            if row_campaign_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_campaign_preferred_window_title),
+                        cls._text_match_score(row_campaign_preferred_window_title, term),
+                    )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
                 + max(0.0, float(row.get("replay_pressure", 0.0) or 0.0))
+                + max(0.0, float(row.get("campaign_pressure", 0.0) or 0.0))
             )
             if row_score > best_score or (abs(row_score - best_score) <= 1e-9 and row_priority > best_priority):
                 best_score = row_score
@@ -360,6 +411,24 @@ class WindowManager:
             "replay_pending_count": max(0, int(best_row.get("replay_pending_count", 0) or 0)),
             "replay_failed_count": max(0, int(best_row.get("replay_failed_count", 0) or 0)),
             "replay_completed_count": max(0, int(best_row.get("replay_completed_count", 0) or 0)),
+            "campaign_count": max(0, int(best_row.get("campaign_count", 0) or 0)),
+            "campaign_sweep_count": max(0, int(best_row.get("campaign_sweep_count", 0) or 0)),
+            "campaign_pending_session_count": max(0, int(best_row.get("campaign_pending_session_count", 0) or 0)),
+            "campaign_attention_session_count": max(0, int(best_row.get("campaign_attention_session_count", 0) or 0)),
+            "campaign_pending_app_target_count": max(0, int(best_row.get("campaign_pending_app_target_count", 0) or 0)),
+            "campaign_regression_cycle_count": max(0, int(best_row.get("campaign_regression_cycle_count", 0) or 0)),
+            "campaign_long_horizon_pending_count": max(0, int(best_row.get("campaign_long_horizon_pending_count", 0) or 0)),
+            "campaign_pressure": round(float(best_row.get("campaign_pressure", 0.0) or 0.0), 6),
+            "campaign_hint_query": str(best_row.get("campaign_hint_query", "") or "").strip(),
+            "campaign_descendant_title_hints": [
+                str(item).strip()
+                for item in best_row.get("campaign_descendant_title_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("campaign_descendant_title_hints", []), list) else [],
+            "campaign_descendant_hint_query": str(best_row.get("campaign_descendant_hint_query", "") or "").strip(),
+            "campaign_preferred_window_title": str(best_row.get("campaign_preferred_window_title", "") or "").strip(),
+            "campaign_latest_sweep_status": str(best_row.get("campaign_latest_sweep_status", "") or "").strip(),
+            "campaign_latest_sweep_regression_status": str(best_row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "session_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "session_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -834,12 +903,44 @@ class WindowManager:
             for item in target_app_context.get("descendant_title_hints", [])
             if str(item).strip()
         ] if isinstance(target_app_context.get("descendant_title_hints", []), list) else []
+        target_campaign_descendant_title_hints = [
+            str(item).strip()
+            for item in target_app_context.get("campaign_descendant_title_hints", [])
+            if str(item).strip()
+        ] if isinstance(target_app_context.get("campaign_descendant_title_hints", []), list) else []
         target_descendant_hint_query = str(target_app_context.get("descendant_hint_query", "") or "").strip()
         target_preferred_window_title = str(target_app_context.get("preferred_window_title", "") or "").strip()
+        target_campaign_hint_query = str(
+            target_app_context.get(
+                "campaign_hint_query",
+                target_app_context.get("campaign_descendant_hint_query", ""),
+            )
+            or ""
+        ).strip()
+        target_campaign_descendant_hint_query = str(
+            target_app_context.get("campaign_descendant_hint_query", "") or ""
+        ).strip()
+        target_campaign_preferred_window_title = str(
+            target_app_context.get("campaign_preferred_window_title", "") or ""
+        ).strip()
         target_replay_pressure = max(0.0, float(target_app_context.get("replay_pressure", 0.0) or 0.0))
         target_replay_pending_count = max(0, int(target_app_context.get("replay_pending_count", 0) or 0))
         target_replay_failed_count = max(0, int(target_app_context.get("replay_failed_count", 0) or 0))
         target_replay_completed_count = max(0, int(target_app_context.get("replay_completed_count", 0) or 0))
+        target_campaign_count = max(0, int(target_app_context.get("campaign_count", 0) or 0))
+        target_campaign_sweep_count = max(0, int(target_app_context.get("campaign_sweep_count", 0) or 0))
+        target_campaign_pending_session_count = max(0, int(target_app_context.get("campaign_pending_session_count", 0) or 0))
+        target_campaign_attention_session_count = max(0, int(target_app_context.get("campaign_attention_session_count", 0) or 0))
+        target_campaign_pending_app_target_count = max(0, int(target_app_context.get("campaign_pending_app_target_count", 0) or 0))
+        target_campaign_regression_cycle_count = max(0, int(target_app_context.get("campaign_regression_cycle_count", 0) or 0))
+        target_campaign_long_horizon_pending_count = max(0, int(target_app_context.get("campaign_long_horizon_pending_count", 0) or 0))
+        target_campaign_pressure = max(0.0, float(target_app_context.get("campaign_pressure", 0.0) or 0.0))
+        target_campaign_latest_sweep_status = str(
+            target_app_context.get("campaign_latest_sweep_status", "") or ""
+        ).strip().lower()
+        target_campaign_latest_sweep_regression_status = str(
+            target_app_context.get("campaign_latest_sweep_regression_status", "") or ""
+        ).strip().lower()
         target_session_cycle_count = max(0, int(target_app_context.get("session_cycle_count", 0) or 0))
         target_regression_cycle_count = max(0, int(target_app_context.get("session_regression_cycle_count", 0) or 0))
         target_long_horizon_pending_count = max(0, int(target_app_context.get("session_long_horizon_pending_count", 0) or 0))
@@ -888,10 +989,36 @@ class WindowManager:
                 self._text_match_score(candidate_signature, target_descendant_hint_query),
                 self._text_match_score(candidate_process, target_descendant_hint_query),
             )
+        candidate_campaign_descendant_hint_score = 0.0
+        for hint in target_campaign_descendant_title_hints:
+            candidate_campaign_descendant_hint_score = max(
+                candidate_campaign_descendant_hint_score,
+                self._text_match_score(candidate_title, hint),
+                self._text_match_score(candidate_signature, hint),
+            )
+        if target_campaign_hint_query:
+            candidate_campaign_descendant_hint_score = max(
+                candidate_campaign_descendant_hint_score,
+                self._text_match_score(candidate_title, target_campaign_hint_query),
+                self._text_match_score(candidate_signature, target_campaign_hint_query),
+                self._text_match_score(candidate_process, target_campaign_hint_query),
+                self._text_match_score(candidate_app_name, target_campaign_hint_query),
+            )
+        if target_campaign_descendant_hint_query:
+            candidate_campaign_descendant_hint_score = max(
+                candidate_campaign_descendant_hint_score,
+                self._text_match_score(candidate_title, target_campaign_descendant_hint_query),
+                self._text_match_score(candidate_signature, target_campaign_descendant_hint_query),
+                self._text_match_score(candidate_process, target_campaign_descendant_hint_query),
+            )
         preferred_window_title_score = max(
             self._text_match_score(candidate_title, target_preferred_window_title),
             self._text_match_score(candidate_signature, target_preferred_window_title),
         ) if target_preferred_window_title else 0.0
+        campaign_preferred_window_title_score = max(
+            self._text_match_score(candidate_title, target_campaign_preferred_window_title),
+            self._text_match_score(candidate_signature, target_campaign_preferred_window_title),
+        ) if target_campaign_preferred_window_title else 0.0
         if bool(target_app_context.get("matched", False)):
             score += min(0.28, 0.08 + (0.2 * float(target_app_context.get("match_score", 0.0) or 0.0)))
             reasons.append("benchmark_target_app_match")
@@ -923,6 +1050,63 @@ class WindowManager:
                     replay_boost += min(0.08, 0.05 * candidate_target_hint_score)
                 score += min(0.24, replay_boost)
                 reasons.append("benchmark_replay_pressure")
+            if target_campaign_pressure > 0.0:
+                campaign_boost = min(
+                    0.24,
+                    (0.02 * min(target_campaign_pressure, 4.0))
+                    + (0.025 * min(target_campaign_attention_session_count, 3))
+                    + (0.02 * min(target_campaign_pending_session_count, 3))
+                    + (0.02 * min(target_campaign_pending_app_target_count, 3))
+                    + (0.02 * min(target_campaign_regression_cycle_count, 3))
+                    + (0.015 * min(target_campaign_sweep_count, 4))
+                    + (0.01 * min(target_campaign_count, 4)),
+                )
+                if candidate_campaign_descendant_hint_score > 0.0:
+                    campaign_boost += min(0.08, 0.05 * candidate_campaign_descendant_hint_score)
+                if campaign_preferred_window_title_score > 0.0:
+                    campaign_boost += min(0.06, 0.04 * campaign_preferred_window_title_score)
+                score += min(0.3, campaign_boost)
+                reasons.append("benchmark_campaign_pressure")
+            if candidate_campaign_descendant_hint_score > 0.0:
+                score += min(0.18, 0.05 + (0.12 * candidate_campaign_descendant_hint_score))
+                reasons.append("benchmark_campaign_descendant_hint")
+            if campaign_preferred_window_title_score > 0.0:
+                score += min(0.16, 0.05 + (0.11 * campaign_preferred_window_title_score))
+                reasons.append("benchmark_campaign_preferred_title")
+            if target_campaign_attention_session_count > 0 and (
+                candidate_campaign_descendant_hint_score > 0.0 or campaign_preferred_window_title_score > 0.0
+            ):
+                score += min(
+                    0.14,
+                    0.02 * min(target_campaign_attention_session_count, 4)
+                    + (0.04 * max(candidate_campaign_descendant_hint_score, campaign_preferred_window_title_score)),
+                )
+                reasons.append("benchmark_campaign_attention_pressure")
+            if target_campaign_regression_cycle_count > 0 and (
+                candidate_campaign_descendant_hint_score > 0.0 or campaign_preferred_window_title_score > 0.0
+            ):
+                score += min(
+                    0.14,
+                    0.02 * min(target_campaign_regression_cycle_count, 4)
+                    + (0.04 * max(candidate_campaign_descendant_hint_score, campaign_preferred_window_title_score)),
+                )
+                reasons.append("benchmark_campaign_regression_pressure")
+            if target_campaign_pending_app_target_count > 0 and candidate_owner_chain_depth > owner_chain_depth:
+                score += min(0.12, 0.02 * min(target_campaign_pending_app_target_count, 4) + 0.03)
+                reasons.append("benchmark_campaign_pending_app_pressure")
+            if target_campaign_long_horizon_pending_count > 0 and candidate_owner_chain_depth > owner_chain_depth:
+                score += min(0.1, 0.02 * min(target_campaign_long_horizon_pending_count, 4) + 0.02)
+                reasons.append("benchmark_campaign_long_horizon_pressure")
+            if target_campaign_latest_sweep_status in {"error", "failed"} and (
+                candidate_campaign_descendant_hint_score > 0.0 or campaign_preferred_window_title_score > 0.0
+            ):
+                score += 0.06
+                reasons.append("benchmark_campaign_latest_sweep_pressure")
+            if target_campaign_latest_sweep_regression_status in {"regression", "failed"} and (
+                candidate_campaign_descendant_hint_score > 0.0 or campaign_preferred_window_title_score > 0.0
+            ):
+                score += 0.08
+                reasons.append("benchmark_campaign_latest_regression_pressure")
             if target_session_cycle_count > 0 and candidate_descendant_hint_score > 0.0:
                 score += min(0.08, 0.015 * min(target_session_cycle_count, 4) + (0.04 * candidate_descendant_hint_score))
                 reasons.append("benchmark_session_cycle_pressure")
@@ -1170,6 +1354,8 @@ class WindowManager:
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        campaign_hint_query: str = "",
+        campaign_preferred_title: str = "",
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1183,6 +1369,8 @@ class WindowManager:
                 query=query,
                 hint_query=hint_query,
                 descendant_hint_query=descendant_hint_query,
+                campaign_hint_query=campaign_hint_query,
+                campaign_preferred_title=campaign_preferred_title,
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1249,11 +1437,23 @@ class WindowManager:
         hint_query = str(target_app_context.get("hint_query", "") or "").strip()
         descendant_hint_query = str(target_app_context.get("descendant_hint_query", "") or "").strip()
         preferred_window_title = str(target_app_context.get("preferred_window_title", "") or "").strip()
+        campaign_hint_query = str(
+            target_app_context.get(
+                "campaign_hint_query",
+                target_app_context.get("campaign_descendant_hint_query", ""),
+            )
+            or ""
+        ).strip()
+        campaign_preferred_window_title = str(
+            target_app_context.get("campaign_preferred_window_title", "") or ""
+        ).strip()
         try:
             payload = self._native_runtime.reacquire_related_window(
                 query=query,
                 hint_query=hint_query,
                 descendant_hint_query=descendant_hint_query,
+                campaign_hint_query=campaign_hint_query,
+                campaign_preferred_title=campaign_preferred_window_title,
                 preferred_title=preferred_window_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1284,6 +1484,8 @@ class WindowManager:
             query=query,
             hint_query=hint_query,
             descendant_hint_query=descendant_hint_query,
+            campaign_hint_query=campaign_hint_query,
+            campaign_preferred_title=campaign_preferred_window_title,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -1319,20 +1521,39 @@ class WindowManager:
             for item in target_app_context.get("descendant_title_hints", [])
             if str(item).strip()
         ] if isinstance(target_app_context.get("descendant_title_hints", []), list) else []
+        target_campaign_descendant_title_hints = [
+            str(item).strip()
+            for item in target_app_context.get("campaign_descendant_title_hints", [])
+            if str(item).strip()
+        ] if isinstance(target_app_context.get("campaign_descendant_title_hints", []), list) else []
         target_session_cycle_count = max(0, int(target_app_context.get("session_cycle_count", 0) or 0))
         target_regression_cycle_count = max(0, int(target_app_context.get("session_regression_cycle_count", 0) or 0))
         target_long_horizon_pending_count = max(0, int(target_app_context.get("session_long_horizon_pending_count", 0) or 0))
+        target_campaign_pressure = max(0.0, float(target_app_context.get("campaign_pressure", 0.0) or 0.0))
+        target_campaign_attention_session_count = max(0, int(target_app_context.get("campaign_attention_session_count", 0) or 0))
+        target_campaign_pending_app_target_count = max(0, int(target_app_context.get("campaign_pending_app_target_count", 0) or 0))
+        target_campaign_regression_cycle_count = max(0, int(target_app_context.get("campaign_regression_cycle_count", 0) or 0))
+        target_campaign_long_horizon_pending_count = max(0, int(target_app_context.get("campaign_long_horizon_pending_count", 0) or 0))
         replay_session_pressure = min(
             1.0,
             (0.18 * min(target_regression_cycle_count, 3))
             + (0.12 * min(target_long_horizon_pending_count, 3))
             + (0.06 * min(target_session_cycle_count, 4)),
         )
+        campaign_replay_pressure = min(
+            1.0,
+            (0.16 * min(target_campaign_pressure, 4.0))
+            + (0.12 * min(target_campaign_attention_session_count, 3))
+            + (0.08 * min(target_campaign_pending_app_target_count, 3))
+            + (0.08 * min(target_campaign_regression_cycle_count, 3))
+            + (0.05 * min(target_campaign_long_horizon_pending_count, 3)),
+        )
         descendant_rerank_pressure = max(
             descendant_focus_pressure,
             dialog_resolution_pressure,
             native_focus_pressure,
             replay_session_pressure,
+            campaign_replay_pressure,
         )
         anchor_window = next(
             (
@@ -1370,9 +1591,15 @@ class WindowManager:
                 row_hwnd = int(row.get("hwnd", 0) or 0)
                 row_title = str(row.get("title", "") or "").strip()
                 row_descendant_hint_score = 0.0
+                row_campaign_descendant_hint_score = 0.0
                 for hint in target_descendant_title_hints:
                     row_descendant_hint_score = max(
                         row_descendant_hint_score,
+                        self._text_match_score(row_title, hint),
+                    )
+                for hint in target_campaign_descendant_title_hints:
+                    row_campaign_descendant_hint_score = max(
+                        row_campaign_descendant_hint_score,
                         self._text_match_score(row_title, hint),
                     )
                 if descendant_hint_query:
@@ -1396,15 +1623,27 @@ class WindowManager:
                         (0.18 + (0.34 * row_descendant_hint_score)) * max(0.45, descendant_rerank_pressure),
                     )
                     relation_reasons.append("benchmark_descendant_title_hint")
+                if row_campaign_descendant_hint_score > 0.0 and campaign_replay_pressure > 0.0:
+                    relation_score += min(
+                        0.48,
+                        (0.16 + (0.3 * row_campaign_descendant_hint_score)) * max(0.4, campaign_replay_pressure),
+                    )
+                    relation_reasons.append("benchmark_campaign_descendant_title_hint")
                 if preferred_window_title and row_title and self._text_match_score(row_title, preferred_window_title) >= 0.95:
                     relation_score += 0.54 * descendant_rerank_pressure
                     relation_reasons.append("benchmark_preferred_window_title")
                 if target_regression_cycle_count > 0 and row_descendant_hint_score > 0.0:
                     relation_score += min(0.22, 0.05 * min(target_regression_cycle_count, 4))
                     relation_reasons.append("benchmark_regression_cycle_rerank")
+                if target_campaign_regression_cycle_count > 0 and row_campaign_descendant_hint_score > 0.0:
+                    relation_score += min(0.22, 0.05 * min(target_campaign_regression_cycle_count, 4))
+                    relation_reasons.append("benchmark_campaign_regression_rerank")
                 if target_long_horizon_pending_count > 0 and int(row.get("owner_chain_depth", 0) or 0) > anchor_owner_chain_depth:
                     relation_score += min(0.16, 0.04 * min(target_long_horizon_pending_count, 3))
                     relation_reasons.append("benchmark_long_horizon_rerank")
+                if target_campaign_pending_app_target_count > 0 and int(row.get("owner_chain_depth", 0) or 0) > anchor_owner_chain_depth:
+                    relation_score += min(0.16, 0.04 * min(target_campaign_pending_app_target_count, 3))
+                    relation_reasons.append("benchmark_campaign_pending_app_rerank")
             if native_match_score > 0.0:
                 enriched["native_match_score"] = round(native_match_score, 4)
             enriched["match_score"] = round(relation_score, 4)
@@ -1501,6 +1740,8 @@ class WindowManager:
             query=query,
             hint_query=hint_query,
             descendant_hint_query=descendant_hint_query,
+            campaign_hint_query=campaign_hint_query,
+            campaign_preferred_title=campaign_preferred_window_title,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),

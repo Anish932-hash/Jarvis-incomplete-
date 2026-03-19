@@ -976,6 +976,20 @@ class EvaluationRunner:
             for item in lab_sessions_payload.get("items", [])
             if isinstance(item, dict) and self._lab_session_matches_filters(session=item, filters=filters)
         ] if isinstance(lab_sessions_payload, dict) and isinstance(lab_sessions_payload.get("items", []), list) else []
+        lab_campaigns_payload = (
+            self.lab_campaigns(limit=max(8, history_limit * 2))
+            if self.lab_memory is not None
+            else {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        )
+        replay_campaigns = [
+            dict(item)
+            for item in lab_campaigns_payload.get("items", [])
+            if isinstance(item, dict)
+            and self._filters_match(
+                dict(item.get("filters", {})) if isinstance(item.get("filters", {}), dict) else {},
+                filters,
+            )
+        ] if isinstance(lab_campaigns_payload, dict) and isinstance(lab_campaigns_payload.get("items", []), list) else []
         target_apps: Dict[str, Dict[str, object]] = {}
         tactic_totals = {
             "dialog_resolution": 0.0,
@@ -997,6 +1011,19 @@ class EvaluationRunner:
             "latest_session_id": "",
             "latest_session_label": "",
             "latest_cycle_regression_status": "",
+        }
+        replay_campaign_summary = {
+            "campaign_count": len(replay_campaigns),
+            "sweep_count": 0,
+            "pending_session_count": 0,
+            "attention_session_count": 0,
+            "pending_app_target_count": 0,
+            "regression_cycle_count": 0,
+            "long_horizon_pending_count": 0,
+            "latest_campaign_id": "",
+            "latest_campaign_label": "",
+            "latest_sweep_status": "",
+            "latest_sweep_regression_status": "",
         }
 
         def _ensure_target_entry(app_name_value: str) -> Dict[str, object]:
@@ -1021,6 +1048,23 @@ class EvaluationRunner:
                     "replay_pending_count": 0,
                     "replay_failed_count": 0,
                     "replay_completed_count": 0,
+                    "campaign_ids": set(),
+                    "campaign_labels": [],
+                    "campaign_focus_summary": [],
+                    "campaign_count": 0,
+                    "campaign_sweep_count": 0,
+                    "campaign_pending_session_count": 0,
+                    "campaign_attention_session_count": 0,
+                    "campaign_pending_app_target_count": 0,
+                    "campaign_regression_cycle_count": 0,
+                    "campaign_long_horizon_pending_count": 0,
+                    "campaign_pressure": 0.0,
+                    "campaign_hint_query": "",
+                    "campaign_descendant_title_hints": [],
+                    "campaign_descendant_hint_query": "",
+                    "campaign_preferred_window_title": "",
+                    "campaign_latest_sweep_status": "",
+                    "campaign_latest_sweep_regression_status": "",
                     "session_cycle_count": 0,
                     "session_regression_cycle_count": 0,
                     "session_long_horizon_pending_count": 0,
@@ -1203,6 +1247,140 @@ class EvaluationRunner:
                     tactic_totals[key] += tactic_value
                 entry["control_biases"] = control_biases
 
+        def _ingest_native_target_campaign(
+            campaign: Dict[str, Any],
+            target_row: Dict[str, Any],
+        ) -> None:
+            app_name_value = str(target_row.get("app_name", "") or "").strip().lower()
+            if not app_name_value:
+                return
+            entry = _ensure_target_entry(app_name_value)
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            campaign_label = str(campaign.get("label", "") or "").strip()
+            campaign_sweep_count = max(0, int(campaign.get("sweep_count", 0) or 0))
+            campaign_pending_session_count = max(0, int(campaign.get("pending_session_count", 0) or 0))
+            campaign_attention_session_count = max(0, int(campaign.get("attention_session_count", 0) or 0))
+            campaign_pending_app_target_count = max(0, int(campaign.get("pending_app_target_count", 0) or 0))
+            campaign_regression_cycle_count = max(0, int(campaign.get("regression_cycle_count", 0) or 0))
+            campaign_long_horizon_pending_count = max(0, int(campaign.get("long_horizon_pending_count", 0) or 0))
+            campaign_latest_sweep_status = str(campaign.get("latest_sweep_status", "") or "").strip().lower()
+            campaign_latest_sweep_regression_status = str(
+                campaign.get("latest_sweep_regression_status", "")
+                or ""
+            ).strip().lower()
+            campaign_priority = max(
+                0.0,
+                min(
+                    6.0,
+                    (0.2 * min(max(0.0, float(target_row.get("priority", 0.0) or 0.0)), 6.0))
+                    + (0.25 * min(max(0.0, float(target_row.get("replay_pressure", 0.0) or 0.0)), 4.0))
+                    + (0.12 * min(campaign_sweep_count, 4))
+                    + (0.18 * min(campaign_attention_session_count, 3))
+                    + (0.08 * min(campaign_pending_session_count, 4))
+                    + (0.1 * min(campaign_pending_app_target_count, 3))
+                    + (0.1 * min(campaign_regression_cycle_count, 4))
+                    + (0.06 * min(campaign_long_horizon_pending_count, 4))
+                    + (0.12 if campaign_latest_sweep_regression_status in {"regression", "failed"} else 0.0)
+                    + (0.08 if campaign_latest_sweep_status in {"error", "failed"} else 0.0),
+                ),
+            )
+            entry["priority"] = float(entry.get("priority", 0.0) or 0.0) + campaign_priority
+            entry["campaign_count"] = int(entry.get("campaign_count", 0) or 0) + 1
+            entry["campaign_sweep_count"] = int(entry.get("campaign_sweep_count", 0) or 0) + campaign_sweep_count
+            entry["campaign_pending_session_count"] = int(entry.get("campaign_pending_session_count", 0) or 0) + campaign_pending_session_count
+            entry["campaign_attention_session_count"] = int(entry.get("campaign_attention_session_count", 0) or 0) + campaign_attention_session_count
+            entry["campaign_pending_app_target_count"] = int(entry.get("campaign_pending_app_target_count", 0) or 0) + campaign_pending_app_target_count
+            entry["campaign_regression_cycle_count"] = int(entry.get("campaign_regression_cycle_count", 0) or 0) + campaign_regression_cycle_count
+            entry["campaign_long_horizon_pending_count"] = int(entry.get("campaign_long_horizon_pending_count", 0) or 0) + campaign_long_horizon_pending_count
+            entry["campaign_pressure"] = float(entry.get("campaign_pressure", 0.0) or 0.0) + campaign_priority
+            campaign_ids = entry["campaign_ids"] if isinstance(entry.get("campaign_ids"), set) else set(entry.get("campaign_ids", []))
+            if campaign_id:
+                campaign_ids.add(campaign_id)
+            entry["campaign_ids"] = campaign_ids
+            campaign_labels = entry["campaign_labels"] if isinstance(entry.get("campaign_labels"), list) else []
+            if campaign_label and campaign_label not in campaign_labels:
+                campaign_labels.append(campaign_label)
+            entry["campaign_labels"] = campaign_labels[:6]
+            campaign_focus_summary = entry["campaign_focus_summary"] if isinstance(entry.get("campaign_focus_summary"), list) else []
+            for hint in campaign.get("focus_summary", []) if isinstance(campaign.get("focus_summary", []), list) else []:
+                clean_hint = str(hint).strip()
+                if clean_hint and clean_hint not in campaign_focus_summary:
+                    campaign_focus_summary.append(clean_hint)
+            entry["campaign_focus_summary"] = campaign_focus_summary[:6]
+            query_hints = [
+                str(item).strip()
+                for item in target_row.get("query_hints", [])
+                if str(item).strip()
+            ] if isinstance(target_row.get("query_hints", []), list) else []
+            descendant_title_hints = [
+                str(item).strip()
+                for item in target_row.get("descendant_title_hints", [])
+                if str(item).strip()
+            ] if isinstance(target_row.get("descendant_title_hints", []), list) else []
+            hints = entry["query_hints"] if isinstance(entry.get("query_hints"), list) else []
+            for hint in query_hints:
+                if hint not in hints:
+                    hints.append(hint)
+            entry["query_hints"] = hints[:8]
+            campaign_descendant_hints = entry["campaign_descendant_title_hints"] if isinstance(entry.get("campaign_descendant_title_hints"), list) else []
+            for hint in descendant_title_hints:
+                if hint not in campaign_descendant_hints:
+                    campaign_descendant_hints.append(hint)
+            entry["campaign_descendant_title_hints"] = campaign_descendant_hints[:8]
+            descendant_hints = entry["descendant_title_hints"] if isinstance(entry.get("descendant_title_hints"), list) else []
+            for hint in descendant_title_hints:
+                if hint not in descendant_hints:
+                    descendant_hints.append(hint)
+            entry["descendant_title_hints"] = descendant_hints[:8]
+            hint_query = str(target_row.get("hint_query", "") or "").strip()
+            descendant_hint_query = str(target_row.get("descendant_hint_query", "") or "").strip()
+            preferred_window_title = str(target_row.get("preferred_window_title", "") or "").strip()
+            if hint_query and not str(entry.get("hint_query", "") or "").strip():
+                entry["hint_query"] = hint_query
+            if descendant_hint_query and not str(entry.get("descendant_hint_query", "") or "").strip():
+                entry["descendant_hint_query"] = descendant_hint_query
+            if preferred_window_title and not str(entry.get("preferred_window_title", "") or "").strip():
+                entry["preferred_window_title"] = preferred_window_title
+            if hint_query and not str(entry.get("campaign_hint_query", "") or "").strip():
+                entry["campaign_hint_query"] = hint_query
+            if descendant_hint_query and not str(entry.get("campaign_descendant_hint_query", "") or "").strip():
+                entry["campaign_descendant_hint_query"] = descendant_hint_query
+            if preferred_window_title and not str(entry.get("campaign_preferred_window_title", "") or "").strip():
+                entry["campaign_preferred_window_title"] = preferred_window_title
+            current_sweep_status = str(entry.get("campaign_latest_sweep_status", "") or "").strip().lower()
+            current_sweep_regression_status = str(entry.get("campaign_latest_sweep_regression_status", "") or "").strip().lower()
+            if campaign_latest_sweep_status and (
+                not current_sweep_status
+                or current_sweep_status in {"idle", "ready"}
+                or campaign_latest_sweep_status in {"error", "failed"}
+            ):
+                entry["campaign_latest_sweep_status"] = campaign_latest_sweep_status
+            if campaign_latest_sweep_regression_status and (
+                not current_sweep_regression_status
+                or current_sweep_regression_status in {"idle", "ready", "success"}
+                or campaign_latest_sweep_regression_status in {"regression", "failed"}
+            ):
+                entry["campaign_latest_sweep_regression_status"] = campaign_latest_sweep_regression_status
+            control_biases = (
+                dict(entry.get("control_biases", {}))
+                if isinstance(entry.get("control_biases", {}), dict)
+                else {}
+            )
+            target_biases = (
+                dict(target_row.get("control_biases", {}))
+                if isinstance(target_row.get("control_biases", {}), dict)
+                else {}
+            )
+            for key, value in target_biases.items():
+                tactic_value = max(0.0, min(float(value or 0.0), 1.0))
+                if campaign_latest_sweep_regression_status in {"regression", "failed"} and key in {"descendant_focus", "dialog_resolution", "recovery_reacquire", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + 0.05)
+                elif campaign_attention_session_count > 0 and key in {"recovery_reacquire", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + 0.03)
+                control_biases[key] = max(float(control_biases.get(key, 0.0) or 0.0), tactic_value)
+                tactic_totals[key] += tactic_value
+            entry["control_biases"] = control_biases
+
         for candidate in replay_candidates:
             scenario_name_value = str(candidate.get("scenario", "") or "").strip()
             scenario = scenario_by_name.get(scenario_name_value)
@@ -1235,6 +1413,33 @@ class EvaluationRunner:
                 scenario = scenario_by_name.get(scenario_name_value)
                 row_fallback = dict(latest_rows_by_name.get(scenario_name_value, {}))
                 _ingest_native_target_candidate(candidate, scenario=scenario, row_fallback=row_fallback, session=session)
+        for campaign in replay_campaigns:
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            campaign_label = str(campaign.get("label", "") or "").strip()
+            if campaign_id and not replay_campaign_summary["latest_campaign_id"]:
+                replay_campaign_summary["latest_campaign_id"] = campaign_id
+                replay_campaign_summary["latest_campaign_label"] = campaign_label
+            replay_campaign_summary["sweep_count"] = int(replay_campaign_summary["sweep_count"]) + int(campaign.get("sweep_count", 0) or 0)
+            replay_campaign_summary["pending_session_count"] = int(replay_campaign_summary["pending_session_count"]) + int(campaign.get("pending_session_count", 0) or 0)
+            replay_campaign_summary["attention_session_count"] = int(replay_campaign_summary["attention_session_count"]) + int(campaign.get("attention_session_count", 0) or 0)
+            replay_campaign_summary["pending_app_target_count"] = int(replay_campaign_summary["pending_app_target_count"]) + int(campaign.get("pending_app_target_count", 0) or 0)
+            replay_campaign_summary["regression_cycle_count"] = int(replay_campaign_summary["regression_cycle_count"]) + int(campaign.get("regression_cycle_count", 0) or 0)
+            replay_campaign_summary["long_horizon_pending_count"] = int(replay_campaign_summary["long_horizon_pending_count"]) + int(campaign.get("long_horizon_pending_count", 0) or 0)
+            if not replay_campaign_summary["latest_sweep_status"]:
+                replay_campaign_summary["latest_sweep_status"] = str(campaign.get("latest_sweep_status", "") or "").strip()
+            if not replay_campaign_summary["latest_sweep_regression_status"]:
+                replay_campaign_summary["latest_sweep_regression_status"] = str(
+                    campaign.get("latest_sweep_regression_status", "")
+                    or ""
+                ).strip()
+            native_targets_snapshot = (
+                dict(campaign.get("native_targets_snapshot", {}))
+                if isinstance(campaign.get("native_targets_snapshot", {}), dict)
+                else {}
+            )
+            for target_row in native_targets_snapshot.get("target_apps", []) if isinstance(native_targets_snapshot.get("target_apps", []), list) else []:
+                if isinstance(target_row, dict):
+                    _ingest_native_target_campaign(campaign, target_row)
         target_app_rows: List[Dict[str, object]] = []
         for row in target_apps.values():
             replay_session_ids = row.get("replay_session_ids", set())
@@ -1257,6 +1462,20 @@ class EvaluationRunner:
                 descendant_title_hints=descendant_title_hints,
                 query_hints=query_hints,
                 replay_scenarios=replay_scenarios,
+            )
+            campaign_descendant_title_hints = list(row.get("campaign_descendant_title_hints", []))[:8] if isinstance(row.get("campaign_descendant_title_hints", []), list) else []
+            campaign_hint_query = str(row.get("campaign_hint_query", "") or "").strip() or self._native_target_hint_query(
+                query_hints=query_hints,
+                replay_scenarios=list(row.get("campaign_labels", []))[:4] if isinstance(row.get("campaign_labels", []), list) else [],
+            )
+            campaign_descendant_hint_query = str(row.get("campaign_descendant_hint_query", "") or "").strip() or self._native_target_hint_query(
+                query_hints=campaign_descendant_title_hints or descendant_title_hints or query_hints,
+                replay_scenarios=list(row.get("campaign_labels", []))[:4] if isinstance(row.get("campaign_labels", []), list) else [],
+            )
+            campaign_preferred_window_title = str(row.get("campaign_preferred_window_title", "") or "").strip() or self._native_target_preferred_window_title(
+                descendant_title_hints=campaign_descendant_title_hints or descendant_title_hints,
+                query_hints=query_hints,
+                replay_scenarios=list(row.get("campaign_labels", []))[:4] if isinstance(row.get("campaign_labels", []), list) else [],
             )
             target_app_rows.append(
                 {
@@ -1283,6 +1502,23 @@ class EvaluationRunner:
                     "session_long_horizon_pending_count": int(row.get("session_long_horizon_pending_count", 0) or 0),
                     "replay_scenarios": replay_scenarios,
                     "replay_session_labels": replay_session_labels,
+                    "campaign_ids": sorted(str(item).strip() for item in row.get("campaign_ids", set()) if str(item).strip())[:6],
+                    "campaign_labels": list(row.get("campaign_labels", []))[:6] if isinstance(row.get("campaign_labels", []), list) else [],
+                    "campaign_focus_summary": list(row.get("campaign_focus_summary", []))[:6] if isinstance(row.get("campaign_focus_summary", []), list) else [],
+                    "campaign_count": int(row.get("campaign_count", 0) or 0),
+                    "campaign_sweep_count": int(row.get("campaign_sweep_count", 0) or 0),
+                    "campaign_pending_session_count": int(row.get("campaign_pending_session_count", 0) or 0),
+                    "campaign_attention_session_count": int(row.get("campaign_attention_session_count", 0) or 0),
+                    "campaign_pending_app_target_count": int(row.get("campaign_pending_app_target_count", 0) or 0),
+                    "campaign_regression_cycle_count": int(row.get("campaign_regression_cycle_count", 0) or 0),
+                    "campaign_long_horizon_pending_count": int(row.get("campaign_long_horizon_pending_count", 0) or 0),
+                    "campaign_pressure": round(float(row.get("campaign_pressure", 0.0) or 0.0), 6),
+                    "campaign_hint_query": campaign_hint_query,
+                    "campaign_descendant_title_hints": campaign_descendant_title_hints,
+                    "campaign_descendant_hint_query": campaign_descendant_hint_query,
+                    "campaign_preferred_window_title": campaign_preferred_window_title,
+                    "campaign_latest_sweep_status": str(row.get("campaign_latest_sweep_status", "") or "").strip(),
+                    "campaign_latest_sweep_regression_status": str(row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
                     "control_biases": {
                         key: round(max(0.0, min(float(value or 0.0), 1.0)), 6)
                         for key, value in dict(row.get("control_biases", {})).items()
@@ -1325,6 +1561,7 @@ class EvaluationRunner:
             },
             "replay_candidates": replay_candidates[:8],
             "replay_session_summary": replay_session_summary,
+            "replay_campaign_summary": replay_campaign_summary,
             "strongest_tactics": strongest_tactics,
             "coverage_gap_apps": [
                 str(item).strip()

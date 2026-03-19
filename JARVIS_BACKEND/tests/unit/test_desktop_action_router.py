@@ -653,6 +653,20 @@ def test_desktop_action_router_benchmark_native_target_context_carries_replay_na
                         "replay_pending_count": 1,
                         "replay_failed_count": 1,
                         "replay_completed_count": 0,
+                        "campaign_count": 1,
+                        "campaign_sweep_count": 2,
+                        "campaign_pending_session_count": 1,
+                        "campaign_attention_session_count": 1,
+                        "campaign_pending_app_target_count": 1,
+                        "campaign_regression_cycle_count": 2,
+                        "campaign_long_horizon_pending_count": 1,
+                        "campaign_pressure": 1.9,
+                        "campaign_hint_query": "pair device | confirm pairing",
+                        "campaign_descendant_title_hints": ["Pair device", "Confirm pairing"],
+                        "campaign_descendant_hint_query": "Pair device | Confirm pairing",
+                        "campaign_preferred_window_title": "Confirm pairing",
+                        "campaign_latest_sweep_status": "success",
+                        "campaign_latest_sweep_regression_status": "regression",
                         "session_cycle_count": 3,
                         "session_regression_cycle_count": 2,
                         "session_long_horizon_pending_count": 1,
@@ -680,6 +694,12 @@ def test_desktop_action_router_benchmark_native_target_context_carries_replay_na
     assert payload["benchmark_target_descendant_title_hints"] == ["Pair device", "Confirm pairing"]
     assert payload["benchmark_target_descendant_hint_query"] == "pair device | confirm pairing"
     assert payload["benchmark_target_preferred_window_title"] == "Pair device"
+    assert payload["benchmark_target_campaign_count"] == 1
+    assert payload["benchmark_target_campaign_pressure"] == 1.9
+    assert payload["benchmark_target_campaign_hint_query"] == "pair device | confirm pairing"
+    assert payload["benchmark_target_campaign_descendant_title_hints"] == ["Pair device", "Confirm pairing"]
+    assert payload["benchmark_target_campaign_preferred_window_title"] == "Confirm pairing"
+    assert payload["benchmark_target_campaign_latest_sweep_regression_status"] == "regression"
     assert payload["benchmark_target_session_cycle_count"] == 3
     assert payload["benchmark_target_regression_cycle_count"] == 2
     assert payload["benchmark_target_long_horizon_pending_count"] == 1

@@ -206,13 +206,15 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
             query: str = "",
             hint_query: str = "",
             descendant_hint_query: str = "",
+            campaign_hint_query: str = "",
+            campaign_preferred_title: str = "",
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 120,
         ) -> dict:
-            del query, hint_query, descendant_hint_query, preferred_title, window_title, pid
+            del query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title, pid
             assert limit >= 3
             if int(hwnd or 0) == 5001:
                 return {
@@ -366,6 +368,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             query: str = "",
             hint_query: str = "",
             descendant_hint_query: str = "",
+            campaign_hint_query: str = "",
+            campaign_preferred_title: str = "",
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -374,6 +378,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
         ) -> dict:
             calls["reacquire_hint_query"] = str(hint_query or "")
             calls["reacquire_descendant_hint_query"] = str(descendant_hint_query or "")
+            calls["reacquire_campaign_hint_query"] = str(campaign_hint_query or "")
+            calls["reacquire_campaign_preferred_title"] = str(campaign_preferred_title or "")
             calls["reacquire_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
@@ -443,6 +449,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             query: str = "",
             hint_query: str = "",
             descendant_hint_query: str = "",
+            campaign_hint_query: str = "",
+            campaign_preferred_title: str = "",
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -451,6 +459,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
         ) -> dict:
             calls["trace_hint_query"] = str(hint_query or "")
             calls["trace_descendant_hint_query"] = str(descendant_hint_query or "")
+            calls["trace_campaign_hint_query"] = str(campaign_hint_query or "")
+            calls["trace_campaign_preferred_title"] = str(campaign_preferred_title or "")
             calls["trace_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
@@ -498,6 +508,20 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "replay_pending_count": 1,
                         "replay_failed_count": 1,
                         "replay_completed_count": 0,
+                        "campaign_count": 1,
+                        "campaign_sweep_count": 2,
+                        "campaign_pending_session_count": 1,
+                        "campaign_attention_session_count": 1,
+                        "campaign_pending_app_target_count": 1,
+                        "campaign_regression_cycle_count": 2,
+                        "campaign_long_horizon_pending_count": 1,
+                        "campaign_pressure": 1.9,
+                        "campaign_hint_query": "pair device | confirm pairing",
+                        "campaign_descendant_title_hints": ["Pair device", "Confirm pairing"],
+                        "campaign_descendant_hint_query": "Pair device | Confirm pairing",
+                        "campaign_preferred_window_title": "Confirm pairing",
+                        "campaign_latest_sweep_status": "success",
+                        "campaign_latest_sweep_regression_status": "regression",
                         "session_cycle_count": 3,
                         "session_regression_cycle_count": 2,
                         "session_long_horizon_pending_count": 1,
@@ -519,9 +543,13 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["candidate"]["hwnd"] == 5002
     assert calls["reacquire_hint_query"] == "pair device | confirm pairing"
     assert calls["reacquire_descendant_hint_query"] == "Pair device | Confirm pairing"
+    assert calls["reacquire_campaign_hint_query"] == "pair device | confirm pairing"
+    assert calls["reacquire_campaign_preferred_title"] == "Confirm pairing"
     assert calls["reacquire_preferred_title"] == "Pair device"
     assert calls["trace_hint_query"] == "pair device | confirm pairing"
     assert calls["trace_descendant_hint_query"] == "Pair device | Confirm pairing"
+    assert calls["trace_campaign_hint_query"] == "pair device | confirm pairing"
+    assert calls["trace_campaign_preferred_title"] == "Confirm pairing"
     assert calls["trace_preferred_title"] == "Pair device"
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
@@ -532,6 +560,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert "benchmark_descendant_title_hint" in payload["candidate"]["match_reasons"]
     assert "benchmark_preferred_window_title" in payload["candidate"]["match_reasons"]
     assert "benchmark_regression_cycle_rerank" in payload["candidate"]["match_reasons"]
+    assert "benchmark_campaign_descendant_hint" in payload["candidate"]["match_reasons"]
+    assert "benchmark_campaign_pressure" in payload["candidate"]["match_reasons"]
+    assert "benchmark_campaign_regression_pressure" in payload["candidate"]["match_reasons"]
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:

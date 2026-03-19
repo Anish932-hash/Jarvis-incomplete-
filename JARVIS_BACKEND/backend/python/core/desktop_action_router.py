@@ -3500,6 +3500,20 @@ class DesktopActionRouter:
                 "benchmark_target_replay_pending_count": 0,
                 "benchmark_target_replay_failed_count": 0,
                 "benchmark_target_replay_completed_count": 0,
+                "benchmark_target_campaign_count": 0,
+                "benchmark_target_campaign_sweep_count": 0,
+                "benchmark_target_campaign_pending_session_count": 0,
+                "benchmark_target_campaign_attention_session_count": 0,
+                "benchmark_target_campaign_pending_app_target_count": 0,
+                "benchmark_target_campaign_regression_cycle_count": 0,
+                "benchmark_target_campaign_long_horizon_pending_count": 0,
+                "benchmark_target_campaign_pressure": 0.0,
+                "benchmark_target_campaign_hint_query": "",
+                "benchmark_target_campaign_descendant_title_hints": [],
+                "benchmark_target_campaign_descendant_hint_query": "",
+                "benchmark_target_campaign_preferred_window_title": "",
+                "benchmark_target_campaign_latest_sweep_status": "",
+                "benchmark_target_campaign_latest_sweep_regression_status": "",
                 "benchmark_target_session_cycle_count": 0,
                 "benchmark_target_regression_cycle_count": 0,
                 "benchmark_target_long_horizon_pending_count": 0,
@@ -3533,6 +3547,12 @@ class DesktopActionRouter:
             row_hint_query = self._normalize_probe_text(row.get("hint_query", ""))
             row_descendant_hint_query = self._normalize_probe_text(row.get("descendant_hint_query", ""))
             row_preferred_window_title = self._normalize_probe_text(row.get("preferred_window_title", ""))
+            row_campaign_hint_query = self._normalize_probe_text(
+                row.get("campaign_hint_query", row.get("campaign_descendant_hint_query", ""))
+            )
+            row_campaign_preferred_window_title = self._normalize_probe_text(
+                row.get("campaign_preferred_window_title", "")
+            )
             if any(term and term == target_app_name for term in candidate_terms):
                 row_score = 1.0
             for term in candidate_terms:
@@ -3571,6 +3591,18 @@ class DesktopActionRouter:
                         self._text_match_score(requested_query, row_preferred_window_title),
                         self._text_match_score(row_preferred_window_title, requested_query),
                     )
+                if row_campaign_hint_query:
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, row_campaign_hint_query),
+                        self._text_match_score(row_campaign_hint_query, requested_query),
+                    )
+                if row_campaign_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, row_campaign_preferred_window_title),
+                        self._text_match_score(row_campaign_preferred_window_title, requested_query),
+                    )
             if row_hint_query:
                 for term in candidate_terms:
                     if not term:
@@ -3598,9 +3630,28 @@ class DesktopActionRouter:
                         self._text_match_score(term, row_preferred_window_title),
                         self._text_match_score(row_preferred_window_title, term),
                     )
+            if row_campaign_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(term, row_campaign_hint_query),
+                        self._text_match_score(row_campaign_hint_query, term),
+                    )
+            if row_campaign_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(term, row_campaign_preferred_window_title),
+                        self._text_match_score(row_campaign_preferred_window_title, term),
+                    )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
                 + max(0.0, float(row.get("replay_pressure", 0.0) or 0.0))
+                + max(0.0, float(row.get("campaign_pressure", 0.0) or 0.0))
             )
             if row_score > best_score or (abs(row_score - best_score) <= 1e-9 and row_priority > best_priority):
                 best_score = row_score
@@ -3638,6 +3689,26 @@ class DesktopActionRouter:
             "benchmark_target_replay_pending_count": max(0, int(best_row.get("replay_pending_count", 0) or 0)),
             "benchmark_target_replay_failed_count": max(0, int(best_row.get("replay_failed_count", 0) or 0)),
             "benchmark_target_replay_completed_count": max(0, int(best_row.get("replay_completed_count", 0) or 0)),
+            "benchmark_target_campaign_count": max(0, int(best_row.get("campaign_count", 0) or 0)),
+            "benchmark_target_campaign_sweep_count": max(0, int(best_row.get("campaign_sweep_count", 0) or 0)),
+            "benchmark_target_campaign_pending_session_count": max(0, int(best_row.get("campaign_pending_session_count", 0) or 0)),
+            "benchmark_target_campaign_attention_session_count": max(0, int(best_row.get("campaign_attention_session_count", 0) or 0)),
+            "benchmark_target_campaign_pending_app_target_count": max(0, int(best_row.get("campaign_pending_app_target_count", 0) or 0)),
+            "benchmark_target_campaign_regression_cycle_count": max(0, int(best_row.get("campaign_regression_cycle_count", 0) or 0)),
+            "benchmark_target_campaign_long_horizon_pending_count": max(0, int(best_row.get("campaign_long_horizon_pending_count", 0) or 0)),
+            "benchmark_target_campaign_pressure": round(float(best_row.get("campaign_pressure", 0.0) or 0.0), 6),
+            "benchmark_target_campaign_hint_query": str(best_row.get("campaign_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_descendant_title_hints": self._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in best_row.get("campaign_descendant_title_hints", [])
+                    if str(item).strip()
+                ]
+            )[:8] if isinstance(best_row.get("campaign_descendant_title_hints", []), list) else [],
+            "benchmark_target_campaign_descendant_hint_query": str(best_row.get("campaign_descendant_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_preferred_window_title": str(best_row.get("campaign_preferred_window_title", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_status": str(best_row.get("campaign_latest_sweep_status", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_regression_status": str(best_row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "benchmark_target_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "benchmark_target_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -10289,6 +10360,24 @@ class DesktopActionRouter:
             "benchmark_target_replay_pending_count": max(0, int(native_target_context.get("benchmark_target_replay_pending_count", 0) or 0)),
             "benchmark_target_replay_failed_count": max(0, int(native_target_context.get("benchmark_target_replay_failed_count", 0) or 0)),
             "benchmark_target_replay_completed_count": max(0, int(native_target_context.get("benchmark_target_replay_completed_count", 0) or 0)),
+            "benchmark_target_campaign_count": max(0, int(native_target_context.get("benchmark_target_campaign_count", 0) or 0)),
+            "benchmark_target_campaign_sweep_count": max(0, int(native_target_context.get("benchmark_target_campaign_sweep_count", 0) or 0)),
+            "benchmark_target_campaign_pending_session_count": max(0, int(native_target_context.get("benchmark_target_campaign_pending_session_count", 0) or 0)),
+            "benchmark_target_campaign_attention_session_count": max(0, int(native_target_context.get("benchmark_target_campaign_attention_session_count", 0) or 0)),
+            "benchmark_target_campaign_pending_app_target_count": max(0, int(native_target_context.get("benchmark_target_campaign_pending_app_target_count", 0) or 0)),
+            "benchmark_target_campaign_regression_cycle_count": max(0, int(native_target_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0)),
+            "benchmark_target_campaign_long_horizon_pending_count": max(0, int(native_target_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0)),
+            "benchmark_target_campaign_pressure": max(0.0, float(native_target_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0)),
+            "benchmark_target_campaign_hint_query": str(native_target_context.get("benchmark_target_campaign_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_descendant_title_hints": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_campaign_descendant_title_hints", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_campaign_descendant_title_hints", []), list) else [],
+            "benchmark_target_campaign_descendant_hint_query": str(native_target_context.get("benchmark_target_campaign_descendant_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_preferred_window_title": str(native_target_context.get("benchmark_target_campaign_preferred_window_title", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_status": str(native_target_context.get("benchmark_target_campaign_latest_sweep_status", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_regression_status": str(native_target_context.get("benchmark_target_campaign_latest_sweep_regression_status", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(native_target_context.get("benchmark_target_session_cycle_count", 0) or 0)),
             "benchmark_target_regression_cycle_count": max(0, int(native_target_context.get("benchmark_target_regression_cycle_count", 0) or 0)),
             "benchmark_target_long_horizon_pending_count": max(0, int(native_target_context.get("benchmark_target_long_horizon_pending_count", 0) or 0)),

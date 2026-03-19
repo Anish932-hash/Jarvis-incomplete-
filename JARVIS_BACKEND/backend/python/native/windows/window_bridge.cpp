@@ -378,6 +378,8 @@ bool snapshot_matches_chain_query(
     const std::wstring& query,
     const std::wstring& hint_query,
     const std::wstring& descendant_hint_query,
+    const std::wstring& campaign_hint_query,
+    const std::wstring& campaign_preferred_title,
     const std::wstring& preferred_title,
     const std::wstring& window_title
 ) {
@@ -397,6 +399,15 @@ bool snapshot_matches_chain_query(
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.process_name), descendant_hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.title), campaign_hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.process_name), campaign_hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.title), campaign_preferred_title) > 0.0) {
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.title), preferred_title) > 0.0) {
@@ -484,6 +495,8 @@ RelatedWindowScore score_related_window(
     const std::wstring& query,
     const std::wstring& hint_query,
     const std::wstring& descendant_hint_query,
+    const std::wstring& campaign_hint_query,
+    const std::wstring& campaign_preferred_title,
     const std::wstring& preferred_title,
     const std::wstring& window_title,
     long long anchor_hwnd,
@@ -508,6 +521,14 @@ RelatedWindowScore score_related_window(
     const double descendant_hint_query_score = std::max(
         substring_match_score(utf8_to_wide(snapshot.title), descendant_hint_query),
         substring_match_score(utf8_to_wide(snapshot.process_name), descendant_hint_query)
+    );
+    const double campaign_hint_query_score = std::max(
+        substring_match_score(utf8_to_wide(snapshot.title), campaign_hint_query),
+        substring_match_score(utf8_to_wide(snapshot.process_name), campaign_hint_query)
+    );
+    const double campaign_preferred_title_score = substring_match_score(
+        utf8_to_wide(snapshot.title),
+        campaign_preferred_title
     );
     const double preferred_title_score = substring_match_score(
         utf8_to_wide(snapshot.title),
@@ -546,6 +567,14 @@ RelatedWindowScore score_related_window(
         relation.score += 0.36 * descendant_hint_query_score;
         relation.reasons.push_back("descendant_hint_query");
     }
+    if (campaign_hint_query_score > 0.0) {
+        relation.score += 0.34 * campaign_hint_query_score;
+        relation.reasons.push_back("campaign_hint_query");
+    }
+    if (campaign_preferred_title_score > 0.0) {
+        relation.score += 0.42 * campaign_preferred_title_score;
+        relation.reasons.push_back("campaign_preferred_title");
+    }
     if (preferred_title_score > 0.0) {
         relation.score += 0.44 * preferred_title_score;
         relation.reasons.push_back("preferred_title");
@@ -578,6 +607,28 @@ RelatedWindowScore score_related_window(
     ) {
         relation.score += 0.52;
         relation.reasons.push_back("descendant_hint_same_root_owner");
+    }
+    if (campaign_hint_query_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 0.82;
+        relation.reasons.push_back("campaign_hint_owned_child");
+    } else if (
+        campaign_hint_query_score >= 0.95
+        && anchor_root_owner_hwnd > 0
+        && candidate_root_owner_hwnd == anchor_root_owner_hwnd
+    ) {
+        relation.score += 0.5;
+        relation.reasons.push_back("campaign_hint_same_root_owner");
+    }
+    if (campaign_preferred_title_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 0.96;
+        relation.reasons.push_back("campaign_preferred_title_owned_child");
+    } else if (
+        campaign_preferred_title_score >= 0.95
+        && anchor_root_owner_hwnd > 0
+        && candidate_root_owner_hwnd == anchor_root_owner_hwnd
+    ) {
+        relation.score += 0.62;
+        relation.reasons.push_back("campaign_preferred_title_same_root_owner");
     }
     if (preferred_title_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
         relation.score += 1.1;
@@ -812,6 +863,8 @@ std::string reacquire_related_window_json(
     const std::string& query_utf8,
     const std::string& hint_query_utf8,
     const std::string& descendant_hint_query_utf8,
+    const std::string& campaign_hint_query_utf8,
+    const std::string& campaign_preferred_title_utf8,
     const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
@@ -845,6 +898,8 @@ std::string reacquire_related_window_json(
     const std::wstring query = utf8_to_wide(query_utf8);
     const std::wstring hint_query = utf8_to_wide(hint_query_utf8);
     const std::wstring descendant_hint_query = utf8_to_wide(descendant_hint_query_utf8);
+    const std::wstring campaign_hint_query = utf8_to_wide(campaign_hint_query_utf8);
+    const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
@@ -860,6 +915,8 @@ std::string reacquire_related_window_json(
             query,
             hint_query,
             descendant_hint_query,
+            campaign_hint_query,
+            campaign_preferred_title,
             preferred_title,
             window_title,
             anchor_hwnd,
@@ -917,6 +974,8 @@ std::string trace_related_window_chain_json(
     const std::string& query_utf8,
     const std::string& hint_query_utf8,
     const std::string& descendant_hint_query_utf8,
+    const std::string& campaign_hint_query_utf8,
+    const std::string& campaign_preferred_title_utf8,
     const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
@@ -950,6 +1009,8 @@ std::string trace_related_window_chain_json(
     const std::wstring query = utf8_to_wide(query_utf8);
     const std::wstring hint_query = utf8_to_wide(hint_query_utf8);
     const std::wstring descendant_hint_query = utf8_to_wide(descendant_hint_query_utf8);
+    const std::wstring campaign_hint_query = utf8_to_wide(campaign_hint_query_utf8);
+    const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
@@ -965,6 +1026,8 @@ std::string trace_related_window_chain_json(
             query,
             hint_query,
             descendant_hint_query,
+            campaign_hint_query,
+            campaign_preferred_title,
             preferred_title,
             window_title,
             anchor_hwnd,
@@ -1031,7 +1094,7 @@ std::string trace_related_window_chain_json(
         if (snapshot_is_dialog_like(row)) {
             descendant_dialog_chain_depth = std::max(descendant_dialog_chain_depth, relative_depth);
         }
-        if (snapshot_matches_chain_query(row, query, hint_query, descendant_hint_query, preferred_title, window_title)) {
+        if (snapshot_matches_chain_query(row, query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title)) {
             ++descendant_query_match_count;
         }
     }
@@ -1043,8 +1106,8 @@ std::string trace_related_window_chain_json(
         return left.title < right.title;
     });
     std::sort(descendant_depth_rows.begin(), descendant_depth_rows.end(), [&](const auto& left, const auto& right) {
-        const bool left_query_match = snapshot_matches_chain_query(left.second, query, hint_query, descendant_hint_query, preferred_title, window_title);
-        const bool right_query_match = snapshot_matches_chain_query(right.second, query, hint_query, descendant_hint_query, preferred_title, window_title);
+        const bool left_query_match = snapshot_matches_chain_query(left.second, query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title);
+        const bool right_query_match = snapshot_matches_chain_query(right.second, query, hint_query, descendant_hint_query, campaign_hint_query, campaign_preferred_title, preferred_title, window_title);
         if (left_query_match != right_query_match) {
             return left_query_match;
         }
