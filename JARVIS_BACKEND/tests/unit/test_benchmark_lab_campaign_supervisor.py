@@ -54,6 +54,7 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
             "long_horizon_pending_count": 4,
             "error_count": 0,
             "latest_campaign_label": "settings replay campaign",
+            "auto_created_campaign_count": 1,
         }
 
     supervisor = DesktopBenchmarkLabCampaignSupervisor(state_path=str(state_path), enabled=False, interval_s=30.0)
@@ -77,6 +78,7 @@ def test_benchmark_campaign_supervisor_manual_trigger_updates_runtime(tmp_path) 
         assert status["last_result_status"] == "success"
         assert status["last_summary"]["executed_campaign_count"] == 2
         assert status["last_summary"]["latest_campaign_label"] == "settings replay campaign"
+        assert status["last_summary"]["auto_created_campaign_count"] == 1
     finally:
         supervisor.stop()
 
@@ -102,5 +104,57 @@ def test_benchmark_campaign_supervisor_daemon_runs_when_enabled(tmp_path) -> Non
         status = supervisor.status()
         assert status["auto_trigger_count"] >= 1
         assert status["last_result_status"] == "idle"
+    finally:
+        supervisor.stop()
+
+
+def test_benchmark_campaign_supervisor_history_persists_and_resets(tmp_path) -> None:
+    state_path = tmp_path / "benchmark_campaign_supervisor.json"
+
+    def _callback(**kwargs):  # noqa: ANN001
+        trigger_source = str(kwargs.get("trigger_source", "") or "").strip().lower()
+        return {
+            "status": "success",
+            "message": f"campaign watchdog executed 1 campaign(s) from {trigger_source}",
+            "targeted_campaign_count": 1,
+            "executed_campaign_count": 1,
+            "regression_campaign_count": 0,
+            "pending_session_count": 1,
+            "attention_session_count": 0,
+            "pending_app_target_count": 1,
+            "long_horizon_pending_count": 2,
+            "error_count": 0,
+            "latest_campaign_label": f"{trigger_source} replay campaign",
+            "auto_created_campaign_count": 1 if trigger_source == "manual_test" else 0,
+        }
+
+    supervisor = DesktopBenchmarkLabCampaignSupervisor(state_path=str(state_path), enabled=False, interval_s=30.0)
+    supervisor.start(_callback)
+    try:
+        supervisor.trigger_now(source="manual_test", pack="long_horizon_and_replay")
+        supervisor.trigger_now(source="ops_test", pack="installer_and_governance")
+        status = supervisor.status()
+        assert status["history_count"] == 2
+        assert isinstance(status.get("latest_history_run"), dict)
+        assert status["latest_history_run"]["source"] == "ops_test"
+
+        history = supervisor.history(limit=4)
+        assert history["status"] == "success"
+        assert history["count"] == 2
+        assert history["latest_run"]["source"] == "ops_test"
+
+        filtered = supervisor.history(limit=4, source="manual_test")
+        assert filtered["count"] == 1
+        assert filtered["items"][0]["auto_created_campaign_count"] == 1
+
+        reloaded = DesktopBenchmarkLabCampaignSupervisor(state_path=str(state_path))
+        persisted = reloaded.history(limit=4)
+        assert persisted["count"] == 2
+        assert persisted["latest_run"]["source"] == "ops_test"
+
+        reset = reloaded.reset_history(source="manual_test")
+        assert reset["removed_count"] == 1
+        assert reset["remaining_count"] == 1
+        assert reset["latest_run"]["source"] == "ops_test"
     finally:
         supervisor.stop()

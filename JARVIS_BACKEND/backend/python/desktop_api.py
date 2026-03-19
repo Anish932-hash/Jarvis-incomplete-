@@ -8416,6 +8416,38 @@ class DesktopBackendService:
                 status=campaign_status,
             )
         )
+        payload["history"] = _to_jsonable(
+            supervisor.history(limit=max(1, min(int(history_limit or 6), 32)))
+        )
+        return _to_jsonable(payload)
+
+    def desktop_evaluation_campaign_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_campaign_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation campaign supervisor unavailable"}
+        payload = supervisor.history(limit=limit, status=status, source=source)
+        return _to_jsonable(payload)
+
+    def reset_desktop_evaluation_campaign_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_campaign_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation campaign supervisor unavailable"}
+        payload = supervisor.reset_history(status=status, source=source)
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit)
+        )
         return _to_jsonable(payload)
 
     def configure_desktop_evaluation_campaign_supervisor(
@@ -42321,6 +42353,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/history":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
+                payload = self.server.service.desktop_evaluation_campaign_supervisor_history(
+                    limit=limit,
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    source=str(query.get("source", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/history":
                 limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
                 payload = self.server.service.desktop_evaluation_history(limit=limit)
@@ -44577,6 +44618,19 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     ),
                     source=str(body.get("source", "desktop-ui") or "desktop-ui").strip() or "desktop-ui",
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/history/reset":
+                payload = self.server.service.reset_desktop_evaluation_campaign_supervisor_history(
+                    status=str(body.get("status", "") or "").strip(),
+                    source=str(body.get("source", "") or "").strip(),
+                    history_response_limit=self._parse_int(
+                        body.get("history_response_limit", 6),
+                        6,
+                        minimum=1,
+                        maximum=32,
+                    ),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return

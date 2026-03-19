@@ -556,25 +556,64 @@ class EvaluationRunner:
         normalized_pack = str(pack or "").strip().lower()
         normalized_app = str(app_name or "").strip().lower()
 
-        campaign_payload = self.lab_campaigns(limit=max(normalized_max_campaigns * 4, 16), status=normalized_status)
-        campaign_rows = [dict(item) for item in campaign_payload.get("items", []) if isinstance(item, dict)]
+        all_campaign_payload = self.lab_campaigns(limit=max(normalized_max_campaigns * 4, 16), status="")
+        campaign_rows = [dict(item) for item in all_campaign_payload.get("items", []) if isinstance(item, dict)]
+        native_targets_payload = self.native_control_targets(
+            pack=normalized_pack,
+            app=normalized_app,
+            history_limit=normalized_history_limit,
+        )
+        guidance_payload = self.control_guidance()
         filtered_campaigns = [
             row
             for row in campaign_rows
             if self._campaign_matches_watchdog_filters(
                 row,
+                campaign_status=normalized_status,
                 pack=normalized_pack,
                 app_name=normalized_app,
             )
         ]
+        auto_created_campaigns: List[Dict[str, object]] = []
+        if len(filtered_campaigns) < normalized_max_campaigns:
+            auto_created_campaigns = self._watchdog_auto_create_campaigns(
+                existing_campaigns=campaign_rows,
+                native_targets_payload=native_targets_payload,
+                max_campaigns=normalized_max_campaigns - len(filtered_campaigns),
+                max_sessions=normalized_max_sessions,
+                history_limit=normalized_history_limit,
+                campaign_status=normalized_status,
+                pack=normalized_pack,
+                app_name=normalized_app,
+                trigger_source=trigger_source,
+            )
+            if auto_created_campaigns:
+                all_campaign_payload = self.lab_campaigns(limit=max(normalized_max_campaigns * 6, 24), status="")
+                campaign_rows = [
+                    dict(item)
+                    for item in all_campaign_payload.get("items", [])
+                    if isinstance(item, dict)
+                ]
+                filtered_campaigns = [
+                    row
+                    for row in campaign_rows
+                    if self._campaign_matches_watchdog_filters(
+                        row,
+                        campaign_status=normalized_status,
+                        pack=normalized_pack,
+                        app_name=normalized_app,
+                    )
+                ]
         if not filtered_campaigns:
             message_bits = ["no matching replay campaigns ready for sweep"]
             if normalized_pack:
                 message_bits.append(f"pack={normalized_pack}")
             if normalized_app:
                 message_bits.append(f"app={normalized_app}")
+            if auto_created_campaigns:
+                message_bits.insert(0, f"auto-created {len(auto_created_campaigns)} replay campaign(s)")
             return {
-                "status": "idle",
+                "status": "partial" if auto_created_campaigns else "idle",
                 "message": " | ".join(message_bits),
                 "trigger_source": str(trigger_source or "manual").strip().lower() or "manual",
                 "filters": {
@@ -592,11 +631,23 @@ class EvaluationRunner:
                 "long_horizon_pending_count": 0,
                 "error_count": 0,
                 "latest_campaign_label": "",
+                "auto_created_campaign_count": len(auto_created_campaigns),
+                "auto_created_campaigns": auto_created_campaigns,
+                "auto_created_app_names": self._unique_strings(
+                    [
+                        str(item.get("app_name", "") or "").strip()
+                        for item in auto_created_campaigns
+                        if isinstance(item, dict)
+                    ]
+                ),
                 "campaigns": [],
                 "results": [],
-                "lab_campaigns": campaign_payload,
-                "native_targets": self.native_control_targets(history_limit=normalized_history_limit),
-                "guidance": self.control_guidance(),
+                "lab_campaigns": self.lab_campaigns(
+                    limit=max(normalized_max_campaigns * 4, 16),
+                    status=normalized_status,
+                ),
+                "native_targets": native_targets_payload,
+                "guidance": guidance_payload,
             }
 
         ranked_campaigns = sorted(filtered_campaigns, key=self._campaign_watchdog_sort_key, reverse=True)
@@ -657,12 +708,6 @@ class EvaluationRunner:
             )
 
         refreshed_campaigns = self.lab_campaigns(limit=max(normalized_max_campaigns * 2, 8), status=normalized_status)
-        native_targets_payload = self.native_control_targets(
-            pack=normalized_pack,
-            app=normalized_app,
-            history_limit=normalized_history_limit,
-        )
-        guidance_payload = self.control_guidance()
         executed_campaign_count = len(results)
         if executed_campaign_count <= 0 and error_count > 0:
             status = "error"
@@ -672,13 +717,16 @@ class EvaluationRunner:
             status = "partial"
         else:
             status = "success"
+        message = (
+            f"campaign watchdog executed {executed_campaign_count} campaign(s)"
+            if executed_campaign_count > 0
+            else "campaign watchdog found no executable replay campaigns"
+        )
+        if auto_created_campaigns:
+            message = f"{message} | auto-created {len(auto_created_campaigns)} replay campaign(s)"
         return {
             "status": status,
-            "message": (
-                f"campaign watchdog executed {executed_campaign_count} campaign(s)"
-                if executed_campaign_count > 0
-                else "campaign watchdog found no executable replay campaigns"
-            ),
+            "message": message,
             "trigger_source": str(trigger_source or "manual").strip().lower() or "manual",
             "filters": {
                 "campaign_status": normalized_status,
@@ -695,6 +743,15 @@ class EvaluationRunner:
             "long_horizon_pending_count": long_horizon_pending_count,
             "error_count": error_count,
             "latest_campaign_label": latest_campaign_label,
+            "auto_created_campaign_count": len(auto_created_campaigns),
+            "auto_created_campaigns": auto_created_campaigns,
+            "auto_created_app_names": self._unique_strings(
+                [
+                    str(item.get("app_name", "") or "").strip()
+                    for item in auto_created_campaigns
+                    if isinstance(item, dict)
+                ]
+            ),
             "campaigns": selected_campaigns,
             "results": results,
             "lab_campaigns": refreshed_campaigns,
@@ -1772,9 +1829,14 @@ class EvaluationRunner:
     def _campaign_matches_watchdog_filters(
         campaign: Dict[str, object],
         *,
+        campaign_status: str,
         pack: str,
         app_name: str,
     ) -> bool:
+        if campaign_status:
+            current_status = str(campaign.get("status", "") or "").strip().lower()
+            if current_status != campaign_status.strip().lower():
+                return False
         filters = dict(campaign.get("filters", {})) if isinstance(campaign.get("filters", {}), dict) else {}
         if pack:
             campaign_pack = str(campaign.get("pack", filters.get("pack", "")) or "").strip().lower()
@@ -1791,6 +1853,124 @@ class EvaluationRunner:
             if app_name not in candidate_values:
                 return False
         return True
+
+    def _watchdog_auto_create_campaigns(
+        self,
+        *,
+        existing_campaigns: List[Dict[str, object]],
+        native_targets_payload: Dict[str, object],
+        max_campaigns: int,
+        max_sessions: int,
+        history_limit: int,
+        campaign_status: str,
+        pack: str,
+        app_name: str,
+        trigger_source: str,
+    ) -> List[Dict[str, object]]:
+        if max_campaigns <= 0:
+            return []
+        normalized_status = str(campaign_status or "").strip().lower()
+        if normalized_status and normalized_status not in {"ready", "attention"}:
+            return []
+        target_rows = [
+            dict(item)
+            for item in native_targets_payload.get("target_apps", [])
+            if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+        ] if isinstance(native_targets_payload.get("target_apps", []), list) else []
+        if not target_rows:
+            return []
+        existing_keys: set[tuple[str, str]] = set()
+        explicit_pack = bool(pack)
+        for campaign in existing_campaigns:
+            filters = dict(campaign.get("filters", {})) if isinstance(campaign.get("filters", {}), dict) else {}
+            campaign_pack = str(campaign.get("pack", filters.get("pack", "")) or "").strip().lower()
+            campaign_app_candidates = [
+                str(campaign.get("app_name", "") or "").strip().lower(),
+                str(filters.get("app", filters.get("app_name", "")) or "").strip().lower(),
+            ]
+            target_apps = campaign.get("target_apps", campaign.get("app_targets", []))
+            if isinstance(target_apps, list):
+                campaign_app_candidates.extend(
+                    str(item).strip().lower()
+                    for item in target_apps
+                    if str(item).strip()
+                )
+            campaign_apps = self._unique_strings(campaign_app_candidates)
+            for candidate_app in campaign_apps:
+                if candidate_app:
+                    existing_keys.add((campaign_pack if explicit_pack else "", candidate_app))
+        ranked_specs: List[Dict[str, object]] = []
+        for row in target_rows:
+            candidate_app = str(row.get("app_name", "") or "").strip().lower()
+            if not candidate_app:
+                continue
+            if app_name and candidate_app != app_name:
+                continue
+            row_packs = self._unique_strings(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("packs", [])
+                    if str(item).strip()
+                ]
+            ) if isinstance(row.get("packs", []), list) else []
+            candidate_pack = pack or (row_packs[0] if row_packs else "")
+            dedupe_key = (candidate_pack if explicit_pack else "", candidate_app)
+            if dedupe_key in existing_keys:
+                continue
+            ranked_specs.append(
+                {
+                    "app_name": candidate_app,
+                    "pack": candidate_pack,
+                    "priority": float(row.get("campaign_pressure", row.get("replay_pressure", row.get("priority", 0.0))) or 0.0),
+                    "replay_pressure": float(row.get("replay_pressure", 0.0) or 0.0),
+                    "max_horizon_steps": int(row.get("max_horizon_steps", 0) or 0),
+                }
+            )
+            existing_keys.add(dedupe_key)
+        ranked_specs.sort(
+            key=lambda item: (
+                float(item.get("priority", 0.0) or 0.0),
+                float(item.get("replay_pressure", 0.0) or 0.0),
+                int(item.get("max_horizon_steps", 0) or 0),
+            ),
+            reverse=True,
+        )
+        created: List[Dict[str, object]] = []
+        for spec in ranked_specs[:max_campaigns]:
+            create_payload = self.create_lab_campaign(
+                pack=str(spec.get("pack", "") or "").strip(),
+                app=str(spec.get("app_name", "") or "").strip(),
+                history_limit=history_limit,
+                source=f"campaign_watchdog_auto_create:{str(trigger_source or 'manual').strip().lower() or 'manual'}",
+                max_sessions=max_sessions,
+            )
+            if str(create_payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            campaign = (
+                dict(create_payload.get("campaign", {}))
+                if isinstance(create_payload.get("campaign", {}), dict)
+                else {}
+            )
+            if not campaign:
+                continue
+            created.append(
+                {
+                    "campaign_id": str(campaign.get("campaign_id", "") or "").strip(),
+                    "label": str(campaign.get("label", "") or "").strip(),
+                    "status": str(campaign.get("status", "") or "").strip().lower(),
+                    "pack": str(spec.get("pack", "") or "").strip(),
+                    "app_name": str(spec.get("app_name", "") or "").strip(),
+                    "target_apps": [
+                        str(item).strip()
+                        for item in campaign.get("target_apps", campaign.get("app_targets", []))
+                        if str(item).strip()
+                    ][:8]
+                    if isinstance(campaign.get("target_apps", campaign.get("app_targets", [])), list)
+                    else [],
+                    "created_session_count": int(create_payload.get("created_session_count", 0) or 0),
+                }
+            )
+        return created
 
     @staticmethod
     def _campaign_watchdog_sort_key(campaign: Dict[str, object]) -> tuple[int, int, int, int, int, int, int]:

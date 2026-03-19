@@ -974,3 +974,103 @@ def test_evaluation_runner_campaign_watchdog_returns_idle_for_no_matching_campai
     assert payload["targeted_campaign_count"] == 0
     assert payload["executed_campaign_count"] == 0
     assert payload["results"] == []
+
+
+def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_targets(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    campaign_rows: list[dict] = []
+    create_calls: list[dict] = []
+    sweep_calls: list[str] = []
+
+    def _lab_campaigns(**kwargs):  # noqa: ANN001
+        normalized_status = str(kwargs.get("status", "") or "").strip().lower()
+        items = [dict(item) for item in campaign_rows]
+        if normalized_status:
+            items = [
+                item
+                for item in items
+                if str(item.get("status", "") or "").strip().lower() == normalized_status
+            ]
+        return {"status": "success", "count": len(items), "items": items}
+
+    def _create_lab_campaign(**kwargs):  # noqa: ANN001
+        create_calls.append(dict(kwargs))
+        target_app = str(kwargs.get("app", "") or "").strip().lower() or "settings"
+        pack = str(kwargs.get("pack", "") or "").strip() or "long_horizon_and_replay"
+        campaign = {
+            "campaign_id": f"camp-{target_app}",
+            "label": f"{target_app} replay campaign",
+            "status": "ready",
+            "filters": {"pack": pack, "app": target_app},
+            "target_apps": [target_app],
+            "pending_session_count": 1,
+            "attention_session_count": 0,
+            "pending_app_target_count": 1,
+            "long_horizon_pending_count": 2,
+            "regression_cycle_count": 0,
+            "sweep_count": 0,
+        }
+        campaign_rows.append(campaign)
+        return {"status": "success", "campaign": campaign, "created_session_count": 1}
+
+    def _run_lab_campaign_sweep(**kwargs):  # noqa: ANN001
+        campaign_id = str(kwargs.get("campaign_id", "") or "").strip()
+        sweep_calls.append(campaign_id)
+        updated = next(
+            dict(item)
+            for item in campaign_rows
+            if str(item.get("campaign_id", "") or "").strip() == campaign_id
+        )
+        updated["pending_session_count"] = 0
+        updated["pending_app_target_count"] = 0
+        updated["long_horizon_pending_count"] = 1
+        updated["sweep_count"] = 1
+        updated["latest_sweep_regression_status"] = "stable"
+        for index, item in enumerate(campaign_rows):
+            if str(item.get("campaign_id", "") or "").strip() == campaign_id:
+                campaign_rows[index] = dict(updated)
+                break
+        return {
+            "status": "success",
+            "campaign": updated,
+            "sweep": {"executed_session_count": 1, "regression_status": "stable"},
+            "created_session_count": 0,
+        }
+
+    monkeypatch.setattr(runner, "lab_campaigns", _lab_campaigns)
+    monkeypatch.setattr(runner, "create_lab_campaign", _create_lab_campaign)
+    monkeypatch.setattr(runner, "run_lab_campaign_sweep", _run_lab_campaign_sweep)
+    monkeypatch.setattr(
+        runner,
+        "native_control_targets",
+        lambda **_: {
+            "status": "success",
+            "target_apps": [
+                {
+                    "app_name": "settings",
+                    "packs": ["long_horizon_and_replay"],
+                    "campaign_pressure": 1.3,
+                    "replay_pressure": 0.9,
+                    "max_horizon_steps": 5,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["campaign_auto_create"]})
+
+    payload = runner.run_lab_campaign_watchdog(
+        max_campaigns=1,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        pack="long_horizon_and_replay",
+        trigger_source="daemon",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["auto_created_campaign_count"] == 1
+    assert payload["executed_campaign_count"] == 1
+    assert payload["auto_created_app_names"] == ["settings"]
+    assert "auto-created 1 replay campaign(s)" in str(payload.get("message", ""))
+    assert create_calls and create_calls[0]["app"] == "settings"
+    assert sweep_calls == ["camp-settings"]

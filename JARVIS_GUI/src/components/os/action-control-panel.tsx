@@ -1199,6 +1199,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabSessionsBusy, setDesktopEvaluationLabSessionsBusy] = useState(false);
   const [desktopEvaluationLabCampaignsBusy, setDesktopEvaluationLabCampaignsBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonBusy, setDesktopEvaluationCampaignDaemonBusy] = useState(false);
+  const [desktopEvaluationCampaignDaemonHistoryBusy, setDesktopEvaluationCampaignDaemonHistoryBusy] =
+    useState(false);
   const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
   const [desktopEvaluationLabCampaignCreateBusy, setDesktopEvaluationLabCampaignCreateBusy] = useState(false);
   const [desktopEvaluationLabSessionReplayBusy, setDesktopEvaluationLabSessionReplayBusy] = useState(false);
@@ -1952,6 +1954,12 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationCampaignDaemon.campaigns),
     [desktopEvaluationCampaignDaemon]
   );
+  const desktopEvaluationCampaignDaemonHistory = useMemo(() => {
+    const historyPayload = asObjectRecord(desktopEvaluationCampaignDaemon.history);
+    return Array.isArray(historyPayload.items)
+      ? historyPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      : [];
+  }, [desktopEvaluationCampaignDaemon]);
   const desktopEvaluationLatestLabSession = useMemo(
     () => asObjectRecord(desktopEvaluationLabSessions.latest_session),
     [desktopEvaluationLabSessions]
@@ -13995,6 +14003,36 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     ]
   );
 
+  const resetDesktopEvaluationCampaignDaemonHistory = useCallback(async () => {
+    setDesktopEvaluationCampaignDaemonHistoryBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationResetCampaignDaemonHistory({
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationCampaignDaemonState(
+          payload.supervisor as DesktopEvaluationCampaignDaemonStatusResponse
+        );
+      }
+      toast({
+        title: 'Campaign Daemon History Cleared',
+        description:
+          `${Number(payload.removed ?? 0)} run(s) removed` +
+          ` | remaining:${Number(asObjectRecord(payload.supervisor).history_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Campaign Daemon History Reset Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationCampaignDaemonHistoryBusy(false);
+    }
+  }, [toast]);
+
   const previewSelectedDesktopMissionResume = useCallback(async () => {
     const missionId = String(selectedDesktopMission?.mission_id ?? '').trim();
     if (!missionId) {
@@ -18790,12 +18828,40 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         {' â€¢ '}executed:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).executed_campaign_count ?? 0)}
                                         {' â€¢ '}pending sessions:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).pending_session_count ?? 0)}
                                         {' â€¢ '}attention:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).attention_session_count ?? 0)}
+                                        {' â€¢ '}auto-created:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).auto_created_campaign_count ?? 0)}
                                       </p>
                                       <p className="mt-1 text-[10px] text-muted-foreground">
                                         campaigns:{Number(desktopEvaluationCampaignDaemonCampaigns.count ?? 0)}
                                         {' â€¢ '}pending sessions:{Number(asObjectRecord(desktopEvaluationCampaignDaemonCampaigns.summary).pending_sessions ?? 0)}
                                         {' â€¢ '}pending apps:{Number(asObjectRecord(desktopEvaluationCampaignDaemonCampaigns.summary).pending_app_targets ?? 0)}
                                       </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        history:{Number(desktopEvaluationCampaignDaemon.history_count ?? 0)}
+                                        {' â€¢ '}latest source:
+                                        {String(asObjectRecord(desktopEvaluationCampaignDaemon.latest_history_run).source ?? 'n/a')}
+                                        {' â€¢ '}latest status:
+                                        {String(asObjectRecord(desktopEvaluationCampaignDaemon.latest_history_run).status ?? 'n/a')}
+                                      </p>
+                                      {desktopEvaluationCampaignDaemonHistory.length ? (
+                                        <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2 text-[10px] text-muted-foreground">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/75">
+                                            Recent Daemon Runs
+                                          </p>
+                                          <div className="mt-1 space-y-1">
+                                            {desktopEvaluationCampaignDaemonHistory.slice(0, 3).map((item, index) => {
+                                              const summary = asObjectRecord(item.summary);
+                                              return (
+                                                <p key={`${String(item.triggered_at ?? index)}-${String(item.source ?? index)}`}>
+                                                  {String(item.status ?? 'unknown')}
+                                                  {' â€¢ '}source:{String(item.source ?? 'n/a')}
+                                                  {' â€¢ '}executed:{Number(summary.executed_campaign_count ?? 0)}
+                                                  {' â€¢ '}auto-created:{Number(summary.auto_created_campaign_count ?? 0)}
+                                                </p>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      ) : null}
                                       <div className="mt-2 flex flex-wrap gap-2">
                                         <Button
                                           type="button"
@@ -18827,6 +18893,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           disabled={desktopEvaluationCampaignDaemonTriggerBusy}
                                         >
                                           {desktopEvaluationCampaignDaemonTriggerBusy ? 'Triggering' : 'Trigger'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void resetDesktopEvaluationCampaignDaemonHistory()}
+                                          disabled={desktopEvaluationCampaignDaemonHistoryBusy}
+                                        >
+                                          {desktopEvaluationCampaignDaemonHistoryBusy ? 'Clearing' : 'Clear History'}
                                         </Button>
                                       </div>
                                     </div>

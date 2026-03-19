@@ -56,6 +56,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
             app_name=app_name,
         )
         self._runtime = self._default_runtime()
+        self._history: list[Dict[str, Any]] = []
         self._load()
 
     def start(self, execute_callback: Callable[..., Dict[str, Any]]) -> None:
@@ -86,6 +87,87 @@ class DesktopBenchmarkLabCampaignSupervisor:
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return self._public_status_locked()
+
+    def history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        with self._lock:
+            normalized_limit = self._coerce_int(limit, minimum=1, maximum=128, default=12)
+            normalized_status = str(status or "").strip().lower()
+            normalized_source = str(source or "").strip().lower()
+            items = [
+                copy.deepcopy(item)
+                for item in self._history
+                if isinstance(item, dict)
+                and (
+                    not normalized_status
+                    or str(item.get("status", "") or "").strip().lower() == normalized_status
+                )
+                and (
+                    not normalized_source
+                    or str(item.get("source", "") or "").strip().lower() == normalized_source
+                )
+            ]
+            limited = items[-normalized_limit:]
+            latest = dict(limited[-1]) if limited else {}
+            return {
+                "status": "success",
+                "count": len(limited),
+                "total": len(items),
+                "limit": normalized_limit,
+                "filters": {
+                    "status": normalized_status,
+                    "source": normalized_source,
+                },
+                "items": limited,
+                "latest_run": latest,
+            }
+
+    def reset_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        with self._lock:
+            normalized_status = str(status or "").strip().lower()
+            normalized_source = str(source or "").strip().lower()
+            before = len(self._history)
+            if normalized_status or normalized_source:
+                self._history = [
+                    item
+                    for item in self._history
+                    if not (
+                        isinstance(item, dict)
+                        and (
+                            not normalized_status
+                            or str(item.get("status", "") or "").strip().lower() == normalized_status
+                        )
+                        and (
+                            not normalized_source
+                            or str(item.get("source", "") or "").strip().lower() == normalized_source
+                        )
+                    )
+                ]
+            else:
+                self._history = []
+            removed = max(0, before - len(self._history))
+            self._runtime["updated_at"] = _utc_now_iso()
+            self._persist_locked()
+            return {
+                "status": "success",
+                "removed_count": removed,
+                "remaining_count": len(self._history),
+                "filters": {
+                    "status": normalized_status,
+                    "source": normalized_source,
+                },
+                "latest_run": copy.deepcopy(self._history[-1]) if self._history else {},
+            }
 
     def configure(
         self,
@@ -246,6 +328,12 @@ class DesktopBenchmarkLabCampaignSupervisor:
             else:
                 self._runtime["last_success_at"] = self._runtime["last_tick_at"]
                 self._runtime["consecutive_error_count"] = 0
+            self._append_history_locked(
+                source=source,
+                duration_ms=duration_ms,
+                effective=effective,
+                result_payload=result_payload,
+            )
             self._runtime["updated_at"] = _utc_now_iso()
             self._persist_locked()
             status = self._public_status_locked()
@@ -260,6 +348,7 @@ class DesktopBenchmarkLabCampaignSupervisor:
         interval_s = self._coerce_float(self._config.get("interval_s", 180.0), minimum=5.0, maximum=3600.0, default=180.0)
         last_tick_ts = float(self._runtime.get("last_tick_ts", 0.0) or 0.0)
         next_due_at = _iso_from_ts(last_tick_ts + interval_s) if bool(self._config.get("enabled", False)) and last_tick_ts > 0 else ""
+        latest_history_run = copy.deepcopy(self._history[-1]) if self._history else {}
         return {
             "status": "success",
             "active": bool(self._thread and self._thread.is_alive()),
@@ -298,20 +387,30 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "last_summary": copy.deepcopy(self._runtime.get("last_summary", {}))
             if isinstance(self._runtime.get("last_summary", {}), dict)
             else {},
+            "history_count": len(self._history),
+            "latest_history_run": latest_history_run,
             "updated_at": str(self._runtime.get("updated_at", "") or "").strip(),
         }
 
     def _load(self) -> None:
         config = self._store.get("config", {})
         runtime = self._store.get("runtime", {})
+        history = self._store.get("history", [])
         if isinstance(config, dict):
             self._config.update(self._apply_overrides(self._config, config))
         if isinstance(runtime, dict):
             self._runtime.update(runtime)
+        if isinstance(history, list):
+            self._history = [
+                copy.deepcopy(item)
+                for item in history
+                if isinstance(item, dict)
+            ][-self._coerce_int(self._config.get("history_limit", 8), minimum=1, maximum=64, default=8) :]
 
     def _persist_locked(self) -> None:
         self._store.set("config", self._config)
         self._store.set("runtime", self._runtime)
+        self._store.set("history", self._history)
 
     @staticmethod
     def _result_summary(result_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -344,6 +443,9 @@ class DesktopBenchmarkLabCampaignSupervisor:
                 payload.get("error_count", 0), minimum=0, maximum=100_000, default=0
             ),
             "latest_campaign_label": str(payload.get("latest_campaign_label", "") or "").strip(),
+            "auto_created_campaign_count": DesktopBenchmarkLabCampaignSupervisor._coerce_int(
+                payload.get("auto_created_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
         }
 
     @staticmethod
@@ -402,6 +504,32 @@ class DesktopBenchmarkLabCampaignSupervisor:
             "last_summary": {},
             "updated_at": "",
         }
+
+    def _append_history_locked(
+        self,
+        *,
+        source: str,
+        duration_ms: float,
+        effective: Dict[str, Any],
+        result_payload: Dict[str, Any],
+    ) -> None:
+        summary = self._result_summary(result_payload)
+        entry = {
+            "recorded_at": str(self._runtime.get("last_tick_at", "") or "").strip() or _utc_now_iso(),
+            "source": str(source or "manual").strip().lower() or "manual",
+            "status": str(summary.get("status", "") or "").strip().lower(),
+            "message": str(summary.get("message", "") or "").strip(),
+            "duration_ms": round(float(duration_ms or 0.0), 2),
+            "filters": {
+                "campaign_status": str(effective.get("campaign_status", "") or "").strip(),
+                "pack": str(effective.get("pack", "") or "").strip(),
+                "app_name": str(effective.get("app_name", "") or "").strip(),
+            },
+            **summary,
+        }
+        self._history.append(entry)
+        history_limit = self._coerce_int(self._config.get("history_limit", 8), minimum=1, maximum=64, default=8)
+        self._history = self._history[-history_limit:]
 
     @staticmethod
     def _apply_overrides(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:

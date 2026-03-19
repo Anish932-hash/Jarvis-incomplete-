@@ -897,8 +897,11 @@ class FakeDesktopService:
             "auto_trigger_count": 0,
             "consecutive_error_count": 0,
             "last_summary": {},
+            "history_count": 0,
+            "latest_history_run": {},
             "updated_at": "2026-03-18T10:00:00+00:00",
         }
+        self.desktop_evaluation_campaign_daemon_history_items: list[Dict[str, Any]] = []
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -14358,7 +14361,87 @@ class FakeDesktopService:
             limit=max(1, int(history_limit or 6)),
             status=str(payload.get("campaign_status", "") or "").strip(),
         )
+        payload["history_count"] = len(self.desktop_evaluation_campaign_daemon_history_items)
+        payload["latest_history_run"] = (
+            dict(self.desktop_evaluation_campaign_daemon_history_items[-1])
+            if self.desktop_evaluation_campaign_daemon_history_items
+            else {}
+        )
+        payload["history"] = self.desktop_evaluation_campaign_supervisor_history(limit=history_limit)
         return payload
+
+    def desktop_evaluation_campaign_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        items = [
+            dict(item)
+            for item in self.desktop_evaluation_campaign_daemon_history_items
+            if (
+                not normalized_status
+                or str(item.get("status", "") or "").strip().lower() == normalized_status
+            )
+            and (
+                not normalized_source
+                or str(item.get("source", "") or "").strip().lower() == normalized_source
+            )
+        ]
+        limited = items[-max(1, int(limit or 12)) :]
+        return {
+            "status": "success",
+            "count": len(limited),
+            "total": len(items),
+            "limit": max(1, int(limit or 12)),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "items": limited,
+            "latest_run": dict(limited[-1]) if limited else {},
+        }
+
+    def reset_desktop_evaluation_campaign_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        before = len(self.desktop_evaluation_campaign_daemon_history_items)
+        if normalized_status or normalized_source:
+            self.desktop_evaluation_campaign_daemon_history_items = [
+                item
+                for item in self.desktop_evaluation_campaign_daemon_history_items
+                if not (
+                    (not normalized_status or str(item.get("status", "") or "").strip().lower() == normalized_status)
+                    and (not normalized_source or str(item.get("source", "") or "").strip().lower() == normalized_source)
+                )
+            ]
+        else:
+            self.desktop_evaluation_campaign_daemon_history_items = []
+        self.desktop_evaluation_campaign_daemon_state["history_count"] = len(
+            self.desktop_evaluation_campaign_daemon_history_items
+        )
+        self.desktop_evaluation_campaign_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_campaign_daemon_history_items[-1])
+            if self.desktop_evaluation_campaign_daemon_history_items
+            else {}
+        )
+        self.desktop_evaluation_campaign_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {
+            "status": "success",
+            "removed_count": max(0, before - len(self.desktop_evaluation_campaign_daemon_history_items)),
+            "remaining_count": len(self.desktop_evaluation_campaign_daemon_history_items),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "latest_run": dict(self.desktop_evaluation_campaign_daemon_state["latest_history_run"])
+            if isinstance(self.desktop_evaluation_campaign_daemon_state.get("latest_history_run", {}), dict)
+            else {},
+            "supervisor": self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit),
+        }
 
     def configure_desktop_evaluation_campaign_supervisor(
         self,
@@ -14515,7 +14598,33 @@ class FakeDesktopService:
             ),
             "error_count": 0,
             "latest_campaign_label": str(dict(results[0].get("campaign", {})).get("label", "") or "").strip() if results else "",
+            "auto_created_campaign_count": 0,
         }
+        history_entry = {
+            "recorded_at": now_iso,
+            "source": str(source or "manual").strip().lower() or "manual",
+            "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_campaign_daemon_state["last_result_message"],
+            "duration_ms": 0.0,
+            "filters": {
+                "campaign_status": effective_status,
+                "pack": effective_pack,
+                "app_name": effective_app,
+            },
+            **dict(self.desktop_evaluation_campaign_daemon_state["last_summary"]),
+        }
+        self.desktop_evaluation_campaign_daemon_history_items.append(history_entry)
+        self.desktop_evaluation_campaign_daemon_history_items = self.desktop_evaluation_campaign_daemon_history_items[
+            -max(1, int(self.desktop_evaluation_campaign_daemon_state.get("history_limit", 8) or 8)) :
+        ]
+        self.desktop_evaluation_campaign_daemon_state["history_count"] = len(
+            self.desktop_evaluation_campaign_daemon_history_items
+        )
+        self.desktop_evaluation_campaign_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_campaign_daemon_history_items[-1])
+            if self.desktop_evaluation_campaign_daemon_history_items
+            else {}
+        )
         self.desktop_evaluation_campaign_daemon_state["updated_at"] = now_iso
         return {
             "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
@@ -19214,6 +19323,7 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
     assert status == 200
     assert daemon_status["status"] == "success"
     assert isinstance(daemon_status.get("campaigns"), dict)
+    assert isinstance(daemon_status.get("history"), dict)
 
     status, configured = request_json(
         "POST",
@@ -19252,6 +19362,26 @@ def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDe
     assert isinstance(triggered.get("result"), dict)
     assert isinstance(triggered.get("supervisor"), dict)
     assert int(triggered["supervisor"]["run_count"]) >= 1
+    assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/history?limit=4&source=http_test",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert int(history["count"]) >= 1
+    assert str(history["latest_run"]["source"]) == "http_test"
+
+    status, reset = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/history/reset",
+        payload={"source": "http_test", "history_response_limit": 4},
+    )
+    assert status == 200
+    assert reset["status"] == "success"
+    assert int(reset["removed_count"]) >= 1
+    assert int(reset["supervisor"]["history_count"]) == 0
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:
