@@ -838,3 +838,139 @@ def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -
     assert str(vscode_row["descendant_hint_query"]).strip()
     assert str(vscode_row["preferred_window_title"]).strip()
     assert float(vscode_row["replay_pressure"]) > 0.0
+
+
+def test_evaluation_runner_campaign_watchdog_prioritizes_attention_and_regressions(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    sweep_calls: list[str] = []
+
+    campaigns_payload = {
+        "status": "success",
+        "count": 3,
+        "items": [
+            {
+                "campaign_id": "camp-settings",
+                "label": "Settings replay campaign",
+                "status": "ready",
+                "attention_session_count": 2,
+                "pending_session_count": 3,
+                "pending_app_target_count": 1,
+                "long_horizon_pending_count": 4,
+                "regression_cycle_count": 0,
+                "latest_sweep_regression_status": "stable",
+                "filters": {"pack": "long_horizon_and_replay", "app": "settings"},
+                "target_apps": ["settings"],
+            },
+            {
+                "campaign_id": "camp-installer",
+                "label": "Installer replay campaign",
+                "status": "ready",
+                "attention_session_count": 0,
+                "pending_session_count": 4,
+                "pending_app_target_count": 2,
+                "long_horizon_pending_count": 3,
+                "regression_cycle_count": 2,
+                "latest_sweep_regression_status": "regression",
+                "filters": {"pack": "long_horizon_and_replay", "app": "installer"},
+                "target_apps": ["installer"],
+            },
+            {
+                "campaign_id": "camp-vscode",
+                "label": "VS Code replay campaign",
+                "status": "ready",
+                "attention_session_count": 0,
+                "pending_session_count": 1,
+                "pending_app_target_count": 0,
+                "long_horizon_pending_count": 1,
+                "regression_cycle_count": 0,
+                "latest_sweep_regression_status": "stable",
+                "filters": {"pack": "long_horizon_and_replay", "app": "vscode"},
+                "target_apps": ["vscode"],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(runner, "lab_campaigns", lambda **_: campaigns_payload)
+
+    def _run_lab_campaign_sweep(**kwargs):  # noqa: ANN001
+        campaign_id = str(kwargs.get("campaign_id", "") or "")
+        sweep_calls.append(campaign_id)
+        if campaign_id == "camp-settings":
+            return {
+                "status": "success",
+                "campaign": {
+                    "campaign_id": campaign_id,
+                    "label": "Settings replay campaign",
+                    "pending_session_count": 2,
+                    "attention_session_count": 1,
+                    "pending_app_target_count": 1,
+                    "long_horizon_pending_count": 2,
+                    "latest_sweep_regression_status": "stable",
+                },
+                "sweep": {"executed_session_count": 2, "regression_status": "stable"},
+                "created_session_count": 0,
+            }
+        return {
+            "status": "success",
+            "campaign": {
+                "campaign_id": campaign_id,
+                "label": "Installer replay campaign",
+                "pending_session_count": 3,
+                "attention_session_count": 0,
+                "pending_app_target_count": 1,
+                "long_horizon_pending_count": 1,
+                "latest_sweep_regression_status": "regression",
+            },
+            "sweep": {"executed_session_count": 1, "regression_status": "regression"},
+            "created_session_count": 1,
+        }
+
+    monkeypatch.setattr(runner, "run_lab_campaign_sweep", _run_lab_campaign_sweep)
+    monkeypatch.setattr(runner, "native_control_targets", lambda **_: {"status": "success", "target_apps": []})
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["campaign_watchdog"]})
+
+    payload = runner.run_lab_campaign_watchdog(
+        max_campaigns=2,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        pack="long_horizon_and_replay",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["targeted_campaign_count"] == 2
+    assert payload["executed_campaign_count"] == 2
+    assert payload["regression_campaign_count"] == 1
+    assert sweep_calls == ["camp-settings", "camp-installer"]
+    assert payload["results"][0]["campaign_id"] == "camp-settings"
+    assert payload["results"][1]["campaign_id"] == "camp-installer"
+
+
+def test_evaluation_runner_campaign_watchdog_returns_idle_for_no_matching_campaigns(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    monkeypatch.setattr(
+        runner,
+        "lab_campaigns",
+        lambda **_: {
+            "status": "success",
+            "count": 1,
+            "items": [
+                {
+                    "campaign_id": "camp-installer",
+                    "label": "Installer replay campaign",
+                    "status": "ready",
+                    "filters": {"pack": "installer_and_governance", "app": "installer"},
+                    "target_apps": ["installer"],
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(runner, "native_control_targets", lambda **_: {"status": "success", "target_apps": []})
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success"})
+
+    payload = runner.run_lab_campaign_watchdog(pack="long_horizon_and_replay", app_name="settings")
+
+    assert payload["status"] == "idle"
+    assert payload["targeted_campaign_count"] == 0
+    assert payload["executed_campaign_count"] == 0
+    assert payload["results"] == []

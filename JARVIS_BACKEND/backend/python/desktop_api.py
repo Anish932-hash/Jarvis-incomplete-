@@ -37,6 +37,7 @@ from backend.python.core.provider_verifier import ProviderCredentialVerifier
 from backend.python.core.rust_runtime import RustRuntimeBridge
 from backend.python.core.task_state import GoalStatus
 from backend.python.evaluation.benchmark_lab_memory import DesktopBenchmarkLabMemory
+from backend.python.evaluation.benchmark_lab_campaign_supervisor import DesktopBenchmarkLabCampaignSupervisor
 from backend.python.evaluation.runner import EvaluationRunner
 from backend.python.inference.model_registry import ModelRegistry
 from backend.python.inference.model_requirement_manifest import load_model_requirement_manifest
@@ -173,6 +174,42 @@ class DesktopBackendService:
         self.desktop_evaluation_runner = EvaluationRunner(
             installed_app_catalog_provider=self.desktop_app_profiles,
             lab_memory=self.desktop_benchmark_lab_memory,
+        )
+        self.desktop_evaluation_campaign_supervisor = DesktopBenchmarkLabCampaignSupervisor(
+            enabled=self._env_bool("JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_ENABLED", False),
+            interval_s=self._env_float(
+                "JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_INTERVAL_S",
+                180.0,
+                minimum=5.0,
+                maximum=3600.0,
+            ),
+            max_campaigns=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_MAX_CAMPAIGNS",
+                2,
+                minimum=1,
+                maximum=32,
+            ),
+            max_sessions=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_MAX_SESSIONS",
+                3,
+                minimum=1,
+                maximum=8,
+            ),
+            max_replays_per_session=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_MAX_REPLAYS",
+                2,
+                minimum=1,
+                maximum=8,
+            ),
+            history_limit=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_HISTORY_LIMIT",
+                8,
+                minimum=1,
+                maximum=64,
+            ),
+            campaign_status=str(os.getenv("JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_STATUS", "") or "").strip(),
+            pack=str(os.getenv("JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_PACK", "") or "").strip(),
+            app_name=str(os.getenv("JARVIS_DESKTOP_EVALUATION_CAMPAIGN_DAEMON_APP_NAME", "") or "").strip(),
         )
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
@@ -1608,6 +1645,7 @@ class DesktopBackendService:
         future = asyncio.run_coroutine_threadsafe(self.kernel.start(), self._loop)
         future.result(timeout=20)
         self.desktop_recovery_supervisor.start(self._execute_desktop_recovery_supervisor_tick)
+        self.desktop_evaluation_campaign_supervisor.start(self._execute_desktop_evaluation_campaign_supervisor_tick)
         self.model_setup_recovery_watchdog_supervisor.start(
             self._execute_model_setup_watchdog_supervisor_tick
         )
@@ -1692,6 +1730,10 @@ class DesktopBackendService:
             self.desktop_recovery_supervisor.stop()
         except Exception as exc:  # noqa: BLE001
             self.log.warning(f"Desktop recovery supervisor stop failed: {exc}")
+        try:
+            self.desktop_evaluation_campaign_supervisor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Desktop evaluation campaign supervisor stop failed: {exc}")
         self._stop_bridge_scheduler_worker()
         self._stop_context_opportunity_worker()
         self._cancel_all_voice_continuous_sessions(reason="service_stop")
@@ -8327,6 +8369,117 @@ class DesktopBackendService:
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaign sweep payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def _execute_desktop_evaluation_campaign_supervisor_tick(
+        self,
+        *,
+        max_campaigns: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        campaign_status: str = "",
+        pack: str = "",
+        app_name: str = "",
+        trigger_source: str = "manual",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_campaign_watchdog(
+                max_campaigns=max_campaigns,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                campaign_status=campaign_status,
+                pack=pack,
+                app_name=app_name,
+                trigger_source=trigger_source,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation campaign watchdog payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_campaign_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_campaign_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation campaign supervisor unavailable"}
+        payload = supervisor.status()
+        campaign_status = str(payload.get("campaign_status", "") or "").strip()
+        payload["campaigns"] = _to_jsonable(
+            self.desktop_evaluation_lab_campaigns(
+                limit=max(1, min(int(history_limit or 6), 32)),
+                status=campaign_status,
+            )
+        )
+        return _to_jsonable(payload)
+
+    def configure_desktop_evaluation_campaign_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        max_campaigns: Optional[int] = None,
+        max_sessions: Optional[int] = None,
+        max_replays_per_session: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        campaign_status: Optional[str] = None,
+        pack: Optional[str] = None,
+        app_name: Optional[str] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_campaign_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation campaign supervisor unavailable"}
+        supervisor.configure(
+            enabled=enabled,
+            interval_s=interval_s,
+            max_campaigns=max_campaigns,
+            max_sessions=max_sessions,
+            max_replays_per_session=max_replays_per_session,
+            history_limit=history_limit,
+            campaign_status=campaign_status,
+            pack=pack,
+            app_name=app_name,
+            source=source,
+        )
+        return self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_evaluation_campaign_supervisor(
+        self,
+        *,
+        max_campaigns: Optional[int] = None,
+        max_sessions: Optional[int] = None,
+        max_replays_per_session: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        campaign_status: Optional[str] = None,
+        pack: Optional[str] = None,
+        app_name: Optional[str] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_campaign_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation campaign supervisor unavailable"}
+        payload = supervisor.trigger_now(
+            source=source,
+            max_campaigns=max_campaigns,
+            max_sessions=max_sessions,
+            max_replays_per_session=max_replays_per_session,
+            history_limit=history_limit,
+            campaign_status=campaign_status,
+            pack=pack,
+            app_name=app_name,
+        )
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit)
+        )
+        return _to_jsonable(payload)
 
     def desktop_evaluation_run_lab_session_cycle(
         self,
@@ -42161,6 +42314,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
+                history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
+                payload = self.server.service.desktop_evaluation_campaign_supervisor_status(
+                    history_limit=history_limit
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/history":
                 limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
                 payload = self.server.service.desktop_evaluation_history(limit=limit)
@@ -44376,6 +44536,50 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
+                payload = self.server.service.configure_desktop_evaluation_campaign_supervisor(
+                    enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
+                    interval_s=(
+                        self._parse_float(str(body.get("interval_s", "180") or "180"), 180.0, minimum=5.0, maximum=3600.0)
+                        if body.get("interval_s") is not None
+                        else None
+                    ),
+                    max_campaigns=(
+                        self._parse_int(body.get("max_campaigns", 2), 2, minimum=1, maximum=32)
+                        if body.get("max_campaigns") is not None
+                        else None
+                    ),
+                    max_sessions=(
+                        self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_sessions") is not None
+                        else None
+                    ),
+                    max_replays_per_session=(
+                        self._parse_int(body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_replays_per_session") is not None
+                        else None
+                    ),
+                    history_limit=(
+                        self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64)
+                        if body.get("history_limit") is not None
+                        else None
+                    ),
+                    campaign_status=(
+                        str(body.get("campaign_status", body.get("status", "")) or "").strip()
+                        if body.get("campaign_status") is not None or body.get("status") is not None
+                        else None
+                    ),
+                    pack=(str(body.get("pack", "") or "").strip() if body.get("pack") is not None else None),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    source=str(body.get("source", "desktop-ui") or "desktop-ui").strip() or "desktop-ui",
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaigns/run-sweep":
                 payload = self.server.service.desktop_evaluation_run_lab_campaign_sweep(
                     campaign_id=str(body.get("campaign_id", "") or "").strip(),
@@ -44389,6 +44593,44 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/trigger":
+                payload = self.server.service.trigger_desktop_evaluation_campaign_supervisor(
+                    max_campaigns=(
+                        self._parse_int(body.get("max_campaigns", 2), 2, minimum=1, maximum=32)
+                        if body.get("max_campaigns") is not None
+                        else None
+                    ),
+                    max_sessions=(
+                        self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_sessions") is not None
+                        else None
+                    ),
+                    max_replays_per_session=(
+                        self._parse_int(body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_replays_per_session") is not None
+                        else None
+                    ),
+                    history_limit=(
+                        self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64)
+                        if body.get("history_limit") is not None
+                        else None
+                    ),
+                    campaign_status=(
+                        str(body.get("campaign_status", body.get("status", "")) or "").strip()
+                        if body.get("campaign_status") is not None or body.get("status") is not None
+                        else None
+                    ),
+                    pack=(str(body.get("pack", "") or "").strip() if body.get("pack") is not None else None),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    source=str(body.get("source", "desktop-ui") or "desktop-ui").strip() or "desktop-ui",
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial", "idle"} else 400, payload)
                 return
             if path == "/runtime/desktop-missions/reset":
                 payload = self.server.service.reset_desktop_missions(

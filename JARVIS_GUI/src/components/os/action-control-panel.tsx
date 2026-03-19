@@ -62,13 +62,14 @@ import {
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
   type DesktopEvaluationCatalogResponse,
-  type DesktopEvaluationGuidanceResponse,
-  type DesktopEvaluationHistoryResponse,
-  type DesktopEvaluationLabResponse,
-  type DesktopEvaluationLabCampaignCreateResponse,
-  type DesktopEvaluationLabCampaignRecord,
-  type DesktopEvaluationLabCampaignSweepResponse,
-  type DesktopEvaluationLabCampaignsResponse,
+    type DesktopEvaluationGuidanceResponse,
+    type DesktopEvaluationHistoryResponse,
+    type DesktopEvaluationLabResponse,
+    type DesktopEvaluationCampaignDaemonStatusResponse,
+    type DesktopEvaluationLabCampaignCreateResponse,
+    type DesktopEvaluationLabCampaignRecord,
+    type DesktopEvaluationLabCampaignSweepResponse,
+    type DesktopEvaluationLabCampaignsResponse,
   type DesktopEvaluationLabSessionAdvanceResponse,
   type DesktopEvaluationLabSessionCycleResponse,
   type DesktopEvaluationLabSessionCreateResponse,
@@ -1174,6 +1175,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabSessionsResponse | null>(null);
   const [desktopEvaluationLabCampaignsState, setDesktopEvaluationLabCampaignsState] =
     useState<DesktopEvaluationLabCampaignsResponse | null>(null);
+  const [desktopEvaluationCampaignDaemonState, setDesktopEvaluationCampaignDaemonState] =
+    useState<DesktopEvaluationCampaignDaemonStatusResponse | null>(null);
   const [desktopEvaluationLabSessionCreateState, setDesktopEvaluationLabSessionCreateState] =
     useState<DesktopEvaluationLabSessionCreateResponse | null>(null);
   const [, setDesktopEvaluationLabCampaignCreateState] =
@@ -1195,12 +1198,15 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabBusy, setDesktopEvaluationLabBusy] = useState(false);
   const [desktopEvaluationLabSessionsBusy, setDesktopEvaluationLabSessionsBusy] = useState(false);
   const [desktopEvaluationLabCampaignsBusy, setDesktopEvaluationLabCampaignsBusy] = useState(false);
+  const [desktopEvaluationCampaignDaemonBusy, setDesktopEvaluationCampaignDaemonBusy] = useState(false);
   const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
   const [desktopEvaluationLabCampaignCreateBusy, setDesktopEvaluationLabCampaignCreateBusy] = useState(false);
   const [desktopEvaluationLabSessionReplayBusy, setDesktopEvaluationLabSessionReplayBusy] = useState(false);
   const [desktopEvaluationLabSessionCycleBusy, setDesktopEvaluationLabSessionCycleBusy] = useState(false);
   const [desktopEvaluationLabSessionAdvanceBusy, setDesktopEvaluationLabSessionAdvanceBusy] = useState(false);
   const [desktopEvaluationLabCampaignSweepBusy, setDesktopEvaluationLabCampaignSweepBusy] = useState(false);
+  const [desktopEvaluationCampaignDaemonTriggerBusy, setDesktopEvaluationCampaignDaemonTriggerBusy] =
+    useState(false);
   const [desktopEvaluationNativeTargetsBusy, setDesktopEvaluationNativeTargetsBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
   const [desktopEvaluationCategoryFilter, setDesktopEvaluationCategoryFilter] = useState('');
@@ -1937,6 +1943,14 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopEvaluationLabCampaigns = useMemo(
     () => asObjectRecord(desktopEvaluationLabCampaignsState),
     [desktopEvaluationLabCampaignsState]
+  );
+  const desktopEvaluationCampaignDaemon = useMemo(
+    () => asObjectRecord(desktopEvaluationCampaignDaemonState),
+    [desktopEvaluationCampaignDaemonState]
+  );
+  const desktopEvaluationCampaignDaemonCampaigns = useMemo(
+    () => asObjectRecord(desktopEvaluationCampaignDaemon.campaigns),
+    [desktopEvaluationCampaignDaemon]
   );
   const desktopEvaluationLatestLabSession = useMemo(
     () => asObjectRecord(desktopEvaluationLabSessions.latest_session),
@@ -13439,6 +13453,86 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [toast]
   );
 
+  const refreshDesktopEvaluationCampaignDaemonStatus = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationCampaignDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationCampaignDaemonStatus({ history_limit: 6 });
+        setDesktopEvaluationCampaignDaemonState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Campaign Daemon Ready',
+            description:
+              `${payload.enabled ? 'enabled' : 'paused'}` +
+              ` | campaigns:${Number(asObjectRecord(asObjectRecord(payload.campaigns).summary).count ?? payload.run_count ?? 0)}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Campaign Daemon Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationCampaignDaemonBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const configureDesktopEvaluationCampaignDaemon = useCallback(
+    async (enabled: boolean) => {
+      setDesktopEvaluationCampaignDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationConfigureCampaignDaemon({
+          enabled,
+          interval_s: Number(desktopEvaluationCampaignDaemon.interval_s ?? 180),
+          max_campaigns: Number(desktopEvaluationCampaignDaemon.max_campaigns ?? 2),
+          max_sessions: Number(desktopEvaluationCampaignDaemon.max_sessions ?? 3),
+          max_replays_per_session: Number(desktopEvaluationCampaignDaemon.max_replays_per_session ?? 2),
+          history_limit: Number(desktopEvaluationCampaignDaemon.history_limit ?? 8),
+          campaign_status: String(desktopEvaluationCampaignDaemon.campaign_status ?? '').trim() || undefined,
+          pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationCampaignDaemon.pack ?? '').trim() || undefined,
+          app_name:
+            desktopEvaluationAppFilter.trim() ||
+            String(desktopEvaluationCampaignDaemon.app_name ?? '').trim() ||
+            undefined,
+          source: 'action_control_panel',
+          history_response_limit: 6,
+        });
+        setDesktopEvaluationCampaignDaemonState(payload);
+        await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+        toast({
+          title: enabled ? 'Campaign Daemon Enabled' : 'Campaign Daemon Paused',
+          description:
+            `${enabled ? 'Background replay campaign sweeps will keep running.' : 'Background replay campaign sweeps are paused.'}` +
+            ` | max campaigns:${Number(payload.max_campaigns ?? 0)}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Campaign Daemon Update Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationCampaignDaemonBusy(false);
+      }
+    },
+    [
+      desktopEvaluationAppFilter,
+      desktopEvaluationCampaignDaemon,
+      desktopEvaluationPackFilter,
+      refreshDesktopEvaluationLabCampaigns,
+      toast,
+    ]
+  );
+
   const createDesktopEvaluationLabSession = useCallback(async () => {
     setDesktopEvaluationLabSessionCreateBusy(true);
     try {
@@ -13515,7 +13609,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopEvaluationLabCampaignCreateBusy(false);
     }
-  }, [buildDesktopEvaluationQueryInput, refreshDesktopEvaluationLabCampaigns, refreshDesktopEvaluationLabSessions, toast]);
+  }, [
+    buildDesktopEvaluationQueryInput,
+    refreshDesktopEvaluationCampaignDaemonStatus,
+    refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabSessions,
+    toast,
+  ]);
 
   const replayDesktopEvaluationLabSessionScenario = useCallback(
     async (sessionId: string, scenarioName?: string) => {
@@ -13541,6 +13641,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         await refreshDesktopEvaluationHistory({ quiet: true });
         await refreshDesktopEvaluationLabSessions({ quiet: true });
         await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+        await refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
         toast({
           title: 'Lab Session Replay Ran',
           description:
@@ -13559,7 +13660,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopEvaluationLabSessionReplayBusy(false);
       }
     },
-    [refreshDesktopEvaluationHistory, refreshDesktopEvaluationLabCampaigns, refreshDesktopEvaluationLabSessions, toast]
+    [
+      refreshDesktopEvaluationCampaignDaemonStatus,
+      refreshDesktopEvaluationHistory,
+      refreshDesktopEvaluationLabCampaigns,
+      refreshDesktopEvaluationLabSessions,
+      toast,
+    ]
   );
 
   const runDesktopEvaluationLabSessionCycle = useCallback(
@@ -13729,6 +13836,61 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     },
     [buildDesktopEvaluationQueryInput, toast]
   );
+
+  const triggerDesktopEvaluationCampaignDaemon = useCallback(async () => {
+    setDesktopEvaluationCampaignDaemonTriggerBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationTriggerCampaignDaemon({
+        max_campaigns: Number(desktopEvaluationCampaignDaemon.max_campaigns ?? 2),
+        max_sessions: Number(desktopEvaluationCampaignDaemon.max_sessions ?? 3),
+        max_replays_per_session: Number(desktopEvaluationCampaignDaemon.max_replays_per_session ?? 2),
+        history_limit: Number(desktopEvaluationCampaignDaemon.history_limit ?? 8),
+        campaign_status: String(desktopEvaluationCampaignDaemon.campaign_status ?? '').trim() || undefined,
+        pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationCampaignDaemon.pack ?? '').trim() || undefined,
+        app_name:
+          desktopEvaluationAppFilter.trim() ||
+          String(desktopEvaluationCampaignDaemon.app_name ?? '').trim() ||
+          undefined,
+        source: 'action_control_panel',
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationCampaignDaemonState(
+          payload.supervisor as DesktopEvaluationCampaignDaemonStatusResponse
+        );
+      }
+      await refreshDesktopEvaluationHistory({ quiet: true });
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
+      await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+      await refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
+      await refreshDesktopEvaluationNativeTargets({ quiet: true });
+      toast({
+        title: 'Campaign Daemon Tick Ran',
+        description:
+          `${String(payload.status ?? 'success')}` +
+          ` | executed:${Number(asObjectRecord(payload.result).executed_campaign_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Campaign Daemon Tick Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationCampaignDaemonTriggerBusy(false);
+    }
+  }, [
+    desktopEvaluationAppFilter,
+    desktopEvaluationCampaignDaemon,
+    desktopEvaluationPackFilter,
+    refreshDesktopEvaluationHistory,
+    refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabSessions,
+    refreshDesktopEvaluationNativeTargets,
+    toast,
+  ]);
 
   const runDesktopEvaluationBenchmarks = useCallback(async () => {
     setDesktopEvaluationRunBusy(true);
@@ -14003,10 +14165,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopEvaluationLab({ quiet: true });
     void refreshDesktopEvaluationLabSessions({ quiet: true });
     void refreshDesktopEvaluationLabCampaigns({ quiet: true });
+    void refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
     void refreshDesktopEvaluationNativeTargets({ quiet: true });
   }, [
     open,
     refreshDesktopEvaluationCatalog,
+    refreshDesktopEvaluationCampaignDaemonStatus,
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
@@ -18597,6 +18761,74 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           Save a benchmark lab session to keep replay queues, target apps, and trend snapshots as reusable regression assets.
                                         </p>
                                       )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Campaign Daemon</p>
+                                        {desktopEvaluationCampaignDaemonState ? (
+                                          <Badge variant={desktopEvaluationCampaignDaemon.enabled ? 'secondary' : 'outline'}>
+                                            {desktopEvaluationCampaignDaemon.enabled ? 'enabled' : 'paused'}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline">idle</Badge>
+                                        )}
+                                      </div>
+                                      <p className="mt-2">
+                                        interval:{Number(desktopEvaluationCampaignDaemon.interval_s ?? 0)}
+                                        {' â€¢ '}max campaigns:{Number(desktopEvaluationCampaignDaemon.max_campaigns ?? 0)}
+                                        {' â€¢ '}max sessions:{Number(desktopEvaluationCampaignDaemon.max_sessions ?? 0)}
+                                        {' â€¢ '}max replays:{Number(desktopEvaluationCampaignDaemon.max_replays_per_session ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        filters:
+                                        {' '}status:{String(desktopEvaluationCampaignDaemon.campaign_status ?? 'any') || 'any'}
+                                        {' â€¢ '}pack:{String(desktopEvaluationCampaignDaemon.pack ?? 'any') || 'any'}
+                                        {' â€¢ '}app:{String(desktopEvaluationCampaignDaemon.app_name ?? 'any') || 'any'}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        last:{String(desktopEvaluationCampaignDaemon.last_result_status ?? 'idle')}
+                                        {' â€¢ '}executed:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).executed_campaign_count ?? 0)}
+                                        {' â€¢ '}pending sessions:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).pending_session_count ?? 0)}
+                                        {' â€¢ '}attention:{Number(asObjectRecord(desktopEvaluationCampaignDaemon.last_summary).attention_session_count ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        campaigns:{Number(desktopEvaluationCampaignDaemonCampaigns.count ?? 0)}
+                                        {' â€¢ '}pending sessions:{Number(asObjectRecord(desktopEvaluationCampaignDaemonCampaigns.summary).pending_sessions ?? 0)}
+                                        {' â€¢ '}pending apps:{Number(asObjectRecord(desktopEvaluationCampaignDaemonCampaigns.summary).pending_app_targets ?? 0)}
+                                      </p>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void refreshDesktopEvaluationCampaignDaemonStatus()}
+                                          disabled={desktopEvaluationCampaignDaemonBusy}
+                                        >
+                                          {desktopEvaluationCampaignDaemonBusy ? 'Refreshing' : 'Refresh'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() =>
+                                            void configureDesktopEvaluationCampaignDaemon(
+                                              !Boolean(desktopEvaluationCampaignDaemon.enabled)
+                                            )
+                                          }
+                                          disabled={desktopEvaluationCampaignDaemonBusy}
+                                        >
+                                          {desktopEvaluationCampaignDaemon.enabled ? 'Pause' : 'Enable'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void triggerDesktopEvaluationCampaignDaemon()}
+                                          disabled={desktopEvaluationCampaignDaemonTriggerBusy}
+                                        >
+                                          {desktopEvaluationCampaignDaemonTriggerBusy ? 'Triggering' : 'Trigger'}
+                                        </Button>
+                                      </div>
                                     </div>
                                     <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
                                       <div className="flex flex-wrap items-center justify-between gap-2">

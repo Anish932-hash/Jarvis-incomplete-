@@ -869,6 +869,36 @@ class FakeDesktopService:
         self.desktop_evaluation_history_items: list[Dict[str, Any]] = [dict(self.desktop_evaluation_last_run)]
         self.desktop_evaluation_lab_sessions_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_lab_campaigns_items: list[Dict[str, Any]] = []
+        self.desktop_evaluation_campaign_daemon_state: Dict[str, Any] = {
+            "status": "success",
+            "active": True,
+            "enabled": False,
+            "inflight": False,
+            "interval_s": 180.0,
+            "max_campaigns": 2,
+            "max_sessions": 3,
+            "max_replays_per_session": 2,
+            "history_limit": 8,
+            "campaign_status": "",
+            "pack": "",
+            "app_name": "",
+            "last_tick_at": "",
+            "last_success_at": "",
+            "last_error_at": "",
+            "last_duration_ms": 0.0,
+            "last_result_status": "",
+            "last_result_message": "",
+            "last_trigger_source": "",
+            "last_trigger_at": "",
+            "last_config_source": "defaults",
+            "next_due_at": "",
+            "run_count": 0,
+            "manual_trigger_count": 0,
+            "auto_trigger_count": 0,
+            "consecutive_error_count": 0,
+            "last_summary": {},
+            "updated_at": "2026-03-18T10:00:00+00:00",
+        }
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -14322,6 +14352,184 @@ class FakeDesktopService:
             "guidance": dict(guidance),
         }
 
+    def desktop_evaluation_campaign_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
+        payload = dict(self.desktop_evaluation_campaign_daemon_state)
+        payload["campaigns"] = self.desktop_evaluation_lab_campaigns(
+            limit=max(1, int(history_limit or 6)),
+            status=str(payload.get("campaign_status", "") or "").strip(),
+        )
+        return payload
+
+    def configure_desktop_evaluation_campaign_supervisor(
+        self,
+        *,
+        enabled: bool | None = None,
+        interval_s: float | None = None,
+        max_campaigns: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        campaign_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        if enabled is not None:
+            self.desktop_evaluation_campaign_daemon_state["enabled"] = bool(enabled)
+        if interval_s is not None:
+            self.desktop_evaluation_campaign_daemon_state["interval_s"] = float(interval_s)
+        if max_campaigns is not None:
+            self.desktop_evaluation_campaign_daemon_state["max_campaigns"] = int(max_campaigns)
+        if max_sessions is not None:
+            self.desktop_evaluation_campaign_daemon_state["max_sessions"] = int(max_sessions)
+        if max_replays_per_session is not None:
+            self.desktop_evaluation_campaign_daemon_state["max_replays_per_session"] = int(max_replays_per_session)
+        if history_limit is not None:
+            self.desktop_evaluation_campaign_daemon_state["history_limit"] = int(history_limit)
+        if campaign_status is not None:
+            self.desktop_evaluation_campaign_daemon_state["campaign_status"] = str(campaign_status or "").strip()
+        if pack is not None:
+            self.desktop_evaluation_campaign_daemon_state["pack"] = str(pack or "").strip()
+        if app_name is not None:
+            self.desktop_evaluation_campaign_daemon_state["app_name"] = str(app_name or "").strip()
+        self.desktop_evaluation_campaign_daemon_state["last_config_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_campaign_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_evaluation_campaign_supervisor(
+        self,
+        *,
+        max_campaigns: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        campaign_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        effective_max_campaigns = int(max_campaigns or self.desktop_evaluation_campaign_daemon_state.get("max_campaigns", 2) or 2)
+        effective_max_sessions = int(max_sessions or self.desktop_evaluation_campaign_daemon_state.get("max_sessions", 3) or 3)
+        effective_max_replays = int(
+            max_replays_per_session
+            or self.desktop_evaluation_campaign_daemon_state.get("max_replays_per_session", 2)
+            or 2
+        )
+        effective_history_limit = int(history_limit or self.desktop_evaluation_campaign_daemon_state.get("history_limit", 8) or 8)
+        effective_status = str(
+            campaign_status
+            if campaign_status is not None
+            else self.desktop_evaluation_campaign_daemon_state.get("campaign_status", "")
+            or ""
+        ).strip()
+        effective_pack = str(
+            pack if pack is not None else self.desktop_evaluation_campaign_daemon_state.get("pack", "") or ""
+        ).strip().lower()
+        effective_app = str(
+            app_name if app_name is not None else self.desktop_evaluation_campaign_daemon_state.get("app_name", "") or ""
+        ).strip().lower()
+        campaign_rows = [
+            dict(item)
+            for item in self.desktop_evaluation_lab_campaigns_items
+            if not effective_status or str(item.get("status", "") or "").strip().lower() == effective_status.lower()
+        ]
+        if effective_pack:
+            campaign_rows = [
+                item
+                for item in campaign_rows
+                if str(dict(item.get("filters", {})).get("pack", "") or "").strip().lower() == effective_pack
+            ]
+        if effective_app:
+            campaign_rows = [
+                item
+                for item in campaign_rows
+                if effective_app
+                in {
+                    str(dict(item.get("filters", {})).get("app", dict(item.get("filters", {})).get("app_name", "")) or "")
+                    .strip()
+                    .lower(),
+                    *[
+                        str(value).strip().lower()
+                        for value in item.get("target_apps", item.get("app_targets", []))
+                        if str(value).strip()
+                    ],
+                }
+            ]
+        ranked = sorted(
+            campaign_rows,
+            key=lambda item: (
+                int(item.get("attention_session_count", 0) or 0),
+                int(item.get("pending_session_count", 0) or 0),
+                int(item.get("pending_app_target_count", 0) or 0),
+                int(item.get("long_horizon_pending_count", 0) or 0),
+                int(item.get("regression_cycle_count", 0) or 0),
+            ),
+            reverse=True,
+        )[: max(1, effective_max_campaigns)]
+        results: list[Dict[str, Any]] = []
+        for campaign in ranked:
+            sweep = self.desktop_evaluation_run_lab_campaign_sweep(
+                campaign_id=str(campaign.get("campaign_id", "") or "").strip(),
+                max_sessions=effective_max_sessions,
+                max_replays_per_session=effective_max_replays,
+                history_limit=effective_history_limit,
+            )
+            results.append(sweep)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.desktop_evaluation_campaign_daemon_state["run_count"] = int(self.desktop_evaluation_campaign_daemon_state.get("run_count", 0) or 0) + 1
+        self.desktop_evaluation_campaign_daemon_state["manual_trigger_count"] = (
+            int(self.desktop_evaluation_campaign_daemon_state.get("manual_trigger_count", 0) or 0) + 1
+        )
+        self.desktop_evaluation_campaign_daemon_state["last_trigger_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_campaign_daemon_state["last_trigger_at"] = now_iso
+        self.desktop_evaluation_campaign_daemon_state["last_tick_at"] = now_iso
+        self.desktop_evaluation_campaign_daemon_state["last_success_at"] = now_iso
+        self.desktop_evaluation_campaign_daemon_state["last_result_status"] = "success" if results else "idle"
+        self.desktop_evaluation_campaign_daemon_state["last_result_message"] = (
+            f"campaign watchdog executed {len(results)} campaign(s)"
+            if results
+            else "campaign watchdog found no executable replay campaigns"
+        )
+        self.desktop_evaluation_campaign_daemon_state["last_summary"] = {
+            "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
+            "targeted_campaign_count": len(ranked),
+            "executed_campaign_count": len(results),
+            "regression_campaign_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("sweep", {})).get("regression_status", "") or "").strip().lower() == "regression"
+            ),
+            "pending_session_count": sum(
+                int(dict(item.get("campaign", {})).get("pending_session_count", 0) or 0) for item in results
+            ),
+            "attention_session_count": sum(
+                int(dict(item.get("campaign", {})).get("attention_session_count", 0) or 0) for item in results
+            ),
+            "pending_app_target_count": sum(
+                int(dict(item.get("campaign", {})).get("pending_app_target_count", 0) or 0) for item in results
+            ),
+            "long_horizon_pending_count": sum(
+                int(dict(item.get("campaign", {})).get("long_horizon_pending_count", 0) or 0) for item in results
+            ),
+            "error_count": 0,
+            "latest_campaign_label": str(dict(results[0].get("campaign", {})).get("label", "") or "").strip() if results else "",
+        }
+        self.desktop_evaluation_campaign_daemon_state["updated_at"] = now_iso
+        return {
+            "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_campaign_daemon_state["last_result_message"],
+            "result": {
+                "status": self.desktop_evaluation_campaign_daemon_state["last_result_status"],
+                "message": self.desktop_evaluation_campaign_daemon_state["last_result_message"],
+                "targeted_campaign_count": len(ranked),
+                "executed_campaign_count": len(results),
+                "results": results,
+            },
+            "supervisor": self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit),
+        }
+
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -18981,6 +19189,69 @@ def test_desktop_evaluation_lab_campaign_sweep_route(api_server: tuple[str, Fake
     assert int(swept["campaign"]["sweep_count"]) >= 1
     assert int(swept["sweep"]["executed_session_count"]) >= 1
     assert isinstance(swept["results"], list)
+
+
+def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaigns",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_sessions": 2,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+
+    status, daemon_status = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon?history_limit=4",
+    )
+    assert status == 200
+    assert daemon_status["status"] == "success"
+    assert isinstance(daemon_status.get("campaigns"), dict)
+
+    status, configured = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon",
+        payload={
+            "enabled": True,
+            "interval_s": 240,
+            "max_campaigns": 3,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert configured["status"] == "success"
+    assert configured["enabled"] is True
+    assert int(configured["max_campaigns"]) == 3
+    assert str(configured["pack"]) == "long_horizon_and_replay"
+
+    status, triggered = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/trigger",
+        payload={
+            "max_campaigns": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert triggered["status"] in {"success", "idle"}
+    assert isinstance(triggered.get("result"), dict)
+    assert isinstance(triggered.get("supervisor"), dict)
+    assert int(triggered["supervisor"]["run_count"]) >= 1
 
 
 def test_desktop_mission_routes_status_and_reset(api_server: tuple[str, FakeDesktopService]) -> None:

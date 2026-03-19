@@ -533,6 +533,175 @@ class EvaluationRunner:
             "guidance": guidance_payload,
         }
 
+    def run_lab_campaign_watchdog(
+        self,
+        *,
+        max_campaigns: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        campaign_status: str = "",
+        pack: str = "",
+        app_name: str = "",
+        trigger_source: str = "manual",
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        normalized_max_campaigns = max(1, min(int(max_campaigns or 2), 32))
+        normalized_max_sessions = max(1, min(int(max_sessions or 3), 8))
+        normalized_max_replays = max(1, min(int(max_replays_per_session or 2), 8))
+        normalized_history_limit = max(1, min(int(history_limit or 8), 64))
+        normalized_status = str(campaign_status or "").strip()
+        normalized_pack = str(pack or "").strip().lower()
+        normalized_app = str(app_name or "").strip().lower()
+
+        campaign_payload = self.lab_campaigns(limit=max(normalized_max_campaigns * 4, 16), status=normalized_status)
+        campaign_rows = [dict(item) for item in campaign_payload.get("items", []) if isinstance(item, dict)]
+        filtered_campaigns = [
+            row
+            for row in campaign_rows
+            if self._campaign_matches_watchdog_filters(
+                row,
+                pack=normalized_pack,
+                app_name=normalized_app,
+            )
+        ]
+        if not filtered_campaigns:
+            message_bits = ["no matching replay campaigns ready for sweep"]
+            if normalized_pack:
+                message_bits.append(f"pack={normalized_pack}")
+            if normalized_app:
+                message_bits.append(f"app={normalized_app}")
+            return {
+                "status": "idle",
+                "message": " | ".join(message_bits),
+                "trigger_source": str(trigger_source or "manual").strip().lower() or "manual",
+                "filters": {
+                    "campaign_status": normalized_status,
+                    "pack": normalized_pack,
+                    "app_name": normalized_app,
+                    "history_limit": normalized_history_limit,
+                },
+                "targeted_campaign_count": 0,
+                "executed_campaign_count": 0,
+                "regression_campaign_count": 0,
+                "pending_session_count": 0,
+                "attention_session_count": 0,
+                "pending_app_target_count": 0,
+                "long_horizon_pending_count": 0,
+                "error_count": 0,
+                "latest_campaign_label": "",
+                "campaigns": [],
+                "results": [],
+                "lab_campaigns": campaign_payload,
+                "native_targets": self.native_control_targets(history_limit=normalized_history_limit),
+                "guidance": self.control_guidance(),
+            }
+
+        ranked_campaigns = sorted(filtered_campaigns, key=self._campaign_watchdog_sort_key, reverse=True)
+        selected_campaigns = ranked_campaigns[:normalized_max_campaigns]
+        results: List[Dict[str, object]] = []
+        error_count = 0
+        regression_campaign_count = 0
+        pending_session_count = 0
+        attention_session_count = 0
+        pending_app_target_count = 0
+        long_horizon_pending_count = 0
+        latest_campaign_label = ""
+
+        for campaign in selected_campaigns:
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            if not campaign_id:
+                continue
+            sweep_payload = self.run_lab_campaign_sweep(
+                campaign_id=campaign_id,
+                max_sessions=normalized_max_sessions,
+                max_replays_per_session=normalized_max_replays,
+                history_limit=normalized_history_limit,
+            )
+            campaign_row = (
+                dict(sweep_payload.get("campaign", {}))
+                if isinstance(sweep_payload.get("campaign", {}), dict)
+                else dict(campaign)
+            )
+            sweep_row = dict(sweep_payload.get("sweep", {})) if isinstance(sweep_payload.get("sweep", {}), dict) else {}
+            latest_campaign_label = latest_campaign_label or str(campaign_row.get("label", campaign.get("label", "")) or "").strip()
+            if str(sweep_payload.get("status", "") or "").strip().lower() == "error":
+                error_count += 1
+            if str(sweep_row.get("regression_status", campaign_row.get("latest_sweep_regression_status", "")) or "").strip().lower() in {
+                "regression",
+                "failed",
+            }:
+                regression_campaign_count += 1
+            pending_session_count += int(campaign_row.get("pending_session_count", 0) or 0)
+            attention_session_count += int(campaign_row.get("attention_session_count", 0) or 0)
+            pending_app_target_count += int(campaign_row.get("pending_app_target_count", 0) or 0)
+            long_horizon_pending_count += int(campaign_row.get("long_horizon_pending_count", 0) or 0)
+            results.append(
+                {
+                    "campaign_id": campaign_id,
+                    "label": str(campaign_row.get("label", campaign.get("label", "")) or "").strip(),
+                    "status": str(sweep_payload.get("status", campaign_row.get("status", "success")) or "success").strip() or "success",
+                    "pending_session_count": int(campaign_row.get("pending_session_count", 0) or 0),
+                    "attention_session_count": int(campaign_row.get("attention_session_count", 0) or 0),
+                    "pending_app_target_count": int(campaign_row.get("pending_app_target_count", 0) or 0),
+                    "long_horizon_pending_count": int(campaign_row.get("long_horizon_pending_count", 0) or 0),
+                    "latest_sweep_status": str(
+                        campaign_row.get("latest_sweep_regression_status", campaign_row.get("latest_sweep_status", ""))
+                        or ""
+                    ).strip(),
+                    "executed_session_count": int(sweep_row.get("executed_session_count", 0) or 0),
+                    "created_session_count": int(sweep_payload.get("created_session_count", 0) or 0),
+                }
+            )
+
+        refreshed_campaigns = self.lab_campaigns(limit=max(normalized_max_campaigns * 2, 8), status=normalized_status)
+        native_targets_payload = self.native_control_targets(
+            pack=normalized_pack,
+            app=normalized_app,
+            history_limit=normalized_history_limit,
+        )
+        guidance_payload = self.control_guidance()
+        executed_campaign_count = len(results)
+        if executed_campaign_count <= 0 and error_count > 0:
+            status = "error"
+        elif executed_campaign_count <= 0:
+            status = "idle"
+        elif error_count > 0:
+            status = "partial"
+        else:
+            status = "success"
+        return {
+            "status": status,
+            "message": (
+                f"campaign watchdog executed {executed_campaign_count} campaign(s)"
+                if executed_campaign_count > 0
+                else "campaign watchdog found no executable replay campaigns"
+            ),
+            "trigger_source": str(trigger_source or "manual").strip().lower() or "manual",
+            "filters": {
+                "campaign_status": normalized_status,
+                "pack": normalized_pack,
+                "app_name": normalized_app,
+                "history_limit": normalized_history_limit,
+            },
+            "targeted_campaign_count": len(selected_campaigns),
+            "executed_campaign_count": executed_campaign_count,
+            "regression_campaign_count": regression_campaign_count,
+            "pending_session_count": pending_session_count,
+            "attention_session_count": attention_session_count,
+            "pending_app_target_count": pending_app_target_count,
+            "long_horizon_pending_count": long_horizon_pending_count,
+            "error_count": error_count,
+            "latest_campaign_label": latest_campaign_label,
+            "campaigns": selected_campaigns,
+            "results": results,
+            "lab_campaigns": refreshed_campaigns,
+            "native_targets": native_targets_payload,
+            "guidance": guidance_payload,
+        }
+
     def create_lab_session(
         self,
         *,
@@ -1598,6 +1767,46 @@ class EvaluationRunner:
             if actual != expected:
                 return False
         return True
+
+    @staticmethod
+    def _campaign_matches_watchdog_filters(
+        campaign: Dict[str, object],
+        *,
+        pack: str,
+        app_name: str,
+    ) -> bool:
+        filters = dict(campaign.get("filters", {})) if isinstance(campaign.get("filters", {}), dict) else {}
+        if pack:
+            campaign_pack = str(campaign.get("pack", filters.get("pack", "")) or "").strip().lower()
+            if campaign_pack != pack:
+                return False
+        if app_name:
+            candidate_values = {
+                str(campaign.get("app_name", "") or "").strip().lower(),
+                str(filters.get("app", filters.get("app_name", "")) or "").strip().lower(),
+            }
+            target_apps = campaign.get("target_apps", campaign.get("app_targets", []))
+            if isinstance(target_apps, list):
+                candidate_values.update(str(item).strip().lower() for item in target_apps if str(item).strip())
+            if app_name not in candidate_values:
+                return False
+        return True
+
+    @staticmethod
+    def _campaign_watchdog_sort_key(campaign: Dict[str, object]) -> tuple[int, int, int, int, int, int, int]:
+        latest_regression = str(
+            campaign.get("latest_sweep_regression_status", campaign.get("latest_sweep_status", ""))
+            or ""
+        ).strip().lower()
+        return (
+            int(campaign.get("attention_session_count", 0) or 0),
+            1 if latest_regression in {"regression", "failed"} else 0,
+            int(campaign.get("pending_session_count", 0) or 0),
+            int(campaign.get("pending_app_target_count", 0) or 0),
+            int(campaign.get("long_horizon_pending_count", 0) or 0),
+            int(campaign.get("regression_cycle_count", 0) or 0),
+            -int(campaign.get("sweep_count", 0) or 0),
+        )
 
     def _native_target_hint_query(
         self,
