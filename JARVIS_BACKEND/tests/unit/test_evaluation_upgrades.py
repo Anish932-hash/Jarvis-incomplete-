@@ -1156,6 +1156,227 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
     assert cycle_calls == ["camp-settings"]
 
 
+def test_evaluation_runner_program_watchdog_prioritizes_attention_and_regressions(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    cycle_calls: list[str] = []
+
+    programs_payload = {
+        "status": "success",
+        "count": 3,
+        "items": [
+            {
+                "program_id": "prog-settings",
+                "label": "Settings replay program",
+                "status": "ready",
+                "program_pressure_score": 2.1,
+                "attention_campaign_count": 2,
+                "pending_campaign_count": 3,
+                "pending_session_count": 4,
+                "pending_app_target_count": 1,
+                "long_horizon_pending_count": 5,
+                "regression_cycle_count": 0,
+                "latest_cycle_status": "stable",
+                "filters": {"pack": "long_horizon_and_replay", "app": "settings"},
+                "target_apps": ["settings"],
+            },
+            {
+                "program_id": "prog-installer",
+                "label": "Installer replay program",
+                "status": "ready",
+                "program_pressure_score": 1.9,
+                "attention_campaign_count": 0,
+                "pending_campaign_count": 4,
+                "pending_session_count": 3,
+                "pending_app_target_count": 2,
+                "long_horizon_pending_count": 2,
+                "regression_cycle_count": 2,
+                "latest_cycle_status": "regression",
+                "filters": {"pack": "long_horizon_and_replay", "app": "installer"},
+                "target_apps": ["installer"],
+            },
+            {
+                "program_id": "prog-vscode",
+                "label": "VS Code replay program",
+                "status": "ready",
+                "program_pressure_score": 0.7,
+                "attention_campaign_count": 0,
+                "pending_campaign_count": 1,
+                "pending_session_count": 1,
+                "pending_app_target_count": 0,
+                "long_horizon_pending_count": 1,
+                "regression_cycle_count": 0,
+                "latest_cycle_status": "stable",
+                "filters": {"pack": "long_horizon_and_replay", "app": "vscode"},
+                "target_apps": ["vscode"],
+            },
+        ],
+    }
+
+    monkeypatch.setattr(runner, "lab_programs", lambda **_: programs_payload)
+    monkeypatch.setattr(runner, "lab_campaigns", lambda **_: {"status": "success", "count": 0, "items": []})
+
+    def _run_lab_program_cycle(**kwargs):  # noqa: ANN001
+        program_id = str(kwargs.get("program_id", "") or "")
+        cycle_calls.append(program_id)
+        if program_id == "prog-settings":
+            return {
+                "status": "success",
+                "program": {
+                    "program_id": program_id,
+                    "label": "Settings replay program",
+                    "pending_campaign_count": 1,
+                    "attention_campaign_count": 1,
+                    "pending_session_count": 2,
+                    "pending_app_target_count": 1,
+                    "long_horizon_pending_count": 2,
+                    "latest_cycle_status": "stable",
+                    "program_priority": "elevated",
+                    "trend_summary": {"direction": "improving"},
+                },
+                "cycle": {"executed_campaign_count": 2, "executed_sweep_count": 3, "stop_reason": "stable"},
+            }
+        return {
+            "status": "success",
+            "program": {
+                "program_id": program_id,
+                "label": "Installer replay program",
+                "pending_campaign_count": 2,
+                "attention_campaign_count": 0,
+                "pending_session_count": 2,
+                "pending_app_target_count": 1,
+                "long_horizon_pending_count": 1,
+                "latest_cycle_status": "regression",
+                "program_priority": "critical",
+                "trend_summary": {"direction": "regressing"},
+            },
+            "cycle": {"executed_campaign_count": 3, "executed_sweep_count": 4, "stop_reason": "max_campaigns_reached"},
+        }
+
+    monkeypatch.setattr(runner, "run_lab_program_cycle", _run_lab_program_cycle)
+    monkeypatch.setattr(runner, "native_control_targets", lambda **_: {"status": "success", "target_apps": []})
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["program_watchdog"]})
+
+    payload = runner.run_lab_program_watchdog(
+        max_programs=2,
+        max_campaigns_per_program=3,
+        max_sweeps_per_campaign=2,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        pack="long_horizon_and_replay",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["targeted_program_count"] == 2
+    assert payload["executed_program_count"] == 2
+    assert payload["executed_campaign_count"] == 5
+    assert payload["executed_sweep_count"] == 7
+    assert payload["stable_program_count"] == 1
+    assert payload["regression_program_count"] == 1
+    assert payload["cycle_stop_reason_counts"]["stable"] == 1
+    assert payload["cycle_stop_reason_counts"]["max_campaigns_reached"] == 1
+    assert payload["trend_direction_counts"]["improving"] == 1
+    assert payload["trend_direction_counts"]["regressing"] == 1
+    assert cycle_calls == ["prog-settings", "prog-installer"]
+
+
+def test_evaluation_runner_program_watchdog_auto_creates_programs_from_native_targets(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    program_rows: list[dict] = []
+    create_calls: list[dict] = []
+    cycle_calls: list[str] = []
+
+    def _lab_programs(**kwargs):  # noqa: ANN001
+        normalized_status = str(kwargs.get("status", "") or "").strip().lower()
+        items = [dict(item) for item in program_rows]
+        if normalized_status:
+            items = [item for item in items if str(item.get("status", "") or "").strip().lower() == normalized_status]
+        return {"status": "success", "count": len(items), "items": items}
+
+    def _create_lab_program(**kwargs):  # noqa: ANN001
+        create_calls.append(dict(kwargs))
+        target_app = str(kwargs.get("app", "") or "").strip().lower() or "settings"
+        pack = str(kwargs.get("pack", "") or "").strip() or "long_horizon_and_replay"
+        program = {
+            "program_id": f"prog-{target_app}",
+            "label": f"{target_app} replay program",
+            "status": "ready",
+            "filters": {"pack": pack, "app": target_app},
+            "target_apps": [target_app],
+            "pending_campaign_count": 1,
+            "attention_campaign_count": 0,
+            "pending_session_count": 1,
+            "pending_app_target_count": 1,
+            "long_horizon_pending_count": 2,
+            "program_pressure_score": 1.2,
+            "cycle_count": 0,
+        }
+        program_rows.append(program)
+        return {"status": "success", "program": program, "created_campaign_count": 1, "created_session_count": 1}
+
+    def _run_lab_program_cycle(**kwargs):  # noqa: ANN001
+        program_id = str(kwargs.get("program_id", "") or "").strip()
+        cycle_calls.append(program_id)
+        updated = next(dict(item) for item in program_rows if str(item.get("program_id", "") or "").strip() == program_id)
+        updated["pending_campaign_count"] = 0
+        updated["pending_session_count"] = 0
+        updated["pending_app_target_count"] = 0
+        updated["long_horizon_pending_count"] = 1
+        updated["latest_cycle_status"] = "stable"
+        for index, item in enumerate(program_rows):
+            if str(item.get("program_id", "") or "").strip() == program_id:
+                program_rows[index] = dict(updated)
+                break
+        return {
+            "status": "success",
+            "program": updated,
+            "cycle": {"executed_campaign_count": 1, "executed_sweep_count": 1, "stop_reason": "stable"},
+        }
+
+    monkeypatch.setattr(runner, "lab_programs", _lab_programs)
+    monkeypatch.setattr(runner, "lab_campaigns", lambda **_: {"status": "success", "count": 0, "items": []})
+    monkeypatch.setattr(runner, "create_lab_program", _create_lab_program)
+    monkeypatch.setattr(runner, "run_lab_program_cycle", _run_lab_program_cycle)
+    monkeypatch.setattr(
+        runner,
+        "native_control_targets",
+        lambda **_: {
+            "status": "success",
+            "target_apps": [
+                {
+                    "app_name": "settings",
+                    "packs": ["long_horizon_and_replay"],
+                    "campaign_pressure": 1.4,
+                    "replay_pressure": 0.9,
+                    "max_horizon_steps": 5,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["program_auto_create"]})
+
+    payload = runner.run_lab_program_watchdog(
+        max_programs=1,
+        max_campaigns_per_program=2,
+        max_sweeps_per_campaign=2,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        pack="long_horizon_and_replay",
+        trigger_source="daemon",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["auto_created_program_count"] == 1
+    assert payload["executed_program_count"] == 1
+    assert payload["executed_campaign_count"] == 1
+    assert payload["executed_sweep_count"] == 1
+    assert payload["stable_program_count"] == 1
+    assert payload["auto_created_app_names"] == ["settings"]
+    assert create_calls and create_calls[0]["app"] == "settings"
+    assert cycle_calls == ["prog-settings"]
+
+
 def test_evaluation_runner_creates_and_cycles_lab_program(monkeypatch, tmp_path) -> None:
     memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
     runner = EvaluationRunner(history_limit=4, lab_memory=memory)

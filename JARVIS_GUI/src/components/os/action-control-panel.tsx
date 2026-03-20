@@ -62,10 +62,11 @@ import {
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
   type DesktopEvaluationCatalogResponse,
-    type DesktopEvaluationGuidanceResponse,
-    type DesktopEvaluationHistoryResponse,
-    type DesktopEvaluationLabResponse,
-    type DesktopEvaluationCampaignDaemonStatusResponse,
+  type DesktopEvaluationGuidanceResponse,
+  type DesktopEvaluationHistoryResponse,
+  type DesktopEvaluationLabResponse,
+  type DesktopEvaluationCampaignDaemonStatusResponse,
+  type DesktopEvaluationProgramDaemonStatusResponse,
   type DesktopEvaluationLabCampaignCreateResponse,
   type DesktopEvaluationLabCampaignCycleResponse,
   type DesktopEvaluationLabCampaignRecord,
@@ -1184,6 +1185,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabProgramsResponse | null>(null);
   const [desktopEvaluationCampaignDaemonState, setDesktopEvaluationCampaignDaemonState] =
     useState<DesktopEvaluationCampaignDaemonStatusResponse | null>(null);
+  const [desktopEvaluationProgramDaemonState, setDesktopEvaluationProgramDaemonState] =
+    useState<DesktopEvaluationProgramDaemonStatusResponse | null>(null);
   const [desktopEvaluationLabSessionCreateState, setDesktopEvaluationLabSessionCreateState] =
     useState<DesktopEvaluationLabSessionCreateResponse | null>(null);
   const [, setDesktopEvaluationLabCampaignCreateState] =
@@ -1215,6 +1218,9 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationCampaignDaemonBusy, setDesktopEvaluationCampaignDaemonBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonHistoryBusy, setDesktopEvaluationCampaignDaemonHistoryBusy] =
     useState(false);
+  const [desktopEvaluationProgramDaemonBusy, setDesktopEvaluationProgramDaemonBusy] = useState(false);
+  const [desktopEvaluationProgramDaemonHistoryBusy, setDesktopEvaluationProgramDaemonHistoryBusy] =
+    useState(false);
   const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
   const [desktopEvaluationLabCampaignCreateBusy, setDesktopEvaluationLabCampaignCreateBusy] = useState(false);
   const [desktopEvaluationLabProgramCreateBusy, setDesktopEvaluationLabProgramCreateBusy] = useState(false);
@@ -1225,6 +1231,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabCampaignCycleBusy, setDesktopEvaluationLabCampaignCycleBusy] = useState(false);
   const [desktopEvaluationLabProgramCycleBusy, setDesktopEvaluationLabProgramCycleBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonTriggerBusy, setDesktopEvaluationCampaignDaemonTriggerBusy] =
+    useState(false);
+  const [desktopEvaluationProgramDaemonTriggerBusy, setDesktopEvaluationProgramDaemonTriggerBusy] =
     useState(false);
   const [desktopEvaluationNativeTargetsBusy, setDesktopEvaluationNativeTargetsBusy] = useState(false);
   const [desktopEvaluationPackFilter, setDesktopEvaluationPackFilter] = useState('');
@@ -1981,6 +1989,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ? historyPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
       : [];
   }, [desktopEvaluationCampaignDaemon]);
+  const desktopEvaluationProgramDaemon = useMemo(
+    () => asObjectRecord(desktopEvaluationProgramDaemonState),
+    [desktopEvaluationProgramDaemonState]
+  );
+  const desktopEvaluationProgramDaemonPrograms = useMemo(
+    () => asObjectRecord(desktopEvaluationProgramDaemon.programs),
+    [desktopEvaluationProgramDaemon]
+  );
+  const desktopEvaluationProgramDaemonHistory = useMemo(() => {
+    const historyPayload = asObjectRecord(desktopEvaluationProgramDaemon.history);
+    return Array.isArray(historyPayload.items)
+      ? historyPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      : [];
+  }, [desktopEvaluationProgramDaemon]);
   const desktopEvaluationLatestLabSession = useMemo(
     () => asObjectRecord(desktopEvaluationLabSessions.latest_session),
     [desktopEvaluationLabSessions]
@@ -13607,6 +13629,88 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     ]
   );
 
+  const refreshDesktopEvaluationProgramDaemonStatus = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationProgramDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationProgramDaemonStatus({ history_limit: 6 });
+        setDesktopEvaluationProgramDaemonState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Program Daemon Ready',
+            description:
+              `${payload.enabled ? 'enabled' : 'paused'}` +
+              ` | programs:${Number(asObjectRecord(asObjectRecord(payload.programs).summary).count ?? payload.run_count ?? 0)}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Program Daemon Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationProgramDaemonBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const configureDesktopEvaluationProgramDaemon = useCallback(
+    async (enabled: boolean) => {
+      setDesktopEvaluationProgramDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationConfigureProgramDaemon({
+          enabled,
+          interval_s: Number(desktopEvaluationProgramDaemon.interval_s ?? 240),
+          max_programs: Number(desktopEvaluationProgramDaemon.max_programs ?? 2),
+          max_campaigns_per_program: Number(desktopEvaluationProgramDaemon.max_campaigns_per_program ?? 3),
+          max_sweeps_per_campaign: Number(desktopEvaluationProgramDaemon.max_sweeps_per_campaign ?? 2),
+          max_sessions: Number(desktopEvaluationProgramDaemon.max_sessions ?? 3),
+          max_replays_per_session: Number(desktopEvaluationProgramDaemon.max_replays_per_session ?? 2),
+          history_limit: Number(desktopEvaluationProgramDaemon.history_limit ?? 8),
+          program_status: String(desktopEvaluationProgramDaemon.program_status ?? '').trim() || undefined,
+          pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationProgramDaemon.pack ?? '').trim() || undefined,
+          app_name:
+            desktopEvaluationAppFilter.trim() ||
+            String(desktopEvaluationProgramDaemon.app_name ?? '').trim() ||
+            undefined,
+          source: 'action_control_panel',
+          history_response_limit: 6,
+        });
+        setDesktopEvaluationProgramDaemonState(payload);
+        await refreshDesktopEvaluationLabPrograms({ quiet: true });
+        toast({
+          title: enabled ? 'Program Daemon Enabled' : 'Program Daemon Paused',
+          description:
+            `${enabled ? 'Background replay program cycles will keep running.' : 'Background replay program cycles are paused.'}` +
+            ` | max programs:${Number(payload.max_programs ?? 0)}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Program Daemon Update Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationProgramDaemonBusy(false);
+      }
+    },
+    [
+      desktopEvaluationAppFilter,
+      desktopEvaluationPackFilter,
+      desktopEvaluationProgramDaemon,
+      refreshDesktopEvaluationLabPrograms,
+      toast,
+    ]
+  );
+
   const createDesktopEvaluationLabSession = useCallback(async () => {
     setDesktopEvaluationLabSessionCreateBusy(true);
     try {
@@ -14035,6 +14139,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         await refreshDesktopEvaluationLabCampaigns({ quiet: true });
         await refreshDesktopEvaluationLabPrograms({ quiet: true });
         await refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
+        await refreshDesktopEvaluationProgramDaemonStatus({ quiet: true });
         toast({
           title: 'Replay Program Cycle Ran',
           description:
@@ -14058,6 +14163,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [
       desktopEvaluationCampaignDaemon,
       refreshDesktopEvaluationCampaignDaemonStatus,
+      refreshDesktopEvaluationProgramDaemonStatus,
       refreshDesktopEvaluationHistory,
       refreshDesktopEvaluationLabCampaigns,
       refreshDesktopEvaluationLabPrograms,
@@ -14157,6 +14263,94 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationNativeTargets,
     toast,
   ]);
+
+  const triggerDesktopEvaluationProgramDaemon = useCallback(async () => {
+    setDesktopEvaluationProgramDaemonTriggerBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationTriggerProgramDaemon({
+        max_programs: Number(desktopEvaluationProgramDaemon.max_programs ?? 2),
+        max_campaigns_per_program: Number(desktopEvaluationProgramDaemon.max_campaigns_per_program ?? 3),
+        max_sweeps_per_campaign: Number(desktopEvaluationProgramDaemon.max_sweeps_per_campaign ?? 2),
+        max_sessions: Number(desktopEvaluationProgramDaemon.max_sessions ?? 3),
+        max_replays_per_session: Number(desktopEvaluationProgramDaemon.max_replays_per_session ?? 2),
+        history_limit: Number(desktopEvaluationProgramDaemon.history_limit ?? 8),
+        program_status: String(desktopEvaluationProgramDaemon.program_status ?? '').trim() || undefined,
+        pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationProgramDaemon.pack ?? '').trim() || undefined,
+        app_name:
+          desktopEvaluationAppFilter.trim() ||
+          String(desktopEvaluationProgramDaemon.app_name ?? '').trim() ||
+          undefined,
+        source: 'action_control_panel',
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationProgramDaemonState(
+          payload.supervisor as DesktopEvaluationProgramDaemonStatusResponse
+        );
+      }
+      await refreshDesktopEvaluationHistory({ quiet: true });
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
+      await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+      await refreshDesktopEvaluationLabPrograms({ quiet: true });
+      await refreshDesktopEvaluationProgramDaemonStatus({ quiet: true });
+      await refreshDesktopEvaluationNativeTargets({ quiet: true });
+      toast({
+        title: 'Program Daemon Tick Ran',
+        description:
+          `${String(payload.status ?? 'success')}` +
+          ` | executed:${Number(asObjectRecord(payload.result).executed_program_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Program Daemon Tick Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationProgramDaemonTriggerBusy(false);
+    }
+  }, [
+    desktopEvaluationAppFilter,
+    desktopEvaluationPackFilter,
+    desktopEvaluationProgramDaemon,
+    refreshDesktopEvaluationHistory,
+    refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPrograms,
+    refreshDesktopEvaluationLabSessions,
+    refreshDesktopEvaluationNativeTargets,
+    refreshDesktopEvaluationProgramDaemonStatus,
+    toast,
+  ]);
+
+  const resetDesktopEvaluationProgramDaemonHistory = useCallback(async () => {
+    setDesktopEvaluationProgramDaemonHistoryBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationResetProgramDaemonHistory({
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationProgramDaemonState(
+          payload.supervisor as DesktopEvaluationProgramDaemonStatusResponse
+        );
+      }
+      toast({
+        title: 'Program Daemon History Cleared',
+        description: `${Number(payload.removed_count ?? 0)} daemon run record(s) were removed.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Program Daemon History Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationProgramDaemonHistoryBusy(false);
+    }
+  }, [toast]);
 
   const runDesktopEvaluationBenchmarks = useCallback(async () => {
     setDesktopEvaluationRunBusy(true);
@@ -14465,11 +14659,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopEvaluationLabCampaigns({ quiet: true });
     void refreshDesktopEvaluationLabPrograms({ quiet: true });
     void refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
+    void refreshDesktopEvaluationProgramDaemonStatus({ quiet: true });
     void refreshDesktopEvaluationNativeTargets({ quiet: true });
   }, [
     open,
     refreshDesktopEvaluationCatalog,
     refreshDesktopEvaluationCampaignDaemonStatus,
+    refreshDesktopEvaluationProgramDaemonStatus,
     refreshDesktopEvaluationGuidance,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
@@ -19196,6 +19392,114 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           disabled={desktopEvaluationCampaignDaemonHistoryBusy}
                                         >
                                           {desktopEvaluationCampaignDaemonHistoryBusy ? 'Clearing' : 'Clear History'}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Program Daemon</p>
+                                        {desktopEvaluationProgramDaemonState ? (
+                                          <Badge variant={desktopEvaluationProgramDaemon.enabled ? 'secondary' : 'outline'}>
+                                            {desktopEvaluationProgramDaemon.enabled ? 'enabled' : 'paused'}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline">idle</Badge>
+                                        )}
+                                      </div>
+                                      <p className="mt-2">
+                                        interval:{Number(desktopEvaluationProgramDaemon.interval_s ?? 0)}
+                                        {' • '}max programs:{Number(desktopEvaluationProgramDaemon.max_programs ?? 0)}
+                                        {' • '}max campaigns:{Number(desktopEvaluationProgramDaemon.max_campaigns_per_program ?? 0)}
+                                        {' • '}max sweeps:{Number(desktopEvaluationProgramDaemon.max_sweeps_per_campaign ?? 0)}
+                                        {' • '}max sessions:{Number(desktopEvaluationProgramDaemon.max_sessions ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        filters:
+                                        {' '}status:{String(desktopEvaluationProgramDaemon.program_status ?? 'any') || 'any'}
+                                        {' • '}pack:{String(desktopEvaluationProgramDaemon.pack ?? 'any') || 'any'}
+                                        {' • '}app:{String(desktopEvaluationProgramDaemon.app_name ?? 'any') || 'any'}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        last:{String(desktopEvaluationProgramDaemon.last_result_status ?? 'idle')}
+                                        {' • '}executed:{Number(asObjectRecord(desktopEvaluationProgramDaemon.last_summary).executed_program_count ?? 0)}
+                                        {' • '}campaigns:{Number(asObjectRecord(desktopEvaluationProgramDaemon.last_summary).executed_campaign_count ?? 0)}
+                                        {' • '}sweeps:{Number(asObjectRecord(desktopEvaluationProgramDaemon.last_summary).executed_sweep_count ?? 0)}
+                                        {' • '}stable:{Number(asObjectRecord(desktopEvaluationProgramDaemon.last_summary).stable_program_count ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        programs:{Number(desktopEvaluationProgramDaemonPrograms.count ?? 0)}
+                                        {' • '}pending campaigns:{Number(asObjectRecord(desktopEvaluationProgramDaemonPrograms.summary).pending_campaigns ?? 0)}
+                                        {' • '}pending sessions:{Number(asObjectRecord(desktopEvaluationProgramDaemonPrograms.summary).pending_sessions ?? 0)}
+                                        {' • '}pending apps:{Number(asObjectRecord(desktopEvaluationProgramDaemonPrograms.summary).pending_app_targets ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        history:{Number(desktopEvaluationProgramDaemon.history_count ?? 0)}
+                                        {' • '}latest source:
+                                        {String(asObjectRecord(desktopEvaluationProgramDaemon.latest_history_run).source ?? 'n/a')}
+                                        {' • '}latest status:
+                                        {String(asObjectRecord(desktopEvaluationProgramDaemon.latest_history_run).status ?? 'n/a')}
+                                      </p>
+                                      {desktopEvaluationProgramDaemonHistory.length ? (
+                                        <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2 text-[10px] text-muted-foreground">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/75">
+                                            Recent Daemon Runs
+                                          </p>
+                                          <div className="mt-1 space-y-1">
+                                            {desktopEvaluationProgramDaemonHistory.slice(0, 3).map((item, index) => {
+                                              const summary = asObjectRecord(item.summary);
+                                              return (
+                                                <p key={`${String(item.recorded_at ?? index)}-${String(item.source ?? index)}`}>
+                                                  {String(item.status ?? 'unknown')}
+                                                  {' • '}source:{String(item.source ?? 'n/a')}
+                                                  {' • '}executed:{Number(item.executed_program_count ?? summary.executed_program_count ?? 0)}
+                                                  {' • '}campaigns:{Number(item.executed_campaign_count ?? summary.executed_campaign_count ?? 0)}
+                                                  {' • '}sweeps:{Number(item.executed_sweep_count ?? summary.executed_sweep_count ?? 0)}
+                                                </p>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void refreshDesktopEvaluationProgramDaemonStatus()}
+                                          disabled={desktopEvaluationProgramDaemonBusy}
+                                        >
+                                          {desktopEvaluationProgramDaemonBusy ? 'Refreshing' : 'Refresh'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() =>
+                                            void configureDesktopEvaluationProgramDaemon(
+                                              !Boolean(desktopEvaluationProgramDaemon.enabled)
+                                            )
+                                          }
+                                          disabled={desktopEvaluationProgramDaemonBusy}
+                                        >
+                                          {desktopEvaluationProgramDaemon.enabled ? 'Pause' : 'Enable'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void triggerDesktopEvaluationProgramDaemon()}
+                                          disabled={desktopEvaluationProgramDaemonTriggerBusy}
+                                        >
+                                          {desktopEvaluationProgramDaemonTriggerBusy ? 'Triggering' : 'Trigger'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void resetDesktopEvaluationProgramDaemonHistory()}
+                                          disabled={desktopEvaluationProgramDaemonHistoryBusy}
+                                        >
+                                          {desktopEvaluationProgramDaemonHistoryBusy ? 'Clearing' : 'Clear History'}
                                         </Button>
                                       </div>
                                     </div>

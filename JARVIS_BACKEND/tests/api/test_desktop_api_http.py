@@ -904,6 +904,41 @@ class FakeDesktopService:
             "updated_at": "2026-03-18T10:00:00+00:00",
         }
         self.desktop_evaluation_campaign_daemon_history_items: list[Dict[str, Any]] = []
+        self.desktop_evaluation_program_daemon_state: Dict[str, Any] = {
+            "status": "success",
+            "active": True,
+            "enabled": False,
+            "inflight": False,
+            "interval_s": 240.0,
+            "max_programs": 2,
+            "max_campaigns_per_program": 3,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 3,
+            "max_replays_per_session": 2,
+            "history_limit": 8,
+            "program_status": "",
+            "pack": "",
+            "app_name": "",
+            "last_tick_at": "",
+            "last_success_at": "",
+            "last_error_at": "",
+            "last_duration_ms": 0.0,
+            "last_result_status": "",
+            "last_result_message": "",
+            "last_trigger_source": "",
+            "last_trigger_at": "",
+            "last_config_source": "defaults",
+            "next_due_at": "",
+            "run_count": 0,
+            "manual_trigger_count": 0,
+            "auto_trigger_count": 0,
+            "consecutive_error_count": 0,
+            "last_summary": {},
+            "history_count": 0,
+            "latest_history_run": {},
+            "updated_at": "2026-03-18T10:00:00+00:00",
+        }
+        self.desktop_evaluation_program_daemon_history_items: list[Dict[str, Any]] = []
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -15318,6 +15353,292 @@ class FakeDesktopService:
             "supervisor": self.desktop_evaluation_campaign_supervisor_status(history_limit=history_response_limit),
         }
 
+    def desktop_evaluation_program_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
+        payload = dict(self.desktop_evaluation_program_daemon_state)
+        payload["programs"] = self.desktop_evaluation_lab_programs(
+            limit=max(1, int(history_limit or 6)),
+            status=str(payload.get("program_status", "") or "").strip(),
+        )
+        payload["history_count"] = len(self.desktop_evaluation_program_daemon_history_items)
+        payload["latest_history_run"] = (
+            dict(self.desktop_evaluation_program_daemon_history_items[-1])
+            if self.desktop_evaluation_program_daemon_history_items
+            else {}
+        )
+        payload["history"] = self.desktop_evaluation_program_supervisor_history(limit=history_limit)
+        return payload
+
+    def desktop_evaluation_program_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        items = [
+            dict(item)
+            for item in self.desktop_evaluation_program_daemon_history_items
+            if (
+                not normalized_status
+                or str(item.get("status", "") or "").strip().lower() == normalized_status
+            )
+            and (
+                not normalized_source
+                or str(item.get("source", "") or "").strip().lower() == normalized_source
+            )
+        ]
+        limited = items[-max(1, int(limit or 12)):]
+        return {
+            "status": "success",
+            "count": len(limited),
+            "total": len(items),
+            "limit": max(1, int(limit or 12)),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "items": limited,
+            "latest_run": dict(limited[-1]) if limited else {},
+        }
+
+    def reset_desktop_evaluation_program_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        before = len(self.desktop_evaluation_program_daemon_history_items)
+        if normalized_status or normalized_source:
+            self.desktop_evaluation_program_daemon_history_items = [
+                item
+                for item in self.desktop_evaluation_program_daemon_history_items
+                if not (
+                    (not normalized_status or str(item.get("status", "") or "").strip().lower() == normalized_status)
+                    and (not normalized_source or str(item.get("source", "") or "").strip().lower() == normalized_source)
+                )
+            ]
+        else:
+            self.desktop_evaluation_program_daemon_history_items = []
+        self.desktop_evaluation_program_daemon_state["history_count"] = len(
+            self.desktop_evaluation_program_daemon_history_items
+        )
+        self.desktop_evaluation_program_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_program_daemon_history_items[-1])
+            if self.desktop_evaluation_program_daemon_history_items
+            else {}
+        )
+        self.desktop_evaluation_program_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {
+            "status": "success",
+            "removed_count": max(0, before - len(self.desktop_evaluation_program_daemon_history_items)),
+            "remaining_count": len(self.desktop_evaluation_program_daemon_history_items),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "latest_run": dict(self.desktop_evaluation_program_daemon_state["latest_history_run"])
+            if isinstance(self.desktop_evaluation_program_daemon_state.get("latest_history_run", {}), dict)
+            else {},
+            "supervisor": self.desktop_evaluation_program_supervisor_status(history_limit=history_response_limit),
+        }
+
+    def configure_desktop_evaluation_program_supervisor(
+        self,
+        *,
+        enabled: bool | None = None,
+        interval_s: float | None = None,
+        max_programs: int | None = None,
+        max_campaigns_per_program: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        program_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        if enabled is not None:
+            self.desktop_evaluation_program_daemon_state["enabled"] = bool(enabled)
+        if interval_s is not None:
+            self.desktop_evaluation_program_daemon_state["interval_s"] = float(interval_s)
+        if max_programs is not None:
+            self.desktop_evaluation_program_daemon_state["max_programs"] = int(max_programs)
+        if max_campaigns_per_program is not None:
+            self.desktop_evaluation_program_daemon_state["max_campaigns_per_program"] = int(max_campaigns_per_program)
+        if max_sweeps_per_campaign is not None:
+            self.desktop_evaluation_program_daemon_state["max_sweeps_per_campaign"] = int(max_sweeps_per_campaign)
+        if max_sessions is not None:
+            self.desktop_evaluation_program_daemon_state["max_sessions"] = int(max_sessions)
+        if max_replays_per_session is not None:
+            self.desktop_evaluation_program_daemon_state["max_replays_per_session"] = int(max_replays_per_session)
+        if history_limit is not None:
+            self.desktop_evaluation_program_daemon_state["history_limit"] = int(history_limit)
+        if program_status is not None:
+            self.desktop_evaluation_program_daemon_state["program_status"] = str(program_status or "").strip()
+        if pack is not None:
+            self.desktop_evaluation_program_daemon_state["pack"] = str(pack or "").strip()
+        if app_name is not None:
+            self.desktop_evaluation_program_daemon_state["app_name"] = str(app_name or "").strip()
+        self.desktop_evaluation_program_daemon_state["last_config_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_program_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return self.desktop_evaluation_program_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_evaluation_program_supervisor(
+        self,
+        *,
+        max_programs: int | None = None,
+        max_campaigns_per_program: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        program_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        effective_max_programs = int(max_programs or self.desktop_evaluation_program_daemon_state.get("max_programs", 2) or 2)
+        effective_max_campaigns = int(
+            max_campaigns_per_program or self.desktop_evaluation_program_daemon_state.get("max_campaigns_per_program", 3) or 3
+        )
+        effective_max_sweeps = int(
+            max_sweeps_per_campaign or self.desktop_evaluation_program_daemon_state.get("max_sweeps_per_campaign", 2) or 2
+        )
+        effective_max_sessions = int(max_sessions or self.desktop_evaluation_program_daemon_state.get("max_sessions", 3) or 3)
+        effective_max_replays = int(
+            max_replays_per_session or self.desktop_evaluation_program_daemon_state.get("max_replays_per_session", 2) or 2
+        )
+        effective_history_limit = int(history_limit or self.desktop_evaluation_program_daemon_state.get("history_limit", 8) or 8)
+        effective_status = str(
+            program_status if program_status is not None else self.desktop_evaluation_program_daemon_state.get("program_status", "") or ""
+        ).strip()
+        effective_pack = str(pack if pack is not None else self.desktop_evaluation_program_daemon_state.get("pack", "") or "").strip().lower()
+        effective_app = str(app_name if app_name is not None else self.desktop_evaluation_program_daemon_state.get("app_name", "") or "").strip().lower()
+        program_rows = [
+            dict(item)
+            for item in self.desktop_evaluation_lab_programs_items
+            if not effective_status or str(item.get("status", "") or "").strip().lower() == effective_status.lower()
+        ]
+        if effective_pack:
+            program_rows = [
+                item for item in program_rows if str(dict(item.get("filters", {})).get("pack", "") or "").strip().lower() == effective_pack
+            ]
+        if effective_app:
+            program_rows = [
+                item
+                for item in program_rows
+                if effective_app
+                in {
+                    str(dict(item.get("filters", {})).get("app", dict(item.get("filters", {})).get("app_name", "")) or "").strip().lower(),
+                    *[
+                        str(value).strip().lower()
+                        for value in item.get("target_apps", item.get("app_targets", []))
+                        if str(value).strip()
+                    ],
+                }
+            ]
+        ranked = sorted(
+            program_rows,
+            key=lambda item: (
+                float(item.get("program_pressure_score", 0.0) or 0.0),
+                int(item.get("attention_campaign_count", 0) or 0),
+                int(item.get("pending_campaign_count", 0) or 0),
+                int(item.get("pending_session_count", 0) or 0),
+                int(item.get("pending_app_target_count", 0) or 0),
+                int(item.get("regression_cycle_count", 0) or 0),
+            ),
+            reverse=True,
+        )[:max(1, effective_max_programs)]
+        results: list[Dict[str, Any]] = []
+        for program in ranked:
+            cycle = self.desktop_evaluation_run_lab_program_cycle(
+                program_id=str(program.get("program_id", "") or "").strip(),
+                max_campaigns=effective_max_campaigns,
+                max_sweeps_per_campaign=effective_max_sweeps,
+                max_sessions=effective_max_sessions,
+                max_replays_per_session=effective_max_replays,
+                history_limit=effective_history_limit,
+            )
+            results.append(cycle)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.desktop_evaluation_program_daemon_state["run_count"] = int(self.desktop_evaluation_program_daemon_state.get("run_count", 0) or 0) + 1
+        self.desktop_evaluation_program_daemon_state["manual_trigger_count"] = int(self.desktop_evaluation_program_daemon_state.get("manual_trigger_count", 0) or 0) + 1
+        self.desktop_evaluation_program_daemon_state["last_trigger_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_program_daemon_state["last_trigger_at"] = now_iso
+        self.desktop_evaluation_program_daemon_state["last_tick_at"] = now_iso
+        self.desktop_evaluation_program_daemon_state["last_success_at"] = now_iso
+        self.desktop_evaluation_program_daemon_state["last_result_status"] = "success" if results else "idle"
+        self.desktop_evaluation_program_daemon_state["last_result_message"] = (
+            f"program watchdog executed {len(results)} program(s)" if results else "program watchdog found no executable replay programs"
+        )
+        self.desktop_evaluation_program_daemon_state["last_summary"] = {
+            "status": self.desktop_evaluation_program_daemon_state["last_result_status"],
+            "targeted_program_count": len(ranked),
+            "executed_program_count": len(results),
+            "executed_campaign_count": sum(int(dict(item.get("cycle", {})).get("executed_campaign_count", 0) or 0) for item in results),
+            "executed_sweep_count": sum(int(dict(item.get("cycle", {})).get("executed_sweep_count", 0) or 0) for item in results),
+            "stable_program_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("cycle", {})).get("stop_reason", "") or "").strip().lower() == "stable"
+            ),
+            "regression_program_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("program", {})).get("latest_cycle_status", "") or "").strip().lower() == "regression"
+            ),
+            "pending_campaign_count": sum(int(dict(item.get("program", {})).get("pending_campaign_count", 0) or 0) for item in results),
+            "attention_campaign_count": sum(int(dict(item.get("program", {})).get("attention_campaign_count", 0) or 0) for item in results),
+            "pending_session_count": sum(int(dict(item.get("program", {})).get("pending_session_count", 0) or 0) for item in results),
+            "pending_app_target_count": sum(int(dict(item.get("program", {})).get("pending_app_target_count", 0) or 0) for item in results),
+            "long_horizon_pending_count": sum(int(dict(item.get("program", {})).get("long_horizon_pending_count", 0) or 0) for item in results),
+            "error_count": 0,
+            "latest_program_label": str(dict(results[0].get("program", {})).get("label", "") or "").strip() if results else "",
+            "auto_created_program_count": 0,
+            "cycle_stop_reason_counts": {
+                str(dict(item.get("cycle", {})).get("stop_reason", "unknown") or "unknown"): 1
+                for item in results
+            },
+        }
+        history_entry = {
+            "recorded_at": now_iso,
+            "source": str(source or "manual").strip().lower() or "manual",
+            "status": self.desktop_evaluation_program_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_program_daemon_state["last_result_message"],
+            "duration_ms": 0.0,
+            "filters": {
+                "program_status": effective_status,
+                "pack": effective_pack,
+                "app_name": effective_app,
+            },
+            **dict(self.desktop_evaluation_program_daemon_state["last_summary"]),
+        }
+        self.desktop_evaluation_program_daemon_history_items.append(history_entry)
+        self.desktop_evaluation_program_daemon_history_items = self.desktop_evaluation_program_daemon_history_items[
+            -max(1, int(self.desktop_evaluation_program_daemon_state.get("history_limit", 8) or 8)):
+        ]
+        self.desktop_evaluation_program_daemon_state["history_count"] = len(self.desktop_evaluation_program_daemon_history_items)
+        self.desktop_evaluation_program_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_program_daemon_history_items[-1])
+            if self.desktop_evaluation_program_daemon_history_items
+            else {}
+        )
+        self.desktop_evaluation_program_daemon_state["updated_at"] = now_iso
+        return {
+            "status": self.desktop_evaluation_program_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_program_daemon_state["last_result_message"],
+            "result": {
+                "status": self.desktop_evaluation_program_daemon_state["last_result_status"],
+                "message": self.desktop_evaluation_program_daemon_state["last_result_message"],
+                "targeted_program_count": len(ranked),
+                "executed_program_count": len(results),
+                "results": results,
+            },
+            "supervisor": self.desktop_evaluation_program_supervisor_status(history_limit=history_response_limit),
+        }
+
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
         return {
             "status": "success",
@@ -20081,6 +20402,98 @@ def test_desktop_evaluation_lab_program_cycle_route(api_server: tuple[str, FakeD
     assert int(cycled["cycle"]["executed_campaign_count"]) >= 1
     assert int(cycled["program"]["cycle_count"]) >= 1
     assert isinstance(cycled["results"], list)
+
+
+def test_desktop_evaluation_program_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/programs",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_campaigns": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+
+    status, daemon_status = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon?history_limit=4",
+    )
+    assert status == 200
+    assert daemon_status["status"] == "success"
+    assert isinstance(daemon_status.get("programs"), dict)
+    assert isinstance(daemon_status.get("history"), dict)
+
+    status, configured = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon",
+        payload={
+            "enabled": True,
+            "interval_s": 300,
+            "max_programs": 2,
+            "max_campaigns_per_program": 3,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert configured["status"] == "success"
+    assert configured["enabled"] is True
+    assert int(configured["max_programs"]) == 2
+    assert int(configured["max_campaigns_per_program"]) == 3
+    assert int(configured["max_sweeps_per_campaign"]) == 2
+    assert str(configured["pack"]) == "long_horizon_and_replay"
+
+    status, triggered = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon/trigger",
+        payload={
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert triggered["status"] in {"success", "idle"}
+    assert isinstance(triggered.get("result"), dict)
+    assert isinstance(triggered.get("supervisor"), dict)
+    assert int(triggered["supervisor"]["run_count"]) >= 1
+    assert int(triggered["supervisor"]["max_campaigns_per_program"]) == 3
+    assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon/history?limit=4&source=http_test",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert int(history["count"]) >= 1
+    assert str(history["latest_run"]["source"]) == "http_test"
+
+    status, reset = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon/history/reset",
+        payload={"source": "http_test", "history_response_limit": 4},
+    )
+    assert status == 200
+    assert reset["status"] == "success"
+    assert int(reset["removed_count"]) >= 1
+    assert int(reset["supervisor"]["history_count"]) == 0
 
 
 def test_desktop_evaluation_campaign_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
