@@ -38,6 +38,7 @@ from backend.python.core.rust_runtime import RustRuntimeBridge
 from backend.python.core.task_state import GoalStatus
 from backend.python.evaluation.benchmark_lab_memory import DesktopBenchmarkLabMemory
 from backend.python.evaluation.benchmark_lab_campaign_supervisor import DesktopBenchmarkLabCampaignSupervisor
+from backend.python.evaluation.benchmark_lab_portfolio_supervisor import DesktopBenchmarkLabPortfolioSupervisor
 from backend.python.evaluation.benchmark_lab_program_supervisor import DesktopBenchmarkLabProgramSupervisor
 from backend.python.evaluation.runner import EvaluationRunner
 from backend.python.inference.model_registry import ModelRegistry
@@ -259,6 +260,60 @@ class DesktopBackendService:
             program_status=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PROGRAM_DAEMON_STATUS", "") or "").strip(),
             pack=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PROGRAM_DAEMON_PACK", "") or "").strip(),
             app_name=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PROGRAM_DAEMON_APP_NAME", "") or "").strip(),
+        )
+        self.desktop_evaluation_portfolio_supervisor = DesktopBenchmarkLabPortfolioSupervisor(
+            enabled=self._env_bool("JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_ENABLED", False),
+            interval_s=self._env_float(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_INTERVAL_S",
+                300.0,
+                minimum=5.0,
+                maximum=3600.0,
+            ),
+            max_portfolios=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_PORTFOLIOS",
+                2,
+                minimum=1,
+                maximum=32,
+            ),
+            max_programs_per_portfolio=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_PROGRAMS_PER_PORTFOLIO",
+                3,
+                minimum=1,
+                maximum=8,
+            ),
+            max_campaigns_per_program=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_CAMPAIGNS_PER_PROGRAM",
+                3,
+                minimum=1,
+                maximum=8,
+            ),
+            max_sweeps_per_campaign=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_SWEEPS_PER_CAMPAIGN",
+                2,
+                minimum=1,
+                maximum=8,
+            ),
+            max_sessions=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_SESSIONS",
+                3,
+                minimum=1,
+                maximum=8,
+            ),
+            max_replays_per_session=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_REPLAYS",
+                2,
+                minimum=1,
+                maximum=8,
+            ),
+            history_limit=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_HISTORY_LIMIT",
+                8,
+                minimum=1,
+                maximum=64,
+            ),
+            portfolio_status=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_STATUS", "") or "").strip(),
+            pack=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_PACK", "") or "").strip(),
+            app_name=str(os.getenv("JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_APP_NAME", "") or "").strip(),
         )
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
@@ -1696,6 +1751,7 @@ class DesktopBackendService:
         self.desktop_recovery_supervisor.start(self._execute_desktop_recovery_supervisor_tick)
         self.desktop_evaluation_campaign_supervisor.start(self._execute_desktop_evaluation_campaign_supervisor_tick)
         self.desktop_evaluation_program_supervisor.start(self._execute_desktop_evaluation_program_supervisor_tick)
+        self.desktop_evaluation_portfolio_supervisor.start(self._execute_desktop_evaluation_portfolio_supervisor_tick)
         self.model_setup_recovery_watchdog_supervisor.start(
             self._execute_model_setup_watchdog_supervisor_tick
         )
@@ -1788,6 +1844,10 @@ class DesktopBackendService:
             self.desktop_evaluation_program_supervisor.stop()
         except Exception as exc:  # noqa: BLE001
             self.log.warning(f"Desktop evaluation program supervisor stop failed: {exc}")
+        try:
+            self.desktop_evaluation_portfolio_supervisor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Desktop evaluation portfolio supervisor stop failed: {exc}")
         self._stop_bridge_scheduler_worker()
         self._stop_context_opportunity_worker()
         self._cancel_all_voice_continuous_sessions(reason="service_stop")
@@ -8325,6 +8385,22 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_lab_portfolios(
+        self,
+        *,
+        limit: int = 12,
+        portfolio_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.lab_portfolios(limit=limit, portfolio_id=portfolio_id, status=status)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab portfolios payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -8445,6 +8521,50 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_create_lab_portfolio(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sessions_per_campaign: int = 3,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.create_lab_portfolio(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app_name,
+                limit=limit,
+                history_limit=history_limit,
+                source=source,
+                label=label,
+                max_programs=max_programs,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sessions_per_campaign=max_sessions_per_campaign,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab portfolio create payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_replay_lab_session(
         self,
         *,
@@ -8533,6 +8653,36 @@ class DesktopBackendService:
                 stop_on_stable=stop_on_stable,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab program cycle payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_run_lab_portfolio_cycle(
+        self,
+        *,
+        portfolio_id: str = "",
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_portfolio_cycle(
+                portfolio_id=portfolio_id,
+                max_programs=max_programs,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab portfolio cycle payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -8837,6 +8987,167 @@ class DesktopBackendService:
         )
         payload["supervisor"] = _to_jsonable(
             self.desktop_evaluation_program_supervisor_status(history_limit=history_response_limit)
+        )
+        return _to_jsonable(payload)
+
+    def _execute_desktop_evaluation_portfolio_supervisor_tick(
+        self,
+        *,
+        max_portfolios: int = 2,
+        max_programs_per_portfolio: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        portfolio_status: str = "",
+        pack: str = "",
+        app_name: str = "",
+        trigger_source: str = "manual",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_portfolio_watchdog(
+                max_portfolios=max_portfolios,
+                max_programs_per_portfolio=max_programs_per_portfolio,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                portfolio_status=portfolio_status,
+                pack=pack,
+                app_name=app_name,
+                trigger_source=trigger_source,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation portfolio watchdog payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_portfolio_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_portfolio_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation portfolio supervisor unavailable"}
+        payload = supervisor.status()
+        portfolio_status = str(payload.get("portfolio_status", "") or "").strip()
+        payload["portfolios"] = _to_jsonable(
+            self.desktop_evaluation_lab_portfolios(
+                limit=max(1, min(int(history_limit or 6), 32)),
+                status=portfolio_status,
+            )
+        )
+        payload["history"] = _to_jsonable(
+            supervisor.history(limit=max(1, min(int(history_limit or 6), 32)))
+        )
+        return _to_jsonable(payload)
+
+    def desktop_evaluation_portfolio_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_portfolio_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation portfolio supervisor unavailable"}
+        payload = supervisor.history(limit=limit, status=status, source=source)
+        return _to_jsonable(payload)
+
+    def reset_desktop_evaluation_portfolio_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_portfolio_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation portfolio supervisor unavailable"}
+        payload = supervisor.reset_history(status=status, source=source)
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit)
+        )
+        return _to_jsonable(payload)
+
+    def configure_desktop_evaluation_portfolio_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        max_portfolios: Optional[int] = None,
+        max_programs_per_portfolio: Optional[int] = None,
+        max_campaigns_per_program: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
+        max_sessions: Optional[int] = None,
+        max_replays_per_session: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        portfolio_status: Optional[str] = None,
+        pack: Optional[str] = None,
+        app_name: Optional[str] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_portfolio_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation portfolio supervisor unavailable"}
+        supervisor.configure(
+            enabled=enabled,
+            interval_s=interval_s,
+            max_portfolios=max_portfolios,
+            max_programs_per_portfolio=max_programs_per_portfolio,
+            max_campaigns_per_program=max_campaigns_per_program,
+            max_sweeps_per_campaign=max_sweeps_per_campaign,
+            max_sessions=max_sessions,
+            max_replays_per_session=max_replays_per_session,
+            history_limit=history_limit,
+            portfolio_status=portfolio_status,
+            pack=pack,
+            app_name=app_name,
+            source=source,
+        )
+        return self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_evaluation_portfolio_supervisor(
+        self,
+        *,
+        max_portfolios: Optional[int] = None,
+        max_programs_per_portfolio: Optional[int] = None,
+        max_campaigns_per_program: Optional[int] = None,
+        max_sweeps_per_campaign: Optional[int] = None,
+        max_sessions: Optional[int] = None,
+        max_replays_per_session: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        portfolio_status: Optional[str] = None,
+        pack: Optional[str] = None,
+        app_name: Optional[str] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_evaluation_portfolio_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop evaluation portfolio supervisor unavailable"}
+        payload = supervisor.trigger_now(
+            source=source,
+            max_portfolios=max_portfolios,
+            max_programs_per_portfolio=max_programs_per_portfolio,
+            max_campaigns_per_program=max_campaigns_per_program,
+            max_sweeps_per_campaign=max_sweeps_per_campaign,
+            max_sessions=max_sessions,
+            max_replays_per_session=max_replays_per_session,
+            history_limit=history_limit,
+            portfolio_status=portfolio_status,
+            pack=pack,
+            app_name=app_name,
+        )
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit)
         )
         return _to_jsonable(payload)
 
@@ -42682,6 +42993,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolios":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=256)
+                payload = self.server.service.desktop_evaluation_lab_portfolios(
+                    limit=limit,
+                    portfolio_id=str(query.get("portfolio_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
                 history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
                 payload = self.server.service.desktop_evaluation_campaign_supervisor_status(
@@ -42708,6 +43028,22 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
             if path == "/runtime/evaluations/desktop-benchmarks/lab/program-daemon/history":
                 limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
                 payload = self.server.service.desktop_evaluation_program_supervisor_history(
+                    limit=limit,
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    source=str(query.get("source", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon":
+                history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
+                payload = self.server.service.desktop_evaluation_portfolio_supervisor_status(
+                    history_limit=history_limit
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/history":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
+                payload = self.server.service.desktop_evaluation_portfolio_supervisor_history(
                     limit=limit,
                     status=str(query.get("status", [""])[0] or "").strip(),
                     source=str(query.get("source", [""])[0] or "").strip(),
@@ -44928,6 +45264,30 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolios":
+                payload = self.server.service.desktop_evaluation_create_lab_portfolio(
+                    scenario_name=str(body.get("scenario_name", "") or "").strip(),
+                    pack=str(body.get("pack", "") or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                    capability=str(body.get("capability", "") or "").strip(),
+                    risk_level=str(body.get("risk_level", "") or "").strip(),
+                    autonomy_tier=str(body.get("autonomy_tier", "") or "").strip(),
+                    mission_family=str(body.get("mission_family", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    limit=self._parse_int(body.get("limit", 200), 200, minimum=1, maximum=5000),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    source=str(body.get("source", "") or "").strip(),
+                    label=str(body.get("label", "") or "").strip(),
+                    max_programs=self._parse_int(body.get("max_programs", 3), 3, minimum=1, maximum=8),
+                    max_campaigns_per_program=self._parse_int(
+                        body.get("max_campaigns_per_program", 3), 3, minimum=1, maximum=8
+                    ),
+                    max_sessions_per_campaign=self._parse_int(
+                        body.get("max_sessions_per_campaign", 3), 3, minimum=1, maximum=8
+                    ),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/sessions/replay":
                 payload = self.server.service.desktop_evaluation_replay_lab_session(
                     session_id=str(body.get("session_id", "") or "").strip(),
@@ -44954,6 +45314,25 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.desktop_evaluation_run_lab_program_cycle(
                     program_id=str(body.get("program_id", "") or "").strip(),
                     max_campaigns=self._parse_int(body.get("max_campaigns", 3), 3, minimum=1, maximum=8),
+                    max_sweeps_per_campaign=self._parse_int(
+                        body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8
+                    ),
+                    max_sessions=self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8),
+                    max_replays_per_session=self._parse_int(
+                        body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8
+                    ),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    stop_on_stable=self._parse_bool(body.get("stop_on_stable", True), default=True),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolios/run-cycle":
+                payload = self.server.service.desktop_evaluation_run_lab_portfolio_cycle(
+                    portfolio_id=str(body.get("portfolio_id", "") or "").strip(),
+                    max_programs=self._parse_int(body.get("max_programs", 3), 3, minimum=1, maximum=8),
+                    max_campaigns_per_program=self._parse_int(
+                        body.get("max_campaigns_per_program", 3), 3, minimum=1, maximum=8
+                    ),
                     max_sweeps_per_campaign=self._parse_int(
                         body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8
                     ),
@@ -45069,6 +45448,65 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon":
+                payload = self.server.service.configure_desktop_evaluation_portfolio_supervisor(
+                    enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
+                    interval_s=(
+                        self._parse_float(str(body.get("interval_s", "300") or "300"), 300.0, minimum=5.0, maximum=3600.0)
+                        if body.get("interval_s") is not None
+                        else None
+                    ),
+                    max_portfolios=(
+                        self._parse_int(body.get("max_portfolios", 2), 2, minimum=1, maximum=32)
+                        if body.get("max_portfolios") is not None
+                        else None
+                    ),
+                    max_programs_per_portfolio=(
+                        self._parse_int(body.get("max_programs_per_portfolio", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_programs_per_portfolio") is not None
+                        else None
+                    ),
+                    max_campaigns_per_program=(
+                        self._parse_int(body.get("max_campaigns_per_program", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_campaigns_per_program") is not None
+                        else None
+                    ),
+                    max_sweeps_per_campaign=(
+                        self._parse_int(body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_sweeps_per_campaign") is not None
+                        else None
+                    ),
+                    max_sessions=(
+                        self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_sessions") is not None
+                        else None
+                    ),
+                    max_replays_per_session=(
+                        self._parse_int(body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_replays_per_session") is not None
+                        else None
+                    ),
+                    history_limit=(
+                        self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64)
+                        if body.get("history_limit") is not None
+                        else None
+                    ),
+                    portfolio_status=(
+                        str(body.get("portfolio_status", body.get("status", "")) or "").strip()
+                        if body.get("portfolio_status") is not None or body.get("status") is not None
+                        else None
+                    ),
+                    pack=(str(body.get("pack", "") or "").strip() if body.get("pack") is not None else None),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    source=str(body.get("source", "manual") or "manual").strip() or "manual",
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon/history/reset":
                 payload = self.server.service.reset_desktop_evaluation_campaign_supervisor_history(
                     status=str(body.get("status", "") or "").strip(),
@@ -45084,6 +45522,19 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/program-daemon/history/reset":
                 payload = self.server.service.reset_desktop_evaluation_program_supervisor_history(
+                    status=str(body.get("status", "") or "").strip(),
+                    source=str(body.get("source", "") or "").strip(),
+                    history_response_limit=self._parse_int(
+                        body.get("history_response_limit", 6),
+                        6,
+                        minimum=1,
+                        maximum=32,
+                    ),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/history/reset":
+                payload = self.server.service.reset_desktop_evaluation_portfolio_supervisor_history(
                     status=str(body.get("status", "") or "").strip(),
                     source=str(body.get("source", "") or "").strip(),
                     history_response_limit=self._parse_int(
@@ -45212,6 +45663,59 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         else None
                     ),
                     source=str(body.get("source", "desktop-ui") or "desktop-ui").strip() or "desktop-ui",
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial", "idle"} else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/trigger":
+                payload = self.server.service.trigger_desktop_evaluation_portfolio_supervisor(
+                    max_portfolios=(
+                        self._parse_int(body.get("max_portfolios", 2), 2, minimum=1, maximum=32)
+                        if body.get("max_portfolios") is not None
+                        else None
+                    ),
+                    max_programs_per_portfolio=(
+                        self._parse_int(body.get("max_programs_per_portfolio", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_programs_per_portfolio") is not None
+                        else None
+                    ),
+                    max_campaigns_per_program=(
+                        self._parse_int(body.get("max_campaigns_per_program", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_campaigns_per_program") is not None
+                        else None
+                    ),
+                    max_sweeps_per_campaign=(
+                        self._parse_int(body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_sweeps_per_campaign") is not None
+                        else None
+                    ),
+                    max_sessions=(
+                        self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8)
+                        if body.get("max_sessions") is not None
+                        else None
+                    ),
+                    max_replays_per_session=(
+                        self._parse_int(body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_replays_per_session") is not None
+                        else None
+                    ),
+                    history_limit=(
+                        self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64)
+                        if body.get("history_limit") is not None
+                        else None
+                    ),
+                    portfolio_status=(
+                        str(body.get("portfolio_status", body.get("status", "")) or "").strip()
+                        if body.get("portfolio_status") is not None or body.get("status") is not None
+                        else None
+                    ),
+                    pack=(str(body.get("pack", "") or "").strip() if body.get("pack") is not None else None),
+                    app_name=(
+                        str(body.get("app_name", body.get("app", "")) or "").strip()
+                        if body.get("app_name") is not None or body.get("app") is not None
+                        else None
+                    ),
+                    source=str(body.get("source", "manual") or "manual").strip() or "manual",
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial", "idle"} else 400, payload)
