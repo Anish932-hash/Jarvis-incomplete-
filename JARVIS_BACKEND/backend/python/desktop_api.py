@@ -8401,6 +8401,35 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_lab_portfolio_diagnostics(
+        self,
+        *,
+        limit: int = 12,
+        portfolio_id: str = "",
+        status: str = "",
+        history_limit: int = 8,
+        daemon_history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.lab_portfolio_diagnostics(
+                limit=limit,
+                portfolio_id=portfolio_id,
+                status=status,
+                history_limit=history_limit,
+            )
+            if isinstance(payload, dict):
+                payload["portfolio_daemon"] = _to_jsonable(
+                    self.desktop_evaluation_portfolio_supervisor_status(
+                        history_limit=max(1, min(int(daemon_history_limit or 6), 32))
+                    )
+                )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab portfolio diagnostics payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -42999,6 +43028,19 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     limit=limit,
                     portfolio_id=str(query.get("portfolio_id", [""])[0] or "").strip(),
                     status=str(query.get("status", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolio-diagnostics":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=256)
+                history_limit = self._parse_int(str(query.get("history_limit", ["8"])[0]), 8, minimum=1, maximum=64)
+                daemon_history_limit = self._parse_int(str(query.get("daemon_history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
+                payload = self.server.service.desktop_evaluation_lab_portfolio_diagnostics(
+                    limit=limit,
+                    portfolio_id=str(query.get("portfolio_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    history_limit=history_limit,
+                    daemon_history_limit=daemon_history_limit,
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return

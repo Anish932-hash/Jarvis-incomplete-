@@ -14260,6 +14260,91 @@ class FakeDesktopService:
             },
         }
 
+    def desktop_evaluation_lab_portfolio_diagnostics(
+        self,
+        *,
+        limit: int = 12,
+        portfolio_id: str = "",
+        status: str = "",
+        history_limit: int = 8,
+        daemon_history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        del history_limit
+        payload = self.desktop_evaluation_lab_portfolios(
+            limit=limit,
+            portfolio_id=portfolio_id,
+            status=status,
+        )
+        summary = dict(payload.get("summary", {})) if isinstance(payload.get("summary", {}), dict) else {}
+        top_portfolios = [
+            {
+                "portfolio_id": str(item.get("portfolio_id", "") or ""),
+                "label": str(item.get("label", "") or "desktop replay portfolio"),
+                "status": str(item.get("status", "") or "ready"),
+                "portfolio_priority": str(item.get("portfolio_priority", "") or "steady"),
+                "portfolio_pressure_score": round(float(item.get("portfolio_pressure_score", 0.0) or 0.0), 6),
+                "latest_wave_stop_reason": str(item.get("latest_wave_stop_reason", "") or "idle"),
+                "target_apps": list(item.get("target_apps", []))[:6] if isinstance(item.get("target_apps", []), list) else [],
+                "focus_summary": list(item.get("focus_summary", []))[:6] if isinstance(item.get("focus_summary", []), list) else [],
+            }
+            for item in payload.get("items", [])[:3]
+            if isinstance(item, dict)
+        ] if isinstance(payload.get("items", []), list) else []
+        return {
+            "status": "success",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": {
+                "limit": max(1, int(limit)),
+                "portfolio_id": str(portfolio_id or "").strip(),
+                "status": str(status or "").strip(),
+            },
+            "summary": {
+                "portfolio_count": int(payload.get("count", 0) or 0),
+                "portfolio_total": int(payload.get("total", 0) or 0),
+                "portfolio_pressure_total": round(float(summary.get("portfolio_pressure_total", 0.0) or 0.0), 6),
+                "portfolio_pressure_avg": round(
+                    float(summary.get("portfolio_pressure_total", 0.0) or 0.0)
+                    / max(1, int(payload.get("total", 0) or 0)),
+                    6,
+                ),
+                "top_app_name": "settings",
+                "top_stop_reason": "stable",
+                "top_focus_area": "desktop_workflow",
+            },
+            "backlog": {
+                "pending_programs": int(summary.get("pending_programs", 0) or 0),
+                "attention_programs": int(summary.get("attention_programs", 0) or 0),
+                "pending_campaigns": int(summary.get("pending_campaigns", 0) or 0),
+                "pending_sessions": int(summary.get("pending_sessions", 0) or 0),
+                "pending_app_targets": int(summary.get("pending_app_targets", 0) or 0),
+                "long_horizon_pending_count": 1,
+                "stable_waves": int(summary.get("stable_waves", 0) or 0),
+                "regression_waves": int(summary.get("regression_waves", 0) or 0),
+            },
+            "top_portfolios": top_portfolios,
+            "app_pressure_leaderboard": [
+                {
+                    "app_name": "settings",
+                    "total_pressure": 3.25,
+                    "portfolio_pressure": 1.4,
+                    "program_pressure": 1.0,
+                    "campaign_pressure": 0.6,
+                    "replay_pressure": 0.25,
+                    "latest_stop_reason": "stable",
+                }
+            ],
+            "app_target_leaderboard": [{"app_name": "settings", "count": 1}],
+            "stop_reason_leaderboard": [{"stop_reason": "stable", "count": 1}],
+            "focus_leaderboard": [{"focus_area": "desktop_workflow", "count": 1}],
+            "trend_leaderboard": [{"direction": "stable", "count": 1}],
+            "native_targets": self.desktop_evaluation_native_targets(limit=limit, history_limit=8),
+            "guidance": self.desktop_evaluation_guidance(),
+            "portfolios": payload,
+            "portfolio_daemon": self.desktop_evaluation_portfolio_supervisor_status(
+                history_limit=daemon_history_limit
+            ),
+        }
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -21471,6 +21556,36 @@ def test_desktop_evaluation_lab_portfolio_routes(api_server: tuple[str, FakeDesk
     assert portfolios["count"] >= 1
     assert portfolios["latest_portfolio"]["portfolio_id"] == created["portfolio"]["portfolio_id"]
     assert int(portfolios["summary"]["program_count"]) >= 1
+
+
+def test_desktop_evaluation_lab_portfolio_diagnostics_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+
+    status, diagnostics = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-diagnostics?limit=4&history_limit=8&daemon_history_limit=4",
+    )
+    assert status == 200
+    assert diagnostics["status"] == "success"
+    assert diagnostics["summary"]["portfolio_count"] >= 1
+    assert diagnostics["top_portfolios"][0]["portfolio_id"] == created["portfolio"]["portfolio_id"]
+    assert diagnostics["app_pressure_leaderboard"][0]["app_name"] == "settings"
+    assert diagnostics["portfolios"]["latest_portfolio"]["portfolio_id"] == created["portfolio"]["portfolio_id"]
+    assert diagnostics["portfolio_daemon"]["status"] == "success"
 
 
 def test_desktop_evaluation_lab_portfolio_cycle_route(api_server: tuple[str, FakeDesktopService]) -> None:

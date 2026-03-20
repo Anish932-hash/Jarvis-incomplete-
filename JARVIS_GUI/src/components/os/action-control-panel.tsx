@@ -73,6 +73,7 @@ import {
   type DesktopEvaluationLabCampaignRecord,
   type DesktopEvaluationLabCampaignSweepResponse,
   type DesktopEvaluationLabCampaignsResponse,
+  type DesktopEvaluationLabPortfolioDiagnosticsResponse,
   type DesktopEvaluationLabPortfolioCreateResponse,
   type DesktopEvaluationLabPortfolioCycleResponse,
   type DesktopEvaluationLabPortfolioRecord,
@@ -1188,6 +1189,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabCampaignsResponse | null>(null);
   const [desktopEvaluationLabPortfoliosState, setDesktopEvaluationLabPortfoliosState] =
     useState<DesktopEvaluationLabPortfoliosResponse | null>(null);
+  const [desktopEvaluationLabPortfolioDiagnosticsState, setDesktopEvaluationLabPortfolioDiagnosticsState] =
+    useState<DesktopEvaluationLabPortfolioDiagnosticsResponse | null>(null);
   const [desktopEvaluationLabProgramsState, setDesktopEvaluationLabProgramsState] =
     useState<DesktopEvaluationLabProgramsResponse | null>(null);
   const [desktopEvaluationCampaignDaemonState, setDesktopEvaluationCampaignDaemonState] =
@@ -1996,6 +1999,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabPortfoliosState),
     [desktopEvaluationLabPortfoliosState]
   );
+  const desktopEvaluationLabPortfolioDiagnostics = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfolioDiagnosticsState),
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
   const desktopEvaluationLabPrograms = useMemo(
     () => asObjectRecord(desktopEvaluationLabProgramsState),
     [desktopEvaluationLabProgramsState]
@@ -2054,6 +2061,14 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabPortfolios.latest_portfolio),
     [desktopEvaluationLabPortfolios]
   );
+  const desktopEvaluationLabPortfolioDiagnosticsSummary = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfolioDiagnostics.summary),
+    [desktopEvaluationLabPortfolioDiagnostics]
+  );
+  const desktopEvaluationLabPortfolioBacklog = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfolioDiagnostics.backlog),
+    [desktopEvaluationLabPortfolioDiagnostics]
+  );
   const desktopEvaluationLatestLabProgram = useMemo(
     () => asObjectRecord(desktopEvaluationLabPrograms.latest_program),
     [desktopEvaluationLabPrograms]
@@ -2084,6 +2099,42 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
           )
         : [],
     [desktopEvaluationLabPortfoliosState]
+  );
+  const desktopEvaluationLabPortfolioTopRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.top_portfolios)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.top_portfolios.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
+  const desktopEvaluationLabPortfolioAppPressureRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.app_pressure_leaderboard)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.app_pressure_leaderboard.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
+  const desktopEvaluationLabPortfolioStopReasonRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.stop_reason_leaderboard)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.stop_reason_leaderboard.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
+  const desktopEvaluationLabPortfolioFocusRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.focus_leaderboard)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.focus_leaderboard.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
   );
   const desktopEvaluationLabProgramRows = useMemo(
     () =>
@@ -13573,12 +13624,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationLabPortfoliosBusy(true);
       try {
-        const payload = await backendClient.desktopEvaluationLabPortfolios({ limit: 6 });
-        setDesktopEvaluationLabPortfoliosState(payload);
+        const payload = await backendClient.desktopEvaluationLabPortfolioDiagnostics({
+          limit: 6,
+          history_limit: 8,
+          daemon_history_limit: 6,
+        });
+        setDesktopEvaluationLabPortfolioDiagnosticsState(payload);
+        if (payload.portfolios && isObjectRecord(payload.portfolios)) {
+          setDesktopEvaluationLabPortfoliosState(payload.portfolios as DesktopEvaluationLabPortfoliosResponse);
+        }
+        if (payload.portfolio_daemon && isObjectRecord(payload.portfolio_daemon)) {
+          setDesktopEvaluationPortfolioDaemonState(
+            payload.portfolio_daemon as DesktopEvaluationPortfolioDaemonStatusResponse
+          );
+        }
         if (!quiet) {
           toast({
             title: 'Replay Portfolios Ready',
-            description: `${Number(payload.count ?? 0)} stored replay portfolio(s) are ready for multi-program portfolio cycles.`,
+            description:
+              `${Number(asObjectRecord(payload.portfolios).count ?? 0)} stored replay portfolio(s)` +
+              ` • top app:${String(asObjectRecord(payload.summary).top_app_name ?? 'n/a')}`,
           });
         }
         return payload;
@@ -20163,7 +20228,57 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).program_count ?? 0)}
                                             {' • '}pending programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).pending_programs ?? 0)}
                                             {' • '}waves:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).wave_count ?? 0)}
+                                            {' • '}pressure:{Number(
+                                              desktopEvaluationLabPortfolioDiagnosticsSummary.portfolio_pressure_total ?? 0
+                                            ).toFixed(2)}
                                           </p>
+                                          <div className="rounded border border-primary/10 bg-black/10 p-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/70">Portfolio Hotspots</p>
+                                            <p className="mt-1">
+                                              backlog programs:{Number(desktopEvaluationLabPortfolioBacklog.pending_programs ?? 0)}
+                                              {' • '}campaigns:{Number(desktopEvaluationLabPortfolioBacklog.pending_campaigns ?? 0)}
+                                              {' • '}sessions:{Number(desktopEvaluationLabPortfolioBacklog.pending_sessions ?? 0)}
+                                              {' • '}apps:{Number(desktopEvaluationLabPortfolioBacklog.pending_app_targets ?? 0)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              top app:
+                                              {desktopEvaluationLabPortfolioAppPressureRows.length > 0
+                                                ? ` ${String(desktopEvaluationLabPortfolioAppPressureRows[0].app_name ?? 'n/a')}`
+                                                : ' n/a'}
+                                              {' • '}stop:
+                                              {desktopEvaluationLabPortfolioStopReasonRows.length > 0
+                                                ? ` ${String(desktopEvaluationLabPortfolioStopReasonRows[0].stop_reason ?? 'n/a')}`
+                                                : ' n/a'}
+                                              {' • '}focus:
+                                              {desktopEvaluationLabPortfolioFocusRows.length > 0
+                                                ? ` ${String(desktopEvaluationLabPortfolioFocusRows[0].focus_area ?? 'n/a')}`
+                                                : ' n/a'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              app pressure:
+                                              {desktopEvaluationLabPortfolioAppPressureRows.slice(0, 3).length > 0
+                                                ? ` ${desktopEvaluationLabPortfolioAppPressureRows
+                                                    .slice(0, 3)
+                                                    .map(
+                                                      (row) =>
+                                                        `${String(row.app_name ?? 'app')}(${Number(row.total_pressure ?? 0).toFixed(1)})`
+                                                    )
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              focus areas:
+                                              {desktopEvaluationLabPortfolioFocusRows.slice(0, 3).length > 0
+                                                ? ` ${desktopEvaluationLabPortfolioFocusRows
+                                                    .slice(0, 3)
+                                                    .map(
+                                                      (row) =>
+                                                        `${String(row.focus_area ?? 'focus')}(${Number(row.count ?? 0)})`
+                                                    )
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                            </p>
+                                          </div>
                                           <div className="rounded border border-primary/10 bg-black/10 p-2">
                                             <p className="font-semibold uppercase tracking-wider text-primary/70">Latest Portfolio</p>
                                             <p className="mt-1">
@@ -20189,7 +20304,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           </div>
                                           <ScrollArea className="h-[132px] rounded border border-primary/10 bg-black/10 p-2">
                                             <div className="space-y-2">
-                                              {desktopEvaluationLabPortfolioRows.slice(0, 3).map((portfolio, index) => (
+                                              {(desktopEvaluationLabPortfolioTopRows.length > 0
+                                                ? desktopEvaluationLabPortfolioTopRows
+                                                : desktopEvaluationLabPortfolioRows.slice(0, 3)
+                                              ).slice(0, 3).map((portfolio, index) => (
                                                 <div
                                                   key={`desktop-eval-portfolio-${String(portfolio.portfolio_id ?? index)}`}
                                                   className="rounded border border-primary/10 bg-background/30 p-2"

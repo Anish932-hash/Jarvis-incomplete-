@@ -200,6 +200,146 @@ class EvaluationRunner:
             return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
         return memory.portfolio_history(limit=limit, portfolio_id=portfolio_id, status=status)
 
+    def lab_portfolio_diagnostics(
+        self,
+        *,
+        limit: int = 12,
+        portfolio_id: str = "",
+        status: str = "",
+        history_limit: int = 8,
+    ) -> Dict[str, object]:
+        portfolio_payload = self.lab_portfolios(limit=limit, portfolio_id=portfolio_id, status=status)
+        if str(portfolio_payload.get("status", "") or "").strip().lower() != "success":
+            return portfolio_payload
+        summary = (
+            dict(portfolio_payload.get("summary", {}))
+            if isinstance(portfolio_payload.get("summary", {}), dict)
+            else {}
+        )
+        top_portfolios = [
+            dict(item)
+            for item in portfolio_payload.get("top_portfolios", [])
+            if isinstance(item, dict)
+        ] if isinstance(portfolio_payload.get("top_portfolios", []), list) else []
+        native_targets_payload = self.native_control_targets(
+            limit=max(12, min(int(limit or 12) * 2, 48)),
+            history_limit=max(1, min(int(history_limit or 8), 64)),
+        )
+        guidance_payload = self.control_guidance()
+        app_pressure_leaderboard: List[Dict[str, object]] = []
+        for row in native_targets_payload.get("target_apps", []) if isinstance(native_targets_payload.get("target_apps", []), list) else []:
+            if not isinstance(row, dict):
+                continue
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            total_pressure = round(
+                float(row.get("portfolio_pressure", 0.0) or 0.0)
+                + float(row.get("program_pressure", 0.0) or 0.0)
+                + float(row.get("campaign_pressure", 0.0) or 0.0)
+                + float(row.get("replay_pressure", 0.0) or 0.0),
+                6,
+            )
+            app_pressure_leaderboard.append(
+                {
+                    "app_name": app_name,
+                    "total_pressure": total_pressure,
+                    "portfolio_pressure": round(float(row.get("portfolio_pressure", 0.0) or 0.0), 6),
+                    "program_pressure": round(float(row.get("program_pressure", 0.0) or 0.0), 6),
+                    "campaign_pressure": round(float(row.get("campaign_pressure", 0.0) or 0.0), 6),
+                    "replay_pressure": round(float(row.get("replay_pressure", 0.0) or 0.0), 6),
+                    "priority": round(float(row.get("priority", 0.0) or 0.0), 6),
+                    "pending_program_count": int(row.get("portfolio_pending_program_count", 0) or 0),
+                    "pending_campaign_count": int(row.get("portfolio_pending_campaign_count", 0) or 0)
+                    + int(row.get("program_pending_campaign_count", 0) or 0),
+                    "pending_session_count": int(row.get("portfolio_pending_session_count", 0) or 0)
+                    + int(row.get("campaign_pending_session_count", 0) or 0),
+                    "pending_app_target_count": int(row.get("portfolio_pending_app_target_count", 0) or 0)
+                    + int(row.get("program_pending_app_target_count", 0) or 0)
+                    + int(row.get("campaign_pending_app_target_count", 0) or 0),
+                    "latest_portfolio_status": str(row.get("portfolio_latest_wave_status", "") or "idle"),
+                    "latest_stop_reason": str(
+                        row.get("portfolio_latest_wave_stop_reason", "")
+                        or row.get("program_latest_cycle_stop_reason", "")
+                        or row.get("campaign_latest_sweep_regression_status", "")
+                        or row.get("campaign_latest_sweep_status", "")
+                        or "idle"
+                    ),
+                    "focus_summary": list(row.get("campaign_focus_summary", []))[:6]
+                    if isinstance(row.get("campaign_focus_summary", []), list)
+                    else [],
+                    "hint_query": str(
+                        row.get("portfolio_hint_query", "")
+                        or row.get("program_hint_query", "")
+                        or row.get("campaign_hint_query", "")
+                        or row.get("hint_query", "")
+                        or ""
+                    ),
+                }
+            )
+        app_pressure_leaderboard.sort(
+            key=lambda item: (
+                -float(item.get("total_pressure", 0.0) or 0.0),
+                -float(item.get("priority", 0.0) or 0.0),
+                str(item.get("app_name", "") or ""),
+            )
+        )
+        stop_reason_leaderboard = self._count_map_leaderboard(
+            summary.get("wave_stop_reason_counts", {}),
+            label_key="stop_reason",
+        )
+        focus_leaderboard = self._count_map_leaderboard(
+            summary.get("focus_summary_counts", {}),
+            label_key="focus_area",
+        )
+        trend_leaderboard = self._count_map_leaderboard(
+            summary.get("trend_direction_counts", {}),
+            label_key="direction",
+        )
+        app_target_leaderboard = self._count_map_leaderboard(
+            summary.get("app_target_counts", {}),
+            label_key="app_name",
+        )
+        backlog = {
+            "pending_programs": int(summary.get("pending_programs", 0) or 0),
+            "attention_programs": int(summary.get("attention_programs", 0) or 0),
+            "pending_campaigns": int(summary.get("pending_campaigns", 0) or 0),
+            "pending_sessions": int(summary.get("pending_sessions", 0) or 0),
+            "pending_app_targets": int(summary.get("pending_app_targets", 0) or 0),
+            "long_horizon_pending_count": int(summary.get("long_horizon_pending_count", 0) or 0),
+            "stable_waves": int(summary.get("stable_waves", 0) or 0),
+            "regression_waves": int(summary.get("regression_waves", 0) or 0),
+        }
+        return {
+            "status": "success",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": {
+                "limit": max(1, int(limit or 12)),
+                "portfolio_id": str(portfolio_id or "").strip(),
+                "status": str(status or "").strip(),
+                "history_limit": max(1, min(int(history_limit or 8), 64)),
+            },
+            "portfolios": portfolio_payload,
+            "summary": {
+                "portfolio_count": int(portfolio_payload.get("count", 0) or 0),
+                "portfolio_total": int(portfolio_payload.get("total", 0) or 0),
+                "portfolio_pressure_total": round(float(summary.get("portfolio_pressure_total", 0.0) or 0.0), 6),
+                "portfolio_pressure_avg": round(float(summary.get("portfolio_pressure_avg", 0.0) or 0.0), 6),
+                "top_app_name": str(dict(app_pressure_leaderboard[0]).get("app_name", "") or "") if app_pressure_leaderboard else "",
+                "top_stop_reason": str(dict(stop_reason_leaderboard[0]).get("stop_reason", "") or "") if stop_reason_leaderboard else "",
+                "top_focus_area": str(dict(focus_leaderboard[0]).get("focus_area", "") or "") if focus_leaderboard else "",
+            },
+            "backlog": backlog,
+            "top_portfolios": top_portfolios,
+            "app_pressure_leaderboard": app_pressure_leaderboard[:6],
+            "app_target_leaderboard": app_target_leaderboard[:6],
+            "stop_reason_leaderboard": stop_reason_leaderboard[:6],
+            "focus_leaderboard": focus_leaderboard[:6],
+            "trend_leaderboard": trend_leaderboard[:6],
+            "native_targets": native_targets_payload,
+            "guidance": guidance_payload,
+        }
+
     def create_lab_campaign(
         self,
         *,
@@ -5083,6 +5223,24 @@ class EvaluationRunner:
     def _sorted_count_map(source: Dict[str, int], *, limit: int = 24) -> Dict[str, int]:
         ordered = sorted(source.items(), key=lambda item: (-int(item[1]), item[0]))
         return {name: count for name, count in ordered[: max(1, limit)]}
+
+    @staticmethod
+    def _count_map_leaderboard(
+        source: object,
+        *,
+        label_key: str = "name",
+        limit: int = 8,
+    ) -> List[Dict[str, object]]:
+        if not isinstance(source, dict):
+            return []
+        rows = []
+        for name, count in source.items():
+            clean_name = str(name or "").strip()
+            if not clean_name:
+                continue
+            rows.append({label_key: clean_name, "count": int(count or 0)})
+        rows.sort(key=lambda item: (-int(item.get("count", 0) or 0), str(item.get(label_key, "") or "")))
+        return rows[: max(1, limit)]
 
     @staticmethod
     def _bucket_view(source: Dict[str, Dict[str, float]]) -> List[Dict[str, object]]:

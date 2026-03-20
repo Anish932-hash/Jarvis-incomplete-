@@ -430,3 +430,9 @@ def test_benchmark_lab_memory_records_portfolios_and_wave_cycles(tmp_path) -> No
     assert history["count"] == 1
     assert history["latest_portfolio"]["portfolio_id"] == portfolio["portfolio_id"]
     assert history["summary"]["program_count"] == 2
+    assert history["summary"]["app_target_counts"]["settings"] == 1
+    assert history["summary"]["focus_summary_counts"]["desktop_workflow"] == 1
+    assert history["summary"]["wave_stop_reason_counts"]["stable"] == 1
+    assert history["summary"]["long_horizon_pending_count"] >= 0
+    assert len(history["top_portfolios"]) == 1
+    assert history["top_portfolios"][0]["portfolio_id"] == portfolio["portfolio_id"]

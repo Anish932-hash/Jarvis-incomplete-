@@ -490,6 +490,9 @@ class DesktopBenchmarkLabMemory:
         latest_wave_status_counts: Dict[str, int] = {}
         trend_direction_counts: Dict[str, int] = {}
         priority_counts: Dict[str, int] = {}
+        app_target_counts: Dict[str, int] = {}
+        focus_summary_counts: Dict[str, int] = {}
+        wave_stop_reason_counts: Dict[str, int] = {}
         pressure_total = 0.0
         for row in rows:
             self._increment_count(status_counts, str(row.get("status", "") or "ready"))
@@ -503,8 +506,71 @@ class DesktopBenchmarkLabMemory:
                 str(trend_summary.get("direction", row.get("history_direction", "")) or "stable"),
             )
             self._increment_count(priority_counts, str(row.get("portfolio_priority", "") or "steady"))
+            self._increment_count(
+                wave_stop_reason_counts,
+                str(row.get("latest_wave_stop_reason", "") or "idle"),
+            )
+            for app_name in row.get("target_apps", row.get("app_targets", [])) if isinstance(
+                row.get("target_apps", row.get("app_targets", [])),
+                list,
+            ) else []:
+                clean_app = str(app_name or "").strip()
+                if clean_app:
+                    self._increment_count(app_target_counts, clean_app)
+            for hint in row.get("focus_summary", []) if isinstance(row.get("focus_summary", []), list) else []:
+                clean_hint = str(hint or "").strip()
+                if clean_hint:
+                    self._increment_count(focus_summary_counts, clean_hint)
             pressure_total += float(row.get("portfolio_pressure_score", 0.0) or 0.0)
         latest = selected[0] if selected else {}
+        ranked_rows = sorted(
+            rows,
+            key=lambda item: (
+                -float(item.get("portfolio_pressure_score", 0.0) or 0.0),
+                -int(item.get("pending_program_count", 0) or 0),
+                -int(item.get("pending_campaign_count", 0) or 0),
+                -int(item.get("pending_session_count", 0) or 0),
+                str(item.get("updated_at", "") or ""),
+            ),
+            reverse=False,
+        )
+        top_portfolios = [
+            {
+                "portfolio_id": str(item.get("portfolio_id", "") or ""),
+                "label": str(item.get("label", "") or "desktop replay portfolio"),
+                "status": str(item.get("status", "") or "ready"),
+                "portfolio_priority": str(item.get("portfolio_priority", "") or "steady"),
+                "portfolio_pressure_score": round(float(item.get("portfolio_pressure_score", 0.0) or 0.0), 6),
+                "trend_direction": str(
+                    dict(item.get("trend_summary", {})).get("direction", item.get("history_direction", ""))
+                    if isinstance(item.get("trend_summary", {}), dict)
+                    else item.get("history_direction", "")
+                )
+                or "stable",
+                "latest_wave_status": str(item.get("latest_wave_status", "") or "idle"),
+                "latest_wave_stop_reason": str(item.get("latest_wave_stop_reason", "") or "idle"),
+                "pending_program_count": int(item.get("pending_program_count", 0) or 0),
+                "pending_campaign_count": int(item.get("pending_campaign_count", 0) or 0),
+                "pending_session_count": int(item.get("pending_session_count", 0) or 0),
+                "pending_app_target_count": int(item.get("pending_app_target_count", 0) or 0),
+                "long_horizon_pending_count": int(item.get("long_horizon_pending_count", 0) or 0),
+                "target_apps": [
+                    str(app_name).strip()
+                    for app_name in item.get("target_apps", item.get("app_targets", []))
+                    if str(app_name).strip()
+                ][:6]
+                if isinstance(item.get("target_apps", item.get("app_targets", [])), list)
+                else [],
+                "focus_summary": [
+                    str(hint).strip()
+                    for hint in item.get("focus_summary", [])
+                    if str(hint).strip()
+                ][:6]
+                if isinstance(item.get("focus_summary", []), list)
+                else [],
+            }
+            for item in ranked_rows[: min(5, len(ranked_rows))]
+        ]
         return {
             "status": "success",
             "count": len(selected),
@@ -512,11 +578,15 @@ class DesktopBenchmarkLabMemory:
             "limit": normalized_limit,
             "items": [self._public_row(row) for row in selected],
             "latest_portfolio": self._public_row(latest) if latest else {},
+            "top_portfolios": top_portfolios,
             "summary": {
                 "status_counts": self._sorted_count_map(status_counts),
                 "latest_wave_status_counts": self._sorted_count_map(latest_wave_status_counts),
                 "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
                 "priority_counts": self._sorted_count_map(priority_counts),
+                "app_target_counts": self._sorted_count_map(app_target_counts),
+                "focus_summary_counts": self._sorted_count_map(focus_summary_counts),
+                "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
                 "program_count": sum(int(row.get("program_count", 0) or 0) for row in rows),
                 "pending_programs": sum(int(row.get("pending_program_count", 0) or 0) for row in rows),
                 "attention_programs": sum(int(row.get("attention_program_count", 0) or 0) for row in rows),
@@ -524,6 +594,7 @@ class DesktopBenchmarkLabMemory:
                 "attention_campaigns": sum(int(row.get("attention_campaign_count", 0) or 0) for row in rows),
                 "pending_sessions": sum(int(row.get("pending_session_count", 0) or 0) for row in rows),
                 "pending_app_targets": sum(int(row.get("pending_app_target_count", 0) or 0) for row in rows),
+                "long_horizon_pending_count": sum(int(row.get("long_horizon_pending_count", 0) or 0) for row in rows),
                 "wave_count": sum(int(row.get("wave_count", 0) or 0) for row in rows),
                 "completed_waves": sum(int(row.get("completed_wave_count", 0) or 0) for row in rows),
                 "stable_waves": sum(int(row.get("stable_wave_count", 0) or 0) for row in rows),

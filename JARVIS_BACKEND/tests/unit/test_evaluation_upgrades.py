@@ -1676,6 +1676,107 @@ def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatc
     assert cycle_calls == ["portfolio-settings"]
 
 
+def test_evaluation_runner_portfolio_diagnostics_surfaces_hotspots(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4)
+
+    monkeypatch.setattr(
+        runner,
+        "lab_portfolios",
+        lambda **_: {
+            "status": "success",
+            "count": 2,
+            "total": 2,
+            "items": [
+                {
+                    "portfolio_id": "portfolio-settings",
+                    "label": "settings replay portfolio",
+                    "status": "attention",
+                    "portfolio_pressure_score": 4.5,
+                    "latest_wave_stop_reason": "regression",
+                    "pending_program_count": 2,
+                    "pending_campaign_count": 3,
+                    "pending_session_count": 4,
+                    "pending_app_target_count": 1,
+                }
+            ],
+            "top_portfolios": [
+                {
+                    "portfolio_id": "portfolio-settings",
+                    "label": "settings replay portfolio",
+                    "status": "attention",
+                    "portfolio_priority": "critical",
+                    "portfolio_pressure_score": 4.5,
+                    "latest_wave_stop_reason": "regression",
+                    "target_apps": ["settings"],
+                    "focus_summary": ["desktop_workflow"],
+                }
+            ],
+            "summary": {
+                "portfolio_pressure_total": 5.2,
+                "portfolio_pressure_avg": 2.6,
+                "pending_programs": 2,
+                "attention_programs": 1,
+                "pending_campaigns": 3,
+                "pending_sessions": 4,
+                "pending_app_targets": 1,
+                "long_horizon_pending_count": 2,
+                "stable_waves": 0,
+                "regression_waves": 1,
+                "wave_stop_reason_counts": {"regression": 1, "stable": 1},
+                "focus_summary_counts": {"desktop_workflow": 2, "native_focus": 1},
+                "trend_direction_counts": {"regression": 1, "stable": 1},
+                "app_target_counts": {"settings": 2, "vscode": 1},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "native_control_targets",
+        lambda **_: {
+            "status": "success",
+            "target_apps": [
+                {
+                    "app_name": "settings",
+                    "priority": 1.0,
+                    "portfolio_pressure": 3.0,
+                    "program_pressure": 1.0,
+                    "campaign_pressure": 0.5,
+                    "replay_pressure": 0.25,
+                    "portfolio_pending_program_count": 2,
+                    "portfolio_pending_campaign_count": 3,
+                    "portfolio_pending_session_count": 4,
+                    "portfolio_pending_app_target_count": 1,
+                    "portfolio_latest_wave_status": "attention",
+                    "portfolio_latest_wave_stop_reason": "regression",
+                    "campaign_focus_summary": ["desktop_workflow"],
+                    "portfolio_hint_query": "settings bluetooth dialog",
+                }
+            ],
+            "coverage_gap_apps": ["outlook"],
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "control_guidance",
+        lambda: {
+            "status": "success",
+            "focus_summary": ["desktop_workflow"],
+            "control_biases": {"native_focus": 0.7},
+        },
+    )
+
+    payload = runner.lab_portfolio_diagnostics(limit=6, history_limit=8)
+
+    assert payload["status"] == "success"
+    assert payload["summary"]["top_app_name"] == "settings"
+    assert payload["summary"]["top_stop_reason"] == "regression"
+    assert payload["backlog"]["pending_programs"] == 2
+    assert payload["top_portfolios"][0]["portfolio_id"] == "portfolio-settings"
+    assert payload["app_pressure_leaderboard"][0]["app_name"] == "settings"
+    assert payload["stop_reason_leaderboard"][0]["stop_reason"] == "regression"
+    assert payload["focus_leaderboard"][0]["focus_area"] == "desktop_workflow"
+
+
 def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_signals(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=6, lab_memory=DesktopBenchmarkLabMemory())
 
