@@ -870,6 +870,7 @@ class FakeDesktopService:
         self.desktop_evaluation_lab_sessions_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_lab_campaigns_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_lab_programs_items: list[Dict[str, Any]] = []
+        self.desktop_evaluation_lab_portfolios_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_campaign_daemon_state: Dict[str, Any] = {
             "status": "success",
             "active": True,
@@ -939,6 +940,42 @@ class FakeDesktopService:
             "updated_at": "2026-03-18T10:00:00+00:00",
         }
         self.desktop_evaluation_program_daemon_history_items: list[Dict[str, Any]] = []
+        self.desktop_evaluation_portfolio_daemon_state: Dict[str, Any] = {
+            "status": "success",
+            "active": True,
+            "enabled": False,
+            "inflight": False,
+            "interval_s": 300.0,
+            "max_portfolios": 2,
+            "max_programs_per_portfolio": 3,
+            "max_campaigns_per_program": 3,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 3,
+            "max_replays_per_session": 2,
+            "history_limit": 8,
+            "portfolio_status": "",
+            "pack": "",
+            "app_name": "",
+            "last_tick_at": "",
+            "last_success_at": "",
+            "last_error_at": "",
+            "last_duration_ms": 0.0,
+            "last_result_status": "",
+            "last_result_message": "",
+            "last_trigger_source": "",
+            "last_trigger_at": "",
+            "last_config_source": "defaults",
+            "next_due_at": "",
+            "run_count": 0,
+            "manual_trigger_count": 0,
+            "auto_trigger_count": 0,
+            "consecutive_error_count": 0,
+            "last_summary": {},
+            "history_count": 0,
+            "latest_history_run": {},
+            "updated_at": "2026-03-18T10:00:00+00:00",
+        }
+        self.desktop_evaluation_portfolio_daemon_history_items: list[Dict[str, Any]] = []
         self.model_connector_policy: Dict[str, float] = {
             "readiness_weight": 1.8,
             "reliability_weight": 2.2,
@@ -13988,6 +14025,241 @@ class FakeDesktopService:
             },
         }
 
+    def _desktop_evaluation_refresh_portfolio_row(self, portfolio: Dict[str, Any]) -> Dict[str, Any]:
+        program_ids = [
+            str(item).strip()
+            for item in portfolio.get("program_ids", [])
+            if str(item).strip()
+        ] if isinstance(portfolio.get("program_ids", []), list) else []
+        programs = [
+            self._desktop_evaluation_refresh_program_row(dict(item))
+            for item in self.desktop_evaluation_lab_programs_items
+            if str(item.get("program_id", "") or "").strip() in program_ids
+        ]
+        wave_runs = [
+            dict(item)
+            for item in portfolio.get("wave_runs", [])
+            if isinstance(item, dict)
+        ]
+        latest_wave = wave_runs[-1] if wave_runs else {}
+        target_apps = [
+            str(item).strip()
+            for item in portfolio.get("target_apps", portfolio.get("app_targets", []))
+            if str(item).strip()
+        ] if isinstance(portfolio.get("target_apps", portfolio.get("app_targets", [])), list) else []
+        represented_apps = {
+            str(app_name).strip().lower()
+            for item in programs
+            for app_name in item.get("target_apps", [])
+            if str(app_name).strip()
+        }
+        direction_counts: Dict[str, int] = {}
+        for item in wave_runs:
+            direction = str(item.get("trend_direction", "") or "").strip().lower()
+            if direction:
+                direction_counts[direction] = int(direction_counts.get(direction, 0) or 0) + 1
+        latest_direction = str(
+            latest_wave.get(
+                "trend_direction",
+                latest_wave.get("history_direction", portfolio.get("history_direction", "")),
+            )
+            or ""
+        ).strip().lower()
+        trend_direction = latest_direction or (
+            max(direction_counts.items(), key=lambda entry: entry[1])[0]
+            if direction_counts
+            else ""
+        )
+        stable_wave_count = sum(
+            1
+            for item in wave_runs
+            if bool(item.get("stable", False))
+            or str(item.get("stop_reason", "") or "").strip().lower() == "stable"
+        )
+        regression_wave_count = sum(
+            1
+            for item in wave_runs
+            if str(item.get("trend_direction", item.get("latest_wave_status", "")) or "").strip().lower()
+            in {"regression", "failed", "error"}
+        )
+        stable_wave_streak = 0
+        regression_wave_streak = 0
+        for item in reversed(wave_runs):
+            if bool(item.get("stable", False)) or str(item.get("stop_reason", "") or "").strip().lower() == "stable":
+                stable_wave_streak += 1
+            else:
+                break
+        for item in reversed(wave_runs):
+            if str(item.get("trend_direction", item.get("latest_wave_status", "")) or "").strip().lower() in {
+                "regression",
+                "failed",
+                "error",
+            }:
+                regression_wave_streak += 1
+            else:
+                break
+        pending_program_count = sum(
+            1 for item in programs if str(item.get("status", "") or "").strip().lower() != "complete"
+        )
+        attention_program_count = sum(
+            1 for item in programs if str(item.get("status", "") or "").strip().lower() == "attention"
+        )
+        complete_program_count = sum(
+            1 for item in programs if str(item.get("status", "") or "").strip().lower() == "complete"
+        )
+        pending_campaign_count = sum(int(item.get("pending_campaign_count", 0) or 0) for item in programs)
+        attention_campaign_count = sum(int(item.get("attention_campaign_count", 0) or 0) for item in programs)
+        pending_session_count = sum(int(item.get("pending_session_count", 0) or 0) for item in programs)
+        pending_app_target_count = max(0, len(target_apps) - len(represented_apps))
+        long_horizon_pending_count = sum(int(item.get("long_horizon_pending_count", 0) or 0) for item in programs)
+        program_count = len(programs)
+        campaign_count = sum(int(item.get("campaign_count", 0) or 0) for item in programs)
+        sweep_count = sum(int(item.get("sweep_count", 0) or 0) for item in programs)
+        portfolio_pressure_score = round(
+            float(attention_program_count * 3)
+            + float(pending_program_count)
+            + float(pending_campaign_count) * 0.5
+            + float(pending_session_count) * 0.25
+            + float(long_horizon_pending_count) * 0.2
+            + float(regression_wave_count) * 1.75,
+            6,
+        )
+        portfolio_priority = (
+            "critical"
+            if attention_program_count > 0 or regression_wave_count > 0
+            else ("elevated" if pending_program_count > 0 or pending_app_target_count > 0 else "normal")
+        )
+        latest_weighted_score = round(
+            float(latest_wave.get("weighted_score", portfolio.get("latest_wave_weighted_score", 0.0)) or 0.0),
+            6,
+        )
+        latest_weighted_pass_rate = round(
+            float(latest_wave.get("weighted_pass_rate", portfolio.get("latest_wave_weighted_pass_rate", 0.0)) or 0.0),
+            6,
+        )
+        portfolio["programs"] = [
+            {
+                "program_id": str(item.get("program_id", "") or ""),
+                "label": str(item.get("label", "") or ""),
+                "status": str(item.get("status", "") or "ready"),
+                "pending_campaign_count": int(item.get("pending_campaign_count", 0) or 0),
+                "attention_campaign_count": int(item.get("attention_campaign_count", 0) or 0),
+                "pending_session_count": int(item.get("pending_session_count", 0) or 0),
+                "pending_app_target_count": int(item.get("pending_app_target_count", 0) or 0),
+                "campaign_count": int(item.get("campaign_count", 0) or 0),
+                "sweep_count": int(item.get("sweep_count", 0) or 0),
+                "program_priority": str(item.get("program_priority", "") or ""),
+            }
+            for item in programs[:8]
+        ]
+        portfolio["program_count"] = program_count
+        portfolio["pending_program_count"] = pending_program_count
+        portfolio["attention_program_count"] = attention_program_count
+        portfolio["complete_program_count"] = complete_program_count
+        portfolio["pending_campaign_count"] = pending_campaign_count
+        portfolio["attention_campaign_count"] = attention_campaign_count
+        portfolio["pending_session_count"] = pending_session_count
+        portfolio["campaign_count"] = campaign_count
+        portfolio["sweep_count"] = sweep_count
+        portfolio["pending_app_target_count"] = pending_app_target_count
+        portfolio["target_apps"] = list(target_apps)
+        portfolio["app_targets"] = list(target_apps)
+        portfolio["target_app_count"] = len(target_apps)
+        portfolio["long_horizon_pending_count"] = long_horizon_pending_count
+        portfolio["wave_count"] = len(wave_runs)
+        portfolio["completed_wave_count"] = len(wave_runs)
+        portfolio["stable_wave_count"] = stable_wave_count
+        portfolio["regression_wave_count"] = regression_wave_count
+        portfolio["stable_wave_streak"] = stable_wave_streak
+        portfolio["regression_wave_streak"] = regression_wave_streak
+        portfolio["latest_wave_status"] = str(latest_wave.get("status", "") or "")
+        portfolio["latest_wave_stop_reason"] = str(latest_wave.get("stop_reason", "") or "")
+        portfolio["latest_wave_executed_at"] = str(latest_wave.get("executed_at", "") or "")
+        portfolio["latest_wave_executed_program_count"] = int(latest_wave.get("executed_program_count", 0) or 0)
+        portfolio["latest_wave_executed_campaign_count"] = int(latest_wave.get("executed_campaign_count", 0) or 0)
+        portfolio["latest_wave_executed_sweep_count"] = int(latest_wave.get("executed_sweep_count", 0) or 0)
+        portfolio["latest_wave_weighted_score"] = latest_weighted_score
+        portfolio["latest_wave_weighted_pass_rate"] = latest_weighted_pass_rate
+        portfolio["latest_wave_trend_direction"] = trend_direction
+        portfolio["history_direction"] = trend_direction
+        portfolio["trend_summary"] = {
+            "direction": trend_direction,
+            "counts": direction_counts,
+            "wave_count": len(wave_runs),
+        }
+        portfolio["portfolio_pressure_score"] = portfolio_pressure_score
+        portfolio["portfolio_priority"] = portfolio_priority
+        portfolio["status"] = (
+            "attention"
+            if attention_program_count > 0 or regression_wave_count > 0
+            else ("complete" if pending_program_count == 0 and programs else "ready")
+        )
+        portfolio["updated_at"] = str(
+            latest_wave.get(
+                "executed_at",
+                programs[0].get("updated_at", portfolio.get("updated_at", portfolio.get("created_at", "")))
+                if programs
+                else portfolio.get("updated_at", portfolio.get("created_at", "")),
+            )
+            or ""
+        )
+        return portfolio
+
+    def desktop_evaluation_lab_portfolios(
+        self,
+        *,
+        limit: int = 12,
+        portfolio_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        selected = [
+            self._desktop_evaluation_refresh_portfolio_row(dict(item))
+            for item in self.desktop_evaluation_lab_portfolios_items
+        ]
+        if str(portfolio_id or "").strip():
+            selected = [
+                item
+                for item in selected
+                if str(item.get("portfolio_id", "") or "").strip() == str(portfolio_id or "").strip()
+            ]
+        if str(status or "").strip():
+            normalized_status = str(status or "").strip().lower()
+            selected = [
+                item
+                for item in selected
+                if str(item.get("status", "") or "").strip().lower() == normalized_status
+            ]
+        selected = selected[: max(1, int(limit))]
+        all_rows = [
+            self._desktop_evaluation_refresh_portfolio_row(dict(item))
+            for item in self.desktop_evaluation_lab_portfolios_items
+        ]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(all_rows),
+            "limit": max(1, int(limit)),
+            "items": selected,
+            "latest_portfolio": dict(selected[0]) if selected else {},
+            "summary": {
+                "program_count": sum(int(item.get("program_count", 0) or 0) for item in all_rows),
+                "pending_programs": sum(int(item.get("pending_program_count", 0) or 0) for item in all_rows),
+                "attention_programs": sum(int(item.get("attention_program_count", 0) or 0) for item in all_rows),
+                "pending_campaigns": sum(int(item.get("pending_campaign_count", 0) or 0) for item in all_rows),
+                "pending_sessions": sum(int(item.get("pending_session_count", 0) or 0) for item in all_rows),
+                "pending_app_targets": sum(int(item.get("pending_app_target_count", 0) or 0) for item in all_rows),
+                "campaign_count": sum(int(item.get("campaign_count", 0) or 0) for item in all_rows),
+                "sweep_count": sum(int(item.get("sweep_count", 0) or 0) for item in all_rows),
+                "wave_count": sum(int(item.get("wave_count", 0) or 0) for item in all_rows),
+                "stable_waves": sum(int(item.get("stable_wave_count", 0) or 0) for item in all_rows),
+                "regression_waves": sum(int(item.get("regression_wave_count", 0) or 0) for item in all_rows),
+                "portfolio_pressure_total": round(
+                    sum(float(item.get("portfolio_pressure_score", 0.0) or 0.0) for item in all_rows),
+                    6,
+                ),
+            },
+        }
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -15053,6 +15325,382 @@ class FakeDesktopService:
             "guidance": dict(guidance),
         }
 
+    def desktop_evaluation_create_lab_portfolio(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sessions_per_campaign: int = 3,
+    ) -> Dict[str, Any]:
+        lab = self.desktop_evaluation_lab(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        normalized_max_programs = max(1, int(max_programs or 3))
+        normalized_max_campaigns = max(1, int(max_campaigns_per_program or 3))
+        normalized_max_sessions = max(1, int(max_sessions_per_campaign or 3))
+        target_apps: list[str] = []
+        if str(app_name or "").strip():
+            target_apps.append(str(app_name).strip())
+        for item in native_targets.get("target_apps", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("app_name", "") or "").strip()
+            if name and name.lower() not in {value.lower() for value in target_apps}:
+                target_apps.append(name)
+        target_apps = target_apps[:normalized_max_programs]
+        if not target_apps:
+            target_apps = ["settings"]
+        created_programs: list[Dict[str, Any]] = []
+        program_ids: list[str] = []
+        base_label = str(label or pack or category or app_name or "benchmark replay portfolio")
+        for target_app in target_apps[:normalized_max_programs]:
+            program_label = (
+                f"{base_label} / {target_app}"
+                if base_label and len(target_apps) > 1
+                else (base_label or f"{target_app} replay portfolio")
+            )
+            payload = self.desktop_evaluation_create_lab_program(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app_name=target_app,
+                limit=limit,
+                history_limit=history_limit,
+                source=source or "benchmark_portfolio",
+                label=program_label,
+                max_campaigns=normalized_max_campaigns,
+                max_sessions_per_campaign=normalized_max_sessions,
+            )
+            if str(payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            created_programs.append(dict(payload))
+            program = dict(payload.get("program", {})) if isinstance(payload.get("program", {}), dict) else {}
+            program_id = str(program.get("program_id", "") or "").strip()
+            if program_id:
+                program_ids.append(program_id)
+        portfolio_id = f"benchportfolio-test-{len(self.desktop_evaluation_lab_portfolios_items) + 1}"
+        created_at = datetime.now(timezone.utc).isoformat()
+        portfolio = {
+            "portfolio_id": portfolio_id,
+            "status": "ready",
+            "label": base_label,
+            "source": str(source or "action_control_panel"),
+            "created_at": created_at,
+            "updated_at": created_at,
+            "filters": dict(lab.get("filters", {})),
+            "focus_summary": list(native_targets.get("focus_summary", [])),
+            "program_ids": list(program_ids),
+            "target_apps": list(target_apps),
+            "app_targets": list(target_apps),
+            "wave_runs": [],
+            "wave_count": 0,
+            "completed_wave_count": 0,
+            "stable_wave_count": 0,
+            "regression_wave_count": 0,
+            "stable_wave_streak": 0,
+            "regression_wave_streak": 0,
+            "latest_wave_status": "",
+            "latest_wave_stop_reason": "",
+            "latest_wave_executed_at": "",
+            "latest_wave_executed_program_count": 0,
+            "latest_wave_executed_campaign_count": 0,
+            "latest_wave_executed_sweep_count": 0,
+            "latest_wave_weighted_score": 0.0,
+            "latest_wave_weighted_pass_rate": 0.0,
+            "latest_wave_trend_direction": "",
+            "history_direction": "",
+            "trend_summary": {},
+            "lab_snapshot": dict(lab),
+            "native_targets_snapshot": dict(native_targets),
+            "guidance_snapshot": dict(guidance),
+        }
+        portfolio = self._desktop_evaluation_refresh_portfolio_row(portfolio)
+        self.desktop_evaluation_lab_portfolios_items.insert(0, portfolio)
+        self.desktop_evaluation_lab_portfolios_items = self.desktop_evaluation_lab_portfolios_items[:8]
+        return {
+            "status": "success",
+            "portfolio": dict(portfolio),
+            "created_programs": created_programs,
+            "created_program_count": len(created_programs),
+            "created_campaign_count": sum(
+                int(item.get("created_campaign_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "created_session_count": sum(
+                int(item.get("created_session_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "lab": dict(lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
+    def desktop_evaluation_run_lab_portfolio_cycle(
+        self,
+        *,
+        portfolio_id: str = "",
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_max_programs = max(1, int(max_programs or 3))
+        selected: Dict[str, Any] | None = None
+        selected_index = -1
+        for index, item in enumerate(self.desktop_evaluation_lab_portfolios_items):
+            if str(item.get("portfolio_id", "") or "").strip() == str(portfolio_id or "").strip():
+                selected = self._desktop_evaluation_refresh_portfolio_row(dict(item))
+                selected_index = index
+                break
+        if selected is None:
+            return {"status": "error", "message": "benchmark lab portfolio not found"}
+        filters = dict(selected.get("filters", {})) if isinstance(selected.get("filters", {}), dict) else {}
+        portfolio_program_ids = [
+            str(item).strip()
+            for item in selected.get("program_ids", [])
+            if str(item).strip()
+        ] if isinstance(selected.get("program_ids", []), list) else []
+        current_programs = [
+            self._desktop_evaluation_refresh_program_row(dict(item))
+            for item in self.desktop_evaluation_lab_programs_items
+            if str(item.get("program_id", "") or "").strip() in portfolio_program_ids
+        ]
+        represented_apps = {
+            str(app_name).strip().lower()
+            for item in current_programs
+            for app_name in item.get("target_apps", [])
+            if str(app_name).strip()
+        }
+        app_targets = [
+            str(item).strip()
+            for item in selected.get("target_apps", selected.get("app_targets", []))
+            if str(item).strip()
+        ] if isinstance(selected.get("target_apps", selected.get("app_targets", [])), list) else []
+        created_programs: list[Dict[str, Any]] = []
+        for target_app in app_targets:
+            if target_app.strip().lower() in represented_apps:
+                continue
+            if len(current_programs) + len(created_programs) >= max(normalized_max_programs, len(current_programs)):
+                break
+            payload = self.desktop_evaluation_create_lab_program(
+                scenario_name=str(filters.get("scenario_name", "") or ""),
+                pack=str(filters.get("pack", "") or ""),
+                category=str(filters.get("category", "") or ""),
+                capability=str(filters.get("capability", "") or ""),
+                risk_level=str(filters.get("risk_level", "") or ""),
+                autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+                mission_family=str(filters.get("mission_family", "") or ""),
+                app_name=target_app,
+                limit=int(filters.get("limit", 200) or 200),
+                history_limit=history_limit,
+                source="benchmark_portfolio_cycle",
+                label=f"{str(selected.get('label', '') or 'replay portfolio').strip()} / {target_app}",
+                max_campaigns=max(1, int(max_campaigns_per_program or 3)),
+                max_sessions_per_campaign=max(1, int(max_sessions or 3)),
+            )
+            if str(payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            created_programs.append(dict(payload))
+            program = dict(payload.get("program", {})) if isinstance(payload.get("program", {}), dict) else {}
+            program_id = str(program.get("program_id", "") or "").strip()
+            if program_id and program_id not in portfolio_program_ids:
+                portfolio_program_ids.append(program_id)
+                current_programs.append(self._desktop_evaluation_refresh_program_row(program))
+        ranked_programs = sorted(
+            current_programs,
+            key=lambda item: (
+                1 if str(item.get("status", "") or "").strip().lower() == "attention" else 0,
+                int(item.get("attention_campaign_count", 0) or 0),
+                int(item.get("pending_campaign_count", 0) or 0),
+                int(item.get("pending_session_count", 0) or 0),
+                int(item.get("pending_app_target_count", 0) or 0),
+                float(item.get("program_pressure_score", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )[:normalized_max_programs]
+        results: list[Dict[str, Any]] = []
+        for program in ranked_programs:
+            program_id_value = str(program.get("program_id", "") or "").strip()
+            if not program_id_value:
+                continue
+            results.append(
+                self.desktop_evaluation_run_lab_program_cycle(
+                    program_id=program_id_value,
+                    max_campaigns=max_campaigns_per_program,
+                    max_sweeps_per_campaign=max_sweeps_per_campaign,
+                    max_sessions=max_sessions,
+                    max_replays_per_session=max_replays_per_session,
+                    history_limit=history_limit,
+                    stop_on_stable=stop_on_stable,
+                )
+            )
+        refreshed_programs = [
+            self._desktop_evaluation_refresh_program_row(dict(item))
+            for item in self.desktop_evaluation_lab_programs_items
+            if str(item.get("program_id", "") or "").strip() in portfolio_program_ids
+        ]
+        selected["program_ids"] = list(portfolio_program_ids)
+        selected["target_apps"] = list(
+            dict.fromkeys(
+                [
+                    *app_targets,
+                    *[
+                        app_name
+                        for item in refreshed_programs
+                        for app_name in item.get("target_apps", [])
+                        if str(app_name).strip()
+                    ],
+                ]
+            )
+        )
+        lab = self.desktop_evaluation_lab(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        stable = bool(results) and all(bool(dict(item.get("cycle", {})).get("stable", False)) for item in results)
+        trend_direction = (
+            "regression"
+            if any(
+                str(dict(item.get("program", {})).get("latest_cycle_status", "") or "").strip().lower()
+                in {"regression", "failed", "error"}
+                for item in results
+            )
+            else str(dict(lab.get("history_trend", {})).get("direction", "") or "").strip().lower()
+        )
+        wave_row = {
+            "wave_id": f"{str(selected.get('portfolio_id', '') or portfolio_id).strip()}-wave-{int(selected.get('wave_count', 0) or 0) + 1}",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "success" if results else "idle",
+            "stop_reason": "stable" if stable and stop_on_stable else ("idle" if not results else "program_budget_reached"),
+            "stable": stable,
+            "executed_program_count": len(results),
+            "executed_campaign_count": sum(
+                int(dict(item.get("cycle", {})).get("executed_campaign_count", 0) or 0)
+                for item in results
+            ),
+            "executed_sweep_count": sum(
+                int(dict(item.get("cycle", {})).get("executed_sweep_count", 0) or 0)
+                for item in results
+            ),
+            "created_program_count": len(created_programs),
+            "created_campaign_count": sum(
+                int(item.get("created_campaign_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "created_session_count": sum(
+                int(item.get("created_session_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "weighted_score": round(
+                float(dict(lab.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0),
+                6,
+            ),
+            "weighted_pass_rate": round(
+                float(dict(lab.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0),
+                6,
+            ),
+            "trend_direction": trend_direction,
+            "portfolio_priority": "critical" if trend_direction == "regression" else "elevated",
+        }
+        selected.setdefault("wave_runs", [])
+        if not isinstance(selected.get("wave_runs", []), list):
+            selected["wave_runs"] = []
+        selected["wave_runs"].append(wave_row)
+        selected["lab_snapshot"] = dict(lab)
+        selected["native_targets_snapshot"] = dict(native_targets)
+        selected["guidance_snapshot"] = dict(guidance)
+        selected = self._desktop_evaluation_refresh_portfolio_row(selected)
+        if 0 <= selected_index < len(self.desktop_evaluation_lab_portfolios_items):
+            self.desktop_evaluation_lab_portfolios_items[selected_index] = selected
+        return {
+            "status": "success",
+            "portfolio": dict(selected),
+            "wave": dict(wave_row),
+            "results": results,
+            "created_programs": created_programs,
+            "created_program_count": len(created_programs),
+            "created_campaign_count": sum(
+                int(item.get("created_campaign_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "created_session_count": sum(
+                int(item.get("created_session_count", 0) or 0)
+                for item in created_programs
+                if isinstance(item, dict)
+            ),
+            "lab": dict(lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
     def desktop_evaluation_campaign_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
         payload = dict(self.desktop_evaluation_campaign_daemon_state)
         payload["campaigns"] = self.desktop_evaluation_lab_campaigns(
@@ -15637,6 +16285,303 @@ class FakeDesktopService:
                 "results": results,
             },
             "supervisor": self.desktop_evaluation_program_supervisor_status(history_limit=history_response_limit),
+        }
+
+    def desktop_evaluation_portfolio_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
+        payload = dict(self.desktop_evaluation_portfolio_daemon_state)
+        payload["portfolios"] = self.desktop_evaluation_lab_portfolios(
+            limit=max(1, int(history_limit or 6)),
+            status=str(payload.get("portfolio_status", "") or "").strip(),
+        )
+        payload["history_count"] = len(self.desktop_evaluation_portfolio_daemon_history_items)
+        payload["latest_history_run"] = (
+            dict(self.desktop_evaluation_portfolio_daemon_history_items[-1])
+            if self.desktop_evaluation_portfolio_daemon_history_items
+            else {}
+        )
+        payload["history"] = self.desktop_evaluation_portfolio_supervisor_history(limit=history_limit)
+        return payload
+
+    def desktop_evaluation_portfolio_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        items = [
+            dict(item)
+            for item in self.desktop_evaluation_portfolio_daemon_history_items
+            if (
+                not normalized_status
+                or str(item.get("status", "") or "").strip().lower() == normalized_status
+            )
+            and (
+                not normalized_source
+                or str(item.get("source", "") or "").strip().lower() == normalized_source
+            )
+        ]
+        limited = items[-max(1, int(limit or 12)):]
+        return {
+            "status": "success",
+            "count": len(limited),
+            "total": len(items),
+            "limit": max(1, int(limit or 12)),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "items": limited,
+            "latest_run": dict(limited[-1]) if limited else {},
+        }
+
+    def reset_desktop_evaluation_portfolio_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        normalized_status = str(status or "").strip().lower()
+        normalized_source = str(source or "").strip().lower()
+        before = len(self.desktop_evaluation_portfolio_daemon_history_items)
+        if normalized_status or normalized_source:
+            self.desktop_evaluation_portfolio_daemon_history_items = [
+                item
+                for item in self.desktop_evaluation_portfolio_daemon_history_items
+                if not (
+                    (not normalized_status or str(item.get("status", "") or "").strip().lower() == normalized_status)
+                    and (not normalized_source or str(item.get("source", "") or "").strip().lower() == normalized_source)
+                )
+            ]
+        else:
+            self.desktop_evaluation_portfolio_daemon_history_items = []
+        self.desktop_evaluation_portfolio_daemon_state["history_count"] = len(
+            self.desktop_evaluation_portfolio_daemon_history_items
+        )
+        self.desktop_evaluation_portfolio_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_portfolio_daemon_history_items[-1])
+            if self.desktop_evaluation_portfolio_daemon_history_items
+            else {}
+        )
+        self.desktop_evaluation_portfolio_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {
+            "status": "success",
+            "removed_count": max(0, before - len(self.desktop_evaluation_portfolio_daemon_history_items)),
+            "remaining_count": len(self.desktop_evaluation_portfolio_daemon_history_items),
+            "filters": {"status": normalized_status, "source": normalized_source},
+            "latest_run": dict(self.desktop_evaluation_portfolio_daemon_state["latest_history_run"])
+            if isinstance(self.desktop_evaluation_portfolio_daemon_state.get("latest_history_run", {}), dict)
+            else {},
+            "supervisor": self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit),
+        }
+
+    def configure_desktop_evaluation_portfolio_supervisor(
+        self,
+        *,
+        enabled: bool | None = None,
+        interval_s: float | None = None,
+        max_portfolios: int | None = None,
+        max_programs_per_portfolio: int | None = None,
+        max_campaigns_per_program: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        portfolio_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        if enabled is not None:
+            self.desktop_evaluation_portfolio_daemon_state["enabled"] = bool(enabled)
+        if interval_s is not None:
+            self.desktop_evaluation_portfolio_daemon_state["interval_s"] = float(interval_s)
+        if max_portfolios is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_portfolios"] = int(max_portfolios)
+        if max_programs_per_portfolio is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_programs_per_portfolio"] = int(max_programs_per_portfolio)
+        if max_campaigns_per_program is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_campaigns_per_program"] = int(max_campaigns_per_program)
+        if max_sweeps_per_campaign is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_sweeps_per_campaign"] = int(max_sweeps_per_campaign)
+        if max_sessions is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_sessions"] = int(max_sessions)
+        if max_replays_per_session is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_replays_per_session"] = int(max_replays_per_session)
+        if history_limit is not None:
+            self.desktop_evaluation_portfolio_daemon_state["history_limit"] = int(history_limit)
+        if portfolio_status is not None:
+            self.desktop_evaluation_portfolio_daemon_state["portfolio_status"] = str(portfolio_status or "").strip()
+        if pack is not None:
+            self.desktop_evaluation_portfolio_daemon_state["pack"] = str(pack or "").strip()
+        if app_name is not None:
+            self.desktop_evaluation_portfolio_daemon_state["app_name"] = str(app_name or "").strip()
+        self.desktop_evaluation_portfolio_daemon_state["last_config_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_portfolio_daemon_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_evaluation_portfolio_supervisor(
+        self,
+        *,
+        max_portfolios: int | None = None,
+        max_programs_per_portfolio: int | None = None,
+        max_campaigns_per_program: int | None = None,
+        max_sweeps_per_campaign: int | None = None,
+        max_sessions: int | None = None,
+        max_replays_per_session: int | None = None,
+        history_limit: int | None = None,
+        portfolio_status: str | None = None,
+        pack: str | None = None,
+        app_name: str | None = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        effective_max_portfolios = int(max_portfolios or self.desktop_evaluation_portfolio_daemon_state.get("max_portfolios", 2) or 2)
+        effective_max_programs = int(
+            max_programs_per_portfolio or self.desktop_evaluation_portfolio_daemon_state.get("max_programs_per_portfolio", 3) or 3
+        )
+        effective_max_campaigns = int(
+            max_campaigns_per_program or self.desktop_evaluation_portfolio_daemon_state.get("max_campaigns_per_program", 3) or 3
+        )
+        effective_max_sweeps = int(
+            max_sweeps_per_campaign or self.desktop_evaluation_portfolio_daemon_state.get("max_sweeps_per_campaign", 2) or 2
+        )
+        effective_max_sessions = int(max_sessions or self.desktop_evaluation_portfolio_daemon_state.get("max_sessions", 3) or 3)
+        effective_max_replays = int(
+            max_replays_per_session or self.desktop_evaluation_portfolio_daemon_state.get("max_replays_per_session", 2) or 2
+        )
+        effective_history_limit = int(history_limit or self.desktop_evaluation_portfolio_daemon_state.get("history_limit", 8) or 8)
+        effective_status = str(
+            portfolio_status if portfolio_status is not None else self.desktop_evaluation_portfolio_daemon_state.get("portfolio_status", "") or ""
+        ).strip()
+        effective_pack = str(pack if pack is not None else self.desktop_evaluation_portfolio_daemon_state.get("pack", "") or "").strip().lower()
+        effective_app = str(app_name if app_name is not None else self.desktop_evaluation_portfolio_daemon_state.get("app_name", "") or "").strip().lower()
+        portfolio_rows = [
+            dict(item)
+            for item in self.desktop_evaluation_lab_portfolios_items
+            if not effective_status or str(item.get("status", "") or "").strip().lower() == effective_status.lower()
+        ]
+        if effective_pack:
+            portfolio_rows = [
+                item for item in portfolio_rows if str(dict(item.get("filters", {})).get("pack", "") or "").strip().lower() == effective_pack
+            ]
+        if effective_app:
+            portfolio_rows = [
+                item
+                for item in portfolio_rows
+                if effective_app
+                in {
+                    str(dict(item.get("filters", {})).get("app", dict(item.get("filters", {})).get("app_name", "")) or "").strip().lower(),
+                    *[
+                        str(value).strip().lower()
+                        for value in item.get("target_apps", item.get("app_targets", []))
+                        if str(value).strip()
+                    ],
+                }
+            ]
+        ranked = sorted(
+            [self._desktop_evaluation_refresh_portfolio_row(dict(item)) for item in portfolio_rows],
+            key=lambda item: (
+                float(item.get("portfolio_pressure_score", 0.0) or 0.0),
+                int(item.get("attention_program_count", 0) or 0),
+                int(item.get("pending_program_count", 0) or 0),
+                int(item.get("pending_campaign_count", 0) or 0),
+                int(item.get("pending_session_count", 0) or 0),
+                int(item.get("pending_app_target_count", 0) or 0),
+                int(item.get("regression_wave_count", 0) or 0),
+            ),
+            reverse=True,
+        )[:max(1, effective_max_portfolios)]
+        results: list[Dict[str, Any]] = []
+        for portfolio in ranked:
+            cycle = self.desktop_evaluation_run_lab_portfolio_cycle(
+                portfolio_id=str(portfolio.get("portfolio_id", "") or "").strip(),
+                max_programs=effective_max_programs,
+                max_campaigns_per_program=effective_max_campaigns,
+                max_sweeps_per_campaign=effective_max_sweeps,
+                max_sessions=effective_max_sessions,
+                max_replays_per_session=effective_max_replays,
+                history_limit=effective_history_limit,
+            )
+            results.append(cycle)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        self.desktop_evaluation_portfolio_daemon_state["run_count"] = int(self.desktop_evaluation_portfolio_daemon_state.get("run_count", 0) or 0) + 1
+        self.desktop_evaluation_portfolio_daemon_state["manual_trigger_count"] = int(self.desktop_evaluation_portfolio_daemon_state.get("manual_trigger_count", 0) or 0) + 1
+        self.desktop_evaluation_portfolio_daemon_state["last_trigger_source"] = str(source or "manual").strip()
+        self.desktop_evaluation_portfolio_daemon_state["last_trigger_at"] = now_iso
+        self.desktop_evaluation_portfolio_daemon_state["last_tick_at"] = now_iso
+        self.desktop_evaluation_portfolio_daemon_state["last_success_at"] = now_iso
+        self.desktop_evaluation_portfolio_daemon_state["last_result_status"] = "success" if results else "idle"
+        self.desktop_evaluation_portfolio_daemon_state["last_result_message"] = (
+            f"portfolio watchdog executed {len(results)} portfolio(s)" if results else "portfolio watchdog found no executable replay portfolios"
+        )
+        self.desktop_evaluation_portfolio_daemon_state["last_summary"] = {
+            "status": self.desktop_evaluation_portfolio_daemon_state["last_result_status"],
+            "targeted_portfolio_count": len(ranked),
+            "executed_portfolio_count": len(results),
+            "executed_program_count": sum(int(dict(item.get("wave", {})).get("executed_program_count", 0) or 0) for item in results),
+            "executed_campaign_count": sum(int(dict(item.get("wave", {})).get("executed_campaign_count", 0) or 0) for item in results),
+            "executed_sweep_count": sum(int(dict(item.get("wave", {})).get("executed_sweep_count", 0) or 0) for item in results),
+            "stable_portfolio_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("wave", {})).get("stop_reason", "") or "").strip().lower() == "stable"
+            ),
+            "regression_portfolio_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("portfolio", {})).get("latest_wave_status", "") or "").strip().lower() == "regression"
+            ),
+            "pending_program_count": sum(int(dict(item.get("portfolio", {})).get("pending_program_count", 0) or 0) for item in results),
+            "attention_program_count": sum(int(dict(item.get("portfolio", {})).get("attention_program_count", 0) or 0) for item in results),
+            "pending_campaign_count": sum(int(dict(item.get("portfolio", {})).get("pending_campaign_count", 0) or 0) for item in results),
+            "pending_session_count": sum(int(dict(item.get("portfolio", {})).get("pending_session_count", 0) or 0) for item in results),
+            "pending_app_target_count": sum(int(dict(item.get("portfolio", {})).get("pending_app_target_count", 0) or 0) for item in results),
+            "long_horizon_pending_count": sum(int(dict(item.get("portfolio", {})).get("long_horizon_pending_count", 0) or 0) for item in results),
+            "error_count": 0,
+            "latest_portfolio_label": str(dict(results[0].get("portfolio", {})).get("label", "") or "").strip() if results else "",
+            "auto_created_portfolio_count": 0,
+            "wave_stop_reason_counts": {
+                str(dict(item.get("wave", {})).get("stop_reason", "unknown") or "unknown"): 1
+                for item in results
+            },
+        }
+        history_entry = {
+            "recorded_at": now_iso,
+            "source": str(source or "manual").strip().lower() or "manual",
+            "status": self.desktop_evaluation_portfolio_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_portfolio_daemon_state["last_result_message"],
+            "duration_ms": 0.0,
+            "filters": {
+                "portfolio_status": effective_status,
+                "pack": effective_pack,
+                "app_name": effective_app,
+            },
+            **dict(self.desktop_evaluation_portfolio_daemon_state["last_summary"]),
+        }
+        self.desktop_evaluation_portfolio_daemon_history_items.append(history_entry)
+        self.desktop_evaluation_portfolio_daemon_history_items = self.desktop_evaluation_portfolio_daemon_history_items[
+            -max(1, int(self.desktop_evaluation_portfolio_daemon_state.get("history_limit", 8) or 8)):
+        ]
+        self.desktop_evaluation_portfolio_daemon_state["history_count"] = len(self.desktop_evaluation_portfolio_daemon_history_items)
+        self.desktop_evaluation_portfolio_daemon_state["latest_history_run"] = (
+            dict(self.desktop_evaluation_portfolio_daemon_history_items[-1])
+            if self.desktop_evaluation_portfolio_daemon_history_items
+            else {}
+        )
+        self.desktop_evaluation_portfolio_daemon_state["updated_at"] = now_iso
+        return {
+            "status": self.desktop_evaluation_portfolio_daemon_state["last_result_status"],
+            "message": self.desktop_evaluation_portfolio_daemon_state["last_result_message"],
+            "result": {
+                "status": self.desktop_evaluation_portfolio_daemon_state["last_result_status"],
+                "message": self.desktop_evaluation_portfolio_daemon_state["last_result_message"],
+                "targeted_portfolio_count": len(ranked),
+                "executed_portfolio_count": len(results),
+                "results": results,
+            },
+            "supervisor": self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit),
         }
 
     def desktop_evaluation_guidance(self) -> Dict[str, Any]:
@@ -20488,6 +21433,173 @@ def test_desktop_evaluation_program_daemon_routes(api_server: tuple[str, FakeDes
     status, reset = request_json(
         "POST",
         f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/program-daemon/history/reset",
+        payload={"source": "http_test", "history_response_limit": 4},
+    )
+    assert status == 200
+    assert reset["status"] == "success"
+    assert int(reset["removed_count"]) >= 1
+    assert int(reset["supervisor"]["history_count"]) == 0
+
+
+def test_desktop_evaluation_lab_portfolio_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+    assert str(created["portfolio"]["portfolio_id"]).startswith("benchportfolio-test-")
+    assert int(created["created_program_count"]) >= 1
+    assert int(created["created_campaign_count"]) >= 1
+
+    status, portfolios = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios?limit=4",
+    )
+    assert status == 200
+    assert portfolios["status"] == "success"
+    assert portfolios["count"] >= 1
+    assert portfolios["latest_portfolio"]["portfolio_id"] == created["portfolio"]["portfolio_id"]
+    assert int(portfolios["summary"]["program_count"]) >= 1
+
+
+def test_desktop_evaluation_lab_portfolio_cycle_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios",
+        payload={
+            "pack": "unsupported_and_recovery",
+            "app_name": "settings",
+            "history_limit": 6,
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    portfolio_id = str(created["portfolio"]["portfolio_id"])
+
+    status, cycled = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios/run-cycle",
+        payload={
+            "portfolio_id": portfolio_id,
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "stop_on_stable": True,
+        },
+    )
+    assert status == 200
+    assert cycled["status"] == "success"
+    assert cycled["portfolio"]["portfolio_id"] == portfolio_id
+    assert int(cycled["wave"]["executed_program_count"]) >= 1
+    assert int(cycled["portfolio"]["wave_count"]) >= 1
+    assert isinstance(cycled["results"], list)
+
+
+def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+
+    status, daemon_status = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon?history_limit=4",
+    )
+    assert status == 200
+    assert daemon_status["status"] == "success"
+    assert isinstance(daemon_status.get("portfolios"), dict)
+    assert isinstance(daemon_status.get("history"), dict)
+
+    status, configured = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon",
+        payload={
+            "enabled": True,
+            "interval_s": 360,
+            "max_portfolios": 2,
+            "max_programs_per_portfolio": 3,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert configured["status"] == "success"
+    assert configured["enabled"] is True
+    assert int(configured["max_portfolios"]) == 2
+    assert int(configured["max_programs_per_portfolio"]) == 3
+    assert int(configured["max_campaigns_per_program"]) == 2
+    assert str(configured["pack"]) == "long_horizon_and_replay"
+
+    status, triggered = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/trigger",
+        payload={
+            "max_portfolios": 2,
+            "max_programs_per_portfolio": 2,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "pack": "long_horizon_and_replay",
+            "source": "http_test",
+        },
+    )
+    assert status == 200
+    assert triggered["status"] in {"success", "idle"}
+    assert isinstance(triggered.get("result"), dict)
+    assert isinstance(triggered.get("supervisor"), dict)
+    assert int(triggered["supervisor"]["run_count"]) >= 1
+    assert int(triggered["supervisor"]["max_programs_per_portfolio"]) == 3
+    assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/history?limit=4&source=http_test",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert int(history["count"]) >= 1
+    assert str(history["latest_run"]["source"]) == "http_test"
+
+    status, reset = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/history/reset",
         payload={"source": "http_test", "history_response_limit": 4},
     )
     assert status == 200

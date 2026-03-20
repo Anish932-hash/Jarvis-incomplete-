@@ -66,12 +66,17 @@ import {
   type DesktopEvaluationHistoryResponse,
   type DesktopEvaluationLabResponse,
   type DesktopEvaluationCampaignDaemonStatusResponse,
+  type DesktopEvaluationPortfolioDaemonStatusResponse,
   type DesktopEvaluationProgramDaemonStatusResponse,
   type DesktopEvaluationLabCampaignCreateResponse,
   type DesktopEvaluationLabCampaignCycleResponse,
   type DesktopEvaluationLabCampaignRecord,
   type DesktopEvaluationLabCampaignSweepResponse,
   type DesktopEvaluationLabCampaignsResponse,
+  type DesktopEvaluationLabPortfolioCreateResponse,
+  type DesktopEvaluationLabPortfolioCycleResponse,
+  type DesktopEvaluationLabPortfolioRecord,
+  type DesktopEvaluationLabPortfoliosResponse,
   type DesktopEvaluationLabProgramCreateResponse,
   type DesktopEvaluationLabProgramCycleResponse,
   type DesktopEvaluationLabProgramRecord,
@@ -1181,16 +1186,22 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabSessionsResponse | null>(null);
   const [desktopEvaluationLabCampaignsState, setDesktopEvaluationLabCampaignsState] =
     useState<DesktopEvaluationLabCampaignsResponse | null>(null);
+  const [desktopEvaluationLabPortfoliosState, setDesktopEvaluationLabPortfoliosState] =
+    useState<DesktopEvaluationLabPortfoliosResponse | null>(null);
   const [desktopEvaluationLabProgramsState, setDesktopEvaluationLabProgramsState] =
     useState<DesktopEvaluationLabProgramsResponse | null>(null);
   const [desktopEvaluationCampaignDaemonState, setDesktopEvaluationCampaignDaemonState] =
     useState<DesktopEvaluationCampaignDaemonStatusResponse | null>(null);
+  const [desktopEvaluationPortfolioDaemonState, setDesktopEvaluationPortfolioDaemonState] =
+    useState<DesktopEvaluationPortfolioDaemonStatusResponse | null>(null);
   const [desktopEvaluationProgramDaemonState, setDesktopEvaluationProgramDaemonState] =
     useState<DesktopEvaluationProgramDaemonStatusResponse | null>(null);
   const [desktopEvaluationLabSessionCreateState, setDesktopEvaluationLabSessionCreateState] =
     useState<DesktopEvaluationLabSessionCreateResponse | null>(null);
   const [, setDesktopEvaluationLabCampaignCreateState] =
     useState<DesktopEvaluationLabCampaignCreateResponse | null>(null);
+  const [, setDesktopEvaluationLabPortfolioCreateState] =
+    useState<DesktopEvaluationLabPortfolioCreateResponse | null>(null);
   const [, setDesktopEvaluationLabProgramCreateState] =
     useState<DesktopEvaluationLabProgramCreateResponse | null>(null);
   const [desktopEvaluationLabSessionReplayState, setDesktopEvaluationLabSessionReplayState] =
@@ -1203,6 +1214,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabCampaignSweepResponse | null>(null);
   const [, setDesktopEvaluationLabCampaignCycleState] =
     useState<DesktopEvaluationLabCampaignCycleResponse | null>(null);
+  const [, setDesktopEvaluationLabPortfolioCycleState] =
+    useState<DesktopEvaluationLabPortfolioCycleResponse | null>(null);
   const [, setDesktopEvaluationLabProgramCycleState] =
     useState<DesktopEvaluationLabProgramCycleResponse | null>(null);
   const [desktopEvaluationNativeTargetsState, setDesktopEvaluationNativeTargetsState] =
@@ -1214,23 +1227,31 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabBusy, setDesktopEvaluationLabBusy] = useState(false);
   const [desktopEvaluationLabSessionsBusy, setDesktopEvaluationLabSessionsBusy] = useState(false);
   const [desktopEvaluationLabCampaignsBusy, setDesktopEvaluationLabCampaignsBusy] = useState(false);
+  const [desktopEvaluationLabPortfoliosBusy, setDesktopEvaluationLabPortfoliosBusy] = useState(false);
   const [desktopEvaluationLabProgramsBusy, setDesktopEvaluationLabProgramsBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonBusy, setDesktopEvaluationCampaignDaemonBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonHistoryBusy, setDesktopEvaluationCampaignDaemonHistoryBusy] =
+    useState(false);
+  const [desktopEvaluationPortfolioDaemonBusy, setDesktopEvaluationPortfolioDaemonBusy] = useState(false);
+  const [desktopEvaluationPortfolioDaemonHistoryBusy, setDesktopEvaluationPortfolioDaemonHistoryBusy] =
     useState(false);
   const [desktopEvaluationProgramDaemonBusy, setDesktopEvaluationProgramDaemonBusy] = useState(false);
   const [desktopEvaluationProgramDaemonHistoryBusy, setDesktopEvaluationProgramDaemonHistoryBusy] =
     useState(false);
   const [desktopEvaluationLabSessionCreateBusy, setDesktopEvaluationLabSessionCreateBusy] = useState(false);
   const [desktopEvaluationLabCampaignCreateBusy, setDesktopEvaluationLabCampaignCreateBusy] = useState(false);
+  const [desktopEvaluationLabPortfolioCreateBusy, setDesktopEvaluationLabPortfolioCreateBusy] = useState(false);
   const [desktopEvaluationLabProgramCreateBusy, setDesktopEvaluationLabProgramCreateBusy] = useState(false);
   const [desktopEvaluationLabSessionReplayBusy, setDesktopEvaluationLabSessionReplayBusy] = useState(false);
   const [desktopEvaluationLabSessionCycleBusy, setDesktopEvaluationLabSessionCycleBusy] = useState(false);
   const [desktopEvaluationLabSessionAdvanceBusy, setDesktopEvaluationLabSessionAdvanceBusy] = useState(false);
   const [desktopEvaluationLabCampaignSweepBusy, setDesktopEvaluationLabCampaignSweepBusy] = useState(false);
   const [desktopEvaluationLabCampaignCycleBusy, setDesktopEvaluationLabCampaignCycleBusy] = useState(false);
+  const [desktopEvaluationLabPortfolioCycleBusy, setDesktopEvaluationLabPortfolioCycleBusy] = useState(false);
   const [desktopEvaluationLabProgramCycleBusy, setDesktopEvaluationLabProgramCycleBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonTriggerBusy, setDesktopEvaluationCampaignDaemonTriggerBusy] =
+    useState(false);
+  const [desktopEvaluationPortfolioDaemonTriggerBusy, setDesktopEvaluationPortfolioDaemonTriggerBusy] =
     useState(false);
   const [desktopEvaluationProgramDaemonTriggerBusy, setDesktopEvaluationProgramDaemonTriggerBusy] =
     useState(false);
@@ -1971,6 +1992,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabCampaignsState),
     [desktopEvaluationLabCampaignsState]
   );
+  const desktopEvaluationLabPortfolios = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfoliosState),
+    [desktopEvaluationLabPortfoliosState]
+  );
   const desktopEvaluationLabPrograms = useMemo(
     () => asObjectRecord(desktopEvaluationLabProgramsState),
     [desktopEvaluationLabProgramsState]
@@ -1989,6 +2014,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ? historyPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
       : [];
   }, [desktopEvaluationCampaignDaemon]);
+  const desktopEvaluationPortfolioDaemon = useMemo(
+    () => asObjectRecord(desktopEvaluationPortfolioDaemonState),
+    [desktopEvaluationPortfolioDaemonState]
+  );
+  const desktopEvaluationPortfolioDaemonPortfolios = useMemo(
+    () => asObjectRecord(desktopEvaluationPortfolioDaemon.portfolios),
+    [desktopEvaluationPortfolioDaemon]
+  );
+  const desktopEvaluationPortfolioDaemonHistory = useMemo(() => {
+    const historyPayload = asObjectRecord(desktopEvaluationPortfolioDaemon.history);
+    return Array.isArray(historyPayload.items)
+      ? historyPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+      : [];
+  }, [desktopEvaluationPortfolioDaemon]);
   const desktopEvaluationProgramDaemon = useMemo(
     () => asObjectRecord(desktopEvaluationProgramDaemonState),
     [desktopEvaluationProgramDaemonState]
@@ -2011,6 +2050,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabCampaigns.latest_campaign),
     [desktopEvaluationLabCampaigns]
   );
+  const desktopEvaluationLatestLabPortfolio = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfolios.latest_portfolio),
+    [desktopEvaluationLabPortfolios]
+  );
   const desktopEvaluationLatestLabProgram = useMemo(
     () => asObjectRecord(desktopEvaluationLabPrograms.latest_program),
     [desktopEvaluationLabPrograms]
@@ -2032,6 +2075,15 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
           )
         : [],
     [desktopEvaluationLabCampaignsState]
+  );
+  const desktopEvaluationLabPortfolioRows = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfoliosState?.items)
+        ? desktopEvaluationLabPortfoliosState.items.filter(
+            (item): item is DesktopEvaluationLabPortfolioRecord => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfoliosState]
   );
   const desktopEvaluationLabProgramRows = useMemo(
     () =>
@@ -13517,6 +13569,35 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [toast]
   );
 
+  const refreshDesktopEvaluationLabPortfolios = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationLabPortfoliosBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationLabPortfolios({ limit: 6 });
+        setDesktopEvaluationLabPortfoliosState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Replay Portfolios Ready',
+            description: `${Number(payload.count ?? 0)} stored replay portfolio(s) are ready for multi-program portfolio cycles.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Replay Portfolios Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationLabPortfoliosBusy(false);
+      }
+    },
+    [toast]
+  );
+
   const refreshDesktopEvaluationLabPrograms = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationLabProgramsBusy(true);
@@ -13572,6 +13653,37 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         return null;
       } finally {
         setDesktopEvaluationCampaignDaemonBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const refreshDesktopEvaluationPortfolioDaemonStatus = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopEvaluationPortfolioDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationPortfolioDaemonStatus({ history_limit: 6 });
+        setDesktopEvaluationPortfolioDaemonState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Portfolio Daemon Ready',
+            description:
+              `${payload.enabled ? 'enabled' : 'paused'}` +
+              ` | portfolios:${Number(asObjectRecord(asObjectRecord(payload.portfolios).summary).count ?? payload.run_count ?? 0)}`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Portfolio Daemon Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopEvaluationPortfolioDaemonBusy(false);
       }
     },
     [toast]
@@ -13711,6 +13823,58 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     ]
   );
 
+  const configureDesktopEvaluationPortfolioDaemon = useCallback(
+    async (enabled: boolean) => {
+      setDesktopEvaluationPortfolioDaemonBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationConfigurePortfolioDaemon({
+          enabled,
+          interval_s: Number(desktopEvaluationPortfolioDaemon.interval_s ?? 300),
+          max_portfolios: Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 2),
+          max_programs_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
+          max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
+          max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
+          max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
+          max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
+          history_limit: Number(desktopEvaluationPortfolioDaemon.history_limit ?? 8),
+          portfolio_status: String(desktopEvaluationPortfolioDaemon.portfolio_status ?? '').trim() || undefined,
+          pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationPortfolioDaemon.pack ?? '').trim() || undefined,
+          app_name:
+            desktopEvaluationAppFilter.trim() ||
+            String(desktopEvaluationPortfolioDaemon.app_name ?? '').trim() ||
+            undefined,
+          source: 'action_control_panel',
+          history_response_limit: 6,
+        });
+        setDesktopEvaluationPortfolioDaemonState(payload);
+        await refreshDesktopEvaluationLabPortfolios({ quiet: true });
+        toast({
+          title: enabled ? 'Portfolio Daemon Enabled' : 'Portfolio Daemon Paused',
+          description:
+            `${enabled ? 'Background replay portfolio cycles will keep running.' : 'Background replay portfolio cycles are paused.'}` +
+            ` | max portfolios:${Number(payload.max_portfolios ?? 0)}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Portfolio Daemon Update Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationPortfolioDaemonBusy(false);
+      }
+    },
+    [
+      desktopEvaluationAppFilter,
+      desktopEvaluationPackFilter,
+      desktopEvaluationPortfolioDaemon,
+      refreshDesktopEvaluationLabPortfolios,
+      toast,
+    ]
+  );
+
   const createDesktopEvaluationLabSession = useCallback(async () => {
     setDesktopEvaluationLabSessionCreateBusy(true);
     try {
@@ -13840,6 +14004,57 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
     buildDesktopEvaluationQueryInput,
     refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPrograms,
+    refreshDesktopEvaluationLabSessions,
+    toast,
+  ]);
+
+  const createDesktopEvaluationLabPortfolio = useCallback(async () => {
+    setDesktopEvaluationLabPortfolioCreateBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationCreateLabPortfolio({
+        ...buildDesktopEvaluationQueryInput(),
+        history_limit: 8,
+        source: 'action_control_panel',
+        max_programs: 3,
+        max_campaigns_per_program: 3,
+        max_sessions_per_campaign: 3,
+      });
+      setDesktopEvaluationLabPortfolioCreateState(payload);
+      if (payload.lab && isObjectRecord(payload.lab)) {
+        setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+      }
+      if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+        setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+      }
+      if (payload.guidance && isObjectRecord(payload.guidance)) {
+        setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+      }
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
+      await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+      await refreshDesktopEvaluationLabPrograms({ quiet: true });
+      await refreshDesktopEvaluationLabPortfolios({ quiet: true });
+      toast({
+        title: 'Replay Portfolio Stored',
+        description:
+          `${String(asObjectRecord(payload.portfolio).label ?? 'desktop replay portfolio')}` +
+          ` • programs:${Number(asObjectRecord(payload.portfolio).program_count ?? payload.created_program_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Replay Portfolio Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationLabPortfolioCreateBusy(false);
+    }
+  }, [
+    buildDesktopEvaluationQueryInput,
+    refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPortfolios,
     refreshDesktopEvaluationLabPrograms,
     refreshDesktopEvaluationLabSessions,
     toast,
@@ -14172,6 +14387,68 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     ]
   );
 
+  const runDesktopEvaluationLabPortfolioCycle = useCallback(
+    async (portfolioId: string) => {
+      setDesktopEvaluationLabPortfolioCycleBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationRunLabPortfolioCycle({
+          portfolio_id: portfolioId,
+          max_programs: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
+          max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
+          max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
+          max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
+          max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
+          history_limit: 8,
+          stop_on_stable: true,
+        });
+        setDesktopEvaluationLabPortfolioCycleState(payload);
+        if (payload.lab && isObjectRecord(payload.lab)) {
+          setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+        }
+        if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+          setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+        }
+        if (payload.guidance && isObjectRecord(payload.guidance)) {
+          setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+        }
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
+        await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+        await refreshDesktopEvaluationLabPrograms({ quiet: true });
+        await refreshDesktopEvaluationLabPortfolios({ quiet: true });
+        await refreshDesktopEvaluationPortfolioDaemonStatus({ quiet: true });
+        toast({
+          title: 'Replay Portfolio Cycle Ran',
+          description:
+            `${String(asObjectRecord(payload.portfolio).label ?? 'portfolio')}` +
+            ` • programs:${Number(asObjectRecord(payload.wave).executed_program_count ?? 0)}` +
+            ` • campaigns:${Number(asObjectRecord(payload.wave).executed_campaign_count ?? 0)}` +
+            ` • stop:${String(asObjectRecord(payload.wave).stop_reason ?? 'n/a')}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Replay Portfolio Cycle Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationLabPortfolioCycleBusy(false);
+      }
+    },
+    [
+      desktopEvaluationPortfolioDaemon,
+      refreshDesktopEvaluationHistory,
+      refreshDesktopEvaluationLabCampaigns,
+      refreshDesktopEvaluationLabPortfolios,
+      refreshDesktopEvaluationLabPrograms,
+      refreshDesktopEvaluationLabSessions,
+      refreshDesktopEvaluationPortfolioDaemonStatus,
+      toast,
+    ]
+  );
+
   const refreshDesktopEvaluationNativeTargets = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationNativeTargetsBusy(true);
@@ -14324,6 +14601,97 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     toast,
   ]);
 
+  const triggerDesktopEvaluationPortfolioDaemon = useCallback(async () => {
+    setDesktopEvaluationPortfolioDaemonTriggerBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationTriggerPortfolioDaemon({
+        max_portfolios: Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 2),
+        max_programs_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
+        max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
+        max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
+        max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
+        max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
+        history_limit: Number(desktopEvaluationPortfolioDaemon.history_limit ?? 8),
+        portfolio_status: String(desktopEvaluationPortfolioDaemon.portfolio_status ?? '').trim() || undefined,
+        pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationPortfolioDaemon.pack ?? '').trim() || undefined,
+        app_name:
+          desktopEvaluationAppFilter.trim() ||
+          String(desktopEvaluationPortfolioDaemon.app_name ?? '').trim() ||
+          undefined,
+        source: 'action_control_panel',
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationPortfolioDaemonState(
+          payload.supervisor as DesktopEvaluationPortfolioDaemonStatusResponse
+        );
+      }
+      await refreshDesktopEvaluationHistory({ quiet: true });
+      await refreshDesktopEvaluationLabSessions({ quiet: true });
+      await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+      await refreshDesktopEvaluationLabPrograms({ quiet: true });
+      await refreshDesktopEvaluationLabPortfolios({ quiet: true });
+      await refreshDesktopEvaluationPortfolioDaemonStatus({ quiet: true });
+      await refreshDesktopEvaluationNativeTargets({ quiet: true });
+      toast({
+        title: 'Portfolio Daemon Tick Ran',
+        description:
+          `${String(payload.status ?? 'success')}` +
+          ` | executed:${Number(asObjectRecord(payload.result).executed_portfolio_count ?? 0)}`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Portfolio Daemon Tick Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationPortfolioDaemonTriggerBusy(false);
+    }
+  }, [
+    desktopEvaluationAppFilter,
+    desktopEvaluationPackFilter,
+    desktopEvaluationPortfolioDaemon,
+    refreshDesktopEvaluationHistory,
+    refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPortfolios,
+    refreshDesktopEvaluationLabPrograms,
+    refreshDesktopEvaluationLabSessions,
+    refreshDesktopEvaluationNativeTargets,
+    refreshDesktopEvaluationPortfolioDaemonStatus,
+    toast,
+  ]);
+
+  const resetDesktopEvaluationPortfolioDaemonHistory = useCallback(async () => {
+    setDesktopEvaluationPortfolioDaemonHistoryBusy(true);
+    try {
+      const payload = await backendClient.desktopEvaluationResetPortfolioDaemonHistory({
+        history_response_limit: 6,
+      });
+      if (payload.supervisor && isObjectRecord(payload.supervisor)) {
+        setDesktopEvaluationPortfolioDaemonState(
+          payload.supervisor as DesktopEvaluationPortfolioDaemonStatusResponse
+        );
+      }
+      toast({
+        title: 'Portfolio Daemon History Cleared',
+        description: `${Number(payload.removed_count ?? 0)} daemon run record(s) were removed.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Portfolio Daemon History Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopEvaluationPortfolioDaemonHistoryBusy(false);
+    }
+  }, [toast]);
+
   const resetDesktopEvaluationProgramDaemonHistory = useCallback(async () => {
     setDesktopEvaluationProgramDaemonHistoryBusy(true);
     try {
@@ -14363,6 +14731,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       await refreshDesktopEvaluationLab({ quiet: true });
       await refreshDesktopEvaluationLabSessions({ quiet: true });
       await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+      await refreshDesktopEvaluationLabPortfolios({ quiet: true });
       await refreshDesktopEvaluationLabPrograms({ quiet: true });
       await refreshDesktopEvaluationNativeTargets({ quiet: true });
       const summary = asObjectRecord(payload.summary);
@@ -14395,6 +14764,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
     refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPortfolios,
     refreshDesktopEvaluationLabPrograms,
     refreshDesktopEvaluationLabSessions,
     refreshDesktopEvaluationNativeTargets,
@@ -14657,8 +15027,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     void refreshDesktopEvaluationLab({ quiet: true });
     void refreshDesktopEvaluationLabSessions({ quiet: true });
     void refreshDesktopEvaluationLabCampaigns({ quiet: true });
+    void refreshDesktopEvaluationLabPortfolios({ quiet: true });
     void refreshDesktopEvaluationLabPrograms({ quiet: true });
     void refreshDesktopEvaluationCampaignDaemonStatus({ quiet: true });
+    void refreshDesktopEvaluationPortfolioDaemonStatus({ quiet: true });
     void refreshDesktopEvaluationProgramDaemonStatus({ quiet: true });
     void refreshDesktopEvaluationNativeTargets({ quiet: true });
   }, [
@@ -14670,9 +15042,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLab,
     refreshDesktopEvaluationLabCampaigns,
+    refreshDesktopEvaluationLabPortfolios,
     refreshDesktopEvaluationLabPrograms,
     refreshDesktopEvaluationLabSessions,
     refreshDesktopEvaluationNativeTargets,
+    refreshDesktopEvaluationPortfolioDaemonStatus,
     refreshDesktopMissions,
     refreshDesktopRecoveryDaemonStatus,
   ]);
@@ -19397,6 +19771,111 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                     </div>
                                     <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
                                       <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Portfolio Daemon</p>
+                                        {desktopEvaluationPortfolioDaemonState ? (
+                                          <Badge variant={desktopEvaluationPortfolioDaemon.enabled ? 'secondary' : 'outline'}>
+                                            {desktopEvaluationPortfolioDaemon.enabled ? 'enabled' : 'paused'}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="outline">idle</Badge>
+                                        )}
+                                      </div>
+                                      <p className="mt-2">
+                                        interval:{Number(desktopEvaluationPortfolioDaemon.interval_s ?? 0)}
+                                        {' • '}max portfolios:{Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 0)}
+                                        {' • '}max programs:{Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 0)}
+                                        {' • '}max campaigns:{Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 0)}
+                                        {' • '}max sweeps:{Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        filters:
+                                        {' '}status:{String(desktopEvaluationPortfolioDaemon.portfolio_status ?? 'any') || 'any'}
+                                        {' • '}pack:{String(desktopEvaluationPortfolioDaemon.pack ?? 'any') || 'any'}
+                                        {' • '}app:{String(desktopEvaluationPortfolioDaemon.app_name ?? 'any') || 'any'}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        last:{String(desktopEvaluationPortfolioDaemon.last_result_status ?? 'idle')}
+                                        {' • '}executed:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_portfolio_count ?? 0)}
+                                        {' • '}programs:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_program_count ?? 0)}
+                                        {' • '}stable:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).stable_portfolio_count ?? 0)}
+                                        {' • '}auto-created:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).auto_created_portfolio_count ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        portfolios:{Number(desktopEvaluationPortfolioDaemonPortfolios.count ?? 0)}
+                                        {' • '}pending programs:{Number(asObjectRecord(desktopEvaluationPortfolioDaemonPortfolios.summary).pending_programs ?? 0)}
+                                        {' • '}pending campaigns:{Number(asObjectRecord(desktopEvaluationPortfolioDaemonPortfolios.summary).pending_campaigns ?? 0)}
+                                        {' • '}pending apps:{Number(asObjectRecord(desktopEvaluationPortfolioDaemonPortfolios.summary).pending_app_targets ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        history:{Number(desktopEvaluationPortfolioDaemon.history_count ?? 0)}
+                                        {' • '}latest source:
+                                        {String(asObjectRecord(desktopEvaluationPortfolioDaemon.latest_history_run).source ?? 'n/a')}
+                                        {' • '}latest status:
+                                        {String(asObjectRecord(desktopEvaluationPortfolioDaemon.latest_history_run).status ?? 'n/a')}
+                                      </p>
+                                      {desktopEvaluationPortfolioDaemonHistory.length ? (
+                                        <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2 text-[10px] text-muted-foreground">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/75">
+                                            Recent Daemon Runs
+                                          </p>
+                                          <div className="mt-1 space-y-1">
+                                            {desktopEvaluationPortfolioDaemonHistory.slice(0, 3).map((item, index) => (
+                                              <p key={`${String(item.recorded_at ?? index)}-${String(item.source ?? index)}`}>
+                                                {String(item.status ?? 'unknown')}
+                                                {' • '}source:{String(item.source ?? 'n/a')}
+                                                {' • '}executed:{Number(item.executed_portfolio_count ?? 0)}
+                                                {' • '}programs:{Number(item.executed_program_count ?? 0)}
+                                                {' • '}campaigns:{Number(item.executed_campaign_count ?? 0)}
+                                              </p>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void refreshDesktopEvaluationPortfolioDaemonStatus()}
+                                          disabled={desktopEvaluationPortfolioDaemonBusy}
+                                        >
+                                          {desktopEvaluationPortfolioDaemonBusy ? 'Refreshing' : 'Refresh'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() =>
+                                            void configureDesktopEvaluationPortfolioDaemon(
+                                              !Boolean(desktopEvaluationPortfolioDaemon.enabled)
+                                            )
+                                          }
+                                          disabled={desktopEvaluationPortfolioDaemonBusy}
+                                        >
+                                          {desktopEvaluationPortfolioDaemon.enabled ? 'Pause' : 'Enable'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void triggerDesktopEvaluationPortfolioDaemon()}
+                                          disabled={desktopEvaluationPortfolioDaemonTriggerBusy}
+                                        >
+                                          {desktopEvaluationPortfolioDaemonTriggerBusy ? 'Triggering' : 'Trigger'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void resetDesktopEvaluationPortfolioDaemonHistory()}
+                                          disabled={desktopEvaluationPortfolioDaemonHistoryBusy}
+                                        >
+                                          {desktopEvaluationPortfolioDaemonHistoryBusy ? 'Clearing' : 'Clear History'}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
                                         <p className="font-semibold uppercase tracking-wider text-primary/80">Program Daemon</p>
                                         {desktopEvaluationProgramDaemonState ? (
                                           <Badge variant={desktopEvaluationProgramDaemon.enabled ? 'secondary' : 'outline'}>
@@ -19643,6 +20122,129 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       ) : (
                                         <p className="mt-2">
                                           Save a replay campaign to group installed-app lab sessions into a reusable long-horizon sweep that can be rerun as one regression asset.
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Replay Portfolios</p>
+                                        {desktopEvaluationLabPortfoliosState ? (
+                                          <Badge variant="outline">
+                                            {String(desktopEvaluationLatestLabPortfolio.status ?? 'ready')}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="secondary">idle</Badge>
+                                        )}
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void refreshDesktopEvaluationLabPortfolios()}
+                                          disabled={desktopEvaluationLabPortfoliosBusy}
+                                        >
+                                          {desktopEvaluationLabPortfoliosBusy ? 'Refreshing' : 'Refresh'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() => void createDesktopEvaluationLabPortfolio()}
+                                          disabled={desktopEvaluationLabPortfolioCreateBusy}
+                                        >
+                                          {desktopEvaluationLabPortfolioCreateBusy ? 'Saving' : 'Save Portfolio'}
+                                        </Button>
+                                      </div>
+                                      {desktopEvaluationLabPortfolioRows.length > 0 ? (
+                                        <div className="mt-2 space-y-2">
+                                          <p>
+                                            portfolios:{desktopEvaluationLabPortfolioRows.length}
+                                            {' • '}programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).program_count ?? 0)}
+                                            {' • '}pending programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).pending_programs ?? 0)}
+                                            {' • '}waves:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).wave_count ?? 0)}
+                                          </p>
+                                          <div className="rounded border border-primary/10 bg-black/10 p-2">
+                                            <p className="font-semibold uppercase tracking-wider text-primary/70">Latest Portfolio</p>
+                                            <p className="mt-1">
+                                              {String(desktopEvaluationLatestLabPortfolio.label ?? 'desktop replay portfolio')}
+                                              {' • '}programs:{Number(desktopEvaluationLatestLabPortfolio.program_count ?? 0)}
+                                              {' • '}apps:{Number(desktopEvaluationLatestLabPortfolio.target_app_count ?? 0)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              trend:{String(
+                                                asObjectRecord(desktopEvaluationLatestLabPortfolio.trend_summary).direction ??
+                                                  desktopEvaluationLatestLabPortfolio.history_direction ??
+                                                  'stable'
+                                              )}
+                                              {' • '}stop:{String(desktopEvaluationLatestLabPortfolio.latest_wave_stop_reason ?? 'n/a')}
+                                              {' • '}pending programs:{Number(desktopEvaluationLatestLabPortfolio.pending_program_count ?? 0)}
+                                              {' • '}pending apps:{Number(desktopEvaluationLatestLabPortfolio.pending_app_target_count ?? 0)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              pressure:{Number(desktopEvaluationLatestLabPortfolio.portfolio_pressure_score ?? 0).toFixed(2)}
+                                              {' • '}priority:{String(desktopEvaluationLatestLabPortfolio.portfolio_priority ?? 'steady')}
+                                              {' • '}stable streak:{Number(desktopEvaluationLatestLabPortfolio.stable_wave_streak ?? 0)}
+                                            </p>
+                                          </div>
+                                          <ScrollArea className="h-[132px] rounded border border-primary/10 bg-black/10 p-2">
+                                            <div className="space-y-2">
+                                              {desktopEvaluationLabPortfolioRows.slice(0, 3).map((portfolio, index) => (
+                                                <div
+                                                  key={`desktop-eval-portfolio-${String(portfolio.portfolio_id ?? index)}`}
+                                                  className="rounded border border-primary/10 bg-background/30 p-2"
+                                                >
+                                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <p className="text-[11px] text-primary/90">
+                                                      {String(portfolio.label ?? portfolio.portfolio_id ?? 'portfolio')}
+                                                    </p>
+                                                    <Button
+                                                      type="button"
+                                                      variant="outline"
+                                                      className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                      onClick={() =>
+                                                        void runDesktopEvaluationLabPortfolioCycle(
+                                                          String(portfolio.portfolio_id ?? '')
+                                                        )
+                                                      }
+                                                      disabled={
+                                                        desktopEvaluationLabPortfolioCycleBusy ||
+                                                        !String(portfolio.portfolio_id ?? '').trim()
+                                                      }
+                                                    >
+                                                      {desktopEvaluationLabPortfolioCycleBusy ? 'Cycling' : 'Run Cycle'}
+                                                    </Button>
+                                                  </div>
+                                                  <p className="mt-1">
+                                                    programs:{Number(portfolio.program_count ?? 0)}
+                                                    {' • '}pending:{Number(portfolio.pending_program_count ?? 0)}
+                                                    {' • '}campaigns:{Number(portfolio.pending_campaign_count ?? 0)}
+                                                    {' • '}waves:{Number(portfolio.wave_count ?? 0)}
+                                                  </p>
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                                    apps:
+                                                    {Array.isArray(portfolio.target_apps) && portfolio.target_apps.length > 0
+                                                      ? ` ${portfolio.target_apps.slice(0, 5).join(' • ')}`
+                                                      : ' n/a'}
+                                                  </p>
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                                    latest wave:{String(portfolio.latest_wave_status ?? 'idle')}
+                                                    {' • '}pending sessions:{Number(portfolio.pending_session_count ?? 0)}
+                                                    {' • '}pending apps:{Number(portfolio.pending_app_target_count ?? 0)}
+                                                  </p>
+                                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                                    trend:{String(asObjectRecord(portfolio.trend_summary).direction ?? portfolio.history_direction ?? 'stable')}
+                                                    {' • '}pressure:{Number(portfolio.portfolio_pressure_score ?? 0).toFixed(2)}
+                                                    {' • '}priority:{String(portfolio.portfolio_priority ?? 'steady')}
+                                                  </p>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </ScrollArea>
+                                        </div>
+                                      ) : (
+                                        <p className="mt-2">
+                                          Save a replay portfolio to bundle multiple replay programs into one broader regression asset that can run as a bounded portfolio cycle.
                                         </p>
                                       )}
                                     </div>

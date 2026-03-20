@@ -358,3 +358,75 @@ def test_benchmark_lab_memory_records_programs_and_program_cycles(tmp_path) -> N
     assert history["count"] == 1
     assert history["latest_program"]["program_id"] == program["program_id"]
     assert history["summary"]["campaign_count"] == 2
+
+
+def test_benchmark_lab_memory_records_portfolios_and_wave_cycles(tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    first_program = memory.record_program(
+        filters={"pack": "long_horizon_and_replay", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.8}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        campaign_ids=[],
+        app_targets=["settings"],
+        campaign_rows=[],
+        source="unit_test",
+        label="settings replay program",
+    )["program"]
+    second_program = memory.record_program(
+        filters={"pack": "long_horizon_and_replay", "app": "vscode", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.76}},
+        native_targets_payload={"target_apps": [{"app_name": "vscode"}]},
+        campaign_ids=[],
+        app_targets=["vscode"],
+        campaign_rows=[],
+        source="unit_test",
+        label="vscode replay program",
+    )["program"]
+
+    created = memory.record_portfolio(
+        filters={"pack": "long_horizon_and_replay", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.79}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        guidance_payload={"focus_summary": ["desktop_workflow"]},
+        source="unit_test",
+        label="desktop replay portfolio",
+        program_ids=[str(first_program["program_id"]), str(second_program["program_id"])],
+        app_targets=["settings", "vscode"],
+        program_rows=[dict(first_program), dict(second_program)],
+    )
+
+    assert created["status"] == "success"
+    portfolio = created["portfolio"]
+    assert portfolio["label"] == "desktop replay portfolio"
+    assert portfolio["program_count"] == 2
+    assert portfolio["target_app_count"] == 2
+
+    updated = memory.record_portfolio_wave(
+        portfolio_id=str(portfolio["portfolio_id"]),
+        wave_payload={
+            "status": "success",
+            "stop_reason": "stable",
+            "executed_program_count": 2,
+            "executed_campaign_count": 3,
+            "executed_sweep_count": 4,
+            "stable": True,
+            "trend_direction": "improving",
+            "weighted_score": 0.88,
+            "weighted_pass_rate": 0.9,
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.88, "weighted_pass_rate": 0.9}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        guidance_payload={"focus_summary": ["desktop_workflow", "native_focus"]},
+        program_rows=[dict(first_program), dict(second_program)],
+    )
+
+    assert updated["status"] == "success"
+    assert updated["portfolio"]["wave_count"] == 1
+    assert updated["portfolio"]["latest_wave_stop_reason"] == "stable"
+    assert updated["wave"]["executed_program_count"] == 2
+
+    history = memory.portfolio_history(limit=5)
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_portfolio"]["portfolio_id"] == portfolio["portfolio_id"]
+    assert history["summary"]["program_count"] == 2

@@ -1474,3 +1474,203 @@ def test_evaluation_runner_creates_and_cycles_lab_program(monkeypatch, tmp_path)
     assert cycled["program"]["cycle_count"] == 1
     assert cycled["program"]["latest_cycle_stop_reason"] in {"stable", "max_campaigns_reached"}
     assert cycled["cycle"]["executed_campaign_count"] == 2
+
+
+def test_evaluation_runner_creates_and_cycles_lab_portfolio(monkeypatch, tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    runner = EvaluationRunner(history_limit=4, lab_memory=memory)
+
+    def _lab(**kwargs):  # noqa: ANN001
+        filters = {key: value for key, value in kwargs.items() if value not in {"", None}}
+        return {
+            "status": "success",
+            "filters": filters,
+            "latest_summary": {"weighted_score": 0.8, "weighted_pass_rate": 0.82},
+            "latest_regression": {"status": "stable"},
+            "catalog_summary": {"scenario_count": 4},
+            "history_trend": {"direction": "warming", "run_count": 4},
+            "replay_candidates": [
+                {
+                    "scenario": "settings_long_horizon_replay",
+                    "apps": ["settings"],
+                    "horizon_steps": 6,
+                    "replay_status": "pending",
+                    "replay_query": {"scenario_name": "settings_long_horizon_replay", "limit": 1},
+                }
+            ],
+        }
+
+    def _native_targets(**kwargs):  # noqa: ANN001
+        app_name = str(kwargs.get("app", "") or kwargs.get("app_name", "") or "").strip()
+        if app_name:
+            target_apps = [{"app_name": app_name, "priority": 1.0}]
+        else:
+            target_apps = [{"app_name": "settings", "priority": 1.0}, {"app_name": "vscode", "priority": 0.9}]
+        return {
+            "status": "success",
+            "focus_summary": ["long_horizon_and_replay", "desktop_workflow"],
+            "target_apps": target_apps,
+            "strongest_tactics": {"descendant_focus": 0.86, "native_focus": 0.74},
+            "coverage_gap_apps": ["outlook"],
+        }
+
+    monkeypatch.setattr(runner, "lab", _lab)
+    monkeypatch.setattr(runner, "native_control_targets", _native_targets)
+    monkeypatch.setattr(
+        runner,
+        "control_guidance",
+        lambda: {"status": "success", "focus_summary": ["desktop_workflow"], "control_biases": {"native_focus": 0.72}},
+    )
+
+    created = runner.create_lab_portfolio(
+        pack="long_horizon_and_replay",
+        source="unit_test",
+        label="desktop replay portfolio",
+        max_programs=2,
+        max_campaigns_per_program=2,
+        max_sessions_per_campaign=1,
+    )
+
+    assert created["status"] == "success"
+    assert created["created_program_count"] == 2
+    portfolio = created["portfolio"]
+    assert portfolio["program_count"] == 2
+    assert portfolio["target_app_count"] == 2
+
+    def _cycle_program(*, program_id: str, **kwargs):  # noqa: ANN001
+        del kwargs
+        program = memory.get_program(program_id)["program"]
+        return {
+            "status": "success",
+            "program": {
+                **dict(program),
+                "status": "complete",
+                "pending_campaign_count": 0,
+                "attention_campaign_count": 0,
+                "pending_session_count": 0,
+                "pending_app_target_count": 0,
+                "latest_cycle_status": "stable",
+                "trend_summary": {"direction": "improving"},
+            },
+            "cycle": {"executed_campaign_count": 2, "executed_sweep_count": 3, "stop_reason": "stable", "stable": True},
+        }
+
+    monkeypatch.setattr(runner, "run_lab_program_cycle", _cycle_program)
+
+    cycled = runner.run_lab_portfolio_cycle(
+        portfolio_id=str(portfolio["portfolio_id"]),
+        max_programs=2,
+        max_campaigns_per_program=2,
+        max_sweeps_per_campaign=2,
+        max_sessions=1,
+        max_replays_per_session=1,
+        history_limit=4,
+    )
+
+    assert cycled["status"] == "success"
+    assert cycled["created_program_count"] == 0
+    assert len(cycled["results"]) == 2
+    assert cycled["portfolio"]["wave_count"] == 1
+    assert cycled["portfolio"]["latest_wave_stop_reason"] in {"stable", "max_programs_reached"}
+    assert cycled["wave"]["executed_program_count"] == 2
+
+
+def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    portfolio_rows: list[dict] = []
+    create_calls: list[dict] = []
+    cycle_calls: list[str] = []
+
+    def _lab_portfolios(**kwargs):  # noqa: ANN001
+        normalized_status = str(kwargs.get("status", "") or "").strip().lower()
+        items = [dict(item) for item in portfolio_rows]
+        if normalized_status:
+            items = [item for item in items if str(item.get("status", "") or "").strip().lower() == normalized_status]
+        return {"status": "success", "count": len(items), "items": items}
+
+    def _create_lab_portfolio(**kwargs):  # noqa: ANN001
+        create_calls.append(dict(kwargs))
+        target_app = str(kwargs.get("app", "") or "").strip().lower() or "settings"
+        pack = str(kwargs.get("pack", "") or "").strip() or "long_horizon_and_replay"
+        portfolio = {
+            "portfolio_id": f"portfolio-{target_app}",
+            "label": f"{target_app} replay portfolio",
+            "status": "ready",
+            "filters": {"pack": pack, "app": target_app},
+            "target_apps": [target_app],
+            "pending_program_count": 1,
+            "attention_program_count": 0,
+            "pending_campaign_count": 1,
+            "pending_session_count": 2,
+            "pending_app_target_count": 1,
+            "long_horizon_pending_count": 2,
+            "portfolio_pressure_score": 1.4,
+            "wave_count": 0,
+        }
+        portfolio_rows.append(portfolio)
+        return {"status": "success", "portfolio": portfolio, "created_program_count": 1, "created_campaign_count": 1, "created_session_count": 1}
+
+    def _run_lab_portfolio_cycle(**kwargs):  # noqa: ANN001
+        portfolio_id = str(kwargs.get("portfolio_id", "") or "").strip()
+        cycle_calls.append(portfolio_id)
+        updated = next(dict(item) for item in portfolio_rows if str(item.get("portfolio_id", "") or "").strip() == portfolio_id)
+        updated["pending_program_count"] = 0
+        updated["pending_campaign_count"] = 0
+        updated["pending_session_count"] = 0
+        updated["pending_app_target_count"] = 0
+        updated["long_horizon_pending_count"] = 1
+        updated["latest_wave_status"] = "stable"
+        for index, item in enumerate(portfolio_rows):
+            if str(item.get("portfolio_id", "") or "").strip() == portfolio_id:
+                portfolio_rows[index] = dict(updated)
+                break
+        return {
+            "status": "success",
+            "portfolio": updated,
+            "wave": {"executed_program_count": 1, "executed_campaign_count": 1, "executed_sweep_count": 1, "stop_reason": "stable"},
+        }
+
+    monkeypatch.setattr(runner, "lab_portfolios", _lab_portfolios)
+    monkeypatch.setattr(runner, "create_lab_portfolio", _create_lab_portfolio)
+    monkeypatch.setattr(runner, "run_lab_portfolio_cycle", _run_lab_portfolio_cycle)
+    monkeypatch.setattr(
+        runner,
+        "native_control_targets",
+        lambda **_: {
+            "status": "success",
+            "target_apps": [
+                {
+                    "app_name": "settings",
+                    "packs": ["long_horizon_and_replay"],
+                    "campaign_pressure": 1.4,
+                    "program_pressure": 1.1,
+                    "portfolio_pressure": 0.9,
+                    "max_horizon_steps": 5,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(runner, "control_guidance", lambda: {"status": "success", "focus_summary": ["portfolio_auto_create"]})
+
+    payload = runner.run_lab_portfolio_watchdog(
+        max_portfolios=1,
+        max_programs_per_portfolio=2,
+        max_campaigns_per_program=2,
+        max_sweeps_per_campaign=2,
+        max_sessions=2,
+        max_replays_per_session=2,
+        history_limit=6,
+        pack="long_horizon_and_replay",
+        trigger_source="daemon",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["auto_created_portfolio_count"] == 1
+    assert payload["executed_portfolio_count"] == 1
+    assert payload["executed_program_count"] == 1
+    assert payload["executed_campaign_count"] == 1
+    assert payload["executed_sweep_count"] == 1
+    assert payload["stable_portfolio_count"] == 1
+    assert payload["auto_created_app_names"] == ["settings"]
+    assert create_calls and create_calls[0]["app"] == "settings"
+    assert cycle_calls == ["portfolio-settings"]
