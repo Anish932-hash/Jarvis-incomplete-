@@ -317,8 +317,13 @@ def _focus_related_window_impl(payload: Dict[str, Any], *, force_chain: bool = F
         title_contains=str(payload.get("title", "")).strip(),
         hint_query=str(payload.get("hint_query", "")).strip(),
         descendant_hint_query=str(payload.get("descendant_hint_query", "")).strip(),
+        descendant_title_sequence=payload.get("descendant_title_sequence", []),
         campaign_hint_query=str(payload.get("campaign_hint_query", "")).strip(),
         campaign_preferred_title=str(payload.get("campaign_preferred_title", "")).strip(),
+        campaign_descendant_title_sequence=(
+            payload.get("campaign_descendant_title_sequence", [])
+            or payload.get("program_descendant_title_sequence", [])
+        ),
         preferred_title=preferred_title,
         hwnd=hwnd,
         pid=pid,

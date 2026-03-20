@@ -754,6 +754,8 @@ def test_evaluation_runner_creates_lab_campaigns_and_sweeps(monkeypatch, tmp_pat
     assert float(settings_like_row["campaign_pressure"]) > 0.0
     assert str(settings_like_row["campaign_hint_query"]).strip()
     assert str(settings_like_row["campaign_preferred_window_title"]).strip()
+    assert settings_like_row["descendant_title_sequence"]
+    assert settings_like_row["campaign_descendant_title_sequence"]
 
 
 def test_evaluation_runner_campaign_cycle_runs_multiple_sweeps_until_stable(monkeypatch) -> None:
@@ -902,6 +904,7 @@ def test_evaluation_runner_native_targets_fallback_to_latest_rows(monkeypatch) -
     vscode_row = next(item for item in payload["target_apps"] if str(item.get("app_name", "")) == "vscode")
     assert str(vscode_row["hint_query"]).strip()
     assert vscode_row["descendant_title_hints"]
+    assert vscode_row["descendant_title_sequence"]
     assert str(vscode_row["descendant_hint_query"]).strip()
     assert str(vscode_row["preferred_window_title"]).strip()
     assert float(vscode_row["replay_pressure"]) > 0.0

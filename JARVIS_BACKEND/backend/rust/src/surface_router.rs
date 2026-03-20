@@ -100,11 +100,19 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_campaign_descendant_hint_title_match_count: u32,
     #[serde(default)]
+    pub native_descendant_sequence_match_count: u32,
+    #[serde(default)]
+    pub native_campaign_descendant_sequence_match_count: u32,
+    #[serde(default)]
     pub native_descendant_chain_titles: Vec<String>,
     #[serde(default)]
     pub preferred_descendant_title: String,
     #[serde(default)]
     pub preferred_descendant_hwnd: u64,
+    #[serde(default)]
+    pub native_expected_descendant_sequence_title: String,
+    #[serde(default)]
+    pub native_expected_campaign_descendant_sequence_title: String,
     #[serde(default)]
     pub native_child_dialog_like_visible: bool,
     #[serde(default)]
@@ -158,6 +166,8 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub benchmark_target_descendant_title_hints: Vec<String>,
     #[serde(default)]
+    pub benchmark_target_descendant_title_sequence: Vec<String>,
+    #[serde(default)]
     pub benchmark_target_descendant_hint_query: String,
     #[serde(default)]
     pub benchmark_target_preferred_window_title: String,
@@ -197,6 +207,8 @@ pub struct SurfaceExplorationRouterInput {
     pub benchmark_target_campaign_hint_query: String,
     #[serde(default)]
     pub benchmark_target_campaign_descendant_title_hints: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_campaign_descendant_title_sequence: Vec<String>,
     #[serde(default)]
     pub benchmark_target_campaign_descendant_hint_query: String,
     #[serde(default)]
@@ -572,6 +584,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let native_descendant_hint_title_match_count = input.native_descendant_hint_title_match_count;
     let native_campaign_descendant_hint_title_match_count =
         input.native_campaign_descendant_hint_title_match_count;
+    let native_descendant_sequence_match_count = input.native_descendant_sequence_match_count;
+    let native_campaign_descendant_sequence_match_count =
+        input.native_campaign_descendant_sequence_match_count;
     let native_descendant_chain_titles = input
         .native_descendant_chain_titles
         .iter()
@@ -585,6 +600,14 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let preferred_descendant_title = normalize_text(&input.preferred_descendant_title);
     let preferred_descendant_hwnd = input.preferred_descendant_hwnd;
     let preferred_descendant_tokens = tokenize(&preferred_descendant_title);
+    let native_expected_descendant_sequence_title =
+        normalize_text(&input.native_expected_descendant_sequence_title);
+    let native_expected_descendant_sequence_tokens =
+        tokenize(&native_expected_descendant_sequence_title);
+    let native_expected_campaign_descendant_sequence_title =
+        normalize_text(&input.native_expected_campaign_descendant_sequence_title);
+    let native_expected_campaign_descendant_sequence_tokens =
+        tokenize(&native_expected_campaign_descendant_sequence_title);
     let native_child_dialog_visible = input.native_child_dialog_like_visible
         || topology
             .get("dialog_like_count")
@@ -654,6 +677,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         .iter()
         .flat_map(|value| tokenize(value))
         .collect::<Vec<_>>();
+    let benchmark_target_descendant_sequence_tokens = input
+        .benchmark_target_descendant_title_sequence
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
     let benchmark_target_descendant_hint_query =
         normalize_text(&input.benchmark_target_descendant_hint_query);
     let benchmark_target_descendant_hint_query_tokens =
@@ -691,6 +719,11 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         tokenize(&benchmark_target_campaign_hint_query);
     let benchmark_target_campaign_descendant_title_hint_tokens = input
         .benchmark_target_campaign_descendant_title_hints
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_campaign_descendant_sequence_tokens = input
+        .benchmark_target_campaign_descendant_title_sequence
         .iter()
         .flat_map(|value| tokenize(value))
         .collect::<Vec<_>>();
@@ -792,6 +825,7 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         let target_hint_overlap = token_overlap(&benchmark_target_query_hint_tokens, &label_tokens);
         let target_descendant_hint_overlap =
             token_overlap(&benchmark_target_descendant_title_hint_tokens, &label_tokens)
+                + token_overlap(&benchmark_target_descendant_sequence_tokens, &label_tokens)
                 + token_overlap(&benchmark_target_descendant_hint_query_tokens, &label_tokens);
         let target_hint_query_overlap =
             token_overlap(&benchmark_target_hint_query_tokens, &label_tokens);
@@ -802,6 +836,9 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         let campaign_descendant_hint_overlap =
             token_overlap(
                 &benchmark_target_campaign_descendant_title_hint_tokens,
+                &label_tokens,
+            ) + token_overlap(
+                &benchmark_target_campaign_descendant_sequence_tokens,
                 &label_tokens,
             ) + token_overlap(
                 &benchmark_target_campaign_descendant_hint_query_tokens,
@@ -863,6 +900,12 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         }
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
+        let expected_descendant_sequence_overlap =
+            token_overlap(&native_expected_descendant_sequence_tokens, &label_tokens);
+        let expected_campaign_descendant_sequence_overlap = token_overlap(
+            &native_expected_campaign_descendant_sequence_tokens,
+            &label_tokens,
+        );
         let preferred_descendant_focus = kind == "branch_action"
             && focus_like_action
             && ((!preferred_descendant_title.is_empty() && preferred_descendant_overlap > 0)
@@ -905,6 +948,36 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 reasons.push(format!(
                     "native_campaign_descendant_hint_title_matches:{}",
                     native_campaign_descendant_hint_title_match_count
+                ));
+            }
+            if native_descendant_sequence_match_count > 0 {
+                rust_score += (native_descendant_sequence_match_count as f64 * 0.02).min(0.06);
+                reasons.push(format!(
+                    "native_descendant_sequence_matches:{}",
+                    native_descendant_sequence_match_count
+                ));
+            }
+            if native_campaign_descendant_sequence_match_count > 0 {
+                rust_score +=
+                    (native_campaign_descendant_sequence_match_count as f64 * 0.02).min(0.05);
+                reasons.push(format!(
+                    "native_campaign_descendant_sequence_matches:{}",
+                    native_campaign_descendant_sequence_match_count
+                ));
+            }
+            if expected_descendant_sequence_overlap > 0 {
+                rust_score += (expected_descendant_sequence_overlap as f64 * 0.04).min(0.1);
+                reasons.push(format!(
+                    "expected_descendant_sequence_overlap:{}",
+                    expected_descendant_sequence_overlap
+                ));
+            }
+            if expected_campaign_descendant_sequence_overlap > 0 {
+                rust_score +=
+                    (expected_campaign_descendant_sequence_overlap as f64 * 0.035).min(0.08);
+                reasons.push(format!(
+                    "expected_campaign_descendant_sequence_overlap:{}",
+                    expected_campaign_descendant_sequence_overlap
                 ));
             }
             if requested_descendant_chain && native_descendant_chain_depth > 1 {
@@ -1737,7 +1810,14 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         "native_descendant_hint_title_match_count": native_descendant_hint_title_match_count,
         "native_campaign_descendant_hint_title_match_count":
             native_campaign_descendant_hint_title_match_count,
+        "native_descendant_sequence_match_count": native_descendant_sequence_match_count,
+        "native_campaign_descendant_sequence_match_count":
+            native_campaign_descendant_sequence_match_count,
         "native_descendant_chain_titles": native_descendant_chain_titles,
+        "native_expected_descendant_sequence_title":
+            native_expected_descendant_sequence_title,
+        "native_expected_campaign_descendant_sequence_title":
+            native_expected_campaign_descendant_sequence_title,
         "native_modal_chain_signature": native_modal_chain_signature,
         "native_child_chain_signature": native_child_chain_signature,
         "native_branch_family_signature": native_branch_family_signature,

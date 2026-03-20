@@ -3490,6 +3490,7 @@ class DesktopActionRouter:
                 "benchmark_target_app_match_score": 0.0,
                 "benchmark_target_query_hints": [],
                 "benchmark_target_descendant_title_hints": [],
+                "benchmark_target_descendant_title_sequence": [],
                 "benchmark_target_descendant_hint_query": "",
                 "benchmark_target_preferred_window_title": "",
                 "benchmark_target_hint_query": "",
@@ -3510,10 +3511,12 @@ class DesktopActionRouter:
                 "benchmark_target_campaign_pressure": 0.0,
                 "benchmark_target_campaign_hint_query": "",
                 "benchmark_target_campaign_descendant_title_hints": [],
+                "benchmark_target_campaign_descendant_title_sequence": [],
                 "benchmark_target_campaign_descendant_hint_query": "",
                 "benchmark_target_campaign_preferred_window_title": "",
                 "benchmark_target_campaign_latest_sweep_status": "",
                 "benchmark_target_campaign_latest_sweep_regression_status": "",
+                "benchmark_target_program_descendant_title_sequence": [],
                 "benchmark_target_session_cycle_count": 0,
                 "benchmark_target_regression_cycle_count": 0,
                 "benchmark_target_long_horizon_pending_count": 0,
@@ -3679,6 +3682,13 @@ class DesktopActionRouter:
                     if str(item).strip()
                 ]
             )[:8] if isinstance(best_row.get("descendant_title_hints", []), list) else [],
+            "benchmark_target_descendant_title_sequence": self._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in best_row.get("descendant_title_sequence", [])
+                    if str(item).strip()
+                ]
+            )[:8] if isinstance(best_row.get("descendant_title_sequence", []), list) else [],
             "benchmark_target_descendant_hint_query": str(best_row.get("descendant_hint_query", "") or "").strip(),
             "benchmark_target_preferred_window_title": str(best_row.get("preferred_window_title", "") or "").strip(),
             "benchmark_target_hint_query": str(best_row.get("hint_query", "") or "").strip(),
@@ -3705,10 +3715,24 @@ class DesktopActionRouter:
                     if str(item).strip()
                 ]
             )[:8] if isinstance(best_row.get("campaign_descendant_title_hints", []), list) else [],
+            "benchmark_target_campaign_descendant_title_sequence": self._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in best_row.get("campaign_descendant_title_sequence", [])
+                    if str(item).strip()
+                ]
+            )[:8] if isinstance(best_row.get("campaign_descendant_title_sequence", []), list) else [],
             "benchmark_target_campaign_descendant_hint_query": str(best_row.get("campaign_descendant_hint_query", "") or "").strip(),
             "benchmark_target_campaign_preferred_window_title": str(best_row.get("campaign_preferred_window_title", "") or "").strip(),
             "benchmark_target_campaign_latest_sweep_status": str(best_row.get("campaign_latest_sweep_status", "") or "").strip(),
             "benchmark_target_campaign_latest_sweep_regression_status": str(best_row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
+            "benchmark_target_program_descendant_title_sequence": self._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in best_row.get("program_descendant_title_sequence", [])
+                    if str(item).strip()
+                ]
+            )[:8] if isinstance(best_row.get("program_descendant_title_sequence", []), list) else [],
             "benchmark_target_session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "benchmark_target_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "benchmark_target_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -9333,6 +9357,18 @@ class DesktopActionRouter:
             "native_campaign_descendant_hint_title_match_count": int(
                 window_reacquisition.get("campaign_descendant_hint_title_match_count", 0) or 0
             ),
+            "native_descendant_sequence_match_count": int(
+                window_reacquisition.get("descendant_sequence_match_count", 0) or 0
+            ),
+            "native_campaign_descendant_sequence_match_count": int(
+                window_reacquisition.get("campaign_descendant_sequence_match_count", 0) or 0
+            ),
+            "native_expected_descendant_sequence_title": str(
+                window_reacquisition.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            "native_expected_campaign_descendant_sequence_title": str(
+                window_reacquisition.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
             "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
             "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(
@@ -10274,6 +10310,14 @@ class DesktopActionRouter:
             0,
             int(state_summary.get("native_campaign_descendant_hint_title_match_count", 0) or 0),
         )
+        native_descendant_sequence_match_count = max(
+            0,
+            int(state_summary.get("native_descendant_sequence_match_count", 0) or 0),
+        )
+        native_campaign_descendant_sequence_match_count = max(
+            0,
+            int(state_summary.get("native_campaign_descendant_sequence_match_count", 0) or 0),
+        )
         native_descendant_chain_titles = [
             str(item).strip()
             for item in state_summary.get("native_descendant_chain_titles", [])
@@ -10281,6 +10325,12 @@ class DesktopActionRouter:
         ] if isinstance(state_summary.get("native_descendant_chain_titles", []), list) else []
         preferred_descendant_title = str(state_summary.get("preferred_descendant_title", "") or "").strip()
         preferred_descendant_hwnd = int(state_summary.get("preferred_descendant_hwnd", 0) or 0)
+        native_expected_descendant_sequence_title = str(
+            state_summary.get("native_expected_descendant_sequence_title", "") or ""
+        ).strip()
+        native_expected_campaign_descendant_sequence_title = str(
+            state_summary.get("native_expected_campaign_descendant_sequence_title", "") or ""
+        ).strip()
         native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(state_summary.get("native_modal_chain_signature", "") or "").strip()
         native_child_chain_signature = str(state_summary.get("native_child_chain_signature", "") or "").strip()
@@ -10352,8 +10402,12 @@ class DesktopActionRouter:
             "native_preferred_descendant_match_score": native_preferred_descendant_match_score,
             "native_descendant_hint_title_match_count": native_descendant_hint_title_match_count,
             "native_campaign_descendant_hint_title_match_count": native_campaign_descendant_hint_title_match_count,
+            "native_descendant_sequence_match_count": native_descendant_sequence_match_count,
+            "native_campaign_descendant_sequence_match_count": native_campaign_descendant_sequence_match_count,
             "preferred_descendant_title": preferred_descendant_title,
             "preferred_descendant_hwnd": preferred_descendant_hwnd,
+            "native_expected_descendant_sequence_title": native_expected_descendant_sequence_title,
+            "native_expected_campaign_descendant_sequence_title": native_expected_campaign_descendant_sequence_title,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": native_modal_chain_signature,
@@ -10401,6 +10455,11 @@ class DesktopActionRouter:
                 for item in native_target_context.get("benchmark_target_descendant_title_hints", [])
                 if str(item).strip()
             ] if isinstance(native_target_context.get("benchmark_target_descendant_title_hints", []), list) else [],
+            "benchmark_target_descendant_title_sequence": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_descendant_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_descendant_title_sequence", []), list) else [],
             "benchmark_target_descendant_hint_query": str(native_target_context.get("benchmark_target_descendant_hint_query", "") or "").strip(),
             "benchmark_target_preferred_window_title": str(native_target_context.get("benchmark_target_preferred_window_title", "") or "").strip(),
             "benchmark_target_hint_query": str(native_target_context.get("benchmark_target_hint_query", "") or "").strip(),
@@ -10425,10 +10484,20 @@ class DesktopActionRouter:
                 for item in native_target_context.get("benchmark_target_campaign_descendant_title_hints", [])
                 if str(item).strip()
             ] if isinstance(native_target_context.get("benchmark_target_campaign_descendant_title_hints", []), list) else [],
+            "benchmark_target_campaign_descendant_title_sequence": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_campaign_descendant_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_campaign_descendant_title_sequence", []), list) else [],
             "benchmark_target_campaign_descendant_hint_query": str(native_target_context.get("benchmark_target_campaign_descendant_hint_query", "") or "").strip(),
             "benchmark_target_campaign_preferred_window_title": str(native_target_context.get("benchmark_target_campaign_preferred_window_title", "") or "").strip(),
             "benchmark_target_campaign_latest_sweep_status": str(native_target_context.get("benchmark_target_campaign_latest_sweep_status", "") or "").strip(),
             "benchmark_target_campaign_latest_sweep_regression_status": str(native_target_context.get("benchmark_target_campaign_latest_sweep_regression_status", "") or "").strip(),
+            "benchmark_target_program_descendant_title_sequence": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_program_descendant_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_program_descendant_title_sequence", []), list) else [],
             "benchmark_target_session_cycle_count": max(0, int(native_target_context.get("benchmark_target_session_cycle_count", 0) or 0)),
             "benchmark_target_regression_cycle_count": max(0, int(native_target_context.get("benchmark_target_regression_cycle_count", 0) or 0)),
             "benchmark_target_long_horizon_pending_count": max(0, int(native_target_context.get("benchmark_target_long_horizon_pending_count", 0) or 0)),
@@ -10513,6 +10582,14 @@ class DesktopActionRouter:
             0,
             int(branch_context.get("native_campaign_descendant_hint_title_match_count", 0) or 0),
         )
+        native_descendant_sequence_match_count = max(
+            0,
+            int(branch_context.get("native_descendant_sequence_match_count", 0) or 0),
+        )
+        native_campaign_descendant_sequence_match_count = max(
+            0,
+            int(branch_context.get("native_campaign_descendant_sequence_match_count", 0) or 0),
+        )
         native_descendant_chain_titles = {
             self._normalize_probe_text(item)
             for item in branch_context.get("native_descendant_chain_titles", [])
@@ -10520,6 +10597,12 @@ class DesktopActionRouter:
         } if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else set()
         preferred_descendant_title = self._normalize_probe_text(branch_context.get("preferred_descendant_title", ""))
         preferred_descendant_hwnd = int(branch_context.get("preferred_descendant_hwnd", 0) or 0)
+        native_expected_descendant_sequence_title = self._normalize_probe_text(
+            branch_context.get("native_expected_descendant_sequence_title", "")
+        )
+        native_expected_campaign_descendant_sequence_title = self._normalize_probe_text(
+            branch_context.get("native_expected_campaign_descendant_sequence_title", "")
+        )
         native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(branch_context.get("native_modal_chain_signature", "") or "").strip()
         native_child_chain_signature = str(branch_context.get("native_child_chain_signature", "") or "").strip()
@@ -10569,6 +10652,11 @@ class DesktopActionRouter:
             for item in branch_context.get("benchmark_target_descendant_title_hints", [])
             if str(item).strip()
         ] if isinstance(branch_context.get("benchmark_target_descendant_title_hints", []), list) else []
+        benchmark_target_descendant_title_sequence = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("benchmark_target_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("benchmark_target_descendant_title_sequence", []), list) else []
         benchmark_target_descendant_hint_query = self._normalize_probe_text(
             branch_context.get("benchmark_target_descendant_hint_query", "")
         )
@@ -10608,6 +10696,16 @@ class DesktopActionRouter:
             0.0,
             float(branch_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0),
         )
+        benchmark_target_campaign_descendant_title_sequence = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("benchmark_target_campaign_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("benchmark_target_campaign_descendant_title_sequence", []), list) else []
+        benchmark_target_program_descendant_title_sequence = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("benchmark_target_program_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("benchmark_target_program_descendant_title_sequence", []), list) else []
         benchmark_target_campaign_regression_cycle_count = max(
             0,
             int(branch_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0),
@@ -10717,6 +10815,13 @@ class DesktopActionRouter:
                 self._text_match_score(label, hint),
                 self._text_match_score(action_payload.get("window_title", ""), hint),
             )
+        target_descendant_sequence_overlap = 0.0
+        for hint in benchmark_target_descendant_title_sequence:
+            target_descendant_sequence_overlap = max(
+                target_descendant_sequence_overlap,
+                self._text_match_score(label, hint),
+                self._text_match_score(action_payload.get("window_title", ""), hint),
+            )
         if benchmark_target_descendant_hint_query:
             target_descendant_hint_overlap = max(
                 target_descendant_hint_overlap,
@@ -10737,8 +10842,17 @@ class DesktopActionRouter:
                 score += 0.02
         if benchmark_target_app_matched and target_descendant_hint_overlap > 0.0:
             score += min(0.13, 0.04 + (0.09 * target_descendant_hint_overlap))
+        if benchmark_target_app_matched and target_descendant_sequence_overlap > 0.0:
+            score += min(0.15, 0.05 + (0.1 * target_descendant_sequence_overlap))
         if benchmark_target_app_matched and target_preferred_window_overlap > 0.0:
             score += min(0.11, 0.03 + (0.08 * target_preferred_window_overlap))
+        target_campaign_sequence_overlap = 0.0
+        for hint in [*benchmark_target_campaign_descendant_title_sequence, *benchmark_target_program_descendant_title_sequence]:
+            target_campaign_sequence_overlap = max(
+                target_campaign_sequence_overlap,
+                self._text_match_score(label, hint),
+                self._text_match_score(action_payload.get("window_title", ""), hint),
+            )
         if native_descendant_chain_titles and self._normalize_probe_text(label) in native_descendant_chain_titles:
             score += 0.06
         if native_descendant_chain_titles and self._normalize_probe_text(action_payload.get("window_title", "")) in native_descendant_chain_titles:
@@ -10769,6 +10883,24 @@ class DesktopActionRouter:
                 score += min(0.06, native_descendant_hint_title_match_count * 0.02)
             if native_campaign_descendant_hint_title_match_count > 0:
                 score += min(0.05, native_campaign_descendant_hint_title_match_count * 0.02)
+            if native_descendant_sequence_match_count > 0:
+                score += min(0.06, native_descendant_sequence_match_count * 0.02)
+            if native_campaign_descendant_sequence_match_count > 0:
+                score += min(0.05, native_campaign_descendant_sequence_match_count * 0.02)
+            if native_expected_descendant_sequence_title:
+                expected_descendant_overlap = max(
+                    self._text_match_score(label, native_expected_descendant_sequence_title),
+                    self._text_match_score(action_payload.get("window_title", ""), native_expected_descendant_sequence_title),
+                )
+                if expected_descendant_overlap > 0.0:
+                    score += min(0.09, 0.03 + (0.08 * expected_descendant_overlap))
+            if native_expected_campaign_descendant_sequence_title:
+                expected_campaign_overlap = max(
+                    self._text_match_score(label, native_expected_campaign_descendant_sequence_title),
+                    self._text_match_score(action_payload.get("window_title", ""), native_expected_campaign_descendant_sequence_title),
+                )
+                if expected_campaign_overlap > 0.0:
+                    score += min(0.07, 0.02 + (0.06 * expected_campaign_overlap))
             if native_child_chain_signature:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
@@ -10780,6 +10912,10 @@ class DesktopActionRouter:
                     + (0.03 * min(native_descendant_chain_depth, 3))
                     + (0.02 * min(requested_descendant_chain_steps, 4)),
                 )
+                if target_descendant_sequence_overlap > 0.0:
+                    score += min(0.08, 0.03 + (0.05 * target_descendant_sequence_overlap))
+                if target_campaign_sequence_overlap > 0.0:
+                    score += min(0.06, 0.02 + (0.04 * target_campaign_sequence_overlap))
                 if benchmark_target_app_matched and descendant_chain_pressure > 0.0:
                     score += 0.03 + (0.08 * descendant_chain_pressure)
         if native_descendant_adoption_available and focus_like_action:
@@ -11078,6 +11214,12 @@ class DesktopActionRouter:
             "native_descendant_query_match_count": max(0, int(branch_context.get("native_descendant_query_match_count", 0) or 0)),
             "native_descendant_adoption_available": bool(branch_context.get("native_descendant_adoption_available", False)),
             "native_descendant_adoption_match_score": max(0.0, min(float(branch_context.get("native_descendant_adoption_match_score", 0.0) or 0.0), 1.0)),
+            "native_descendant_focus_strength": max(0.0, min(float(branch_context.get("native_descendant_focus_strength", 0.0) or 0.0), 1.0)),
+            "native_preferred_descendant_match_score": max(0.0, min(float(branch_context.get("native_preferred_descendant_match_score", 0.0) or 0.0), 1.0)),
+            "native_descendant_hint_title_match_count": max(0, int(branch_context.get("native_descendant_hint_title_match_count", 0) or 0)),
+            "native_campaign_descendant_hint_title_match_count": max(0, int(branch_context.get("native_campaign_descendant_hint_title_match_count", 0) or 0)),
+            "native_descendant_sequence_match_count": max(0, int(branch_context.get("native_descendant_sequence_match_count", 0) or 0)),
+            "native_campaign_descendant_sequence_match_count": max(0, int(branch_context.get("native_campaign_descendant_sequence_match_count", 0) or 0)),
             "native_descendant_chain_titles": [
                 str(item).strip()
                 for item in branch_context.get("native_descendant_chain_titles", [])
@@ -11085,6 +11227,8 @@ class DesktopActionRouter:
             ] if isinstance(branch_context.get("native_descendant_chain_titles", []), list) else [],
             "preferred_descendant_title": str(branch_context.get("preferred_descendant_title", "") or "").strip(),
             "preferred_descendant_hwnd": int(branch_context.get("preferred_descendant_hwnd", 0) or 0),
+            "native_expected_descendant_sequence_title": str(branch_context.get("native_expected_descendant_sequence_title", "") or "").strip(),
+            "native_expected_campaign_descendant_sequence_title": str(branch_context.get("native_expected_campaign_descendant_sequence_title", "") or "").strip(),
             "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
             "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(branch_context.get("native_modal_chain_signature", "") or "").strip(),
@@ -11118,8 +11262,52 @@ class DesktopActionRouter:
                 for item in branch_context.get("benchmark_target_query_hints", [])
                 if str(item).strip()
             ] if isinstance(branch_context.get("benchmark_target_query_hints", []), list) else [],
+            "benchmark_target_descendant_title_hints": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_descendant_title_hints", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_descendant_title_hints", []), list) else [],
+            "benchmark_target_descendant_title_sequence": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_descendant_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_descendant_title_sequence", []), list) else [],
+            "benchmark_target_descendant_hint_query": str(branch_context.get("benchmark_target_descendant_hint_query", "") or "").strip(),
+            "benchmark_target_preferred_window_title": str(branch_context.get("benchmark_target_preferred_window_title", "") or "").strip(),
+            "benchmark_target_hint_query": str(branch_context.get("benchmark_target_hint_query", "") or "").strip(),
             "benchmark_target_priority": max(0.0, float(branch_context.get("benchmark_target_priority", 0.0) or 0.0)),
             "benchmark_target_max_horizon_steps": max(0, int(branch_context.get("benchmark_target_max_horizon_steps", 0) or 0)),
+            "benchmark_target_replay_pressure": max(0.0, float(branch_context.get("benchmark_target_replay_pressure", 0.0) or 0.0)),
+            "benchmark_target_replay_session_count": max(0, int(branch_context.get("benchmark_target_replay_session_count", 0) or 0)),
+            "benchmark_target_replay_pending_count": max(0, int(branch_context.get("benchmark_target_replay_pending_count", 0) or 0)),
+            "benchmark_target_replay_failed_count": max(0, int(branch_context.get("benchmark_target_replay_failed_count", 0) or 0)),
+            "benchmark_target_replay_completed_count": max(0, int(branch_context.get("benchmark_target_replay_completed_count", 0) or 0)),
+            "benchmark_target_campaign_count": max(0, int(branch_context.get("benchmark_target_campaign_count", 0) or 0)),
+            "benchmark_target_campaign_sweep_count": max(0, int(branch_context.get("benchmark_target_campaign_sweep_count", 0) or 0)),
+            "benchmark_target_campaign_pending_session_count": max(0, int(branch_context.get("benchmark_target_campaign_pending_session_count", 0) or 0)),
+            "benchmark_target_campaign_attention_session_count": max(0, int(branch_context.get("benchmark_target_campaign_attention_session_count", 0) or 0)),
+            "benchmark_target_campaign_pending_app_target_count": max(0, int(branch_context.get("benchmark_target_campaign_pending_app_target_count", 0) or 0)),
+            "benchmark_target_campaign_regression_cycle_count": max(0, int(branch_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0)),
+            "benchmark_target_campaign_long_horizon_pending_count": max(0, int(branch_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0)),
+            "benchmark_target_campaign_pressure": max(0.0, float(branch_context.get("benchmark_target_campaign_pressure", 0.0) or 0.0)),
+            "benchmark_target_campaign_hint_query": str(branch_context.get("benchmark_target_campaign_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_descendant_title_hints": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_campaign_descendant_title_hints", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_campaign_descendant_title_hints", []), list) else [],
+            "benchmark_target_campaign_descendant_title_sequence": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_campaign_descendant_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_campaign_descendant_title_sequence", []), list) else [],
+            "benchmark_target_campaign_descendant_hint_query": str(branch_context.get("benchmark_target_campaign_descendant_hint_query", "") or "").strip(),
+            "benchmark_target_campaign_preferred_window_title": str(branch_context.get("benchmark_target_campaign_preferred_window_title", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_status": str(branch_context.get("benchmark_target_campaign_latest_sweep_status", "") or "").strip(),
+            "benchmark_target_campaign_latest_sweep_regression_status": str(branch_context.get("benchmark_target_campaign_latest_sweep_regression_status", "") or "").strip(),
+            "benchmark_target_session_cycle_count": max(0, int(branch_context.get("benchmark_target_session_cycle_count", 0) or 0)),
+            "benchmark_target_regression_cycle_count": max(0, int(branch_context.get("benchmark_target_regression_cycle_count", 0) or 0)),
+            "benchmark_target_long_horizon_pending_count": max(0, int(branch_context.get("benchmark_target_long_horizon_pending_count", 0) or 0)),
             "benchmark_target_dialog_pressure": max(0.0, min(float(branch_context.get("benchmark_target_dialog_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_target_descendant_focus_pressure": max(0.0, min(float(branch_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0), 1.0)),
             "benchmark_target_navigation_pressure": max(0.0, min(float(branch_context.get("benchmark_target_navigation_pressure", 0.0) or 0.0), 1.0)),
@@ -14406,12 +14594,27 @@ class DesktopActionRouter:
         benchmark_descendant_hint_query = str(
             native_target_context.get("benchmark_target_descendant_hint_query", "") or ""
         ).strip()
+        benchmark_descendant_title_sequence = [
+            str(item).strip()
+            for item in native_target_context.get("benchmark_target_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(native_target_context.get("benchmark_target_descendant_title_sequence", []), list) else []
         benchmark_campaign_hint_query = str(
             native_target_context.get("benchmark_target_campaign_hint_query", "") or ""
         ).strip()
         benchmark_campaign_preferred_title = str(
             native_target_context.get("benchmark_target_campaign_preferred_window_title", "") or ""
         ).strip()
+        benchmark_campaign_descendant_title_sequence = [
+            str(item).strip()
+            for item in native_target_context.get("benchmark_target_campaign_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(native_target_context.get("benchmark_target_campaign_descendant_title_sequence", []), list) else []
+        benchmark_program_descendant_title_sequence = [
+            str(item).strip()
+            for item in native_target_context.get("benchmark_target_program_descendant_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(native_target_context.get("benchmark_target_program_descendant_title_sequence", []), list) else []
         benchmark_preferred_title = str(
             native_target_context.get("benchmark_target_preferred_window_title", "") or ""
         ).strip()
@@ -14525,10 +14728,16 @@ class DesktopActionRouter:
                 adoption_payload["hint_query"] = resolved_hint_query
             if resolved_descendant_hint_query:
                 adoption_payload["descendant_hint_query"] = resolved_descendant_hint_query
+            if benchmark_descendant_title_sequence:
+                adoption_payload["descendant_title_sequence"] = benchmark_descendant_title_sequence
             if benchmark_campaign_hint_query:
                 adoption_payload["campaign_hint_query"] = benchmark_campaign_hint_query
             if benchmark_campaign_preferred_title:
                 adoption_payload["campaign_preferred_title"] = benchmark_campaign_preferred_title
+            if benchmark_campaign_descendant_title_sequence:
+                adoption_payload["campaign_descendant_title_sequence"] = benchmark_campaign_descendant_title_sequence
+            if benchmark_program_descendant_title_sequence:
+                adoption_payload["program_descendant_title_sequence"] = benchmark_program_descendant_title_sequence
             if benchmark_guidance:
                 adoption_payload["benchmark_guidance"] = benchmark_guidance
             if prefer_descendant_chain:

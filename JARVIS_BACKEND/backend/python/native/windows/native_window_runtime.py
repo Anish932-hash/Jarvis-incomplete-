@@ -130,14 +130,28 @@ class NativeWindowRuntime:
         hwnd_value = 0 if hwnd is None else int(hwnd)
         return self._call("focus_window", "focus_window", title, hwnd_value)
 
+    @staticmethod
+    def _encode_title_sequence(value: Any) -> str:
+        if isinstance(value, (list, tuple, set)):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return "||".join(parts[:8])
+        clean_value = str(value or "").strip()
+        if not clean_value:
+            return ""
+        if "||" in clean_value:
+            return "||".join(part.strip() for part in clean_value.split("||") if part.strip())
+        return clean_value
+
     def focus_related_window(
         self,
         *,
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: Any = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: Any = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -156,8 +170,10 @@ class NativeWindowRuntime:
             str(query or ""),
             str(hint_query or ""),
             str(descendant_hint_query or ""),
+            self._encode_title_sequence(descendant_title_sequence),
             str(campaign_hint_query or ""),
             str(campaign_preferred_title or ""),
+            self._encode_title_sequence(campaign_descendant_title_sequence),
             str(preferred_title or ""),
             str(window_title or ""),
             hwnd_value,
@@ -173,8 +189,10 @@ class NativeWindowRuntime:
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: Any = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: Any = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -190,8 +208,10 @@ class NativeWindowRuntime:
             str(query or ""),
             str(hint_query or ""),
             str(descendant_hint_query or ""),
+            self._encode_title_sequence(descendant_title_sequence),
             str(campaign_hint_query or ""),
             str(campaign_preferred_title or ""),
+            self._encode_title_sequence(campaign_descendant_title_sequence),
             str(preferred_title or ""),
             str(window_title or ""),
             hwnd_value,
@@ -205,8 +225,10 @@ class NativeWindowRuntime:
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: Any = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: Any = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -222,8 +244,10 @@ class NativeWindowRuntime:
             str(query or ""),
             str(hint_query or ""),
             str(descendant_hint_query or ""),
+            self._encode_title_sequence(descendant_title_sequence),
             str(campaign_hint_query or ""),
             str(campaign_preferred_title or ""),
+            self._encode_title_sequence(campaign_descendant_title_sequence),
             str(preferred_title or ""),
             str(window_title or ""),
             hwnd_value,

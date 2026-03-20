@@ -513,11 +513,14 @@ def test_desktop_action_router_surface_exploration_adds_preferred_descendant_cha
     router._benchmark_native_target_context = lambda **_kwargs: {  # type: ignore[method-assign]
         "benchmark_target_app_name": "settings",
         "benchmark_target_app_matched": True,
+        "benchmark_target_descendant_title_sequence": ["Pair device", "Confirm pairing"],
         "benchmark_target_descendant_hint_query": "pair device | confirm pairing",
         "benchmark_target_hint_query": "pair device | confirm pairing",
         "benchmark_target_preferred_window_title": "Pair device",
         "benchmark_target_campaign_preferred_window_title": "Confirm pairing",
         "benchmark_target_campaign_hint_query": "pair device | confirm pairing",
+        "benchmark_target_campaign_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+        "benchmark_target_program_descendant_title_sequence": ["Allow device"],
         "benchmark_target_campaign_pressure": 1.8,
         "benchmark_target_replay_pressure": 1.4,
         "benchmark_target_descendant_focus_pressure": 0.94,
@@ -541,6 +544,9 @@ def test_desktop_action_router_surface_exploration_adds_preferred_descendant_cha
     assert branch["action_payload"]["action"] == "focus_related_window_chain"
     assert branch["action_payload"]["follow_descendant_chain"] is True
     assert branch["action_payload"]["max_descendant_focus_steps"] == 3
+    assert branch["action_payload"]["descendant_title_sequence"] == ["Pair device", "Confirm pairing"]
+    assert branch["action_payload"]["campaign_descendant_title_sequence"] == ["Confirm pairing", "Allow device"]
+    assert branch["action_payload"]["program_descendant_title_sequence"] == ["Allow device"]
     assert "campaign pressure" in branch["reason"].lower()
     assert "chain" in branch["title"].lower()
 
@@ -574,9 +580,13 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_adoption
         "native_preferred_descendant_match_score": 0.93,
         "native_descendant_hint_title_match_count": 2,
         "native_campaign_descendant_hint_title_match_count": 1,
+        "native_descendant_sequence_match_count": 2,
+        "native_campaign_descendant_sequence_match_count": 1,
         "native_descendant_chain_titles": ["Pair device", "Confirm pairing"],
         "preferred_descendant_title": "Pair device",
         "preferred_descendant_hwnd": 5002,
+        "native_expected_descendant_sequence_title": "Confirm pairing",
+        "native_expected_campaign_descendant_sequence_title": "Confirm pairing",
         "native_child_dialog_like_visible": True,
         "native_modal_chain_signature": "5000|2|1|2",
         "native_child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
@@ -600,6 +610,7 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_adoption
         "benchmark_target_app_match_score": 1.0,
         "benchmark_target_query_hints": ["pair device"],
         "benchmark_target_descendant_title_hints": ["Pair device", "Confirm pairing"],
+        "benchmark_target_descendant_title_sequence": ["Pair device", "Confirm pairing"],
         "benchmark_target_descendant_hint_query": "pair device",
         "benchmark_target_preferred_window_title": "Pair device",
         "benchmark_target_hint_query": "pair device",
@@ -629,6 +640,7 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_adoption
         "benchmark_target_campaign_pressure": 1.1,
         "benchmark_target_campaign_hint_query": "pair device",
         "benchmark_target_campaign_descendant_title_hints": ["Pair device"],
+        "benchmark_target_campaign_descendant_title_sequence": ["Confirm pairing", "Allow device"],
         "benchmark_target_campaign_descendant_hint_query": "pair device",
         "benchmark_target_campaign_preferred_window_title": "Pair device",
         "benchmark_target_campaign_latest_sweep_status": "failed",
@@ -687,14 +699,19 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_chain_fo
         "native_preferred_descendant_match_score": 0.97,
         "native_descendant_hint_title_match_count": 2,
         "native_campaign_descendant_hint_title_match_count": 2,
+        "native_descendant_sequence_match_count": 2,
+        "native_campaign_descendant_sequence_match_count": 2,
         "preferred_descendant_title": "Pair device",
         "preferred_descendant_hwnd": 5002,
+        "native_expected_descendant_sequence_title": "Confirm pairing",
+        "native_expected_campaign_descendant_sequence_title": "Allow device",
         "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
         "benchmark_target_app_name": "settings",
         "benchmark_target_app_matched": True,
         "benchmark_target_app_match_score": 1.0,
         "benchmark_target_query_hints": ["pair device"],
         "benchmark_target_descendant_title_hints": ["Pair device", "Confirm pairing"],
+        "benchmark_target_descendant_title_sequence": ["Pair device", "Confirm pairing"],
         "benchmark_target_descendant_hint_query": "pair device | confirm pairing",
         "benchmark_target_hint_query": "pair device | confirm pairing",
         "benchmark_target_preferred_window_title": "Pair device",
@@ -707,6 +724,8 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_chain_fo
         "benchmark_target_long_horizon_pending_count": 1,
         "benchmark_target_campaign_long_horizon_pending_count": 1,
         "recent_selection_keys": set(),
+        "benchmark_target_campaign_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+        "benchmark_target_program_descendant_title_sequence": ["Allow device"],
     }
     chain_row = {
         "kind": "branch_action",

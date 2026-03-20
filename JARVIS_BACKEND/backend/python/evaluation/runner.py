@@ -1857,6 +1857,16 @@ class EvaluationRunner:
             "latest_cycle_stop_reason": "",
         }
 
+        def _ordered_descendant_sequence(*titles: object) -> List[str]:
+            ordered: List[str] = []
+            for title in titles:
+                values = title if isinstance(title, list) else [title]
+                for value in values:
+                    clean = str(value or "").strip()
+                    if clean and clean not in ordered:
+                        ordered.append(clean)
+            return ordered[:8]
+
         def _ensure_target_entry(app_name_value: str) -> Dict[str, object]:
             return target_apps.setdefault(
                 app_name_value,
@@ -1868,6 +1878,7 @@ class EvaluationRunner:
                     "mission_families": set(),
                     "query_hints": [],
                     "descendant_title_hints": [],
+                    "descendant_title_sequence": [],
                     "descendant_hint_query": "",
                     "preferred_window_title": "",
                     "max_horizon_steps": 0,
@@ -1892,6 +1903,7 @@ class EvaluationRunner:
                     "campaign_pressure": 0.0,
                     "campaign_hint_query": "",
                     "campaign_descendant_title_hints": [],
+                    "campaign_descendant_title_sequence": [],
                     "campaign_descendant_hint_query": "",
                     "campaign_preferred_window_title": "",
                     "campaign_latest_sweep_status": "",
@@ -1908,6 +1920,7 @@ class EvaluationRunner:
                     "program_pressure": 0.0,
                     "program_hint_query": "",
                     "program_descendant_title_hints": [],
+                    "program_descendant_title_sequence": [],
                     "program_descendant_hint_query": "",
                     "program_preferred_window_title": "",
                     "program_latest_cycle_status": "",
@@ -1987,6 +2000,10 @@ class EvaluationRunner:
                 query_hints=query_hints,
                 replay_scenarios=[scenario_name_value] if scenario_name_value else [],
             )
+            descendant_title_sequence = _ordered_descendant_sequence(
+                descendant_title_hints,
+                preferred_window_title,
+            )
             session_id = str(session.get("session_id", "") or "").strip() if isinstance(session, dict) else ""
             session_label = str(session.get("label", "") or "").strip() if isinstance(session, dict) else ""
             session_cycle_count = int(session.get("cycle_count", 0) or 0) if isinstance(session, dict) else 0
@@ -2040,6 +2057,11 @@ class EvaluationRunner:
                     if hint not in descendant_hints:
                         descendant_hints.append(hint)
                 entry["descendant_title_hints"] = descendant_hints[:8]
+                descendant_sequence = entry["descendant_title_sequence"] if isinstance(entry.get("descendant_title_sequence"), list) else []
+                for hint in descendant_title_sequence:
+                    if hint not in descendant_sequence:
+                        descendant_sequence.append(hint)
+                entry["descendant_title_sequence"] = descendant_sequence[:8]
                 entry["max_horizon_steps"] = max(int(entry.get("max_horizon_steps", 0) or 0), max_horizon_steps)
                 if replay_hint_query and not str(entry.get("hint_query", "") or "").strip():
                     entry["hint_query"] = replay_hint_query
@@ -2164,6 +2186,11 @@ class EvaluationRunner:
                 for item in target_row.get("descendant_title_hints", [])
                 if str(item).strip()
             ] if isinstance(target_row.get("descendant_title_hints", []), list) else []
+            descendant_title_sequence = _ordered_descendant_sequence(
+                target_row.get("descendant_title_sequence", []),
+                descendant_title_hints,
+                target_row.get("preferred_window_title", ""),
+            )
             hints = entry["query_hints"] if isinstance(entry.get("query_hints"), list) else []
             for hint in query_hints:
                 if hint not in hints:
@@ -2179,9 +2206,20 @@ class EvaluationRunner:
                 if hint not in descendant_hints:
                     descendant_hints.append(hint)
             entry["descendant_title_hints"] = descendant_hints[:8]
+            descendant_sequence_hints = entry["descendant_title_sequence"] if isinstance(entry.get("descendant_title_sequence"), list) else []
+            for hint in descendant_title_sequence:
+                if hint not in descendant_sequence_hints:
+                    descendant_sequence_hints.append(hint)
+            entry["descendant_title_sequence"] = descendant_sequence_hints[:8]
             hint_query = str(target_row.get("hint_query", "") or "").strip()
             descendant_hint_query = str(target_row.get("descendant_hint_query", "") or "").strip()
             preferred_window_title = str(target_row.get("preferred_window_title", "") or "").strip()
+            campaign_descendant_title_sequence = _ordered_descendant_sequence(
+                target_row.get("campaign_descendant_title_sequence", []),
+                target_row.get("campaign_descendant_title_hints", []),
+                descendant_title_sequence,
+                target_row.get("campaign_preferred_window_title", ""),
+            )
             if hint_query and not str(entry.get("hint_query", "") or "").strip():
                 entry["hint_query"] = hint_query
             if descendant_hint_query and not str(entry.get("descendant_hint_query", "") or "").strip():
@@ -2194,6 +2232,11 @@ class EvaluationRunner:
                 entry["campaign_descendant_hint_query"] = descendant_hint_query
             if preferred_window_title and not str(entry.get("campaign_preferred_window_title", "") or "").strip():
                 entry["campaign_preferred_window_title"] = preferred_window_title
+            campaign_sequence_hints = entry["campaign_descendant_title_sequence"] if isinstance(entry.get("campaign_descendant_title_sequence"), list) else []
+            for hint in campaign_descendant_title_sequence:
+                if hint not in campaign_sequence_hints:
+                    campaign_sequence_hints.append(hint)
+            entry["campaign_descendant_title_sequence"] = campaign_sequence_hints[:8]
             current_sweep_status = str(entry.get("campaign_latest_sweep_status", "") or "").strip().lower()
             current_sweep_regression_status = str(entry.get("campaign_latest_sweep_regression_status", "") or "").strip().lower()
             if campaign_latest_sweep_status and (
@@ -2288,11 +2331,27 @@ class EvaluationRunner:
                 for item in target_row.get("descendant_title_hints", [])
                 if str(item).strip()
             ] if isinstance(target_row.get("descendant_title_hints", []), list) else []
+            descendant_title_sequence = _ordered_descendant_sequence(
+                target_row.get("descendant_title_sequence", []),
+                descendant_title_hints,
+                target_row.get("preferred_window_title", ""),
+            )
             program_descendant_hints = entry["program_descendant_title_hints"] if isinstance(entry.get("program_descendant_title_hints"), list) else []
             for hint in descendant_title_hints:
                 if hint not in program_descendant_hints:
                     program_descendant_hints.append(hint)
             entry["program_descendant_title_hints"] = program_descendant_hints[:8]
+            program_descendant_sequence = _ordered_descendant_sequence(
+                target_row.get("program_descendant_title_sequence", []),
+                target_row.get("program_descendant_title_hints", []),
+                descendant_title_sequence,
+                target_row.get("program_preferred_window_title", ""),
+            )
+            program_sequence_hints = entry["program_descendant_title_sequence"] if isinstance(entry.get("program_descendant_title_sequence"), list) else []
+            for hint in program_descendant_sequence:
+                if hint not in program_sequence_hints:
+                    program_sequence_hints.append(hint)
+            entry["program_descendant_title_sequence"] = program_sequence_hints[:8]
             hint_query = str(target_row.get("hint_query", "") or "").strip()
             descendant_hint_query = str(target_row.get("descendant_hint_query", "") or "").strip()
             preferred_window_title = str(target_row.get("preferred_window_title", "") or "").strip()
@@ -2464,6 +2523,9 @@ class EvaluationRunner:
                     )[:6],
                     "query_hints": query_hints,
                     "descendant_title_hints": descendant_title_hints,
+                    "descendant_title_sequence": list(row.get("descendant_title_sequence", []))[:8]
+                    if isinstance(row.get("descendant_title_sequence", []), list)
+                    else [],
                     "descendant_hint_query": descendant_hint_query,
                     "preferred_window_title": preferred_window_title,
                     "hint_query": hint_query,
@@ -2491,6 +2553,9 @@ class EvaluationRunner:
                     "campaign_pressure": round(float(row.get("campaign_pressure", 0.0) or 0.0), 6),
                     "campaign_hint_query": campaign_hint_query,
                     "campaign_descendant_title_hints": campaign_descendant_title_hints,
+                    "campaign_descendant_title_sequence": list(row.get("campaign_descendant_title_sequence", []))[:8]
+                    if isinstance(row.get("campaign_descendant_title_sequence", []), list)
+                    else [],
                     "campaign_descendant_hint_query": campaign_descendant_hint_query,
                     "campaign_preferred_window_title": campaign_preferred_window_title,
                     "campaign_latest_sweep_status": str(row.get("campaign_latest_sweep_status", "") or "").strip(),
@@ -2508,6 +2573,9 @@ class EvaluationRunner:
                     "program_hint_query": str(row.get("program_hint_query", "") or "").strip(),
                     "program_descendant_title_hints": list(row.get("program_descendant_title_hints", []))[:8]
                     if isinstance(row.get("program_descendant_title_hints", []), list)
+                    else [],
+                    "program_descendant_title_sequence": list(row.get("program_descendant_title_sequence", []))[:8]
+                    if isinstance(row.get("program_descendant_title_sequence", []), list)
                     else [],
                     "program_descendant_hint_query": str(row.get("program_descendant_hint_query", "") or "").strip(),
                     "program_preferred_window_title": str(row.get("program_preferred_window_title", "") or "").strip(),

@@ -13,8 +13,10 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
         const string& query_utf8,
         const string& hint_query_utf8,
         const string& descendant_hint_query_utf8,
+        const string& descendant_title_sequence_utf8,
         const string& campaign_hint_query_utf8,
         const string& campaign_preferred_title_utf8,
+        const string& campaign_descendant_title_sequence_utf8,
         const string& preferred_title_utf8,
         const string& window_title_utf8,
         long long hwnd_value,
@@ -27,8 +29,10 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
         const string& query_utf8,
         const string& hint_query_utf8,
         const string& descendant_hint_query_utf8,
+        const string& descendant_title_sequence_utf8,
         const string& campaign_hint_query_utf8,
         const string& campaign_preferred_title_utf8,
+        const string& campaign_descendant_title_sequence_utf8,
         const string& preferred_title_utf8,
         const string& window_title_utf8,
         long long hwnd_value,
@@ -39,8 +43,10 @@ cdef extern from "window_bridge.hpp" namespace "jarvis::native":
         const string& query_utf8,
         const string& hint_query_utf8,
         const string& descendant_hint_query_utf8,
+        const string& descendant_title_sequence_utf8,
         const string& campaign_hint_query_utf8,
         const string& campaign_preferred_title_utf8,
+        const string& campaign_descendant_title_sequence_utf8,
         const string& preferred_title_utf8,
         const string& window_title_utf8,
         long long hwnd_value,
@@ -68,12 +74,14 @@ def focus_window(title_contains="", hwnd=0):
     return _decode_payload(focus_window_json(encoded_title, hwnd_value))
 
 
-def focus_related_window(query="", hint_query="", descendant_hint_query="", campaign_hint_query="", campaign_preferred_title="", preferred_title="", window_title="", hwnd=0, pid=0, follow_descendant_chain=False, max_descendant_focus_steps=1, limit=120):
+def focus_related_window(query="", hint_query="", descendant_hint_query="", descendant_title_sequence="", campaign_hint_query="", campaign_preferred_title="", campaign_descendant_title_sequence="", preferred_title="", window_title="", hwnd=0, pid=0, follow_descendant_chain=False, max_descendant_focus_steps=1, limit=120):
     cdef string encoded_query = str(query or "").encode("utf-8")
     cdef string encoded_hint_query = str(hint_query or "").encode("utf-8")
     cdef string encoded_descendant_hint_query = str(descendant_hint_query or "").encode("utf-8")
+    cdef string encoded_descendant_title_sequence = str(descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_campaign_hint_query = str(campaign_hint_query or "").encode("utf-8")
     cdef string encoded_campaign_preferred_title = str(campaign_preferred_title or "").encode("utf-8")
+    cdef string encoded_campaign_descendant_title_sequence = str(campaign_descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_preferred_title = str(preferred_title or "").encode("utf-8")
     cdef string encoded_window_title = str(window_title or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
@@ -86,8 +94,10 @@ def focus_related_window(query="", hint_query="", descendant_hint_query="", camp
             encoded_query,
             encoded_hint_query,
             encoded_descendant_hint_query,
+            encoded_descendant_title_sequence,
             encoded_campaign_hint_query,
             encoded_campaign_preferred_title,
+            encoded_campaign_descendant_title_sequence,
             encoded_preferred_title,
             encoded_window_title,
             hwnd_value,
@@ -99,12 +109,14 @@ def focus_related_window(query="", hint_query="", descendant_hint_query="", camp
     )
 
 
-def reacquire_related_window(query="", hint_query="", descendant_hint_query="", campaign_hint_query="", campaign_preferred_title="", preferred_title="", window_title="", hwnd=0, pid=0, limit=120):
+def reacquire_related_window(query="", hint_query="", descendant_hint_query="", descendant_title_sequence="", campaign_hint_query="", campaign_preferred_title="", campaign_descendant_title_sequence="", preferred_title="", window_title="", hwnd=0, pid=0, limit=120):
     cdef string encoded_query = str(query or "").encode("utf-8")
     cdef string encoded_hint_query = str(hint_query or "").encode("utf-8")
     cdef string encoded_descendant_hint_query = str(descendant_hint_query or "").encode("utf-8")
+    cdef string encoded_descendant_title_sequence = str(descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_campaign_hint_query = str(campaign_hint_query or "").encode("utf-8")
     cdef string encoded_campaign_preferred_title = str(campaign_preferred_title or "").encode("utf-8")
+    cdef string encoded_campaign_descendant_title_sequence = str(campaign_descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_preferred_title = str(preferred_title or "").encode("utf-8")
     cdef string encoded_window_title = str(window_title or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
@@ -115,8 +127,10 @@ def reacquire_related_window(query="", hint_query="", descendant_hint_query="", 
             encoded_query,
             encoded_hint_query,
             encoded_descendant_hint_query,
+            encoded_descendant_title_sequence,
             encoded_campaign_hint_query,
             encoded_campaign_preferred_title,
+            encoded_campaign_descendant_title_sequence,
             encoded_preferred_title,
             encoded_window_title,
             hwnd_value,
@@ -126,12 +140,14 @@ def reacquire_related_window(query="", hint_query="", descendant_hint_query="", 
     )
 
 
-def trace_related_window_chain(query="", hint_query="", descendant_hint_query="", campaign_hint_query="", campaign_preferred_title="", preferred_title="", window_title="", hwnd=0, pid=0, limit=120):
+def trace_related_window_chain(query="", hint_query="", descendant_hint_query="", descendant_title_sequence="", campaign_hint_query="", campaign_preferred_title="", campaign_descendant_title_sequence="", preferred_title="", window_title="", hwnd=0, pid=0, limit=120):
     cdef string encoded_query = str(query or "").encode("utf-8")
     cdef string encoded_hint_query = str(hint_query or "").encode("utf-8")
     cdef string encoded_descendant_hint_query = str(descendant_hint_query or "").encode("utf-8")
+    cdef string encoded_descendant_title_sequence = str(descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_campaign_hint_query = str(campaign_hint_query or "").encode("utf-8")
     cdef string encoded_campaign_preferred_title = str(campaign_preferred_title or "").encode("utf-8")
+    cdef string encoded_campaign_descendant_title_sequence = str(campaign_descendant_title_sequence or "").encode("utf-8")
     cdef string encoded_preferred_title = str(preferred_title or "").encode("utf-8")
     cdef string encoded_window_title = str(window_title or "").encode("utf-8")
     cdef long long hwnd_value = int(hwnd or 0)
@@ -142,8 +158,10 @@ def trace_related_window_chain(query="", hint_query="", descendant_hint_query=""
             encoded_query,
             encoded_hint_query,
             encoded_descendant_hint_query,
+            encoded_descendant_title_sequence,
             encoded_campaign_hint_query,
             encoded_campaign_preferred_title,
+            encoded_campaign_descendant_title_sequence,
             encoded_preferred_title,
             encoded_window_title,
             hwnd_value,

@@ -65,6 +65,40 @@ class WindowManager:
         return [part for part in normalized.split() if part]
 
     @classmethod
+    def _normalize_title_sequence(cls, value: Any) -> List[str]:
+        if isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            clean_value = str(value or "").strip()
+            if not clean_value:
+                raw_items = []
+            elif "||" in clean_value:
+                raw_items = clean_value.split("||")
+            elif "\n" in clean_value:
+                raw_items = clean_value.splitlines()
+            else:
+                raw_items = [clean_value]
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            clean_item = str(item or "").strip()
+            key = cls._normalize_text(clean_item)
+            if not clean_item or not key or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(clean_item)
+            if len(normalized) >= 8:
+                break
+        return normalized
+
+    @classmethod
+    def _merge_title_sequences(cls, *values: Any) -> List[str]:
+        merged: List[str] = []
+        for value in values:
+            merged.extend(cls._normalize_title_sequence(value))
+        return cls._normalize_title_sequence(merged)
+
+    @classmethod
     def _derive_app_name(cls, *, exe: str = "", process_name: str = "", title: str = "") -> str:
         base = Path(str(exe or "")).stem.strip().lower()
         if base:
@@ -220,6 +254,7 @@ class WindowManager:
                 "match_score": 0.0,
                 "query_hints": [],
                 "descendant_title_hints": [],
+                "descendant_title_sequence": [],
                 "descendant_hint_query": "",
                 "preferred_window_title": "",
                 "hint_query": "",
@@ -239,10 +274,12 @@ class WindowManager:
                 "campaign_pressure": 0.0,
                 "campaign_hint_query": "",
                 "campaign_descendant_title_hints": [],
+                "campaign_descendant_title_sequence": [],
                 "campaign_descendant_hint_query": "",
                 "campaign_preferred_window_title": "",
                 "campaign_latest_sweep_status": "",
                 "campaign_latest_sweep_regression_status": "",
+                "program_descendant_title_sequence": [],
                 "session_cycle_count": 0,
                 "session_regression_cycle_count": 0,
                 "session_long_horizon_pending_count": 0,
@@ -402,6 +439,11 @@ class WindowManager:
                 for item in best_row.get("descendant_title_hints", [])
                 if str(item).strip()
             ][:8] if isinstance(best_row.get("descendant_title_hints", []), list) else [],
+            "descendant_title_sequence": [
+                str(item).strip()
+                for item in cls._normalize_title_sequence(best_row.get("descendant_title_sequence", []))
+                if str(item).strip()
+            ][:8],
             "descendant_hint_query": str(best_row.get("descendant_hint_query", "") or "").strip(),
             "preferred_window_title": str(best_row.get("preferred_window_title", "") or "").strip(),
             "hint_query": str(best_row.get("hint_query", "") or "").strip(),
@@ -425,10 +467,20 @@ class WindowManager:
                 for item in best_row.get("campaign_descendant_title_hints", [])
                 if str(item).strip()
             ][:8] if isinstance(best_row.get("campaign_descendant_title_hints", []), list) else [],
+            "campaign_descendant_title_sequence": [
+                str(item).strip()
+                for item in cls._normalize_title_sequence(best_row.get("campaign_descendant_title_sequence", []))
+                if str(item).strip()
+            ][:8],
             "campaign_descendant_hint_query": str(best_row.get("campaign_descendant_hint_query", "") or "").strip(),
             "campaign_preferred_window_title": str(best_row.get("campaign_preferred_window_title", "") or "").strip(),
             "campaign_latest_sweep_status": str(best_row.get("campaign_latest_sweep_status", "") or "").strip(),
             "campaign_latest_sweep_regression_status": str(best_row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
+            "program_descendant_title_sequence": [
+                str(item).strip()
+                for item in cls._normalize_title_sequence(best_row.get("program_descendant_title_sequence", []))
+                if str(item).strip()
+            ][:8],
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "session_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "session_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -1354,8 +1406,10 @@ class WindowManager:
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: List[str] | None = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1371,8 +1425,10 @@ class WindowManager:
                 query=query,
                 hint_query=hint_query,
                 descendant_hint_query=descendant_hint_query,
+                descendant_title_sequence=descendant_title_sequence or [],
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_title,
+                campaign_descendant_title_sequence=campaign_descendant_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1423,6 +1479,28 @@ class WindowManager:
             "campaign_descendant_hint_title_match_count": max(
                 0,
                 int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "descendant_sequence_match_count": max(
+                0,
+                int(payload.get("descendant_sequence_match_count", 0) or 0),
+            ),
+            "campaign_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("campaign_descendant_sequence_match_count", 0) or 0),
+            ),
+            "expected_descendant_sequence_title": str(
+                payload.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_campaign_descendant_sequence_title": str(
+                payload.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            "preferred_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_campaign_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_campaign_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -1492,8 +1570,10 @@ class WindowManager:
         query: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: List[str] | None = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1507,8 +1587,10 @@ class WindowManager:
                 query=query,
                 hint_query=hint_query,
                 descendant_hint_query=descendant_hint_query,
+                descendant_title_sequence=descendant_title_sequence or [],
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_title,
+                campaign_descendant_title_sequence=campaign_descendant_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1546,6 +1628,28 @@ class WindowManager:
             "campaign_descendant_hint_title_match_count": max(
                 0,
                 int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "descendant_sequence_match_count": max(
+                0,
+                int(payload.get("descendant_sequence_match_count", 0) or 0),
+            ),
+            "campaign_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("campaign_descendant_sequence_match_count", 0) or 0),
+            ),
+            "expected_descendant_sequence_title": str(
+                payload.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_campaign_descendant_sequence_title": str(
+                payload.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            "preferred_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_campaign_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_campaign_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -1590,6 +1694,9 @@ class WindowManager:
         )
         hint_query = str(target_app_context.get("hint_query", "") or "").strip()
         descendant_hint_query = str(target_app_context.get("descendant_hint_query", "") or "").strip()
+        descendant_title_sequence = self._normalize_title_sequence(
+            target_app_context.get("descendant_title_sequence", [])
+        )
         preferred_window_title = str(target_app_context.get("preferred_window_title", "") or "").strip()
         campaign_hint_query = str(
             target_app_context.get(
@@ -1598,6 +1705,10 @@ class WindowManager:
             )
             or ""
         ).strip()
+        campaign_descendant_title_sequence = self._merge_title_sequences(
+            target_app_context.get("campaign_descendant_title_sequence", []),
+            target_app_context.get("program_descendant_title_sequence", []),
+        )
         campaign_preferred_window_title = str(
             target_app_context.get("campaign_preferred_window_title", "") or ""
         ).strip()
@@ -1606,8 +1717,10 @@ class WindowManager:
                 query=query,
                 hint_query=hint_query,
                 descendant_hint_query=descendant_hint_query,
+                descendant_title_sequence=descendant_title_sequence,
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_window_title,
+                campaign_descendant_title_sequence=campaign_descendant_title_sequence,
                 preferred_title=preferred_window_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1638,8 +1751,10 @@ class WindowManager:
             query=query,
             hint_query=hint_query,
             descendant_hint_query=descendant_hint_query,
+            descendant_title_sequence=descendant_title_sequence,
             campaign_hint_query=campaign_hint_query,
             campaign_preferred_title=campaign_preferred_window_title,
+            campaign_descendant_title_sequence=campaign_descendant_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -1894,8 +2009,10 @@ class WindowManager:
             query=query,
             hint_query=hint_query,
             descendant_hint_query=descendant_hint_query,
+            descendant_title_sequence=descendant_title_sequence,
             campaign_hint_query=campaign_hint_query,
             campaign_preferred_title=campaign_preferred_window_title,
+            campaign_descendant_title_sequence=campaign_descendant_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -2000,6 +2117,20 @@ class WindowManager:
                 0,
                 int(child_chain_trace.get("campaign_descendant_hint_title_match_count", 0) or 0),
             ),
+            "descendant_sequence_match_count": max(
+                0,
+                int(child_chain_trace.get("descendant_sequence_match_count", 0) or 0),
+            ),
+            "campaign_descendant_sequence_match_count": max(
+                0,
+                int(child_chain_trace.get("campaign_descendant_sequence_match_count", 0) or 0),
+            ),
+            "expected_descendant_sequence_title": str(
+                child_chain_trace.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_campaign_descendant_sequence_title": str(
+                child_chain_trace.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
 
@@ -2643,8 +2774,10 @@ class WindowManager:
         title_contains: str = "",
         hint_query: str = "",
         descendant_hint_query: str = "",
+        descendant_title_sequence: List[str] | None = None,
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
+        campaign_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
@@ -2664,6 +2797,10 @@ class WindowManager:
         resolved_descendant_hint_query = str(
             descendant_hint_query or target_context.get("descendant_hint_query", "") or preferred_title or title_contains or ""
         ).strip()
+        resolved_descendant_title_sequence = self._merge_title_sequences(
+            descendant_title_sequence,
+            target_context.get("descendant_title_sequence", []),
+        )
         resolved_campaign_hint_query = str(
             campaign_hint_query
             or target_context.get("campaign_hint_query", target_context.get("campaign_descendant_hint_query", ""))
@@ -2672,6 +2809,11 @@ class WindowManager:
         resolved_campaign_preferred_title = str(
             campaign_preferred_title or target_context.get("campaign_preferred_window_title", "") or ""
         ).strip()
+        resolved_campaign_descendant_title_sequence = self._merge_title_sequences(
+            campaign_descendant_title_sequence,
+            target_context.get("campaign_descendant_title_sequence", []),
+            target_context.get("program_descendant_title_sequence", []),
+        )
         resolved_preferred_title = str(
             preferred_title or target_context.get("preferred_window_title", "") or title_contains or ""
         ).strip()
@@ -2729,8 +2871,10 @@ class WindowManager:
             query=query,
             hint_query=resolved_hint_query,
             descendant_hint_query=resolved_descendant_hint_query,
+            descendant_title_sequence=resolved_descendant_title_sequence,
             campaign_hint_query=resolved_campaign_hint_query,
             campaign_preferred_title=resolved_campaign_preferred_title,
+            campaign_descendant_title_sequence=resolved_campaign_descendant_title_sequence,
             preferred_title=resolved_preferred_title,
             window_title=resolved_window_title,
             hwnd=hwnd,
