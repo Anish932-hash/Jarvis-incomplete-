@@ -123,6 +123,9 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
             campaign_hint_query: str = "",
             campaign_preferred_title: str = "",
             campaign_descendant_title_sequence=None,
+            portfolio_hint_query: str = "",
+            portfolio_preferred_title: str = "",
+            portfolio_descendant_title_sequence=None,
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -143,6 +146,9 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
             assert max_descendant_focus_steps == 1
             assert limit == 80
             assert campaign_descendant_title_sequence == ["Confirm pairing", "Allow device"]
+            assert portfolio_hint_query == "Confirm pairing | Allow device"
+            assert portfolio_preferred_title == "Allow device"
+            assert portfolio_descendant_title_sequence == ["Confirm pairing", "Allow device"]
             del campaign_hint_query, campaign_preferred_title
             return {
                 "status": "success",
@@ -210,12 +216,16 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
                 "descendant_query_match_count": 1,
                 "descendant_hint_title_match_count": 1,
                 "campaign_descendant_hint_title_match_count": 0,
+                "portfolio_descendant_hint_title_match_count": 1,
                 "descendant_sequence_match_count": 1,
                 "campaign_descendant_sequence_match_count": 1,
+                "portfolio_descendant_sequence_match_count": 1,
                 "expected_descendant_sequence_title": "Confirm pairing",
                 "expected_campaign_descendant_sequence_title": "Allow device",
+                "expected_portfolio_descendant_sequence_title": "Allow device",
                 "preferred_descendant_sequence_match_score": 0.94,
                 "preferred_campaign_descendant_sequence_match_score": 0.78,
+                "preferred_portfolio_descendant_sequence_match_score": 0.82,
                 "preferred_descendant_match_score": 0.97,
                 "descendant_focus_strength": 0.91,
                 "adopted_descendant_depth": 1,
@@ -244,6 +254,9 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
         descendant_hint_query="Pair device",
         descendant_title_sequence=["Pair device", "Confirm pairing"],
         campaign_descendant_title_sequence=["Confirm pairing", "Allow device"],
+        portfolio_hint_query="Confirm pairing | Allow device",
+        portfolio_preferred_title="Allow device",
+        portfolio_descendant_title_sequence=["Confirm pairing", "Allow device"],
         preferred_title="Pair device",
         hwnd=5001,
         pid=777,
@@ -262,10 +275,17 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
     assert payload["descendant_focus_strength"] == pytest.approx(0.91)
     assert payload["descendant_sequence_match_count"] == 1
     assert payload["campaign_descendant_sequence_match_count"] == 1
+    assert payload["portfolio_descendant_hint_title_match_count"] == 1
+    assert payload["portfolio_descendant_sequence_match_count"] == 1
     assert payload["expected_descendant_sequence_title"] == "Confirm pairing"
     assert payload["expected_campaign_descendant_sequence_title"] == "Allow device"
+    assert str(payload["expected_portfolio_descendant_sequence_title"]).strip() in {
+        "Confirm pairing",
+        "Allow device",
+    }
     assert payload["preferred_descendant_sequence_match_score"] == pytest.approx(0.94)
     assert payload["preferred_campaign_descendant_sequence_match_score"] == pytest.approx(0.78)
+    assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.82)
     assert payload["preferred_descendant_match_score"] == pytest.approx(0.97)
     assert payload["adopted_descendant_depth"] == 1
     assert payload["adopted_matches_preferred_descendant"] is True
@@ -288,6 +308,9 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
             campaign_hint_query: str = "",
             campaign_preferred_title: str = "",
             campaign_descendant_title_sequence=None,
+            portfolio_hint_query: str = "",
+            portfolio_preferred_title: str = "",
+            portfolio_descendant_title_sequence=None,
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -308,6 +331,9 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
             assert max_descendant_focus_steps == 3
             assert limit == 80
             assert campaign_descendant_title_sequence == ["Confirm pairing", "Allow device"]
+            assert portfolio_hint_query == "Confirm pairing | Allow device"
+            assert portfolio_preferred_title == "Allow device"
+            assert portfolio_descendant_title_sequence == ["Confirm pairing", "Allow device"]
             del campaign_hint_query, campaign_preferred_title
             return {
                 "status": "success",
@@ -375,12 +401,16 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
                 "descendant_query_match_count": 1,
                 "descendant_hint_title_match_count": 1,
                 "campaign_descendant_hint_title_match_count": 1,
+                "portfolio_descendant_hint_title_match_count": 2,
                 "descendant_sequence_match_count": 2,
                 "campaign_descendant_sequence_match_count": 2,
+                "portfolio_descendant_sequence_match_count": 2,
                 "expected_descendant_sequence_title": "Confirm pairing",
                 "expected_campaign_descendant_sequence_title": "Allow device",
+                "expected_portfolio_descendant_sequence_title": "Allow device",
                 "preferred_descendant_sequence_match_score": 0.96,
                 "preferred_campaign_descendant_sequence_match_score": 0.84,
+                "preferred_portfolio_descendant_sequence_match_score": 0.89,
                 "preferred_descendant_match_score": 0.95,
                 "descendant_focus_strength": 0.93,
                 "adopted_descendant_depth": 1,
@@ -415,6 +445,9 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
         descendant_hint_query="Pair device",
         descendant_title_sequence=["Pair device", "Confirm pairing"],
         campaign_descendant_title_sequence=["Confirm pairing", "Allow device"],
+        portfolio_hint_query="Confirm pairing | Allow device",
+        portfolio_preferred_title="Allow device",
+        portfolio_descendant_title_sequence=["Confirm pairing", "Allow device"],
         preferred_title="Pair device",
         hwnd=5001,
         pid=777,
@@ -439,10 +472,17 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
     assert payload["descendant_focus_chain_anchor_recovery_match_score"] == pytest.approx(0.88)
     assert payload["descendant_sequence_match_count"] == 2
     assert payload["campaign_descendant_sequence_match_count"] == 2
+    assert payload["portfolio_descendant_hint_title_match_count"] == 2
+    assert payload["portfolio_descendant_sequence_match_count"] == 2
     assert payload["expected_descendant_sequence_title"] == "Confirm pairing"
     assert payload["expected_campaign_descendant_sequence_title"] == "Allow device"
+    assert str(payload["expected_portfolio_descendant_sequence_title"]).strip() in {
+        "Confirm pairing",
+        "Allow device",
+    }
     assert payload["preferred_descendant_sequence_match_score"] == pytest.approx(0.96)
     assert payload["preferred_campaign_descendant_sequence_match_score"] == pytest.approx(0.84)
+    assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.89)
     assert payload["descendant_focus_chain_stop_reason"] == "stable_no_further_descendant"
     assert payload["descendant_focus_chain_quality"] == pytest.approx(0.88)
     assert payload["descendant_focus_chain_signature"] == "5001|2|2|Pair device|Confirm pairing"
@@ -553,13 +593,16 @@ def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None
             campaign_hint_query: str = "",
             campaign_preferred_title: str = "",
             campaign_descendant_title_sequence=None,
+            portfolio_hint_query: str = "",
+            portfolio_preferred_title: str = "",
+            portfolio_descendant_title_sequence=None,
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
             pid: int | None = None,
             limit: int = 120,
         ) -> dict:
-            del query, hint_query, descendant_hint_query, descendant_title_sequence, campaign_hint_query, campaign_preferred_title, campaign_descendant_title_sequence, preferred_title, window_title, pid
+            del query, hint_query, descendant_hint_query, descendant_title_sequence, campaign_hint_query, campaign_preferred_title, campaign_descendant_title_sequence, portfolio_hint_query, portfolio_preferred_title, portfolio_descendant_title_sequence, preferred_title, window_title, pid
             assert limit >= 3
             if int(hwnd or 0) == 5001:
                 return {
@@ -717,6 +760,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             campaign_hint_query: str = "",
             campaign_preferred_title: str = "",
             campaign_descendant_title_sequence=None,
+            portfolio_hint_query: str = "",
+            portfolio_preferred_title: str = "",
+            portfolio_descendant_title_sequence=None,
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -729,6 +775,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             calls["reacquire_campaign_hint_query"] = str(campaign_hint_query or "")
             calls["reacquire_campaign_preferred_title"] = str(campaign_preferred_title or "")
             calls["reacquire_campaign_descendant_title_sequence"] = list(campaign_descendant_title_sequence or [])
+            calls["reacquire_portfolio_hint_query"] = str(portfolio_hint_query or "")
+            calls["reacquire_portfolio_preferred_title"] = str(portfolio_preferred_title or "")
+            calls["reacquire_portfolio_descendant_title_sequence"] = list(portfolio_descendant_title_sequence or [])
             calls["reacquire_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
@@ -816,6 +865,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             campaign_hint_query: str = "",
             campaign_preferred_title: str = "",
             campaign_descendant_title_sequence=None,
+            portfolio_hint_query: str = "",
+            portfolio_preferred_title: str = "",
+            portfolio_descendant_title_sequence=None,
             preferred_title: str = "",
             window_title: str = "",
             hwnd: int | None = None,
@@ -828,6 +880,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
             calls["trace_campaign_hint_query"] = str(campaign_hint_query or "")
             calls["trace_campaign_preferred_title"] = str(campaign_preferred_title or "")
             calls["trace_campaign_descendant_title_sequence"] = list(campaign_descendant_title_sequence or [])
+            calls["trace_portfolio_hint_query"] = str(portfolio_hint_query or "")
+            calls["trace_portfolio_preferred_title"] = str(portfolio_preferred_title or "")
+            calls["trace_portfolio_descendant_title_sequence"] = list(portfolio_descendant_title_sequence or [])
             calls["trace_preferred_title"] = str(preferred_title or "")
             del query, window_title, hwnd, pid, limit
             return {
@@ -841,8 +896,12 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                 "descendant_query_match_count": 0,
                 "descendant_hint_title_match_count": 2,
                 "campaign_descendant_hint_title_match_count": 2,
+                "portfolio_descendant_hint_title_match_count": 2,
+                "portfolio_descendant_sequence_match_count": 2,
                 "preferred_descendant_match_score": 0.94,
                 "descendant_focus_strength": 0.88,
+                "expected_portfolio_descendant_sequence_title": "Allow device",
+                "preferred_portfolio_descendant_sequence_match_score": 0.87,
                 "descendant_chain_titles": ["Pair device"],
                 "child_chain_signature": "5001|1|1|Pair device",
                 "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
@@ -902,6 +961,23 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "program_long_horizon_pending_count": 1,
                         "program_pressure": 1.4,
                         "program_latest_cycle_stop_reason": "descendant_chain_limit_reached",
+                        "portfolio_count": 1,
+                        "portfolio_wave_count": 2,
+                        "portfolio_pending_program_count": 1,
+                        "portfolio_attention_program_count": 1,
+                        "portfolio_pending_campaign_count": 1,
+                        "portfolio_pending_session_count": 2,
+                        "portfolio_pending_app_target_count": 1,
+                        "portfolio_regression_wave_count": 2,
+                        "portfolio_long_horizon_pending_count": 1,
+                        "portfolio_pressure": 1.6,
+                        "portfolio_hint_query": "confirm pairing | allow device",
+                        "portfolio_descendant_title_hints": ["Confirm pairing", "Allow device"],
+                        "portfolio_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+                        "portfolio_descendant_hint_query": "Confirm pairing | Allow device",
+                        "portfolio_preferred_window_title": "Allow device",
+                        "portfolio_latest_wave_status": "failed",
+                        "portfolio_latest_wave_stop_reason": "regression_attention",
                         "session_cycle_count": 3,
                         "session_regression_cycle_count": 2,
                         "session_long_horizon_pending_count": 1,
@@ -927,6 +1003,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert calls["reacquire_campaign_hint_query"] == "pair device | confirm pairing"
     assert calls["reacquire_campaign_preferred_title"] == "Confirm pairing"
     assert calls["reacquire_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing", "Allow device"]
+    assert calls["reacquire_portfolio_hint_query"] == "confirm pairing | allow device"
+    assert calls["reacquire_portfolio_preferred_title"] == "Allow device"
+    assert calls["reacquire_portfolio_descendant_title_sequence"] == ["Confirm pairing", "Allow device"]
     assert calls["reacquire_preferred_title"] == "Pair device"
     assert calls["trace_hint_query"] == "pair device | confirm pairing"
     assert calls["trace_descendant_hint_query"] == "Pair device | Confirm pairing"
@@ -934,6 +1013,9 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert calls["trace_campaign_hint_query"] == "pair device | confirm pairing"
     assert calls["trace_campaign_preferred_title"] == "Confirm pairing"
     assert calls["trace_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing", "Allow device"]
+    assert calls["trace_portfolio_hint_query"] == "confirm pairing | allow device"
+    assert calls["trace_portfolio_preferred_title"] == "Allow device"
+    assert calls["trace_portfolio_descendant_title_sequence"] == ["Confirm pairing", "Allow device"]
     assert calls["trace_preferred_title"] == "Pair device"
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
@@ -951,7 +1033,14 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["preferred_descendant_match_score"] == pytest.approx(0.94)
     assert payload["descendant_hint_title_match_count"] == 2
     assert payload["campaign_descendant_hint_title_match_count"] == 2
+    assert payload["portfolio_descendant_hint_title_match_count"] == 2
+    assert payload["portfolio_descendant_sequence_match_count"] == 2
     assert payload["expected_program_descendant_sequence_title"] == "Confirm pairing"
+    assert str(payload["expected_portfolio_descendant_sequence_title"]).strip() in {
+        "Confirm pairing",
+        "Allow device",
+    }
+    assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.87)
     assert payload["descendant_anchor_recovery_available"] is True
     assert payload["descendant_anchor_recovery_match_score"] >= 0.8
     assert payload["descendant_anchor_recovery_pressure"] >= 0.7

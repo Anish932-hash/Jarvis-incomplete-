@@ -100,9 +100,13 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_campaign_descendant_hint_title_match_count: u32,
     #[serde(default)]
+    pub native_portfolio_descendant_hint_title_match_count: u32,
+    #[serde(default)]
     pub native_descendant_sequence_match_count: u32,
     #[serde(default)]
     pub native_campaign_descendant_sequence_match_count: u32,
+    #[serde(default)]
+    pub native_portfolio_descendant_sequence_match_count: u32,
     #[serde(default)]
     pub native_descendant_chain_titles: Vec<String>,
     #[serde(default)]
@@ -113,6 +117,8 @@ pub struct SurfaceExplorationRouterInput {
     pub native_expected_descendant_sequence_title: String,
     #[serde(default)]
     pub native_expected_campaign_descendant_sequence_title: String,
+    #[serde(default)]
+    pub native_expected_portfolio_descendant_sequence_title: String,
     #[serde(default)]
     pub native_descendant_anchor_recovery_available: bool,
     #[serde(default)]
@@ -227,6 +233,22 @@ pub struct SurfaceExplorationRouterInput {
     pub benchmark_target_campaign_latest_sweep_status: String,
     #[serde(default)]
     pub benchmark_target_campaign_latest_sweep_regression_status: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_portfolio_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_descendant_title_hints: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_portfolio_descendant_title_sequence: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_portfolio_descendant_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_preferred_window_title: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_regression_wave_count: u32,
+    #[serde(default)]
+    pub benchmark_target_portfolio_long_horizon_pending_count: u32,
     #[serde(default)]
     pub benchmark_target_session_cycle_count: u32,
     #[serde(default)]
@@ -594,9 +616,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
     let native_descendant_hint_title_match_count = input.native_descendant_hint_title_match_count;
     let native_campaign_descendant_hint_title_match_count =
         input.native_campaign_descendant_hint_title_match_count;
+    let native_portfolio_descendant_hint_title_match_count =
+        input.native_portfolio_descendant_hint_title_match_count;
     let native_descendant_sequence_match_count = input.native_descendant_sequence_match_count;
     let native_campaign_descendant_sequence_match_count =
         input.native_campaign_descendant_sequence_match_count;
+    let native_portfolio_descendant_sequence_match_count =
+        input.native_portfolio_descendant_sequence_match_count;
     let native_descendant_chain_titles = input
         .native_descendant_chain_titles
         .iter()
@@ -618,6 +644,10 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         normalize_text(&input.native_expected_campaign_descendant_sequence_title);
     let native_expected_campaign_descendant_sequence_tokens =
         tokenize(&native_expected_campaign_descendant_sequence_title);
+    let native_expected_portfolio_descendant_sequence_title =
+        normalize_text(&input.native_expected_portfolio_descendant_sequence_title);
+    let native_expected_portfolio_descendant_sequence_tokens =
+        tokenize(&native_expected_portfolio_descendant_sequence_title);
     let native_descendant_anchor_recovery_available =
         input.native_descendant_anchor_recovery_available;
     let native_descendant_anchor_recovery_match_score =
@@ -763,6 +793,34 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         normalize_text(&input.benchmark_target_campaign_latest_sweep_status);
     let benchmark_target_campaign_latest_sweep_regression_status =
         normalize_text(&input.benchmark_target_campaign_latest_sweep_regression_status);
+    let benchmark_target_portfolio_pressure =
+        input.benchmark_target_portfolio_pressure.max(0.0);
+    let benchmark_target_portfolio_hint_query =
+        normalize_text(&input.benchmark_target_portfolio_hint_query);
+    let benchmark_target_portfolio_hint_query_tokens =
+        tokenize(&benchmark_target_portfolio_hint_query);
+    let benchmark_target_portfolio_descendant_title_hint_tokens = input
+        .benchmark_target_portfolio_descendant_title_hints
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_portfolio_descendant_sequence_tokens = input
+        .benchmark_target_portfolio_descendant_title_sequence
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_portfolio_descendant_hint_query =
+        normalize_text(&input.benchmark_target_portfolio_descendant_hint_query);
+    let benchmark_target_portfolio_descendant_hint_query_tokens =
+        tokenize(&benchmark_target_portfolio_descendant_hint_query);
+    let benchmark_target_portfolio_preferred_window_title =
+        normalize_text(&input.benchmark_target_portfolio_preferred_window_title);
+    let benchmark_target_portfolio_preferred_window_tokens =
+        tokenize(&benchmark_target_portfolio_preferred_window_title);
+    let benchmark_target_portfolio_regression_wave_count =
+        input.benchmark_target_portfolio_regression_wave_count;
+    let benchmark_target_portfolio_long_horizon_pending_count =
+        input.benchmark_target_portfolio_long_horizon_pending_count;
     let benchmark_target_session_cycle_count = input.benchmark_target_session_cycle_count;
     let benchmark_target_regression_cycle_count =
         input.benchmark_target_regression_cycle_count;
@@ -870,6 +928,21 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             );
         let campaign_preferred_window_overlap =
             token_overlap(&benchmark_target_campaign_preferred_window_tokens, &label_tokens);
+        let portfolio_hint_overlap =
+            token_overlap(&benchmark_target_portfolio_hint_query_tokens, &label_tokens);
+        let portfolio_descendant_hint_overlap =
+            token_overlap(
+                &benchmark_target_portfolio_descendant_title_hint_tokens,
+                &label_tokens,
+            ) + token_overlap(
+                &benchmark_target_portfolio_descendant_sequence_tokens,
+                &label_tokens,
+            ) + token_overlap(
+                &benchmark_target_portfolio_descendant_hint_query_tokens,
+                &label_tokens,
+            );
+        let portfolio_preferred_window_overlap =
+            token_overlap(&benchmark_target_portfolio_preferred_window_tokens, &label_tokens);
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
@@ -922,12 +995,34 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 campaign_preferred_window_overlap
             ));
         }
+        if benchmark_target_app_matched && portfolio_hint_overlap > 0 {
+            rust_score += (portfolio_hint_overlap as f64 * 0.04).min(0.14);
+            reasons.push(format!("benchmark_portfolio_hint:{}", portfolio_hint_overlap));
+        }
+        if benchmark_target_app_matched && portfolio_descendant_hint_overlap > 0 {
+            rust_score += (portfolio_descendant_hint_overlap as f64 * 0.045).min(0.16);
+            reasons.push(format!(
+                "benchmark_portfolio_descendant_hint:{}",
+                portfolio_descendant_hint_overlap
+            ));
+        }
+        if benchmark_target_app_matched && portfolio_preferred_window_overlap > 0 {
+            rust_score += (portfolio_preferred_window_overlap as f64 * 0.04).min(0.12);
+            reasons.push(format!(
+                "benchmark_portfolio_preferred_window:{}",
+                portfolio_preferred_window_overlap
+            ));
+        }
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
         let expected_descendant_sequence_overlap =
             token_overlap(&native_expected_descendant_sequence_tokens, &label_tokens);
         let expected_campaign_descendant_sequence_overlap = token_overlap(
             &native_expected_campaign_descendant_sequence_tokens,
+            &label_tokens,
+        );
+        let expected_portfolio_descendant_sequence_overlap = token_overlap(
+            &native_expected_portfolio_descendant_sequence_tokens,
             &label_tokens,
         );
         let expected_program_descendant_sequence_overlap = token_overlap(
@@ -995,6 +1090,22 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     native_campaign_descendant_sequence_match_count
                 ));
             }
+            if native_portfolio_descendant_hint_title_match_count > 0 {
+                rust_score +=
+                    (native_portfolio_descendant_hint_title_match_count as f64 * 0.018).min(0.05);
+                reasons.push(format!(
+                    "native_portfolio_descendant_hint_title_matches:{}",
+                    native_portfolio_descendant_hint_title_match_count
+                ));
+            }
+            if native_portfolio_descendant_sequence_match_count > 0 {
+                rust_score +=
+                    (native_portfolio_descendant_sequence_match_count as f64 * 0.018).min(0.05);
+                reasons.push(format!(
+                    "native_portfolio_descendant_sequence_matches:{}",
+                    native_portfolio_descendant_sequence_match_count
+                ));
+            }
             if expected_descendant_sequence_overlap > 0 {
                 rust_score += (expected_descendant_sequence_overlap as f64 * 0.04).min(0.1);
                 reasons.push(format!(
@@ -1008,6 +1119,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 reasons.push(format!(
                     "expected_campaign_descendant_sequence_overlap:{}",
                     expected_campaign_descendant_sequence_overlap
+                ));
+            }
+            if expected_portfolio_descendant_sequence_overlap > 0 {
+                rust_score +=
+                    (0.025 + (expected_portfolio_descendant_sequence_overlap as f64 * 0.03))
+                        .min(0.08);
+                reasons.push(format!(
+                    "expected_portfolio_descendant_sequence_overlap:{}",
+                    expected_portfolio_descendant_sequence_overlap
                 ));
             }
             if native_descendant_anchor_recovery_available {
@@ -1031,21 +1151,60 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     expected_anchor_recovery_overlap
                 ));
             }
+            if benchmark_target_portfolio_pressure > 0.0 {
+                rust_score +=
+                    (0.02 + (benchmark_target_portfolio_pressure * 0.05)).min(0.08);
+                reasons.push(format!(
+                    "benchmark_portfolio_pressure:{:.2}",
+                    benchmark_target_portfolio_pressure
+                ));
+            }
+            if benchmark_target_portfolio_regression_wave_count > 0 {
+                rust_score +=
+                    (0.02 + (benchmark_target_portfolio_regression_wave_count.min(3) as f64 * 0.01))
+                        .min(0.06);
+                reasons.push(format!(
+                    "benchmark_portfolio_regression_waves:{}",
+                    benchmark_target_portfolio_regression_wave_count
+                ));
+            }
+            if benchmark_target_portfolio_long_horizon_pending_count > 0 {
+                rust_score +=
+                    (0.015
+                        + (benchmark_target_portfolio_long_horizon_pending_count.min(3) as f64
+                            * 0.01))
+                        .min(0.05);
+                reasons.push(format!(
+                    "benchmark_portfolio_long_horizon_pending:{}",
+                    benchmark_target_portfolio_long_horizon_pending_count
+                ));
+            }
             if requested_descendant_chain && native_descendant_chain_depth > 1 {
                 let chain_boost = (0.05
                     + (native_descendant_chain_depth.min(3) as f64 * 0.03)
-                    + (benchmark_target_descendant_focus_pressure * 0.08))
+                    + (benchmark_target_descendant_focus_pressure * 0.08)
+                    + (benchmark_target_portfolio_pressure * 0.06)
+                    + (benchmark_target_portfolio_regression_wave_count.min(3) as f64 * 0.01)
+                    + (benchmark_target_portfolio_long_horizon_pending_count.min(3) as f64
+                        * 0.008))
                     .min(0.2);
                 rust_score += chain_boost;
                 reasons.push(format!(
                     "descendant_focus_chain_request:{}",
                     native_descendant_chain_depth
                 ));
+                if benchmark_target_portfolio_pressure > 0.0 {
+                    reasons.push(format!(
+                        "benchmark_portfolio_chain_pressure:{:.2}",
+                        benchmark_target_portfolio_pressure
+                    ));
+                }
                 if native_descendant_anchor_recovery_available {
                     let recovery_boost = (0.04
                         + (0.08
                             * native_descendant_anchor_recovery_pressure
-                                .max(benchmark_target_descendant_focus_pressure)))
+                                .max(benchmark_target_descendant_focus_pressure)
+                                .max(benchmark_target_portfolio_pressure)))
                         .min(0.14);
                     rust_score += recovery_boost;
                     reasons.push(format!(
@@ -2480,6 +2639,93 @@ mod tests {
             value
                 .as_str()
                 .map(|reason| reason == "descendant_anchor_recovery_available")
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn route_surface_exploration_prefers_portfolio_guided_descendant_chain_adoption() {
+        let payload = json!({
+            "query": "Confirm pairing",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Confirm pairing",
+            "current_reacquired_app_name": "settings",
+            "native_descendant_chain_depth": 3,
+            "native_descendant_dialog_chain_depth": 2,
+            "native_descendant_adoption_available": true,
+            "native_descendant_adoption_match_score": 0.9,
+            "native_descendant_focus_strength": 0.94,
+            "native_preferred_descendant_match_score": 0.95,
+            "native_portfolio_descendant_hint_title_match_count": 2,
+            "native_portfolio_descendant_sequence_match_count": 2,
+            "native_expected_portfolio_descendant_sequence_title": "Allow device",
+            "preferred_descendant_title": "Confirm pairing",
+            "preferred_descendant_hwnd": 5003,
+            "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_descendant_focus_pressure": 0.9,
+            "benchmark_target_portfolio_pressure": 1.2,
+            "benchmark_target_portfolio_descendant_title_hints": ["Confirm pairing", "Allow device"],
+            "benchmark_target_portfolio_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+            "benchmark_target_portfolio_descendant_hint_query": "confirm pairing | allow device",
+            "benchmark_target_portfolio_preferred_window_title": "Confirm pairing",
+            "benchmark_target_portfolio_hint_query": "confirm pairing | allow device",
+            "benchmark_target_portfolio_regression_wave_count": 2,
+            "benchmark_target_portfolio_long_horizon_pending_count": 1,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5003|focus_related_window_chain|adopt child surface chain: confirm pairing",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface chain: Confirm pairing",
+                    "selected_action": "focus_related_window_chain",
+                    "confidence": 0.82
+                },
+                {
+                    "selection_key": "branch_action|5003|focus_related_window|adopt child surface: confirm pairing",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface: Confirm pairing",
+                    "selected_action": "focus_related_window",
+                    "confidence": 0.81
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus_related_window_chain")
+        );
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("benchmark_portfolio_descendant_hint:"))
+                .unwrap_or(false)
+        }));
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("native_portfolio_descendant_sequence_matches:"))
+                .unwrap_or(false)
+        }));
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason.starts_with("benchmark_portfolio_chain_pressure:"))
                 .unwrap_or(false)
         }));
     }

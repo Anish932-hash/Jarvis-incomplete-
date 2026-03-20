@@ -1674,3 +1674,83 @@ def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatc
     assert payload["auto_created_app_names"] == ["settings"]
     assert create_calls and create_calls[0]["app"] == "settings"
     assert cycle_calls == ["portfolio-settings"]
+
+
+def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_signals(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=6, lab_memory=DesktopBenchmarkLabMemory())
+
+    monkeypatch.setattr(
+        runner,
+        "lab",
+        lambda **_: {
+            "status": "success",
+            "coverage": {"long_horizon": {"count": 1}},
+            "replay_candidates": [],
+            "installed_app_coverage": {"missing_apps": []},
+            "history_trend": {"run_count": 0},
+            "filters": {},
+        },
+    )
+    monkeypatch.setattr(runner, "_select_scenarios", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(runner, "lab_sessions", lambda **_: {"status": "success", "items": []})
+    monkeypatch.setattr(runner, "lab_campaigns", lambda **_: {"status": "success", "items": []})
+    monkeypatch.setattr(runner, "lab_programs", lambda **_: {"status": "success", "items": []})
+    monkeypatch.setattr(
+        runner,
+        "lab_portfolios",
+        lambda **_: {
+            "status": "success",
+            "items": [
+                {
+                    "portfolio_id": "portfolio-settings",
+                    "label": "settings replay portfolio",
+                    "filters": {"app": "settings"},
+                    "program_count": 2,
+                    "wave_count": 3,
+                    "pending_program_count": 1,
+                    "attention_program_count": 1,
+                    "pending_campaign_count": 1,
+                    "pending_session_count": 2,
+                    "pending_app_target_count": 1,
+                    "regression_wave_count": 2,
+                    "long_horizon_pending_count": 1,
+                    "latest_wave_status": "failed",
+                    "latest_wave_stop_reason": "regression_attention",
+                    "native_targets_snapshot": {
+                        "target_apps": [
+                            {
+                                "app_name": "settings",
+                                "priority": 2.2,
+                                "control_biases": {
+                                    "dialog_resolution": 0.72,
+                                    "descendant_focus": 0.94,
+                                    "recovery_reacquire": 0.83,
+                                    "native_focus": 0.91,
+                                },
+                                "portfolio_pressure": 1.4,
+                                "portfolio_hint_query": "confirm pairing | allow device",
+                                "portfolio_descendant_title_hints": ["Confirm pairing", "Allow device"],
+                                "portfolio_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+                                "portfolio_descendant_hint_query": "Confirm pairing | Allow device",
+                                "portfolio_preferred_window_title": "Allow device",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+
+    native_targets = runner.native_control_targets(app="settings", history_limit=6)
+
+    assert native_targets["status"] == "success"
+    assert native_targets["replay_portfolio_summary"]["portfolio_count"] == 1
+    assert native_targets["replay_portfolio_summary"]["latest_portfolio_id"] == "portfolio-settings"
+    target_row = next(item for item in native_targets["target_apps"] if str(item.get("app_name", "")) == "settings")
+    assert int(target_row["portfolio_count"]) == 1
+    assert int(target_row["portfolio_wave_count"]) == 3
+    assert float(target_row["portfolio_pressure"]) > 1.0
+    assert list(target_row["portfolio_descendant_title_sequence"]) == ["Confirm pairing", "Allow device"]
+    assert str(target_row["portfolio_hint_query"]) == "confirm pairing | allow device"
+    assert str(target_row["portfolio_preferred_window_title"]) == "Allow device"
+    assert float(target_row["control_biases"]["descendant_focus"]) >= 0.94

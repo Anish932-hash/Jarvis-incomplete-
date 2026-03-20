@@ -421,6 +421,8 @@ bool snapshot_matches_chain_query(
     const std::wstring& descendant_hint_query,
     const std::wstring& campaign_hint_query,
     const std::wstring& campaign_preferred_title,
+    const std::wstring& portfolio_hint_query,
+    const std::wstring& portfolio_preferred_title,
     const std::wstring& preferred_title,
     const std::wstring& window_title
 ) {
@@ -449,6 +451,15 @@ bool snapshot_matches_chain_query(
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.title), campaign_preferred_title) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.title), portfolio_hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.process_name), portfolio_hint_query) > 0.0) {
+        return true;
+    }
+    if (substring_match_score(utf8_to_wide(snapshot.title), portfolio_preferred_title) > 0.0) {
         return true;
     }
     if (substring_match_score(utf8_to_wide(snapshot.title), preferred_title) > 0.0) {
@@ -633,14 +644,18 @@ struct DescendantChainMetrics {
     int descendant_query_match_count = 0;
     int descendant_hint_title_match_count = 0;
     int campaign_descendant_hint_title_match_count = 0;
+    int portfolio_descendant_hint_title_match_count = 0;
     int descendant_sequence_match_count = 0;
     int campaign_descendant_sequence_match_count = 0;
+    int portfolio_descendant_sequence_match_count = 0;
     double preferred_descendant_match_score = 0.0;
     double preferred_descendant_sequence_match_score = 0.0;
     double preferred_campaign_descendant_sequence_match_score = 0.0;
+    double preferred_portfolio_descendant_sequence_match_score = 0.0;
     double descendant_focus_strength = 0.0;
     std::string expected_descendant_sequence_title;
     std::string expected_campaign_descendant_sequence_title;
+    std::string expected_portfolio_descendant_sequence_title;
 };
 
 DescendantChainMetrics analyze_descendant_chain(
@@ -653,6 +668,9 @@ DescendantChainMetrics analyze_descendant_chain(
     const std::wstring& campaign_hint_query,
     const std::wstring& campaign_preferred_title,
     const std::vector<std::wstring>& campaign_descendant_title_sequence,
+    const std::wstring& portfolio_hint_query,
+    const std::wstring& portfolio_preferred_title,
+    const std::vector<std::wstring>& portfolio_descendant_title_sequence,
     const std::wstring& preferred_title,
     const std::wstring& window_title
 ) {
@@ -688,6 +706,8 @@ DescendantChainMetrics analyze_descendant_chain(
                 descendant_hint_query,
                 campaign_hint_query,
                 campaign_preferred_title,
+                portfolio_hint_query,
+                portfolio_preferred_title,
                 preferred_title,
                 window_title
             )) {
@@ -702,6 +722,10 @@ DescendantChainMetrics analyze_descendant_chain(
             && substring_match_score(row_title, campaign_hint_query) > 0.0) {
             ++metrics.campaign_descendant_hint_title_match_count;
         }
+        if (!portfolio_hint_query.empty()
+            && substring_match_score(row_title, portfolio_hint_query) > 0.0) {
+            ++metrics.portfolio_descendant_hint_title_match_count;
+        }
     }
 
     std::sort(metrics.direct_children.begin(), metrics.direct_children.end(), [](const WindowSnapshot& left, const WindowSnapshot& right) {
@@ -714,8 +738,11 @@ DescendantChainMetrics analyze_descendant_chain(
         expected_descendant_sequence_title(descendant_title_sequence, candidate);
     const std::wstring expected_campaign_sequence_title =
         expected_descendant_sequence_title(campaign_descendant_title_sequence, candidate);
+    const std::wstring expected_portfolio_sequence_title =
+        expected_descendant_sequence_title(portfolio_descendant_title_sequence, candidate);
     metrics.expected_descendant_sequence_title = wide_to_utf8(expected_sequence_title);
     metrics.expected_campaign_descendant_sequence_title = wide_to_utf8(expected_campaign_sequence_title);
+    metrics.expected_portfolio_descendant_sequence_title = wide_to_utf8(expected_portfolio_sequence_title);
 
     std::sort(metrics.descendant_depth_rows.begin(), metrics.descendant_depth_rows.end(), [&](const auto& left, const auto& right) {
         const bool left_query_match = snapshot_matches_chain_query(
@@ -725,6 +752,8 @@ DescendantChainMetrics analyze_descendant_chain(
             descendant_hint_query,
             campaign_hint_query,
             campaign_preferred_title,
+            portfolio_hint_query,
+            portfolio_preferred_title,
             preferred_title,
             window_title
         );
@@ -735,6 +764,8 @@ DescendantChainMetrics analyze_descendant_chain(
             descendant_hint_query,
             campaign_hint_query,
             campaign_preferred_title,
+            portfolio_hint_query,
+            portfolio_preferred_title,
             preferred_title,
             window_title
         );
@@ -749,8 +780,14 @@ DescendantChainMetrics analyze_descendant_chain(
                 substring_match_score(expected_sequence_title, left_title)
             ),
             std::max(
-                substring_match_score(left_title, expected_campaign_sequence_title),
-                substring_match_score(expected_campaign_sequence_title, left_title)
+                std::max(
+                    substring_match_score(left_title, expected_campaign_sequence_title),
+                    substring_match_score(expected_campaign_sequence_title, left_title)
+                ),
+                std::max(
+                    substring_match_score(left_title, expected_portfolio_sequence_title),
+                    substring_match_score(expected_portfolio_sequence_title, left_title)
+                )
             )
         );
         const double right_expected_sequence = std::max(
@@ -759,20 +796,32 @@ DescendantChainMetrics analyze_descendant_chain(
                 substring_match_score(expected_sequence_title, right_title)
             ),
             std::max(
-                substring_match_score(right_title, expected_campaign_sequence_title),
-                substring_match_score(expected_campaign_sequence_title, right_title)
+                std::max(
+                    substring_match_score(right_title, expected_campaign_sequence_title),
+                    substring_match_score(expected_campaign_sequence_title, right_title)
+                ),
+                std::max(
+                    substring_match_score(right_title, expected_portfolio_sequence_title),
+                    substring_match_score(expected_portfolio_sequence_title, right_title)
+                )
             )
         );
         if (left_expected_sequence != right_expected_sequence) {
             return left_expected_sequence > right_expected_sequence;
         }
         const double left_preferred = std::max(
-            substring_match_score(left_title, preferred_title),
-            substring_match_score(left_title, campaign_preferred_title)
+            std::max(
+                substring_match_score(left_title, preferred_title),
+                substring_match_score(left_title, campaign_preferred_title)
+            ),
+            substring_match_score(left_title, portfolio_preferred_title)
         );
         const double right_preferred = std::max(
-            substring_match_score(right_title, preferred_title),
-            substring_match_score(right_title, campaign_preferred_title)
+            std::max(
+                substring_match_score(right_title, preferred_title),
+                substring_match_score(right_title, campaign_preferred_title)
+            ),
+            substring_match_score(right_title, portfolio_preferred_title)
         );
         if (left_preferred != right_preferred) {
             return left_preferred > right_preferred;
@@ -808,6 +857,10 @@ DescendantChainMetrics analyze_descendant_chain(
             metrics.descendant_depth_rows,
             campaign_descendant_title_sequence
         );
+        metrics.portfolio_descendant_sequence_match_count = sequence_match_count(
+            metrics.descendant_depth_rows,
+            portfolio_descendant_title_sequence
+        );
 
         const std::wstring preferred_descendant_title =
             utf8_to_wide(metrics.preferred_descendant.title);
@@ -825,6 +878,13 @@ DescendantChainMetrics analyze_descendant_chain(
                 campaign_hint_query
             )
         );
+        const double portfolio_hint_score = std::max(
+            substring_match_score(preferred_descendant_title, portfolio_hint_query),
+            substring_match_score(
+                utf8_to_wide(metrics.preferred_descendant.process_name),
+                portfolio_hint_query
+            )
+        );
         const double preferred_title_score = substring_match_score(
             preferred_descendant_title,
             preferred_title
@@ -833,9 +893,16 @@ DescendantChainMetrics analyze_descendant_chain(
             preferred_descendant_title,
             campaign_preferred_title
         );
+        const double portfolio_preferred_title_score = substring_match_score(
+            preferred_descendant_title,
+            portfolio_preferred_title
+        );
         metrics.preferred_descendant_match_score = std::max(
-            std::max(descendant_hint_score, campaign_hint_score),
-            std::max(preferred_title_score, campaign_preferred_title_score)
+            std::max(
+                std::max(descendant_hint_score, campaign_hint_score),
+                std::max(portfolio_hint_score, preferred_title_score)
+            ),
+            std::max(campaign_preferred_title_score, portfolio_preferred_title_score)
         );
         metrics.preferred_descendant_sequence_match_score = preferred_sequence_match_score(
             preferred_descendant_title,
@@ -847,6 +914,11 @@ DescendantChainMetrics analyze_descendant_chain(
             campaign_descendant_title_sequence,
             expected_campaign_sequence_title
         );
+        metrics.preferred_portfolio_descendant_sequence_match_score = preferred_sequence_match_score(
+            preferred_descendant_title,
+            portfolio_descendant_title_sequence,
+            expected_portfolio_sequence_title
+        );
 
         double focus_strength = 0.38;
         focus_strength += std::min(0.16, 0.04 * metrics.descendant_chain_depth);
@@ -854,11 +926,14 @@ DescendantChainMetrics analyze_descendant_chain(
         focus_strength += std::min(0.18, 0.05 * metrics.descendant_query_match_count);
         focus_strength += std::min(0.12, 0.08 * metrics.descendant_hint_title_match_count);
         focus_strength += std::min(0.1, 0.08 * metrics.campaign_descendant_hint_title_match_count);
+        focus_strength += std::min(0.1, 0.08 * metrics.portfolio_descendant_hint_title_match_count);
         focus_strength += std::min(0.14, metrics.preferred_descendant_match_score * 0.14);
         focus_strength += std::min(0.08, 0.03 * metrics.descendant_sequence_match_count);
         focus_strength += std::min(0.07, 0.025 * metrics.campaign_descendant_sequence_match_count);
+        focus_strength += std::min(0.07, 0.025 * metrics.portfolio_descendant_sequence_match_count);
         focus_strength += std::min(0.12, metrics.preferred_descendant_sequence_match_score * 0.12);
         focus_strength += std::min(0.1, metrics.preferred_campaign_descendant_sequence_match_score * 0.1);
+        focus_strength += std::min(0.1, metrics.preferred_portfolio_descendant_sequence_match_score * 0.1);
         if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
             focus_strength += 0.06;
         }
@@ -892,10 +967,13 @@ double descendant_chain_follow_quality(const DescendantChainMetrics& metrics) {
     quality += std::min(0.12, 0.03 * metrics.descendant_query_match_count);
     quality += std::min(0.08, 0.03 * metrics.descendant_hint_title_match_count);
     quality += std::min(0.06, 0.025 * metrics.campaign_descendant_hint_title_match_count);
+    quality += std::min(0.06, 0.025 * metrics.portfolio_descendant_hint_title_match_count);
     quality += std::min(0.08, 0.025 * metrics.descendant_sequence_match_count);
     quality += std::min(0.06, 0.02 * metrics.campaign_descendant_sequence_match_count);
+    quality += std::min(0.06, 0.02 * metrics.portfolio_descendant_sequence_match_count);
     quality += std::min(0.12, metrics.preferred_descendant_sequence_match_score * 0.12);
     quality += std::min(0.1, metrics.preferred_campaign_descendant_sequence_match_score * 0.1);
+    quality += std::min(0.1, metrics.preferred_portfolio_descendant_sequence_match_score * 0.1);
     if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
         quality += 0.05;
     }
@@ -916,6 +994,7 @@ bool descendant_chain_follow_allowed(const DescendantChainMetrics& metrics) {
             || metrics.preferred_descendant_match_score >= 0.72
             || metrics.preferred_descendant_sequence_match_score >= 0.72
             || metrics.preferred_campaign_descendant_sequence_match_score >= 0.72
+            || metrics.preferred_portfolio_descendant_sequence_match_score >= 0.72
             || metrics.descendant_dialog_chain_depth > 0
             || metrics.direct_child_dialog_like_count > 0
         );
@@ -972,6 +1051,9 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
     const std::wstring& campaign_hint_query,
     const std::wstring& campaign_preferred_title,
     const std::vector<std::wstring>& campaign_descendant_title_sequence,
+    const std::wstring& portfolio_hint_query,
+    const std::wstring& portfolio_preferred_title,
+    const std::vector<std::wstring>& portfolio_descendant_title_sequence,
     const std::wstring& preferred_title,
     const std::wstring& window_title,
     const DescendantChainMetrics& prior_metrics,
@@ -988,6 +1070,8 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
         normalize_whitespace(utf8_to_wide(prior_metrics.expected_descendant_sequence_title));
     const std::wstring expected_campaign_sequence_title =
         normalize_whitespace(utf8_to_wide(prior_metrics.expected_campaign_descendant_sequence_title));
+    const std::wstring expected_portfolio_sequence_title =
+        normalize_whitespace(utf8_to_wide(prior_metrics.expected_portfolio_descendant_sequence_title));
 
     for (const WindowSnapshot& row : rows) {
         if (row.hwnd <= 0 || row.hwnd == missing_anchor.hwnd || row.hwnd == root_owner_hwnd) {
@@ -1005,10 +1089,14 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
             snapshot_bidirectional_match_score(row, expected_sequence_title);
         const double expected_campaign_sequence_score =
             snapshot_bidirectional_match_score(row, expected_campaign_sequence_title);
+        const double expected_portfolio_sequence_score =
+            snapshot_bidirectional_match_score(row, expected_portfolio_sequence_title);
         const double descendant_sequence_score =
             best_snapshot_sequence_match_score(row, descendant_title_sequence);
         const double campaign_descendant_sequence_score =
             best_snapshot_sequence_match_score(row, campaign_descendant_title_sequence);
+        const double portfolio_descendant_sequence_score =
+            best_snapshot_sequence_match_score(row, portfolio_descendant_title_sequence);
         const double query_score = std::max(
             snapshot_bidirectional_match_score(row, query),
             snapshot_bidirectional_match_score(row, hint_query)
@@ -1017,10 +1105,14 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
             snapshot_bidirectional_match_score(row, descendant_hint_query);
         const double campaign_hint_score =
             snapshot_bidirectional_match_score(row, campaign_hint_query);
+        const double portfolio_hint_score =
+            snapshot_bidirectional_match_score(row, portfolio_hint_query);
         const double preferred_title_score =
             snapshot_bidirectional_match_score(row, preferred_title);
         const double campaign_preferred_title_score =
             snapshot_bidirectional_match_score(row, campaign_preferred_title);
+        const double portfolio_preferred_title_score =
+            snapshot_bidirectional_match_score(row, portfolio_preferred_title);
         const double anchor_title_score =
             snapshot_bidirectional_match_score(row, anchor_title);
         const double window_title_score =
@@ -1039,36 +1131,60 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
         }
         score += std::min(
             0.28,
-            std::max(expected_sequence_score, expected_campaign_sequence_score) * 0.28
+            std::max(
+                std::max(expected_sequence_score, expected_campaign_sequence_score),
+                expected_portfolio_sequence_score
+            ) * 0.28
         );
         score += std::min(
             0.18,
-            std::max(descendant_sequence_score, campaign_descendant_sequence_score) * 0.18
+            std::max(
+                std::max(descendant_sequence_score, campaign_descendant_sequence_score),
+                portfolio_descendant_sequence_score
+            ) * 0.18
         );
         score += std::min(
             0.16,
             std::max(
-                std::max(query_score, descendant_hint_score),
-                campaign_hint_score
+                std::max(
+                    std::max(query_score, descendant_hint_score),
+                    campaign_hint_score
+                ),
+                portfolio_hint_score
             ) * 0.16
         );
         score += std::min(
             0.14,
-            std::max(preferred_title_score, campaign_preferred_title_score) * 0.14
+            std::max(
+                std::max(preferred_title_score, campaign_preferred_title_score),
+                portfolio_preferred_title_score
+            ) * 0.14
         );
         score += std::min(0.1, anchor_title_score * 0.1);
         score += std::min(0.08, window_title_score * 0.08);
 
         const double match_score = std::max(
             std::max(
-                std::max(expected_sequence_score, expected_campaign_sequence_score),
-                std::max(descendant_sequence_score, campaign_descendant_sequence_score)
+                std::max(
+                    std::max(expected_sequence_score, expected_campaign_sequence_score),
+                    expected_portfolio_sequence_score
+                ),
+                std::max(
+                    std::max(descendant_sequence_score, campaign_descendant_sequence_score),
+                    portfolio_descendant_sequence_score
+                )
             ),
             std::max(
-                std::max(query_score, descendant_hint_score),
                 std::max(
-                    std::max(campaign_hint_score, preferred_title_score),
-                    std::max(campaign_preferred_title_score, std::max(anchor_title_score, window_title_score))
+                    std::max(query_score, descendant_hint_score),
+                    std::max(campaign_hint_score, portfolio_hint_score)
+                ),
+                std::max(
+                    std::max(
+                        std::max(preferred_title_score, campaign_preferred_title_score),
+                        portfolio_preferred_title_score
+                    ),
+                    std::max(anchor_title_score, window_title_score)
                 )
             )
         );
@@ -1080,71 +1196,128 @@ ChainAnchorRecoveryCandidate recover_descendant_chain_anchor(
         std::string recovery_reason = "same_root_owner_family";
         std::string matched_title;
         if (expected_sequence_score >= expected_campaign_sequence_score
+            && expected_sequence_score >= expected_portfolio_sequence_score
             && expected_sequence_score >= descendant_sequence_score
             && expected_sequence_score >= campaign_descendant_sequence_score
+            && expected_sequence_score >= portfolio_descendant_sequence_score
             && expected_sequence_score >= query_score
             && expected_sequence_score >= descendant_hint_score
             && expected_sequence_score >= campaign_hint_score
+            && expected_sequence_score >= portfolio_hint_score
             && expected_sequence_score >= preferred_title_score
             && expected_sequence_score >= campaign_preferred_title_score
+            && expected_sequence_score >= portfolio_preferred_title_score
             && expected_sequence_score >= anchor_title_score
             && expected_sequence_score >= window_title_score
             && !prior_metrics.expected_descendant_sequence_title.empty()) {
             recovery_reason = "expected_descendant_sequence_title";
             matched_title = prior_metrics.expected_descendant_sequence_title;
-        } else if (expected_campaign_sequence_score >= descendant_sequence_score
+        } else if (expected_campaign_sequence_score >= expected_portfolio_sequence_score
+            && expected_campaign_sequence_score >= descendant_sequence_score
             && expected_campaign_sequence_score >= campaign_descendant_sequence_score
+            && expected_campaign_sequence_score >= portfolio_descendant_sequence_score
             && expected_campaign_sequence_score >= query_score
             && expected_campaign_sequence_score >= descendant_hint_score
             && expected_campaign_sequence_score >= campaign_hint_score
+            && expected_campaign_sequence_score >= portfolio_hint_score
             && expected_campaign_sequence_score >= preferred_title_score
             && expected_campaign_sequence_score >= campaign_preferred_title_score
+            && expected_campaign_sequence_score >= portfolio_preferred_title_score
             && expected_campaign_sequence_score >= anchor_title_score
             && expected_campaign_sequence_score >= window_title_score
             && !prior_metrics.expected_campaign_descendant_sequence_title.empty()) {
             recovery_reason = "expected_campaign_descendant_sequence_title";
             matched_title = prior_metrics.expected_campaign_descendant_sequence_title;
+        } else if (expected_portfolio_sequence_score >= descendant_sequence_score
+            && expected_portfolio_sequence_score >= campaign_descendant_sequence_score
+            && expected_portfolio_sequence_score >= portfolio_descendant_sequence_score
+            && expected_portfolio_sequence_score >= query_score
+            && expected_portfolio_sequence_score >= descendant_hint_score
+            && expected_portfolio_sequence_score >= campaign_hint_score
+            && expected_portfolio_sequence_score >= portfolio_hint_score
+            && expected_portfolio_sequence_score >= preferred_title_score
+            && expected_portfolio_sequence_score >= campaign_preferred_title_score
+            && expected_portfolio_sequence_score >= portfolio_preferred_title_score
+            && expected_portfolio_sequence_score >= anchor_title_score
+            && expected_portfolio_sequence_score >= window_title_score
+            && !prior_metrics.expected_portfolio_descendant_sequence_title.empty()) {
+            recovery_reason = "expected_portfolio_descendant_sequence_title";
+            matched_title = prior_metrics.expected_portfolio_descendant_sequence_title;
         } else if (descendant_sequence_score >= campaign_descendant_sequence_score
+            && descendant_sequence_score >= portfolio_descendant_sequence_score
             && descendant_sequence_score >= query_score
             && descendant_sequence_score >= descendant_hint_score
             && descendant_sequence_score >= campaign_hint_score
+            && descendant_sequence_score >= portfolio_hint_score
             && descendant_sequence_score >= preferred_title_score
             && descendant_sequence_score >= campaign_preferred_title_score
+            && descendant_sequence_score >= portfolio_preferred_title_score
             && descendant_sequence_score >= anchor_title_score
             && descendant_sequence_score >= window_title_score) {
             recovery_reason = "descendant_title_sequence";
-        } else if (campaign_descendant_sequence_score >= query_score
+        } else if (campaign_descendant_sequence_score >= portfolio_descendant_sequence_score
+            && campaign_descendant_sequence_score >= query_score
             && campaign_descendant_sequence_score >= descendant_hint_score
             && campaign_descendant_sequence_score >= campaign_hint_score
+            && campaign_descendant_sequence_score >= portfolio_hint_score
             && campaign_descendant_sequence_score >= preferred_title_score
             && campaign_descendant_sequence_score >= campaign_preferred_title_score
+            && campaign_descendant_sequence_score >= portfolio_preferred_title_score
             && campaign_descendant_sequence_score >= anchor_title_score
             && campaign_descendant_sequence_score >= window_title_score) {
             recovery_reason = "campaign_descendant_title_sequence";
+        } else if (portfolio_descendant_sequence_score >= query_score
+            && portfolio_descendant_sequence_score >= descendant_hint_score
+            && portfolio_descendant_sequence_score >= campaign_hint_score
+            && portfolio_descendant_sequence_score >= portfolio_hint_score
+            && portfolio_descendant_sequence_score >= preferred_title_score
+            && portfolio_descendant_sequence_score >= campaign_preferred_title_score
+            && portfolio_descendant_sequence_score >= portfolio_preferred_title_score
+            && portfolio_descendant_sequence_score >= anchor_title_score
+            && portfolio_descendant_sequence_score >= window_title_score) {
+            recovery_reason = "portfolio_descendant_title_sequence";
         } else if (descendant_hint_score >= query_score
             && descendant_hint_score >= campaign_hint_score
+            && descendant_hint_score >= portfolio_hint_score
             && descendant_hint_score >= preferred_title_score
             && descendant_hint_score >= campaign_preferred_title_score
+            && descendant_hint_score >= portfolio_preferred_title_score
             && descendant_hint_score >= anchor_title_score
             && descendant_hint_score >= window_title_score) {
             recovery_reason = "descendant_hint_query";
             matched_title = wide_to_utf8(descendant_hint_query);
         } else if (campaign_hint_score >= query_score
+            && campaign_hint_score >= portfolio_hint_score
             && campaign_hint_score >= preferred_title_score
             && campaign_hint_score >= campaign_preferred_title_score
+            && campaign_hint_score >= portfolio_preferred_title_score
             && campaign_hint_score >= anchor_title_score
             && campaign_hint_score >= window_title_score) {
             recovery_reason = "campaign_hint_query";
             matched_title = wide_to_utf8(campaign_hint_query);
+        } else if (portfolio_hint_score >= query_score
+            && portfolio_hint_score >= preferred_title_score
+            && portfolio_hint_score >= campaign_preferred_title_score
+            && portfolio_hint_score >= portfolio_preferred_title_score
+            && portfolio_hint_score >= anchor_title_score
+            && portfolio_hint_score >= window_title_score) {
+            recovery_reason = "portfolio_hint_query";
+            matched_title = wide_to_utf8(portfolio_hint_query);
         } else if (preferred_title_score >= campaign_preferred_title_score
+            && preferred_title_score >= portfolio_preferred_title_score
             && preferred_title_score >= anchor_title_score
             && preferred_title_score >= window_title_score) {
             recovery_reason = "preferred_title";
             matched_title = wide_to_utf8(preferred_title);
-        } else if (campaign_preferred_title_score >= anchor_title_score
+        } else if (campaign_preferred_title_score >= portfolio_preferred_title_score
+            && campaign_preferred_title_score >= anchor_title_score
             && campaign_preferred_title_score >= window_title_score) {
             recovery_reason = "campaign_preferred_title";
             matched_title = wide_to_utf8(campaign_preferred_title);
+        } else if (portfolio_preferred_title_score >= anchor_title_score
+            && portfolio_preferred_title_score >= window_title_score) {
+            recovery_reason = "portfolio_preferred_title";
+            matched_title = wide_to_utf8(portfolio_preferred_title);
         } else if (anchor_title_score >= window_title_score) {
             recovery_reason = "anchor_title";
             matched_title = wide_to_utf8(anchor_title);
@@ -1199,6 +1372,8 @@ RelatedWindowScore score_related_window(
     const std::wstring& descendant_hint_query,
     const std::wstring& campaign_hint_query,
     const std::wstring& campaign_preferred_title,
+    const std::wstring& portfolio_hint_query,
+    const std::wstring& portfolio_preferred_title,
     const std::wstring& preferred_title,
     const std::wstring& window_title,
     long long anchor_hwnd,
@@ -1231,6 +1406,14 @@ RelatedWindowScore score_related_window(
     const double campaign_preferred_title_score = substring_match_score(
         utf8_to_wide(snapshot.title),
         campaign_preferred_title
+    );
+    const double portfolio_hint_query_score = std::max(
+        substring_match_score(utf8_to_wide(snapshot.title), portfolio_hint_query),
+        substring_match_score(utf8_to_wide(snapshot.process_name), portfolio_hint_query)
+    );
+    const double portfolio_preferred_title_score = substring_match_score(
+        utf8_to_wide(snapshot.title),
+        portfolio_preferred_title
     );
     const double preferred_title_score = substring_match_score(
         utf8_to_wide(snapshot.title),
@@ -1276,6 +1459,14 @@ RelatedWindowScore score_related_window(
     if (campaign_preferred_title_score > 0.0) {
         relation.score += 0.42 * campaign_preferred_title_score;
         relation.reasons.push_back("campaign_preferred_title");
+    }
+    if (portfolio_hint_query_score > 0.0) {
+        relation.score += 0.34 * portfolio_hint_query_score;
+        relation.reasons.push_back("portfolio_hint_query");
+    }
+    if (portfolio_preferred_title_score > 0.0) {
+        relation.score += 0.42 * portfolio_preferred_title_score;
+        relation.reasons.push_back("portfolio_preferred_title");
     }
     if (preferred_title_score > 0.0) {
         relation.score += 0.44 * preferred_title_score;
@@ -1331,6 +1522,28 @@ RelatedWindowScore score_related_window(
     ) {
         relation.score += 0.62;
         relation.reasons.push_back("campaign_preferred_title_same_root_owner");
+    }
+    if (portfolio_hint_query_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 0.82;
+        relation.reasons.push_back("portfolio_hint_owned_child");
+    } else if (
+        portfolio_hint_query_score >= 0.95
+        && anchor_root_owner_hwnd > 0
+        && candidate_root_owner_hwnd == anchor_root_owner_hwnd
+    ) {
+        relation.score += 0.5;
+        relation.reasons.push_back("portfolio_hint_same_root_owner");
+    }
+    if (portfolio_preferred_title_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
+        relation.score += 0.96;
+        relation.reasons.push_back("portfolio_preferred_title_owned_child");
+    } else if (
+        portfolio_preferred_title_score >= 0.95
+        && anchor_root_owner_hwnd > 0
+        && candidate_root_owner_hwnd == anchor_root_owner_hwnd
+    ) {
+        relation.score += 0.62;
+        relation.reasons.push_back("portfolio_preferred_title_same_root_owner");
     }
     if (preferred_title_score >= 0.95 && anchor_hwnd > 0 && candidate_owner_hwnd == anchor_hwnd) {
         relation.score += 1.1;
@@ -1448,18 +1661,26 @@ std::string related_window_payload_json(
            << "\"descendant_hint_title_match_count\":" << descendant_metrics.descendant_hint_title_match_count << ","
            << "\"campaign_descendant_hint_title_match_count\":"
            << descendant_metrics.campaign_descendant_hint_title_match_count << ","
+           << "\"portfolio_descendant_hint_title_match_count\":"
+           << descendant_metrics.portfolio_descendant_hint_title_match_count << ","
            << "\"descendant_sequence_match_count\":"
            << descendant_metrics.descendant_sequence_match_count << ","
            << "\"campaign_descendant_sequence_match_count\":"
            << descendant_metrics.campaign_descendant_sequence_match_count << ","
+           << "\"portfolio_descendant_sequence_match_count\":"
+           << descendant_metrics.portfolio_descendant_sequence_match_count << ","
            << "\"expected_descendant_sequence_title\":\""
            << json_escape(descendant_metrics.expected_descendant_sequence_title) << "\","
            << "\"expected_campaign_descendant_sequence_title\":\""
            << json_escape(descendant_metrics.expected_campaign_descendant_sequence_title) << "\","
+           << "\"expected_portfolio_descendant_sequence_title\":\""
+           << json_escape(descendant_metrics.expected_portfolio_descendant_sequence_title) << "\","
            << "\"preferred_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_descendant_sequence_match_score << ","
            << "\"preferred_campaign_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_campaign_descendant_sequence_match_score << ","
+           << "\"preferred_portfolio_descendant_sequence_match_score\":"
+           << descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_descendant_match_score\":" << descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << descendant_metrics.descendant_focus_strength << ","
            << "\"direct_child_window_count\":" << descendant_metrics.direct_children.size() << ","
@@ -1606,6 +1827,9 @@ std::string focus_related_window_json(
     const std::string& campaign_hint_query_utf8,
     const std::string& campaign_preferred_title_utf8,
     const std::string& campaign_descendant_title_sequence_utf8,
+    const std::string& portfolio_hint_query_utf8,
+    const std::string& portfolio_preferred_title_utf8,
+    const std::string& portfolio_descendant_title_sequence_utf8,
     const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
@@ -1647,6 +1871,10 @@ std::string focus_related_window_json(
     const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::vector<std::wstring> campaign_descendant_title_sequence =
         parse_title_sequence_utf8(campaign_descendant_title_sequence_utf8);
+    const std::wstring portfolio_hint_query = utf8_to_wide(portfolio_hint_query_utf8);
+    const std::wstring portfolio_preferred_title = utf8_to_wide(portfolio_preferred_title_utf8);
+    const std::vector<std::wstring> portfolio_descendant_title_sequence =
+        parse_title_sequence_utf8(portfolio_descendant_title_sequence_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const bool follow_descendant_chain_requested = follow_descendant_chain_value != 0;
@@ -1671,6 +1899,8 @@ std::string focus_related_window_json(
             descendant_hint_query,
             campaign_hint_query,
             campaign_preferred_title,
+            portfolio_hint_query,
+            portfolio_preferred_title,
             preferred_title,
             window_title,
             anchor_hwnd,
@@ -1688,6 +1918,9 @@ std::string focus_related_window_json(
             campaign_hint_query,
             campaign_preferred_title,
             campaign_descendant_title_sequence,
+            portfolio_hint_query,
+            portfolio_preferred_title,
+            portfolio_descendant_title_sequence,
             preferred_title,
             window_title
         );
@@ -1716,6 +1949,13 @@ std::string focus_related_window_json(
             );
             relation.reasons.push_back("campaign_descendant_hint_title_match");
         }
+        if (descendant_metrics.portfolio_descendant_hint_title_match_count > 0) {
+            relation.score += std::min(
+                0.48,
+                0.1 + (0.1 * descendant_metrics.portfolio_descendant_hint_title_match_count)
+            );
+            relation.reasons.push_back("portfolio_descendant_hint_title_match");
+        }
         if (descendant_metrics.descendant_sequence_match_count > 0) {
             relation.score += std::min(
                 0.44,
@@ -1729,6 +1969,13 @@ std::string focus_related_window_json(
                 0.08 + (0.07 * descendant_metrics.campaign_descendant_sequence_match_count)
             );
             relation.reasons.push_back("campaign_descendant_sequence_match");
+        }
+        if (descendant_metrics.portfolio_descendant_sequence_match_count > 0) {
+            relation.score += std::min(
+                0.38,
+                0.08 + (0.07 * descendant_metrics.portfolio_descendant_sequence_match_count)
+            );
+            relation.reasons.push_back("portfolio_descendant_sequence_match");
         }
         if (descendant_metrics.preferred_descendant_match_score > 0.0) {
             relation.score += std::min(
@@ -1750,6 +1997,13 @@ std::string focus_related_window_json(
                 0.08 + (descendant_metrics.preferred_campaign_descendant_sequence_match_score * 0.22)
             );
             relation.reasons.push_back("campaign_preferred_descendant_sequence_match");
+        }
+        if (descendant_metrics.preferred_portfolio_descendant_sequence_match_score > 0.0) {
+            relation.score += std::min(
+                0.36,
+                0.08 + (descendant_metrics.preferred_portfolio_descendant_sequence_match_score * 0.22)
+            );
+            relation.reasons.push_back("portfolio_preferred_descendant_sequence_match");
         }
         if (descendant_metrics.descendant_focus_strength > 0.0) {
             relation.score += std::min(
@@ -1872,6 +2126,9 @@ std::string focus_related_window_json(
                         campaign_hint_query,
                         campaign_preferred_title,
                         campaign_descendant_title_sequence,
+                        portfolio_hint_query,
+                        portfolio_preferred_title,
+                        portfolio_descendant_title_sequence,
                         preferred_title,
                         window_title,
                         reported_descendant_metrics,
@@ -1936,6 +2193,9 @@ std::string focus_related_window_json(
                     campaign_hint_query,
                     campaign_preferred_title,
                     campaign_descendant_title_sequence,
+                    portfolio_hint_query,
+                    portfolio_preferred_title,
+                    portfolio_descendant_title_sequence,
                     preferred_title,
                     window_title
                 );
@@ -2059,16 +2319,22 @@ std::string focus_related_window_json(
            << "\"descendant_query_match_count\":" << reported_descendant_metrics.descendant_query_match_count << ","
            << "\"descendant_hint_title_match_count\":" << reported_descendant_metrics.descendant_hint_title_match_count << ","
            << "\"campaign_descendant_hint_title_match_count\":" << reported_descendant_metrics.campaign_descendant_hint_title_match_count << ","
+           << "\"portfolio_descendant_hint_title_match_count\":" << reported_descendant_metrics.portfolio_descendant_hint_title_match_count << ","
            << "\"descendant_sequence_match_count\":" << reported_descendant_metrics.descendant_sequence_match_count << ","
            << "\"campaign_descendant_sequence_match_count\":" << reported_descendant_metrics.campaign_descendant_sequence_match_count << ","
+           << "\"portfolio_descendant_sequence_match_count\":" << reported_descendant_metrics.portfolio_descendant_sequence_match_count << ","
            << "\"expected_descendant_sequence_title\":\""
            << json_escape(reported_descendant_metrics.expected_descendant_sequence_title) << "\","
            << "\"expected_campaign_descendant_sequence_title\":\""
            << json_escape(reported_descendant_metrics.expected_campaign_descendant_sequence_title) << "\","
+           << "\"expected_portfolio_descendant_sequence_title\":\""
+           << json_escape(reported_descendant_metrics.expected_portfolio_descendant_sequence_title) << "\","
            << "\"preferred_descendant_sequence_match_score\":"
            << reported_descendant_metrics.preferred_descendant_sequence_match_score << ","
            << "\"preferred_campaign_descendant_sequence_match_score\":"
            << reported_descendant_metrics.preferred_campaign_descendant_sequence_match_score << ","
+           << "\"preferred_portfolio_descendant_sequence_match_score\":"
+           << reported_descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_descendant_match_score\":" << reported_descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << reported_descendant_metrics.descendant_focus_strength << ","
            << "\"adopted_descendant_depth\":" << reported_adopted_descendant_depth << ","
@@ -2156,6 +2422,9 @@ std::string reacquire_related_window_json(
     const std::string& campaign_hint_query_utf8,
     const std::string& campaign_preferred_title_utf8,
     const std::string& campaign_descendant_title_sequence_utf8,
+    const std::string& portfolio_hint_query_utf8,
+    const std::string& portfolio_preferred_title_utf8,
+    const std::string& portfolio_descendant_title_sequence_utf8,
     const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
@@ -2195,6 +2464,10 @@ std::string reacquire_related_window_json(
     const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::vector<std::wstring> campaign_descendant_title_sequence =
         parse_title_sequence_utf8(campaign_descendant_title_sequence_utf8);
+    const std::wstring portfolio_hint_query = utf8_to_wide(portfolio_hint_query_utf8);
+    const std::wstring portfolio_preferred_title = utf8_to_wide(portfolio_preferred_title_utf8);
+    const std::vector<std::wstring> portfolio_descendant_title_sequence =
+        parse_title_sequence_utf8(portfolio_descendant_title_sequence_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
@@ -2217,6 +2490,8 @@ std::string reacquire_related_window_json(
             descendant_hint_query,
             campaign_hint_query,
             campaign_preferred_title,
+            portfolio_hint_query,
+            portfolio_preferred_title,
             preferred_title,
             window_title,
             anchor_hwnd,
@@ -2234,6 +2509,9 @@ std::string reacquire_related_window_json(
             campaign_hint_query,
             campaign_preferred_title,
             campaign_descendant_title_sequence,
+            portfolio_hint_query,
+            portfolio_preferred_title,
+            portfolio_descendant_title_sequence,
             preferred_title,
             window_title
         );
@@ -2361,6 +2639,9 @@ std::string trace_related_window_chain_json(
     const std::string& campaign_hint_query_utf8,
     const std::string& campaign_preferred_title_utf8,
     const std::string& campaign_descendant_title_sequence_utf8,
+    const std::string& portfolio_hint_query_utf8,
+    const std::string& portfolio_preferred_title_utf8,
+    const std::string& portfolio_descendant_title_sequence_utf8,
     const std::string& preferred_title_utf8,
     const std::string& window_title_utf8,
     long long hwnd_value,
@@ -2400,6 +2681,10 @@ std::string trace_related_window_chain_json(
     const std::wstring campaign_preferred_title = utf8_to_wide(campaign_preferred_title_utf8);
     const std::vector<std::wstring> campaign_descendant_title_sequence =
         parse_title_sequence_utf8(campaign_descendant_title_sequence_utf8);
+    const std::wstring portfolio_hint_query = utf8_to_wide(portfolio_hint_query_utf8);
+    const std::wstring portfolio_preferred_title = utf8_to_wide(portfolio_preferred_title_utf8);
+    const std::vector<std::wstring> portfolio_descendant_title_sequence =
+        parse_title_sequence_utf8(portfolio_descendant_title_sequence_utf8);
     const std::wstring preferred_title = utf8_to_wide(preferred_title_utf8);
     const std::wstring window_title = utf8_to_wide(window_title_utf8);
     const long long anchor_hwnd = anchor_found ? anchor.hwnd : hwnd_value;
@@ -2417,6 +2702,8 @@ std::string trace_related_window_chain_json(
             descendant_hint_query,
             campaign_hint_query,
             campaign_preferred_title,
+            portfolio_hint_query,
+            portfolio_preferred_title,
             preferred_title,
             window_title,
             anchor_hwnd,
@@ -2465,6 +2752,9 @@ std::string trace_related_window_chain_json(
         campaign_hint_query,
         campaign_preferred_title,
         campaign_descendant_title_sequence,
+        portfolio_hint_query,
+        portfolio_preferred_title,
+        portfolio_descendant_title_sequence,
         preferred_title,
         window_title
     );
@@ -2490,18 +2780,26 @@ std::string trace_related_window_chain_json(
            << "\"descendant_hint_title_match_count\":" << descendant_metrics.descendant_hint_title_match_count << ","
            << "\"campaign_descendant_hint_title_match_count\":"
            << descendant_metrics.campaign_descendant_hint_title_match_count << ","
+           << "\"portfolio_descendant_hint_title_match_count\":"
+           << descendant_metrics.portfolio_descendant_hint_title_match_count << ","
            << "\"descendant_sequence_match_count\":"
            << descendant_metrics.descendant_sequence_match_count << ","
            << "\"campaign_descendant_sequence_match_count\":"
            << descendant_metrics.campaign_descendant_sequence_match_count << ","
+           << "\"portfolio_descendant_sequence_match_count\":"
+           << descendant_metrics.portfolio_descendant_sequence_match_count << ","
            << "\"expected_descendant_sequence_title\":\""
            << json_escape(descendant_metrics.expected_descendant_sequence_title) << "\","
            << "\"expected_campaign_descendant_sequence_title\":\""
            << json_escape(descendant_metrics.expected_campaign_descendant_sequence_title) << "\","
+           << "\"expected_portfolio_descendant_sequence_title\":\""
+           << json_escape(descendant_metrics.expected_portfolio_descendant_sequence_title) << "\","
            << "\"preferred_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_descendant_sequence_match_score << ","
            << "\"preferred_campaign_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_campaign_descendant_sequence_match_score << ","
+           << "\"preferred_portfolio_descendant_sequence_match_score\":"
+           << descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_descendant_match_score\":" << descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << descendant_metrics.descendant_focus_strength << ","
            << "\"child_chain_signature\":\"" << json_escape(chain_signature) << "\","

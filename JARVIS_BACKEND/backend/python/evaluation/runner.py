@@ -2763,6 +2763,20 @@ class EvaluationRunner:
                 filters,
             )
         ] if isinstance(lab_programs_payload, dict) and isinstance(lab_programs_payload.get("items", []), list) else []
+        lab_portfolios_payload = (
+            self.lab_portfolios(limit=max(4, history_limit * 2))
+            if self.lab_memory is not None
+            else {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        )
+        replay_portfolios = [
+            dict(item)
+            for item in lab_portfolios_payload.get("items", [])
+            if isinstance(item, dict)
+            and self._filters_match(
+                dict(item.get("filters", {})) if isinstance(item.get("filters", {}), dict) else {},
+                filters,
+            )
+        ] if isinstance(lab_portfolios_payload, dict) and isinstance(lab_portfolios_payload.get("items", []), list) else []
         target_apps: Dict[str, Dict[str, object]] = {}
         tactic_totals = {
             "dialog_resolution": 0.0,
@@ -2813,6 +2827,22 @@ class EvaluationRunner:
             "latest_program_label": "",
             "latest_cycle_status": "",
             "latest_cycle_stop_reason": "",
+        }
+        replay_portfolio_summary = {
+            "portfolio_count": len(replay_portfolios),
+            "program_count": 0,
+            "wave_count": 0,
+            "pending_program_count": 0,
+            "attention_program_count": 0,
+            "pending_campaign_count": 0,
+            "pending_session_count": 0,
+            "pending_app_target_count": 0,
+            "regression_wave_count": 0,
+            "long_horizon_pending_count": 0,
+            "latest_portfolio_id": "",
+            "latest_portfolio_label": "",
+            "latest_wave_status": "",
+            "latest_wave_stop_reason": "",
         }
 
         def _ordered_descendant_sequence(*titles: object) -> List[str]:
@@ -2883,6 +2913,25 @@ class EvaluationRunner:
                     "program_preferred_window_title": "",
                     "program_latest_cycle_status": "",
                     "program_latest_cycle_stop_reason": "",
+                    "portfolio_ids": set(),
+                    "portfolio_labels": [],
+                    "portfolio_count": 0,
+                    "portfolio_wave_count": 0,
+                    "portfolio_pending_program_count": 0,
+                    "portfolio_attention_program_count": 0,
+                    "portfolio_pending_campaign_count": 0,
+                    "portfolio_pending_session_count": 0,
+                    "portfolio_pending_app_target_count": 0,
+                    "portfolio_regression_wave_count": 0,
+                    "portfolio_long_horizon_pending_count": 0,
+                    "portfolio_pressure": 0.0,
+                    "portfolio_hint_query": "",
+                    "portfolio_descendant_title_hints": [],
+                    "portfolio_descendant_title_sequence": [],
+                    "portfolio_descendant_hint_query": "",
+                    "portfolio_preferred_window_title": "",
+                    "portfolio_latest_wave_status": "",
+                    "portfolio_latest_wave_stop_reason": "",
                     "session_cycle_count": 0,
                     "session_regression_cycle_count": 0,
                     "session_long_horizon_pending_count": 0,
@@ -3347,6 +3396,137 @@ class EvaluationRunner:
                 tactic_totals[key] += tactic_value
             entry["control_biases"] = control_biases
 
+        def _ingest_native_target_portfolio(
+            portfolio: Dict[str, Any],
+            target_row: Dict[str, Any],
+        ) -> None:
+            app_name_value = str(target_row.get("app_name", "") or "").strip().lower()
+            if not app_name_value:
+                return
+            entry = _ensure_target_entry(app_name_value)
+            portfolio_id = str(portfolio.get("portfolio_id", "") or "").strip()
+            portfolio_label = str(portfolio.get("label", "") or "").strip()
+            portfolio_wave_count = max(0, int(portfolio.get("wave_count", 0) or 0))
+            portfolio_pending_program_count = max(0, int(portfolio.get("pending_program_count", 0) or 0))
+            portfolio_attention_program_count = max(0, int(portfolio.get("attention_program_count", 0) or 0))
+            portfolio_pending_campaign_count = max(0, int(portfolio.get("pending_campaign_count", 0) or 0))
+            portfolio_pending_session_count = max(0, int(portfolio.get("pending_session_count", 0) or 0))
+            portfolio_pending_app_target_count = max(0, int(portfolio.get("pending_app_target_count", 0) or 0))
+            portfolio_regression_wave_count = max(0, int(portfolio.get("regression_wave_count", 0) or 0))
+            portfolio_long_horizon_pending_count = max(0, int(portfolio.get("long_horizon_pending_count", 0) or 0))
+            portfolio_latest_wave_status = str(portfolio.get("latest_wave_status", "") or "").strip().lower()
+            portfolio_latest_wave_stop_reason = str(portfolio.get("latest_wave_stop_reason", "") or "").strip().lower()
+            portfolio_priority = max(
+                0.0,
+                min(
+                    8.0,
+                    (0.14 * min(max(0.0, float(target_row.get("priority", 0.0) or 0.0)), 8.0))
+                    + (0.14 * min(max(0.0, float(target_row.get("replay_pressure", 0.0) or 0.0)), 5.0))
+                    + (0.14 * min(max(0.0, float(target_row.get("campaign_pressure", 0.0) or 0.0)), 5.0))
+                    + (0.18 * min(max(0.0, float(target_row.get("program_pressure", 0.0) or 0.0)), 5.0))
+                    + (0.18 * min(portfolio_wave_count, 5))
+                    + (0.18 * min(portfolio_attention_program_count, 4))
+                    + (0.12 * min(portfolio_pending_program_count, 4))
+                    + (0.1 * min(portfolio_pending_campaign_count, 4))
+                    + (0.1 * min(portfolio_pending_session_count, 4))
+                    + (0.12 * min(portfolio_pending_app_target_count, 4))
+                    + (0.16 * min(portfolio_regression_wave_count, 4))
+                    + (0.08 * min(portfolio_long_horizon_pending_count, 4))
+                    + (0.14 if portfolio_latest_wave_status in {"error", "failed"} else 0.0),
+                ),
+            )
+            entry["priority"] = float(entry.get("priority", 0.0) or 0.0) + portfolio_priority
+            entry["portfolio_count"] = int(entry.get("portfolio_count", 0) or 0) + 1
+            entry["portfolio_wave_count"] = int(entry.get("portfolio_wave_count", 0) or 0) + portfolio_wave_count
+            entry["portfolio_pending_program_count"] = int(entry.get("portfolio_pending_program_count", 0) or 0) + portfolio_pending_program_count
+            entry["portfolio_attention_program_count"] = int(entry.get("portfolio_attention_program_count", 0) or 0) + portfolio_attention_program_count
+            entry["portfolio_pending_campaign_count"] = int(entry.get("portfolio_pending_campaign_count", 0) or 0) + portfolio_pending_campaign_count
+            entry["portfolio_pending_session_count"] = int(entry.get("portfolio_pending_session_count", 0) or 0) + portfolio_pending_session_count
+            entry["portfolio_pending_app_target_count"] = int(entry.get("portfolio_pending_app_target_count", 0) or 0) + portfolio_pending_app_target_count
+            entry["portfolio_regression_wave_count"] = int(entry.get("portfolio_regression_wave_count", 0) or 0) + portfolio_regression_wave_count
+            entry["portfolio_long_horizon_pending_count"] = int(entry.get("portfolio_long_horizon_pending_count", 0) or 0) + portfolio_long_horizon_pending_count
+            entry["portfolio_pressure"] = float(entry.get("portfolio_pressure", 0.0) or 0.0) + portfolio_priority
+            portfolio_ids = entry["portfolio_ids"] if isinstance(entry.get("portfolio_ids"), set) else set(entry.get("portfolio_ids", []))
+            if portfolio_id:
+                portfolio_ids.add(portfolio_id)
+            entry["portfolio_ids"] = portfolio_ids
+            portfolio_labels = entry["portfolio_labels"] if isinstance(entry.get("portfolio_labels"), list) else []
+            if portfolio_label and portfolio_label not in portfolio_labels:
+                portfolio_labels.append(portfolio_label)
+            entry["portfolio_labels"] = portfolio_labels[:6]
+            portfolio_hints = self._unique_strings(
+                [
+                    str(item).strip()
+                    for item in target_row.get(
+                        "portfolio_descendant_title_hints",
+                        target_row.get(
+                            "program_descendant_title_hints",
+                            target_row.get("campaign_descendant_title_hints", []),
+                        ),
+                    )
+                    if str(item).strip()
+                ]
+            )[:8]
+            portfolio_descendant_hints = entry["portfolio_descendant_title_hints"] if isinstance(entry.get("portfolio_descendant_title_hints"), list) else []
+            for hint in portfolio_hints:
+                if hint not in portfolio_descendant_hints:
+                    portfolio_descendant_hints.append(hint)
+            entry["portfolio_descendant_title_hints"] = portfolio_descendant_hints[:8]
+            portfolio_sequence = _ordered_descendant_sequence(
+                target_row.get(
+                    "portfolio_descendant_title_sequence",
+                    target_row.get(
+                        "program_descendant_title_sequence",
+                        target_row.get("campaign_descendant_title_sequence", []),
+                    ),
+                ),
+                portfolio_hints,
+                target_row.get("portfolio_preferred_window_title", ""),
+                target_row.get("program_preferred_window_title", ""),
+                target_row.get("campaign_preferred_window_title", ""),
+            )
+            portfolio_sequence_hints = entry["portfolio_descendant_title_sequence"] if isinstance(entry.get("portfolio_descendant_title_sequence"), list) else []
+            for hint in portfolio_sequence:
+                if hint not in portfolio_sequence_hints:
+                    portfolio_sequence_hints.append(hint)
+            entry["portfolio_descendant_title_sequence"] = portfolio_sequence_hints[:8]
+            hint_query = str(target_row.get("portfolio_hint_query", "") or "").strip()
+            descendant_hint_query = str(target_row.get("portfolio_descendant_hint_query", "") or "").strip()
+            preferred_window_title = str(target_row.get("portfolio_preferred_window_title", "") or "").strip()
+            if hint_query and not str(entry.get("portfolio_hint_query", "") or "").strip():
+                entry["portfolio_hint_query"] = hint_query
+            if descendant_hint_query and not str(entry.get("portfolio_descendant_hint_query", "") or "").strip():
+                entry["portfolio_descendant_hint_query"] = descendant_hint_query
+            if preferred_window_title and not str(entry.get("portfolio_preferred_window_title", "") or "").strip():
+                entry["portfolio_preferred_window_title"] = preferred_window_title
+            if portfolio_latest_wave_status and (
+                not str(entry.get("portfolio_latest_wave_status", "") or "").strip()
+                or str(entry.get("portfolio_latest_wave_status", "") or "").strip().lower() in {"idle", "ready"}
+                or portfolio_latest_wave_status in {"error", "failed"}
+            ):
+                entry["portfolio_latest_wave_status"] = portfolio_latest_wave_status
+            if portfolio_latest_wave_stop_reason and not str(entry.get("portfolio_latest_wave_stop_reason", "") or "").strip():
+                entry["portfolio_latest_wave_stop_reason"] = portfolio_latest_wave_stop_reason
+            control_biases = (
+                dict(entry.get("control_biases", {}))
+                if isinstance(entry.get("control_biases", {}), dict)
+                else {}
+            )
+            target_biases = (
+                dict(target_row.get("control_biases", {}))
+                if isinstance(target_row.get("control_biases", {}), dict)
+                else {}
+            )
+            for key, value in target_biases.items():
+                tactic_value = max(0.0, min(float(value or 0.0), 1.0))
+                if portfolio_regression_wave_count > 0 and key in {"descendant_focus", "dialog_resolution", "recovery_reacquire", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + 0.08)
+                elif portfolio_pending_program_count > 0 and key in {"navigation_branch", "recovery_reacquire", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + 0.04)
+                control_biases[key] = max(float(control_biases.get(key, 0.0) or 0.0), tactic_value)
+                tactic_totals[key] += tactic_value
+            entry["control_biases"] = control_biases
+
         for candidate in replay_candidates:
             scenario_name_value = str(candidate.get("scenario", "") or "").strip()
             scenario = scenario_by_name.get(scenario_name_value)
@@ -3433,6 +3613,33 @@ class EvaluationRunner:
             for target_row in native_targets_snapshot.get("target_apps", []) if isinstance(native_targets_snapshot.get("target_apps", []), list) else []:
                 if isinstance(target_row, dict):
                     _ingest_native_target_program(program, target_row)
+        for portfolio in replay_portfolios:
+            portfolio_id = str(portfolio.get("portfolio_id", "") or "").strip()
+            portfolio_label = str(portfolio.get("label", "") or "").strip()
+            if portfolio_id and not replay_portfolio_summary["latest_portfolio_id"]:
+                replay_portfolio_summary["latest_portfolio_id"] = portfolio_id
+                replay_portfolio_summary["latest_portfolio_label"] = portfolio_label
+            replay_portfolio_summary["program_count"] = int(replay_portfolio_summary["program_count"]) + int(portfolio.get("program_count", 0) or 0)
+            replay_portfolio_summary["wave_count"] = int(replay_portfolio_summary["wave_count"]) + int(portfolio.get("wave_count", 0) or 0)
+            replay_portfolio_summary["pending_program_count"] = int(replay_portfolio_summary["pending_program_count"]) + int(portfolio.get("pending_program_count", 0) or 0)
+            replay_portfolio_summary["attention_program_count"] = int(replay_portfolio_summary["attention_program_count"]) + int(portfolio.get("attention_program_count", 0) or 0)
+            replay_portfolio_summary["pending_campaign_count"] = int(replay_portfolio_summary["pending_campaign_count"]) + int(portfolio.get("pending_campaign_count", 0) or 0)
+            replay_portfolio_summary["pending_session_count"] = int(replay_portfolio_summary["pending_session_count"]) + int(portfolio.get("pending_session_count", 0) or 0)
+            replay_portfolio_summary["pending_app_target_count"] = int(replay_portfolio_summary["pending_app_target_count"]) + int(portfolio.get("pending_app_target_count", 0) or 0)
+            replay_portfolio_summary["regression_wave_count"] = int(replay_portfolio_summary["regression_wave_count"]) + int(portfolio.get("regression_wave_count", 0) or 0)
+            replay_portfolio_summary["long_horizon_pending_count"] = int(replay_portfolio_summary["long_horizon_pending_count"]) + int(portfolio.get("long_horizon_pending_count", 0) or 0)
+            if not replay_portfolio_summary["latest_wave_status"]:
+                replay_portfolio_summary["latest_wave_status"] = str(portfolio.get("latest_wave_status", "") or "").strip()
+            if not replay_portfolio_summary["latest_wave_stop_reason"]:
+                replay_portfolio_summary["latest_wave_stop_reason"] = str(portfolio.get("latest_wave_stop_reason", "") or "").strip()
+            native_targets_snapshot = (
+                dict(portfolio.get("native_targets_snapshot", {}))
+                if isinstance(portfolio.get("native_targets_snapshot", {}), dict)
+                else {}
+            )
+            for target_row in native_targets_snapshot.get("target_apps", []) if isinstance(native_targets_snapshot.get("target_apps", []), list) else []:
+                if isinstance(target_row, dict):
+                    _ingest_native_target_portfolio(portfolio, target_row)
         target_app_rows: List[Dict[str, object]] = []
         for row in target_apps.values():
             replay_session_ids = row.get("replay_session_ids", set())
@@ -3539,6 +3746,29 @@ class EvaluationRunner:
                     "program_preferred_window_title": str(row.get("program_preferred_window_title", "") or "").strip(),
                     "program_latest_cycle_status": str(row.get("program_latest_cycle_status", "") or "").strip(),
                     "program_latest_cycle_stop_reason": str(row.get("program_latest_cycle_stop_reason", "") or "").strip(),
+                    "portfolio_ids": sorted(str(item).strip() for item in row.get("portfolio_ids", set()) if str(item).strip())[:6],
+                    "portfolio_labels": list(row.get("portfolio_labels", []))[:6] if isinstance(row.get("portfolio_labels", []), list) else [],
+                    "portfolio_count": int(row.get("portfolio_count", 0) or 0),
+                    "portfolio_wave_count": int(row.get("portfolio_wave_count", 0) or 0),
+                    "portfolio_pending_program_count": int(row.get("portfolio_pending_program_count", 0) or 0),
+                    "portfolio_attention_program_count": int(row.get("portfolio_attention_program_count", 0) or 0),
+                    "portfolio_pending_campaign_count": int(row.get("portfolio_pending_campaign_count", 0) or 0),
+                    "portfolio_pending_session_count": int(row.get("portfolio_pending_session_count", 0) or 0),
+                    "portfolio_pending_app_target_count": int(row.get("portfolio_pending_app_target_count", 0) or 0),
+                    "portfolio_regression_wave_count": int(row.get("portfolio_regression_wave_count", 0) or 0),
+                    "portfolio_long_horizon_pending_count": int(row.get("portfolio_long_horizon_pending_count", 0) or 0),
+                    "portfolio_pressure": round(float(row.get("portfolio_pressure", 0.0) or 0.0), 6),
+                    "portfolio_hint_query": str(row.get("portfolio_hint_query", "") or "").strip(),
+                    "portfolio_descendant_title_hints": list(row.get("portfolio_descendant_title_hints", []))[:8]
+                    if isinstance(row.get("portfolio_descendant_title_hints", []), list)
+                    else [],
+                    "portfolio_descendant_title_sequence": list(row.get("portfolio_descendant_title_sequence", []))[:8]
+                    if isinstance(row.get("portfolio_descendant_title_sequence", []), list)
+                    else [],
+                    "portfolio_descendant_hint_query": str(row.get("portfolio_descendant_hint_query", "") or "").strip(),
+                    "portfolio_preferred_window_title": str(row.get("portfolio_preferred_window_title", "") or "").strip(),
+                    "portfolio_latest_wave_status": str(row.get("portfolio_latest_wave_status", "") or "").strip(),
+                    "portfolio_latest_wave_stop_reason": str(row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
                     "control_biases": {
                         key: round(max(0.0, min(float(value or 0.0), 1.0)), 6)
                         for key, value in dict(row.get("control_biases", {})).items()
@@ -3583,6 +3813,7 @@ class EvaluationRunner:
             "replay_session_summary": replay_session_summary,
             "replay_campaign_summary": replay_campaign_summary,
             "replay_program_summary": replay_program_summary,
+            "replay_portfolio_summary": replay_portfolio_summary,
             "strongest_tactics": strongest_tactics,
             "coverage_gap_apps": [
                 str(item).strip()

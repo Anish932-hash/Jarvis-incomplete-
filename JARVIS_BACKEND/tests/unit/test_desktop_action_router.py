@@ -872,6 +872,82 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_chain_re
     assert chain_score > plain_focus_score
 
 
+def test_desktop_action_router_branch_scoring_prefers_portfolio_guided_descendant_chain_focus() -> None:
+    router = _build_router({})
+    branch_context = {
+        "active": True,
+        "current_window_title": "Bluetooth & devices",
+        "current_window_app_name": "settings",
+        "current_reacquired_title": "Confirm pairing",
+        "current_reacquired_app_name": "settings",
+        "current_reacquired_hwnd": 5003,
+        "native_descendant_chain_depth": 3,
+        "native_descendant_dialog_chain_depth": 2,
+        "native_descendant_adoption_available": True,
+        "native_descendant_adoption_match_score": 0.89,
+        "native_descendant_focus_strength": 0.94,
+        "native_preferred_descendant_match_score": 0.95,
+        "native_portfolio_descendant_hint_title_match_count": 2,
+        "native_portfolio_descendant_sequence_match_count": 2,
+        "native_expected_portfolio_descendant_sequence_title": "Allow device",
+        "preferred_descendant_title": "Confirm pairing",
+        "preferred_descendant_hwnd": 5003,
+        "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+        "benchmark_target_app_name": "settings",
+        "benchmark_target_app_matched": True,
+        "benchmark_target_app_match_score": 1.0,
+        "benchmark_target_descendant_focus_pressure": 0.92,
+        "benchmark_target_portfolio_pressure": 1.25,
+        "benchmark_target_portfolio_descendant_title_hints": ["Confirm pairing", "Allow device"],
+        "benchmark_target_portfolio_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+        "benchmark_target_portfolio_descendant_hint_query": "confirm pairing | allow device",
+        "benchmark_target_portfolio_hint_query": "confirm pairing | allow device",
+        "benchmark_target_portfolio_preferred_window_title": "Confirm pairing",
+        "benchmark_target_portfolio_regression_wave_count": 2,
+        "benchmark_target_portfolio_long_horizon_pending_count": 1,
+        "recent_selection_keys": set(),
+    }
+    chain_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window_chain",
+        "candidate_id": "5003",
+        "label": "Adopt child surface chain: Confirm pairing",
+        "action_payload": {
+            "action": "focus_related_window_chain",
+            "window_title": "Confirm pairing",
+            "title": "Confirm pairing",
+            "preferred_title": "Confirm pairing",
+            "hwnd": 5001,
+            "follow_descendant_chain": True,
+            "max_descendant_focus_steps": 4,
+        },
+    }
+    plain_focus_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window",
+        "candidate_id": "5003",
+        "label": "Adopt child surface: Confirm pairing",
+        "action_payload": {
+            "action": "focus_related_window",
+            "window_title": "Confirm pairing",
+            "title": "Confirm pairing",
+            "preferred_title": "Confirm pairing",
+            "hwnd": 5001,
+        },
+    }
+
+    chain_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=chain_row,
+        branch_context=branch_context,
+    )
+    plain_focus_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=plain_focus_row,
+        branch_context=branch_context,
+    )
+
+    assert chain_score > plain_focus_score
+
+
 def test_desktop_action_router_branch_scoring_uses_native_descendant_focus_strength() -> None:
     router = _build_router({})
     branch_context = {

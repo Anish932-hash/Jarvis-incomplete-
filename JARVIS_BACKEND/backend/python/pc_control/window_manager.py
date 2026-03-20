@@ -325,18 +325,24 @@ class WindowManager:
         window_title: str = "",
         descendant_hint_query: str = "",
         campaign_hint_query: str = "",
+        portfolio_hint_query: str = "",
         preferred_window_title: str = "",
         campaign_preferred_window_title: str = "",
+        portfolio_preferred_window_title: str = "",
         expected_descendant_sequence_title: str = "",
         expected_campaign_descendant_sequence_title: str = "",
         expected_program_descendant_sequence_title: str = "",
+        expected_portfolio_descendant_sequence_title: str = "",
         program_chain_recovery_pressure: float = 0.0,
+        portfolio_chain_recovery_pressure: float = 0.0,
     ) -> Dict[str, Any]:
         expected_titles = cls._dedupe_strings(
             [
+                str(expected_portfolio_descendant_sequence_title or "").strip(),
                 str(expected_program_descendant_sequence_title or "").strip(),
                 str(expected_descendant_sequence_title or "").strip(),
                 str(expected_campaign_descendant_sequence_title or "").strip(),
+                str(portfolio_preferred_window_title or "").strip(),
                 str(campaign_preferred_window_title or "").strip(),
                 str(preferred_window_title or "").strip(),
             ]
@@ -363,6 +369,10 @@ class WindowManager:
                 cls._text_match_score(row_title, campaign_hint_query),
                 cls._text_match_score(campaign_hint_query, row_title),
             ) if str(campaign_hint_query or "").strip() else 0.0
+            portfolio_hint_score = max(
+                cls._text_match_score(row_title, portfolio_hint_query),
+                cls._text_match_score(portfolio_hint_query, row_title),
+            ) if str(portfolio_hint_query or "").strip() else 0.0
             window_title_score = max(
                 cls._text_match_score(row_title, window_title),
                 cls._text_match_score(window_title, row_title),
@@ -372,6 +382,7 @@ class WindowManager:
                 query_score,
                 descendant_hint_score,
                 campaign_hint_score,
+                portfolio_hint_score,
                 window_title_score,
             )
             if isinstance(row.get("surface_hints", {}), dict) and bool(row.get("surface_hints", {}).get("dialog_like", False)):
@@ -383,7 +394,9 @@ class WindowManager:
                 best_title = row_title
                 best_score = round(score, 4)
                 best_expected_title = matched_expected_title or best_expected_title
-                if matched_expected_title and matched_expected_title == str(expected_program_descendant_sequence_title or "").strip():
+                if matched_expected_title and matched_expected_title == str(expected_portfolio_descendant_sequence_title or "").strip():
+                    best_reason = "expected_portfolio_descendant_sequence_title"
+                elif matched_expected_title and matched_expected_title == str(expected_program_descendant_sequence_title or "").strip():
                     best_reason = "expected_program_descendant_sequence_title"
                 elif matched_expected_title and matched_expected_title == str(expected_descendant_sequence_title or "").strip():
                     best_reason = "expected_descendant_sequence_title"
@@ -391,6 +404,8 @@ class WindowManager:
                     best_reason = "expected_campaign_descendant_sequence_title"
                 elif descendant_hint_score >= max(query_score, campaign_hint_score, window_title_score):
                     best_reason = "descendant_hint_query"
+                elif portfolio_hint_score >= max(query_score, campaign_hint_score, window_title_score):
+                    best_reason = "portfolio_hint_query"
                 elif campaign_hint_score >= max(query_score, window_title_score):
                     best_reason = "campaign_hint_query"
                 elif query_score >= window_title_score:
@@ -398,7 +413,11 @@ class WindowManager:
                 else:
                     best_reason = "same_root_owner_family"
         available = bool(best_title and best_score >= 0.72)
-        pressure = max(0.0, min(float(program_chain_recovery_pressure or 0.0), 1.0))
+        pressure = max(
+            0.0,
+            min(float(program_chain_recovery_pressure or 0.0), 1.0),
+            min(float(portfolio_chain_recovery_pressure or 0.0), 1.0),
+        )
         if available:
             pressure = max(pressure, min(1.0, 0.34 + (best_score * 0.46)))
             if best_reason.startswith("expected_"):
@@ -407,6 +426,7 @@ class WindowManager:
             "descendant_anchor_recovery_available": available,
             "descendant_anchor_recovery_match_score": round(best_score, 4),
             "descendant_anchor_recovery_pressure": round(pressure, 4),
+            "expected_portfolio_descendant_sequence_title": str(expected_portfolio_descendant_sequence_title or "").strip(),
             "expected_program_descendant_sequence_title": str(expected_program_descendant_sequence_title or "").strip(),
             "expected_anchor_recovery_title": str(best_expected_title or "").strip(),
             "descendant_anchor_recovery_title": best_title,
@@ -482,6 +502,23 @@ class WindowManager:
                 "program_preferred_window_title": "",
                 "program_latest_cycle_status": "",
                 "program_latest_cycle_stop_reason": "",
+                "portfolio_count": 0,
+                "portfolio_wave_count": 0,
+                "portfolio_pending_program_count": 0,
+                "portfolio_attention_program_count": 0,
+                "portfolio_pending_campaign_count": 0,
+                "portfolio_pending_session_count": 0,
+                "portfolio_pending_app_target_count": 0,
+                "portfolio_regression_wave_count": 0,
+                "portfolio_long_horizon_pending_count": 0,
+                "portfolio_pressure": 0.0,
+                "portfolio_descendant_title_hints": [],
+                "portfolio_descendant_title_sequence": [],
+                "portfolio_descendant_hint_query": "",
+                "portfolio_preferred_window_title": "",
+                "portfolio_hint_query": "",
+                "portfolio_latest_wave_status": "",
+                "portfolio_latest_wave_stop_reason": "",
                 "session_cycle_count": 0,
                 "session_regression_cycle_count": 0,
                 "session_long_horizon_pending_count": 0,
@@ -522,6 +559,12 @@ class WindowManager:
             )
             row_campaign_preferred_window_title = cls._normalize_text(
                 row.get("campaign_preferred_window_title", "")
+            )
+            row_portfolio_hint_query = cls._normalize_text(
+                row.get("portfolio_hint_query", row.get("portfolio_descendant_hint_query", ""))
+            )
+            row_portfolio_preferred_window_title = cls._normalize_text(
+                row.get("portfolio_preferred_window_title", "")
             )
             if any(term == target_app_name for term in candidate_terms):
                 row_score = 1.0
@@ -571,6 +614,18 @@ class WindowManager:
                         cls._text_match_score(query, row_campaign_preferred_window_title),
                         cls._text_match_score(row_campaign_preferred_window_title, query),
                     )
+                if row_portfolio_hint_query:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_portfolio_hint_query),
+                        cls._text_match_score(row_portfolio_hint_query, query),
+                    )
+                if row_portfolio_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_portfolio_preferred_window_title),
+                        cls._text_match_score(row_portfolio_preferred_window_title, query),
+                    )
             if row_hint_query:
                 for term in candidate_terms:
                     if not term:
@@ -616,10 +671,30 @@ class WindowManager:
                         cls._text_match_score(term, row_campaign_preferred_window_title),
                         cls._text_match_score(row_campaign_preferred_window_title, term),
                     )
+            if row_portfolio_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_portfolio_hint_query),
+                        cls._text_match_score(row_portfolio_hint_query, term),
+                    )
+            if row_portfolio_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_portfolio_preferred_window_title),
+                        cls._text_match_score(row_portfolio_preferred_window_title, term),
+                    )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
                 + max(0.0, float(row.get("replay_pressure", 0.0) or 0.0))
                 + max(0.0, float(row.get("campaign_pressure", 0.0) or 0.0))
+                + max(0.0, float(row.get("program_pressure", 0.0) or 0.0))
+                + max(0.0, float(row.get("portfolio_pressure", 0.0) or 0.0))
             )
             if row_score > best_score or (abs(row_score - best_score) <= 1e-9 and row_priority > best_priority):
                 best_score = row_score
@@ -700,6 +775,31 @@ class WindowManager:
             "program_preferred_window_title": str(best_row.get("program_preferred_window_title", "") or "").strip(),
             "program_latest_cycle_status": str(best_row.get("program_latest_cycle_status", "") or "").strip(),
             "program_latest_cycle_stop_reason": str(best_row.get("program_latest_cycle_stop_reason", "") or "").strip(),
+            "portfolio_count": max(0, int(best_row.get("portfolio_count", 0) or 0)),
+            "portfolio_wave_count": max(0, int(best_row.get("portfolio_wave_count", 0) or 0)),
+            "portfolio_pending_program_count": max(0, int(best_row.get("portfolio_pending_program_count", 0) or 0)),
+            "portfolio_attention_program_count": max(0, int(best_row.get("portfolio_attention_program_count", 0) or 0)),
+            "portfolio_pending_campaign_count": max(0, int(best_row.get("portfolio_pending_campaign_count", 0) or 0)),
+            "portfolio_pending_session_count": max(0, int(best_row.get("portfolio_pending_session_count", 0) or 0)),
+            "portfolio_pending_app_target_count": max(0, int(best_row.get("portfolio_pending_app_target_count", 0) or 0)),
+            "portfolio_regression_wave_count": max(0, int(best_row.get("portfolio_regression_wave_count", 0) or 0)),
+            "portfolio_long_horizon_pending_count": max(0, int(best_row.get("portfolio_long_horizon_pending_count", 0) or 0)),
+            "portfolio_pressure": round(float(best_row.get("portfolio_pressure", 0.0) or 0.0), 6),
+            "portfolio_descendant_title_hints": [
+                str(item).strip()
+                for item in best_row.get("portfolio_descendant_title_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("portfolio_descendant_title_hints", []), list) else [],
+            "portfolio_descendant_title_sequence": [
+                str(item).strip()
+                for item in cls._normalize_title_sequence(best_row.get("portfolio_descendant_title_sequence", []))
+                if str(item).strip()
+            ][:8],
+            "portfolio_descendant_hint_query": str(best_row.get("portfolio_descendant_hint_query", "") or "").strip(),
+            "portfolio_preferred_window_title": str(best_row.get("portfolio_preferred_window_title", "") or "").strip(),
+            "portfolio_hint_query": str(best_row.get("portfolio_hint_query", "") or "").strip(),
+            "portfolio_latest_wave_status": str(best_row.get("portfolio_latest_wave_status", "") or "").strip(),
+            "portfolio_latest_wave_stop_reason": str(best_row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "session_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "session_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -1629,6 +1729,9 @@ class WindowManager:
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
         campaign_descendant_title_sequence: List[str] | None = None,
+        portfolio_hint_query: str = "",
+        portfolio_preferred_title: str = "",
+        portfolio_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1648,6 +1751,9 @@ class WindowManager:
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_title,
                 campaign_descendant_title_sequence=campaign_descendant_title_sequence or [],
+                portfolio_hint_query=portfolio_hint_query,
+                portfolio_preferred_title=portfolio_preferred_title,
+                portfolio_descendant_title_sequence=portfolio_descendant_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1699,6 +1805,10 @@ class WindowManager:
                 0,
                 int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
             ),
+            "portfolio_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("portfolio_descendant_hint_title_match_count", 0) or 0),
+            ),
             "descendant_sequence_match_count": max(
                 0,
                 int(payload.get("descendant_sequence_match_count", 0) or 0),
@@ -1707,11 +1817,18 @@ class WindowManager:
                 0,
                 int(payload.get("campaign_descendant_sequence_match_count", 0) or 0),
             ),
+            "portfolio_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("portfolio_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 payload.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
             "expected_campaign_descendant_sequence_title": str(
                 payload.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_portfolio_descendant_sequence_title": str(
+                payload.get("expected_portfolio_descendant_sequence_title", "") or ""
             ).strip(),
             "preferred_descendant_sequence_match_score": max(
                 0.0,
@@ -1720,6 +1837,10 @@ class WindowManager:
             "preferred_campaign_descendant_sequence_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_campaign_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_portfolio_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -1817,6 +1938,9 @@ class WindowManager:
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
         campaign_descendant_title_sequence: List[str] | None = None,
+        portfolio_hint_query: str = "",
+        portfolio_preferred_title: str = "",
+        portfolio_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1834,6 +1958,9 @@ class WindowManager:
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_title,
                 campaign_descendant_title_sequence=campaign_descendant_title_sequence or [],
+                portfolio_hint_query=portfolio_hint_query,
+                portfolio_preferred_title=portfolio_preferred_title,
+                portfolio_descendant_title_sequence=portfolio_descendant_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1872,6 +1999,10 @@ class WindowManager:
                 0,
                 int(payload.get("campaign_descendant_hint_title_match_count", 0) or 0),
             ),
+            "portfolio_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("portfolio_descendant_hint_title_match_count", 0) or 0),
+            ),
             "descendant_sequence_match_count": max(
                 0,
                 int(payload.get("descendant_sequence_match_count", 0) or 0),
@@ -1880,11 +2011,18 @@ class WindowManager:
                 0,
                 int(payload.get("campaign_descendant_sequence_match_count", 0) or 0),
             ),
+            "portfolio_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("portfolio_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 payload.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
             "expected_campaign_descendant_sequence_title": str(
                 payload.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_portfolio_descendant_sequence_title": str(
+                payload.get("expected_portfolio_descendant_sequence_title", "") or ""
             ).strip(),
             "preferred_descendant_sequence_match_score": max(
                 0.0,
@@ -1893,6 +2031,10 @@ class WindowManager:
             "preferred_campaign_descendant_sequence_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_campaign_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_portfolio_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -1964,6 +2106,34 @@ class WindowManager:
         program_preferred_window_title = str(
             target_app_context.get("program_preferred_window_title", "") or ""
         ).strip()
+        portfolio_hint_query = str(
+            target_app_context.get(
+                "portfolio_hint_query",
+                target_app_context.get("portfolio_descendant_hint_query", ""),
+            )
+            or ""
+        ).strip()
+        portfolio_descendant_title_sequence = self._normalize_title_sequence(
+            target_app_context.get("portfolio_descendant_title_sequence", [])
+        )
+        portfolio_descendant_hint_query = str(
+            target_app_context.get("portfolio_descendant_hint_query", "") or ""
+        ).strip()
+        portfolio_preferred_window_title = str(
+            target_app_context.get("portfolio_preferred_window_title", "") or ""
+        ).strip()
+        target_portfolio_pressure = max(0.0, float(target_app_context.get("portfolio_pressure", 0.0) or 0.0))
+        target_portfolio_regression_wave_count = max(
+            0,
+            int(target_app_context.get("portfolio_regression_wave_count", 0) or 0),
+        )
+        target_portfolio_long_horizon_pending_count = max(
+            0,
+            int(target_app_context.get("portfolio_long_horizon_pending_count", 0) or 0),
+        )
+        target_portfolio_latest_wave_stop_reason = str(
+            target_app_context.get("portfolio_latest_wave_stop_reason", "") or ""
+        ).strip()
         target_program_pressure = max(0.0, float(target_app_context.get("program_pressure", 0.0) or 0.0))
         target_program_regression_cycle_count = max(
             0,
@@ -1985,6 +2155,9 @@ class WindowManager:
                 campaign_hint_query=campaign_hint_query,
                 campaign_preferred_title=campaign_preferred_window_title,
                 campaign_descendant_title_sequence=campaign_descendant_title_sequence,
+                portfolio_hint_query=portfolio_hint_query,
+                portfolio_preferred_title=portfolio_preferred_window_title,
+                portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
                 preferred_title=preferred_window_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -2019,6 +2192,9 @@ class WindowManager:
             campaign_hint_query=campaign_hint_query,
             campaign_preferred_title=campaign_preferred_window_title,
             campaign_descendant_title_sequence=campaign_descendant_title_sequence,
+            portfolio_hint_query=portfolio_hint_query,
+            portfolio_preferred_title=portfolio_preferred_window_title,
+            portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -2277,6 +2453,9 @@ class WindowManager:
             campaign_hint_query=campaign_hint_query,
             campaign_preferred_title=campaign_preferred_window_title,
             campaign_descendant_title_sequence=campaign_descendant_title_sequence,
+            portfolio_hint_query=portfolio_hint_query,
+            portfolio_preferred_title=portfolio_preferred_window_title,
+            portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -2352,11 +2531,21 @@ class WindowManager:
             program_descendant_title_sequence,
             observed_descendant_titles,
         )
+        expected_portfolio_descendant_sequence_title = self._first_unmatched_sequence_title(
+            portfolio_descendant_title_sequence,
+            observed_descendant_titles,
+        )
         program_chain_recovery_pressure = self._program_chain_recovery_pressure(
             program_pressure=target_program_pressure,
             program_regression_cycle_count=target_program_regression_cycle_count,
             program_long_horizon_pending_count=target_program_long_horizon_pending_count,
             program_latest_cycle_stop_reason=target_program_latest_cycle_stop_reason,
+        )
+        portfolio_chain_recovery_pressure = self._program_chain_recovery_pressure(
+            program_pressure=target_portfolio_pressure,
+            program_regression_cycle_count=target_portfolio_regression_wave_count,
+            program_long_horizon_pending_count=target_portfolio_long_horizon_pending_count,
+            program_latest_cycle_stop_reason=target_portfolio_latest_wave_stop_reason,
         )
         descendant_anchor_recovery_signal = self._descendant_anchor_recovery_signal(
             windows=same_root_owner_windows,
@@ -2365,8 +2554,10 @@ class WindowManager:
             window_title=window_title,
             descendant_hint_query=program_descendant_hint_query or descendant_hint_query,
             campaign_hint_query=campaign_hint_query,
+            portfolio_hint_query=portfolio_hint_query or portfolio_descendant_hint_query,
             preferred_window_title=program_preferred_window_title or preferred_window_title,
             campaign_preferred_window_title=campaign_preferred_window_title,
+            portfolio_preferred_window_title=portfolio_preferred_window_title,
             expected_descendant_sequence_title=str(
                 child_chain_trace.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -2374,7 +2565,9 @@ class WindowManager:
                 child_chain_trace.get("expected_campaign_descendant_sequence_title", "") or ""
             ).strip(),
             expected_program_descendant_sequence_title=expected_program_descendant_sequence_title,
+            expected_portfolio_descendant_sequence_title=expected_portfolio_descendant_sequence_title,
             program_chain_recovery_pressure=program_chain_recovery_pressure,
+            portfolio_chain_recovery_pressure=portfolio_chain_recovery_pressure,
         )
         return {
             "status": "success",
@@ -2429,6 +2622,10 @@ class WindowManager:
                 0.0,
                 min(float(child_chain_trace.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
             ),
+            "preferred_portfolio_descendant_sequence_match_score": max(
+                0.0,
+                min(float(child_chain_trace.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
             "descendant_hint_title_match_count": max(
                 0,
                 int(child_chain_trace.get("descendant_hint_title_match_count", 0) or 0),
@@ -2436,6 +2633,10 @@ class WindowManager:
             "campaign_descendant_hint_title_match_count": max(
                 0,
                 int(child_chain_trace.get("campaign_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "portfolio_descendant_hint_title_match_count": max(
+                0,
+                int(child_chain_trace.get("portfolio_descendant_hint_title_match_count", 0) or 0),
             ),
             "descendant_sequence_match_count": max(
                 0,
@@ -2445,6 +2646,10 @@ class WindowManager:
                 0,
                 int(child_chain_trace.get("campaign_descendant_sequence_match_count", 0) or 0),
             ),
+            "portfolio_descendant_sequence_match_count": max(
+                0,
+                int(child_chain_trace.get("portfolio_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 child_chain_trace.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -2452,6 +2657,7 @@ class WindowManager:
                 child_chain_trace.get("expected_campaign_descendant_sequence_title", "") or ""
             ).strip(),
             "expected_program_descendant_sequence_title": expected_program_descendant_sequence_title,
+            "expected_portfolio_descendant_sequence_title": expected_portfolio_descendant_sequence_title,
             "descendant_anchor_recovery_available": bool(
                 descendant_anchor_recovery_signal.get("descendant_anchor_recovery_available", False)
             ),
@@ -2995,6 +3201,10 @@ class WindowManager:
             target_context.get("program_descendant_title_sequence", []),
             observed_descendant_titles,
         )
+        expected_portfolio_descendant_sequence_title = self._first_unmatched_sequence_title(
+            target_context.get("portfolio_descendant_title_sequence", []),
+            observed_descendant_titles,
+        )
         descendant_anchor_recovery_signal = self._descendant_anchor_recovery_signal(
             windows=same_root_owner_windows,
             candidate_hwnd=candidate_hwnd,
@@ -3010,6 +3220,11 @@ class WindowManager:
                 or target_context.get("campaign_descendant_hint_query", "")
                 or ""
             ).strip(),
+            portfolio_hint_query=str(
+                target_context.get("portfolio_hint_query", "")
+                or target_context.get("portfolio_descendant_hint_query", "")
+                or ""
+            ).strip(),
             preferred_window_title=str(
                 target_context.get("program_preferred_window_title", "")
                 or target_context.get("preferred_window_title", "")
@@ -3018,6 +3233,9 @@ class WindowManager:
             campaign_preferred_window_title=str(
                 target_context.get("campaign_preferred_window_title", "") or ""
             ).strip(),
+            portfolio_preferred_window_title=str(
+                target_context.get("portfolio_preferred_window_title", "") or ""
+            ).strip(),
             expected_descendant_sequence_title=str(
                 child_chain_metrics.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -3025,6 +3243,7 @@ class WindowManager:
                 child_chain_metrics.get("expected_campaign_descendant_sequence_title", "") or ""
             ).strip(),
             expected_program_descendant_sequence_title=expected_program_descendant_sequence_title,
+            expected_portfolio_descendant_sequence_title=expected_portfolio_descendant_sequence_title,
             program_chain_recovery_pressure=self._program_chain_recovery_pressure(
                 program_pressure=float(target_context.get("program_pressure", 0.0) or 0.0),
                 program_regression_cycle_count=int(
@@ -3037,8 +3256,21 @@ class WindowManager:
                     target_context.get("program_latest_cycle_stop_reason", "") or ""
                 ).strip(),
             ),
+            portfolio_chain_recovery_pressure=self._program_chain_recovery_pressure(
+                program_pressure=float(target_context.get("portfolio_pressure", 0.0) or 0.0),
+                program_regression_cycle_count=int(
+                    target_context.get("portfolio_regression_wave_count", 0) or 0
+                ),
+                program_long_horizon_pending_count=int(
+                    target_context.get("portfolio_long_horizon_pending_count", 0) or 0
+                ),
+                program_latest_cycle_stop_reason=str(
+                    target_context.get("portfolio_latest_wave_stop_reason", "") or ""
+                ).strip(),
+            ),
         )
         payload["expected_program_descendant_sequence_title"] = expected_program_descendant_sequence_title
+        payload["expected_portfolio_descendant_sequence_title"] = expected_portfolio_descendant_sequence_title
         payload["descendant_anchor_recovery_available"] = bool(
             descendant_anchor_recovery_signal.get("descendant_anchor_recovery_available", False)
         )
@@ -3222,6 +3454,9 @@ class WindowManager:
         campaign_hint_query: str = "",
         campaign_preferred_title: str = "",
         campaign_descendant_title_sequence: List[str] | None = None,
+        portfolio_hint_query: str = "",
+        portfolio_preferred_title: str = "",
+        portfolio_descendant_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
@@ -3258,6 +3493,20 @@ class WindowManager:
             target_context.get("campaign_descendant_title_sequence", []),
             target_context.get("program_descendant_title_sequence", []),
         )
+        resolved_portfolio_hint_query = str(
+            portfolio_hint_query
+            or target_context.get("portfolio_hint_query", target_context.get("portfolio_descendant_hint_query", ""))
+            or ""
+        ).strip()
+        resolved_portfolio_preferred_title = str(
+            portfolio_preferred_title or target_context.get("portfolio_preferred_window_title", "") or ""
+        ).strip()
+        resolved_portfolio_descendant_title_sequence = self._merge_title_sequences(
+            portfolio_descendant_title_sequence,
+            target_context.get("portfolio_descendant_title_sequence", []),
+            target_context.get("program_descendant_title_sequence", []),
+            target_context.get("campaign_descendant_title_sequence", []),
+        )
         resolved_preferred_title = str(
             preferred_title or target_context.get("preferred_window_title", "") or title_contains or ""
         ).strip()
@@ -3272,20 +3521,28 @@ class WindowManager:
             float(target_context.get("replay_pressure", 0.0) or 0.0),
             float(target_context.get("benchmark_target_replay_pressure", 0.0) or 0.0),
         )
+        strong_portfolio_pressure = max(
+            0.0,
+            float(target_context.get("portfolio_pressure", 0.0) or 0.0),
+            float(target_context.get("benchmark_target_portfolio_pressure", 0.0) or 0.0),
+        )
         long_horizon_pressure = max(
             0,
             int(target_context.get("benchmark_target_long_horizon_pending_count", 0) or 0),
             int(target_context.get("benchmark_target_campaign_long_horizon_pending_count", 0) or 0),
+            int(target_context.get("benchmark_target_portfolio_long_horizon_pending_count", 0) or 0),
         )
         regression_cycle_pressure = max(
             0,
             int(target_context.get("benchmark_target_regression_cycle_count", 0) or 0),
             int(target_context.get("benchmark_target_campaign_regression_cycle_count", 0) or 0),
+            int(target_context.get("benchmark_target_portfolio_regression_wave_count", 0) or 0),
         )
         session_cycle_pressure = max(
             0,
             int(target_context.get("benchmark_target_session_cycle_count", 0) or 0),
             int(target_context.get("benchmark_target_campaign_sweep_count", 0) or 0),
+            int(target_context.get("benchmark_target_portfolio_wave_count", 0) or 0),
         )
         target_descendant_pressure = max(
             0.0,
@@ -3294,7 +3551,10 @@ class WindowManager:
         auto_follow_descendant_chain = bool(
             target_context.get("benchmark_target_app_matched", False)
         ) and (
-            strong_campaign_pressure >= 0.75
+            strong_portfolio_pressure >= 0.75
+            or int(target_context.get("benchmark_target_portfolio_pending_program_count", 0) or 0) > 0
+            or int(target_context.get("benchmark_target_portfolio_attention_program_count", 0) or 0) > 0
+            or strong_campaign_pressure >= 0.75
             or strong_replay_pressure >= 0.75
             or regression_cycle_pressure > 0
             or long_horizon_pressure > 0
@@ -3319,6 +3579,9 @@ class WindowManager:
             campaign_hint_query=resolved_campaign_hint_query,
             campaign_preferred_title=resolved_campaign_preferred_title,
             campaign_descendant_title_sequence=resolved_campaign_descendant_title_sequence,
+            portfolio_hint_query=resolved_portfolio_hint_query,
+            portfolio_preferred_title=resolved_portfolio_preferred_title,
+            portfolio_descendant_title_sequence=resolved_portfolio_descendant_title_sequence,
             preferred_title=resolved_preferred_title,
             window_title=resolved_window_title,
             hwnd=hwnd,
