@@ -312,6 +312,60 @@ class EvaluationRunner:
             summary.get("app_target_counts", {}),
             label_key="app_name",
         )
+        cycle_plans = [
+            self._portfolio_cycle_plan(
+                dict(item),
+                default_max_waves=2,
+                default_max_programs=3,
+                default_max_campaigns=3,
+                default_max_sweeps=2,
+                adaptive_goal="balanced",
+            )
+            for item in portfolio_payload.get("items", [])
+            if isinstance(item, dict)
+        ] if isinstance(portfolio_payload.get("items", []), list) else []
+        cycle_plans.sort(
+            key=lambda item: (
+                -float(item.get("queue_score", 0.0) or 0.0),
+                -int(item.get("recommended_max_waves", 0) or 0),
+                -int(item.get("recommended_max_programs", 0) or 0),
+                str(item.get("label", "") or ""),
+            )
+        )
+        budget_profile_counts: Dict[str, int] = {}
+        for item in cycle_plans:
+            self._increment_count(
+                budget_profile_counts,
+                str(item.get("budget_profile", "") or "steady"),
+            )
+        recommended_goal = "balanced"
+        if int(budget_profile_counts.get("stabilize", 0) or 0) > 0:
+            recommended_goal = "stabilize"
+        elif int(budget_profile_counts.get("throughput", 0) or 0) > 0:
+            recommended_goal = "throughput"
+        elif int(budget_profile_counts.get("expand", 0) or 0) > 0:
+            recommended_goal = "expand"
+        daemon_recommendation = {
+            "adaptive_budgeting": bool(cycle_plans),
+            "adaptive_goal": recommended_goal,
+            "max_portfolios": max(1, min(len(cycle_plans[:3]) or 1, 6)),
+            "max_waves_per_portfolio": max(
+                [int(item.get("recommended_max_waves", 0) or 0) for item in cycle_plans[:3]] or [2]
+            ),
+            "max_programs_per_portfolio": max(
+                [int(item.get("recommended_max_programs", 0) or 0) for item in cycle_plans[:3]] or [3]
+            ),
+            "max_campaigns_per_program": max(
+                [int(item.get("recommended_max_campaigns_per_program", 0) or 0) for item in cycle_plans[:3]] or [3]
+            ),
+            "max_sweeps_per_campaign": max(
+                [int(item.get("recommended_max_sweeps_per_campaign", 0) or 0) for item in cycle_plans[:3]] or [2]
+            ),
+            "budget_profile_counts": self._sorted_count_map(budget_profile_counts),
+            "queue_size": len(cycle_plans),
+            "top_plan_label": str(cycle_plans[0].get("label", "") or "") if cycle_plans else "",
+            "top_plan_profile": str(cycle_plans[0].get("budget_profile", "") or "") if cycle_plans else "",
+        }
         backlog = {
             "pending_programs": int(summary.get("pending_programs", 0) or 0),
             "attention_programs": int(summary.get("attention_programs", 0) or 0),
@@ -360,6 +414,9 @@ class EvaluationRunner:
             "trend_leaderboard": trend_leaderboard[:6],
             "campaign_trend_leaderboard": campaign_trend_leaderboard[:6],
             "campaign_status_leaderboard": campaign_status_leaderboard[:6],
+            "cycle_plans": cycle_plans[:6],
+            "attention_queue": cycle_plans[:5],
+            "daemon_recommendation": daemon_recommendation,
             "native_targets": native_targets_payload,
             "guidance": guidance_payload,
         }
@@ -2210,6 +2267,8 @@ class EvaluationRunner:
         portfolio_status: str = "",
         pack: str = "",
         app_name: str = "",
+        adaptive_budgeting: bool = False,
+        adaptive_goal: str = "",
         trigger_source: str = "manual",
     ) -> Dict[str, object]:
         memory = self.lab_memory
@@ -2226,6 +2285,7 @@ class EvaluationRunner:
         normalized_status = str(portfolio_status or "").strip()
         normalized_pack = str(pack or "").strip().lower()
         normalized_app = str(app_name or "").strip().lower()
+        normalized_adaptive_goal = self._normalized_portfolio_adaptive_goal(adaptive_goal)
 
         all_portfolio_payload = self.lab_portfolios(limit=max(normalized_max_portfolios * 4, 16), status="")
         portfolio_rows = [dict(item) for item in all_portfolio_payload.get("items", []) if isinstance(item, dict)]
@@ -2288,33 +2348,39 @@ class EvaluationRunner:
                     "portfolio_status": normalized_status,
                     "pack": normalized_pack,
                     "app_name": normalized_app,
-                "history_limit": normalized_history_limit,
-                "max_waves_per_portfolio": normalized_max_waves,
-                "max_programs_per_portfolio": normalized_max_programs,
-                "max_campaigns_per_program": normalized_max_campaigns,
-                "max_sweeps_per_campaign": normalized_max_sweeps,
-            },
-            "targeted_portfolio_count": 0,
-            "executed_portfolio_count": 0,
-            "executed_wave_count": 0,
-            "executed_program_count": 0,
-            "executed_campaign_count": 0,
-            "executed_sweep_count": 0,
-            "stable_portfolio_count": 0,
-            "regression_portfolio_count": 0,
-            "stable_campaign_count": 0,
-            "regression_campaign_count": 0,
-            "pending_program_count": 0,
-            "attention_program_count": 0,
-            "pending_campaign_count": 0,
-            "pending_session_count": 0,
-            "pending_app_target_count": 0,
-            "long_horizon_pending_count": 0,
-            "error_count": 0,
-            "latest_portfolio_label": "",
-            "campaign_stop_reason_counts": {},
-            "wave_stop_reason_counts": {},
-            "trend_direction_counts": {},
+                    "adaptive_budgeting": bool(adaptive_budgeting),
+                    "adaptive_goal": normalized_adaptive_goal,
+                    "history_limit": normalized_history_limit,
+                    "max_waves_per_portfolio": normalized_max_waves,
+                    "max_programs_per_portfolio": normalized_max_programs,
+                    "max_campaigns_per_program": normalized_max_campaigns,
+                    "max_sweeps_per_campaign": normalized_max_sweeps,
+                },
+                "targeted_portfolio_count": 0,
+                "executed_portfolio_count": 0,
+                "executed_wave_count": 0,
+                "executed_program_count": 0,
+                "executed_campaign_count": 0,
+                "executed_sweep_count": 0,
+                "stable_portfolio_count": 0,
+                "regression_portfolio_count": 0,
+                "stable_campaign_count": 0,
+                "regression_campaign_count": 0,
+                "pending_program_count": 0,
+                "attention_program_count": 0,
+                "pending_campaign_count": 0,
+                "pending_session_count": 0,
+                "pending_app_target_count": 0,
+                "long_horizon_pending_count": 0,
+                "error_count": 0,
+                "latest_portfolio_label": "",
+                "campaign_stop_reason_counts": {},
+                "wave_stop_reason_counts": {},
+                "trend_direction_counts": {},
+                "budget_profile_counts": {},
+                "adaptive_portfolio_count": 0,
+                "planned_wave_budget_total": 0,
+                "planned_program_budget_total": 0,
                 "auto_created_portfolio_count": len(auto_created_portfolios),
                 "auto_created_portfolios": auto_created_portfolios,
                 "auto_created_app_names": self._unique_strings(
@@ -2325,6 +2391,7 @@ class EvaluationRunner:
                     ]
                 ),
                 "portfolios": [],
+                "cycle_plans": [],
                 "results": [],
                 "lab_portfolios": self.lab_portfolios(limit=max(normalized_max_portfolios * 4, 16), status=normalized_status),
                 "native_targets": native_targets_payload,
@@ -2352,21 +2419,62 @@ class EvaluationRunner:
         campaign_stop_reason_counts: Dict[str, int] = {}
         wave_stop_reason_counts: Dict[str, int] = {}
         trend_direction_counts: Dict[str, int] = {}
+        budget_profile_counts: Dict[str, int] = {}
+        cycle_plans: List[Dict[str, object]] = []
+        adaptive_portfolio_count = 0
+        planned_wave_budget_total = 0
+        planned_program_budget_total = 0
 
         for portfolio in selected_portfolios:
             portfolio_id_value = str(portfolio.get("portfolio_id", "") or "").strip()
             if not portfolio_id_value:
                 continue
+            cycle_plan = self._portfolio_cycle_plan(
+                portfolio,
+                default_max_waves=normalized_max_waves,
+                default_max_programs=normalized_max_programs,
+                default_max_campaigns=normalized_max_campaigns,
+                default_max_sweeps=normalized_max_sweeps,
+                adaptive_goal=normalized_adaptive_goal,
+            )
+            cycle_plans.append(cycle_plan)
+            self._increment_count(
+                budget_profile_counts,
+                str(cycle_plan.get("budget_profile", "") or "steady"),
+            )
+            planned_wave_budget_total += int(cycle_plan.get("recommended_max_waves", normalized_max_waves) or normalized_max_waves)
+            planned_program_budget_total += int(
+                cycle_plan.get("recommended_max_programs", normalized_max_programs) or normalized_max_programs
+            )
+            effective_max_waves = normalized_max_waves
+            effective_max_programs = normalized_max_programs
+            effective_max_campaigns = normalized_max_campaigns
+            effective_max_sweeps = normalized_max_sweeps
+            effective_stop_on_stable = True
+            effective_stop_on_regression = True
+            if adaptive_budgeting:
+                adaptive_portfolio_count += 1
+                effective_max_waves = int(cycle_plan.get("recommended_max_waves", normalized_max_waves) or normalized_max_waves)
+                effective_max_programs = int(cycle_plan.get("recommended_max_programs", normalized_max_programs) or normalized_max_programs)
+                effective_max_campaigns = int(
+                    cycle_plan.get("recommended_max_campaigns_per_program", normalized_max_campaigns) or normalized_max_campaigns
+                )
+                effective_max_sweeps = int(
+                    cycle_plan.get("recommended_max_sweeps_per_campaign", normalized_max_sweeps) or normalized_max_sweeps
+                )
+                effective_stop_on_stable = bool(cycle_plan.get("stop_on_stable", True))
+                effective_stop_on_regression = bool(cycle_plan.get("stop_on_regression", True))
             cycle_payload = self.run_lab_portfolio_campaign(
                 portfolio_id=portfolio_id_value,
-                max_waves=normalized_max_waves,
-                max_programs=normalized_max_programs,
-                max_campaigns_per_program=normalized_max_campaigns,
-                max_sweeps_per_campaign=normalized_max_sweeps,
+                max_waves=effective_max_waves,
+                max_programs=effective_max_programs,
+                max_campaigns_per_program=effective_max_campaigns,
+                max_sweeps_per_campaign=effective_max_sweeps,
                 max_sessions=normalized_max_sessions,
                 max_replays_per_session=normalized_max_replays,
                 history_limit=normalized_history_limit,
-                stop_on_regression=True,
+                stop_on_stable=effective_stop_on_stable,
+                stop_on_regression=effective_stop_on_regression,
             )
             portfolio_row = dict(cycle_payload.get("portfolio", {})) if isinstance(cycle_payload.get("portfolio", {}), dict) else dict(portfolio)
             campaign_row = (
@@ -2450,6 +2558,14 @@ class EvaluationRunner:
                     "wave_stop_reason": stop_reason,
                     "trend_direction": trend_direction,
                     "portfolio_priority": str(portfolio_row.get("portfolio_priority", "") or "").strip().lower(),
+                    "budget_profile": str(cycle_plan.get("budget_profile", "") or "steady"),
+                    "planned_max_waves": effective_max_waves,
+                    "planned_max_programs": effective_max_programs,
+                    "planned_max_campaigns_per_program": effective_max_campaigns,
+                    "planned_max_sweeps_per_campaign": effective_max_sweeps,
+                    "plan_reasons": list(cycle_plan.get("reasons", []))[:6]
+                    if isinstance(cycle_plan.get("reasons", []), list)
+                    else [],
                 }
             )
         refreshed_portfolios = self.lab_portfolios(limit=max(normalized_max_portfolios * 2, 8), status=normalized_status)
@@ -2477,6 +2593,8 @@ class EvaluationRunner:
                 "portfolio_status": normalized_status,
                 "pack": normalized_pack,
                 "app_name": normalized_app,
+                "adaptive_budgeting": bool(adaptive_budgeting),
+                "adaptive_goal": normalized_adaptive_goal,
                 "history_limit": normalized_history_limit,
                 "max_waves_per_portfolio": normalized_max_waves,
                 "max_programs_per_portfolio": normalized_max_programs,
@@ -2504,6 +2622,12 @@ class EvaluationRunner:
             "campaign_stop_reason_counts": self._sorted_count_map(campaign_stop_reason_counts),
             "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
             "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+            "budget_profile_counts": self._sorted_count_map(budget_profile_counts),
+            "adaptive_budgeting": bool(adaptive_budgeting),
+            "adaptive_goal": normalized_adaptive_goal,
+            "adaptive_portfolio_count": adaptive_portfolio_count,
+            "planned_wave_budget_total": planned_wave_budget_total,
+            "planned_program_budget_total": planned_program_budget_total,
             "auto_created_portfolio_count": len(auto_created_portfolios),
             "auto_created_portfolios": auto_created_portfolios,
             "auto_created_app_names": self._unique_strings(
@@ -2514,6 +2638,7 @@ class EvaluationRunner:
                 ]
             ),
             "portfolios": selected_portfolios,
+            "cycle_plans": cycle_plans,
             "results": results,
             "lab_portfolios": refreshed_portfolios,
             "native_targets": native_targets_payload,
@@ -5046,6 +5171,182 @@ class EvaluationRunner:
             int(portfolio.get("pending_session_count", 0) or 0),
             int(portfolio.get("regression_wave_count", 0) or 0) + int(portfolio.get("regression_wave_streak", 0) or 0),
         )
+
+    @staticmethod
+    def _normalized_portfolio_adaptive_goal(value: str) -> str:
+        clean = str(value or "").strip().lower()
+        if clean in {"balanced", "stabilize", "throughput", "expand"}:
+            return clean
+        if clean in {"steady", "default"}:
+            return "balanced"
+        if clean in {"recovery", "recover"}:
+            return "stabilize"
+        return "balanced"
+
+    @classmethod
+    def _portfolio_cycle_plan(
+        cls,
+        portfolio: Dict[str, object],
+        *,
+        default_max_waves: int,
+        default_max_programs: int,
+        default_max_campaigns: int,
+        default_max_sweeps: int,
+        adaptive_goal: str = "",
+    ) -> Dict[str, object]:
+        goal = cls._normalized_portfolio_adaptive_goal(adaptive_goal)
+        pending_program_count = max(0, int(portfolio.get("pending_program_count", 0) or 0))
+        attention_program_count = max(0, int(portfolio.get("attention_program_count", 0) or 0))
+        pending_campaign_count = max(0, int(portfolio.get("pending_campaign_count", 0) or 0))
+        pending_session_count = max(0, int(portfolio.get("pending_session_count", 0) or 0))
+        pending_app_target_count = max(0, int(portfolio.get("pending_app_target_count", 0) or 0))
+        long_horizon_pending_count = max(0, int(portfolio.get("long_horizon_pending_count", 0) or 0))
+        regression_wave_count = max(0, int(portfolio.get("regression_wave_count", 0) or 0))
+        regression_wave_streak = max(0, int(portfolio.get("regression_wave_streak", 0) or 0))
+        stable_wave_streak = max(0, int(portfolio.get("stable_wave_streak", 0) or 0))
+        pressure = max(0.0, float(portfolio.get("portfolio_pressure_score", 0.0) or 0.0))
+        latest_wave_status = str(portfolio.get("latest_wave_status", "") or "").strip().lower()
+        latest_wave_stop_reason = str(portfolio.get("latest_wave_stop_reason", "") or "").strip().lower()
+        latest_campaign_status = str(portfolio.get("latest_campaign_status", "") or "").strip().lower()
+        latest_campaign_stop_reason = str(portfolio.get("latest_campaign_stop_reason", "") or "").strip().lower()
+        trend_direction = str(
+            dict(portfolio.get("trend_summary", {})).get("direction", portfolio.get("history_direction", ""))
+            if isinstance(portfolio.get("trend_summary", {}), dict)
+            else portfolio.get("history_direction", "")
+        ).strip().lower()
+        campaign_trend_direction = str(
+            dict(portfolio.get("campaign_trend_summary", {})).get(
+                "direction",
+                portfolio.get("campaign_history_direction", ""),
+            )
+            if isinstance(portfolio.get("campaign_trend_summary", {}), dict)
+            else portfolio.get("campaign_history_direction", "")
+        ).strip().lower()
+        focus_summary = [
+            str(item).strip()
+            for item in portfolio.get("focus_summary", [])
+            if str(item).strip()
+        ][:6] if isinstance(portfolio.get("focus_summary", []), list) else []
+        target_apps = [
+            str(item).strip()
+            for item in portfolio.get("target_apps", portfolio.get("app_targets", []))
+            if str(item).strip()
+        ][:6] if isinstance(portfolio.get("target_apps", portfolio.get("app_targets", [])), list) else []
+
+        budget_profile = "steady"
+        reasons: List[str] = []
+        if (
+            goal == "stabilize"
+            or attention_program_count > 0
+            or regression_wave_count > 0
+            or regression_wave_streak > 0
+            or latest_wave_status in {"regression", "failed", "error"}
+            or latest_campaign_status in {"regression", "failed", "error"}
+            or trend_direction in {"regressing", "degraded"}
+            or campaign_trend_direction in {"regressing", "degraded"}
+            or latest_wave_stop_reason in {"regression", "regression_detected", "wave_error"}
+            or latest_campaign_stop_reason in {"regression_detected", "wave_error"}
+        ):
+            budget_profile = "stabilize"
+            reasons.append("regression_or_attention")
+        elif (
+            goal == "throughput"
+            or pending_program_count >= 3
+            or pending_campaign_count >= 4
+            or pending_session_count >= 5
+            or pressure >= 3.4
+        ):
+            budget_profile = "throughput"
+            reasons.append("backlog_pressure")
+        elif (
+            goal == "expand"
+            or pending_app_target_count > 0
+            or long_horizon_pending_count > 0
+            or latest_wave_stop_reason in {"max_programs_reached", "max_waves_reached"}
+            or latest_campaign_stop_reason in {"max_programs_reached", "max_waves_reached"}
+        ):
+            budget_profile = "expand"
+            reasons.append("coverage_or_horizon_gap")
+        else:
+            reasons.append("steady_monitoring")
+
+        recommended_max_waves = max(1, min(int(default_max_waves or 2), 8))
+        recommended_max_programs = max(1, min(int(default_max_programs or 3), 8))
+        recommended_max_campaigns = max(1, min(int(default_max_campaigns or 3), 8))
+        recommended_max_sweeps = max(1, min(int(default_max_sweeps or 2), 8))
+        stop_on_stable = True
+        stop_on_regression = True
+
+        if budget_profile == "stabilize":
+            recommended_max_waves = min(8, max(recommended_max_waves, 3))
+            recommended_max_programs = min(4, max(1, min(recommended_max_programs, 2) + (1 if pending_program_count > 0 else 0)))
+            recommended_max_campaigns = min(6, max(recommended_max_campaigns, 4))
+            recommended_max_sweeps = min(4, max(recommended_max_sweeps, 3))
+        elif budget_profile == "throughput":
+            recommended_max_waves = min(6, max(recommended_max_waves, 3))
+            recommended_max_programs = min(6, max(recommended_max_programs, 4))
+            recommended_max_campaigns = min(5, max(recommended_max_campaigns, 3))
+            recommended_max_sweeps = min(4, max(recommended_max_sweeps, 2))
+            stop_on_stable = False
+        elif budget_profile == "expand":
+            recommended_max_waves = min(5, max(recommended_max_waves, 2))
+            recommended_max_programs = min(5, max(recommended_max_programs, 3))
+            recommended_max_campaigns = min(6, max(recommended_max_campaigns, 4))
+            recommended_max_sweeps = min(4, max(recommended_max_sweeps, 2))
+            stop_on_stable = False
+
+        if stable_wave_streak >= 2 and budget_profile == "steady":
+            reasons.append("stable_streak")
+        if long_horizon_pending_count > 0:
+            reasons.append("long_horizon_pending")
+        if pending_app_target_count > 0:
+            reasons.append("pending_app_targets")
+        if focus_summary:
+            reasons.append(f"focus:{focus_summary[0]}")
+
+        queue_score = round(
+            pressure
+            + (pending_program_count * 0.55)
+            + (attention_program_count * 0.9)
+            + (pending_campaign_count * 0.4)
+            + (pending_session_count * 0.22)
+            + (pending_app_target_count * 0.75)
+            + (long_horizon_pending_count * 0.35)
+            + (regression_wave_count * 0.6)
+            + (regression_wave_streak * 0.8),
+            6,
+        )
+        return {
+            "portfolio_id": str(portfolio.get("portfolio_id", "") or "").strip(),
+            "label": str(portfolio.get("label", "") or "desktop replay portfolio").strip(),
+            "status": str(portfolio.get("status", "") or "ready").strip().lower() or "ready",
+            "budget_profile": budget_profile,
+            "adaptive_goal": goal,
+            "queue_score": queue_score,
+            "recommended_max_waves": recommended_max_waves,
+            "recommended_max_programs": recommended_max_programs,
+            "recommended_max_campaigns_per_program": recommended_max_campaigns,
+            "recommended_max_sweeps_per_campaign": recommended_max_sweeps,
+            "stop_on_stable": stop_on_stable,
+            "stop_on_regression": stop_on_regression,
+            "portfolio_priority": str(portfolio.get("portfolio_priority", "") or "steady").strip().lower() or "steady",
+            "portfolio_pressure_score": round(pressure, 6),
+            "pending_program_count": pending_program_count,
+            "attention_program_count": attention_program_count,
+            "pending_campaign_count": pending_campaign_count,
+            "pending_session_count": pending_session_count,
+            "pending_app_target_count": pending_app_target_count,
+            "long_horizon_pending_count": long_horizon_pending_count,
+            "regression_wave_count": regression_wave_count,
+            "regression_wave_streak": regression_wave_streak,
+            "latest_wave_stop_reason": latest_wave_stop_reason,
+            "latest_campaign_stop_reason": latest_campaign_stop_reason,
+            "trend_direction": trend_direction or "stable",
+            "campaign_trend_direction": campaign_trend_direction or "stable",
+            "focus_summary": focus_summary,
+            "target_apps": target_apps,
+            "reasons": reasons[:8],
+        }
 
     def _native_target_hint_query(
         self,

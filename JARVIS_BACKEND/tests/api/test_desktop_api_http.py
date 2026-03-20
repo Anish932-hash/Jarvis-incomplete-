@@ -954,6 +954,8 @@ class FakeDesktopService:
             "max_sessions": 3,
             "max_replays_per_session": 2,
             "history_limit": 8,
+            "adaptive_budgeting": False,
+            "adaptive_goal": "balanced",
             "portfolio_status": "",
             "pack": "",
             "app_name": "",
@@ -14416,6 +14418,25 @@ class FakeDesktopService:
                 "regression_waves": int(summary.get("regression_waves", 0) or 0),
             },
             "top_portfolios": top_portfolios,
+            "cycle_plans": [
+                {
+                    "portfolio_id": str(top_portfolios[0].get("portfolio_id", "") or "benchportfolio-test-1"),
+                    "label": str(top_portfolios[0].get("label", "") or "settings replay portfolio"),
+                    "budget_profile": "stabilize",
+                    "recommended_max_waves": 3,
+                    "recommended_max_programs": 3,
+                    "recommended_max_campaigns_per_program": 2,
+                    "recommended_max_sweeps_per_campaign": 2,
+                    "reasons": ["regression_hotspot", "long_horizon_backlog"],
+                }
+            ],
+            "attention_queue": [
+                {
+                    "portfolio_id": str(top_portfolios[0].get("portfolio_id", "") or "benchportfolio-test-1"),
+                    "label": str(top_portfolios[0].get("label", "") or "settings replay portfolio"),
+                    "budget_profile": "stabilize",
+                }
+            ],
             "app_pressure_leaderboard": [
                 {
                     "app_name": "settings",
@@ -14433,6 +14454,18 @@ class FakeDesktopService:
             "trend_leaderboard": [{"direction": "stable", "count": 1}],
             "native_targets": self.desktop_evaluation_native_targets(limit=limit, history_limit=8),
             "guidance": self.desktop_evaluation_guidance(),
+            "daemon_recommendation": {
+                "adaptive_budgeting": True,
+                "adaptive_goal": "stabilize",
+                "queue_size": len(top_portfolios),
+                "top_plan_label": str(top_portfolios[0].get("label", "") or "settings replay portfolio"),
+                "budget_profile_counts": {"stabilize": 1},
+                "max_portfolios": 2,
+                "max_waves_per_portfolio": 3,
+                "max_programs_per_portfolio": 3,
+                "max_campaigns_per_program": 2,
+                "max_sweeps_per_campaign": 2,
+            },
             "portfolios": payload,
             "portfolio_daemon": self.desktop_evaluation_portfolio_supervisor_status(
                 history_limit=daemon_history_limit
@@ -16697,6 +16730,8 @@ class FakeDesktopService:
         max_sessions: int | None = None,
         max_replays_per_session: int | None = None,
         history_limit: int | None = None,
+        adaptive_budgeting: bool | None = None,
+        adaptive_goal: str | None = None,
         portfolio_status: str | None = None,
         pack: str | None = None,
         app_name: str | None = None,
@@ -16723,6 +16758,10 @@ class FakeDesktopService:
             self.desktop_evaluation_portfolio_daemon_state["max_replays_per_session"] = int(max_replays_per_session)
         if history_limit is not None:
             self.desktop_evaluation_portfolio_daemon_state["history_limit"] = int(history_limit)
+        if adaptive_budgeting is not None:
+            self.desktop_evaluation_portfolio_daemon_state["adaptive_budgeting"] = bool(adaptive_budgeting)
+        if adaptive_goal is not None:
+            self.desktop_evaluation_portfolio_daemon_state["adaptive_goal"] = str(adaptive_goal or "").strip().lower()
         if portfolio_status is not None:
             self.desktop_evaluation_portfolio_daemon_state["portfolio_status"] = str(portfolio_status or "").strip()
         if pack is not None:
@@ -16744,6 +16783,8 @@ class FakeDesktopService:
         max_sessions: int | None = None,
         max_replays_per_session: int | None = None,
         history_limit: int | None = None,
+        adaptive_budgeting: bool | None = None,
+        adaptive_goal: str | None = None,
         portfolio_status: str | None = None,
         pack: str | None = None,
         app_name: str | None = None,
@@ -16768,6 +16809,14 @@ class FakeDesktopService:
             max_replays_per_session or self.desktop_evaluation_portfolio_daemon_state.get("max_replays_per_session", 2) or 2
         )
         effective_history_limit = int(history_limit or self.desktop_evaluation_portfolio_daemon_state.get("history_limit", 8) or 8)
+        effective_adaptive_budgeting = (
+            bool(adaptive_budgeting)
+            if adaptive_budgeting is not None
+            else bool(self.desktop_evaluation_portfolio_daemon_state.get("adaptive_budgeting", False))
+        )
+        effective_adaptive_goal = str(
+            adaptive_goal if adaptive_goal is not None else self.desktop_evaluation_portfolio_daemon_state.get("adaptive_goal", "") or ""
+        ).strip().lower() or "balanced"
         effective_status = str(
             portfolio_status if portfolio_status is not None else self.desktop_evaluation_portfolio_daemon_state.get("portfolio_status", "") or ""
         ).strip()
@@ -16870,6 +16919,12 @@ class FakeDesktopService:
             "error_count": 0,
             "latest_portfolio_label": str(dict(results[0].get("portfolio", {})).get("label", "") or "").strip() if results else "",
             "auto_created_portfolio_count": 0,
+            "adaptive_budgeting": effective_adaptive_budgeting,
+            "adaptive_goal": effective_adaptive_goal,
+            "adaptive_portfolio_count": len(ranked) if effective_adaptive_budgeting else 0,
+            "planned_wave_budget_total": effective_max_waves * max(1, len(ranked)),
+            "planned_program_budget_total": effective_max_programs * max(1, len(ranked)),
+            "budget_profile_counts": {"stabilize": len(ranked)} if effective_adaptive_budgeting else {"steady": len(ranked)},
             "wave_stop_reason_counts": {
                 str(dict(item.get("wave_results", [{}])[-1]).get("wave", {}).get("stop_reason", "unknown") or "unknown"): 1
                 for item in results
@@ -16890,6 +16945,8 @@ class FakeDesktopService:
                 "pack": effective_pack,
                 "app_name": effective_app,
                 "max_waves_per_portfolio": effective_max_waves,
+                "adaptive_budgeting": effective_adaptive_budgeting,
+                "adaptive_goal": effective_adaptive_goal,
             },
             **dict(self.desktop_evaluation_portfolio_daemon_state["last_summary"]),
         }
@@ -21837,6 +21894,8 @@ def test_desktop_evaluation_lab_portfolio_diagnostics_route(api_server: tuple[st
     assert diagnostics["app_pressure_leaderboard"][0]["app_name"] == "settings"
     assert diagnostics["portfolios"]["latest_portfolio"]["portfolio_id"] == created["portfolio"]["portfolio_id"]
     assert diagnostics["portfolio_daemon"]["status"] == "success"
+    assert diagnostics["cycle_plans"][0]["budget_profile"] == "stabilize"
+    assert diagnostics["daemon_recommendation"]["adaptive_budgeting"] is True
 
 
 def test_desktop_evaluation_lab_portfolio_cycle_route(api_server: tuple[str, FakeDesktopService]) -> None:
@@ -21963,6 +22022,8 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
             "max_sessions": 2,
             "max_replays_per_session": 2,
             "history_limit": 6,
+            "adaptive_budgeting": True,
+            "adaptive_goal": "stabilize",
             "pack": "long_horizon_and_replay",
             "source": "http_test",
         },
@@ -21974,6 +22035,8 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
     assert int(configured["max_waves_per_portfolio"]) == 3
     assert int(configured["max_programs_per_portfolio"]) == 3
     assert int(configured["max_campaigns_per_program"]) == 2
+    assert configured["adaptive_budgeting"] is True
+    assert str(configured["adaptive_goal"]) == "stabilize"
     assert str(configured["pack"]) == "long_horizon_and_replay"
 
     status, triggered = request_json(
@@ -21988,6 +22051,8 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
             "max_sessions": 2,
             "max_replays_per_session": 2,
             "history_limit": 6,
+            "adaptive_budgeting": True,
+            "adaptive_goal": "stabilize",
             "pack": "long_horizon_and_replay",
             "source": "http_test",
         },
@@ -22001,6 +22066,8 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
     assert int(triggered["supervisor"]["max_programs_per_portfolio"]) == 3
     assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
     assert int(triggered["result"].get("executed_wave_count", 0) or 0) >= 1
+    assert triggered["supervisor"]["adaptive_budgeting"] is True
+    assert str(triggered["supervisor"]["adaptive_goal"]) == "stabilize"
 
     status, history = request_json(
         "GET",
@@ -22010,6 +22077,7 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
     assert history["status"] == "success"
     assert int(history["count"]) >= 1
     assert str(history["latest_run"]["source"]) == "http_test"
+    assert history["latest_run"]["adaptive_portfolio_count"] >= 0
 
     status, reset = request_json(
         "POST",

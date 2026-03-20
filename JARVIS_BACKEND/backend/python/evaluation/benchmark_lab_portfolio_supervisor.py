@@ -38,6 +38,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         max_sessions: int = 3,
         max_replays_per_session: int = 2,
         history_limit: int = 8,
+        adaptive_budgeting: bool = False,
+        adaptive_goal: str = "",
         portfolio_status: str = "",
         pack: str = "",
         app_name: str = "",
@@ -59,6 +61,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
+            adaptive_budgeting=adaptive_budgeting,
+            adaptive_goal=adaptive_goal,
             portfolio_status=portfolio_status,
             pack=pack,
             app_name=app_name,
@@ -126,6 +130,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             source_counts: Dict[str, int] = {}
             trend_direction_counts: Dict[str, int] = {}
             wave_stop_reason_counts: Dict[str, int] = {}
+            budget_profile_counts: Dict[str, int] = {}
             executed_portfolio_total = 0
             executed_wave_total = 0
             executed_program_total = 0
@@ -134,6 +139,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             stable_portfolio_total = 0
             stable_campaign_total = 0
             regression_campaign_total = 0
+            adaptive_portfolio_total = 0
+            planned_wave_budget_total = 0
+            planned_program_budget_total = 0
             campaign_stop_reason_counts: Dict[str, int] = {}
             for item in items:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
@@ -162,6 +170,15 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 regression_campaign_total += self._coerce_int(
                     item.get("regression_campaign_count", 0), minimum=0, maximum=1_000_000, default=0
                 )
+                adaptive_portfolio_total += self._coerce_int(
+                    item.get("adaptive_portfolio_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                planned_wave_budget_total += self._coerce_int(
+                    item.get("planned_wave_budget_total", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                planned_program_budget_total += self._coerce_int(
+                    item.get("planned_program_budget_total", 0), minimum=0, maximum=1_000_000, default=0
+                )
                 trend_counts = item.get("trend_direction_counts", {})
                 if isinstance(trend_counts, dict):
                     for key, value in trend_counts.items():
@@ -183,6 +200,13 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                         campaign_stop_reason_counts[clean] = int(
                             campaign_stop_reason_counts.get(clean, 0)
                         ) + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                profile_counts = item.get("budget_profile_counts", {})
+                if isinstance(profile_counts, dict):
+                    for key, value in profile_counts.items():
+                        clean = str(key or "").strip().lower() or "unknown"
+                        budget_profile_counts[clean] = int(budget_profile_counts.get(clean, 0)) + self._coerce_int(
+                            value, minimum=0, maximum=1_000_000, default=0
+                        )
             return {
                 "status": "success",
                 "count": len(limited),
@@ -205,6 +229,10 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                     "stable_portfolio_total": stable_portfolio_total,
                     "stable_campaign_total": stable_campaign_total,
                     "regression_campaign_total": regression_campaign_total,
+                    "adaptive_portfolio_total": adaptive_portfolio_total,
+                    "planned_wave_budget_total": planned_wave_budget_total,
+                    "planned_program_budget_total": planned_program_budget_total,
+                    "budget_profile_counts": self._sorted_count_map(budget_profile_counts),
                     "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
                     "campaign_stop_reason_counts": self._sorted_count_map(campaign_stop_reason_counts),
                     "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
@@ -266,6 +294,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
+        adaptive_budgeting: Optional[bool] = None,
+        adaptive_goal: Optional[str] = None,
         portfolio_status: Optional[str] = None,
         pack: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -302,6 +332,10 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 )
             if history_limit is not None:
                 self._config["history_limit"] = self._coerce_int(history_limit, minimum=1, maximum=64, default=8)
+            if adaptive_budgeting is not None:
+                self._config["adaptive_budgeting"] = bool(adaptive_budgeting)
+            if adaptive_goal is not None:
+                self._config["adaptive_goal"] = str(adaptive_goal or "").strip().lower()
             if portfolio_status is not None:
                 self._config["portfolio_status"] = str(portfolio_status or "").strip()
             if pack is not None:
@@ -327,6 +361,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
+        adaptive_budgeting: Optional[bool] = None,
+        adaptive_goal: Optional[str] = None,
         portfolio_status: Optional[str] = None,
         pack: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -340,6 +376,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "max_sessions": max_sessions,
             "max_replays_per_session": max_replays_per_session,
             "history_limit": history_limit,
+            "adaptive_budgeting": adaptive_budgeting,
+            "adaptive_goal": adaptive_goal,
             "portfolio_status": portfolio_status,
             "pack": pack,
             "app_name": app_name,
@@ -412,6 +450,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                     effective.get("max_replays_per_session", 2), minimum=1, maximum=8, default=2
                 ),
                 history_limit=self._coerce_int(effective.get("history_limit", 8), minimum=1, maximum=64, default=8),
+                adaptive_budgeting=bool(effective.get("adaptive_budgeting", False)),
+                adaptive_goal=str(effective.get("adaptive_goal", "") or "").strip().lower(),
                 portfolio_status=str(effective.get("portfolio_status", "") or "").strip(),
                 pack=str(effective.get("pack", "") or "").strip(),
                 app_name=str(effective.get("app_name", "") or "").strip(),
@@ -487,6 +527,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 self._config.get("max_replays_per_session", 2), minimum=1, maximum=8, default=2
             ),
             "history_limit": self._coerce_int(self._config.get("history_limit", 8), minimum=1, maximum=64, default=8),
+            "adaptive_budgeting": bool(self._config.get("adaptive_budgeting", False)),
+            "adaptive_goal": str(self._config.get("adaptive_goal", "") or "").strip(),
             "portfolio_status": str(self._config.get("portfolio_status", "") or "").strip(),
             "pack": str(self._config.get("pack", "") or "").strip(),
             "app_name": str(self._config.get("app_name", "") or "").strip(),
@@ -591,6 +633,20 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "auto_created_portfolio_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 payload.get("auto_created_portfolio_count", 0), minimum=0, maximum=100_000, default=0
             ),
+            "adaptive_budgeting": bool(payload.get("adaptive_budgeting", False)),
+            "adaptive_goal": str(payload.get("adaptive_goal", "") or "").strip().lower(),
+            "adaptive_portfolio_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("adaptive_portfolio_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "planned_wave_budget_total": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("planned_wave_budget_total", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "planned_program_budget_total": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("planned_program_budget_total", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "budget_profile_counts": copy.deepcopy(payload.get("budget_profile_counts", {}))
+            if isinstance(payload.get("budget_profile_counts", {}), dict)
+            else {},
             "wave_stop_reason_counts": copy.deepcopy(payload.get("wave_stop_reason_counts", {}))
             if isinstance(payload.get("wave_stop_reason_counts", {}), dict)
             else {},
@@ -615,6 +671,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         max_sessions: int,
         max_replays_per_session: int,
         history_limit: int,
+        adaptive_budgeting: bool,
+        adaptive_goal: str,
         portfolio_status: str,
         pack: str,
         app_name: str,
@@ -640,6 +698,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 max_replays_per_session, minimum=1, maximum=8, default=2
             ),
             "history_limit": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(history_limit, minimum=1, maximum=64, default=8),
+            "adaptive_budgeting": bool(adaptive_budgeting),
+            "adaptive_goal": str(adaptive_goal or "").strip().lower(),
             "portfolio_status": str(portfolio_status or "").strip(),
             "pack": str(pack or "").strip(),
             "app_name": str(app_name or "").strip(),
@@ -698,6 +758,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 "max_sweeps_per_campaign": self._coerce_int(
                     effective.get("max_sweeps_per_campaign", 2), minimum=1, maximum=8, default=2
                 ),
+                "adaptive_budgeting": bool(effective.get("adaptive_budgeting", False)),
+                "adaptive_goal": str(effective.get("adaptive_goal", "") or "").strip().lower(),
             },
             **summary,
         }
@@ -721,6 +783,8 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "max_sessions",
             "max_replays_per_session",
             "history_limit",
+            "adaptive_budgeting",
+            "adaptive_goal",
             "portfolio_status",
             "pack",
             "app_name",

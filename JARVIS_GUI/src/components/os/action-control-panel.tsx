@@ -2073,6 +2073,28 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopEvaluationLabPortfolioDiagnostics.backlog),
     [desktopEvaluationLabPortfolioDiagnostics]
   );
+  const desktopEvaluationPortfolioDaemonRecommendation = useMemo(
+    () => asObjectRecord(desktopEvaluationLabPortfolioDiagnostics.daemon_recommendation),
+    [desktopEvaluationLabPortfolioDiagnostics]
+  );
+  const desktopEvaluationLabPortfolioCyclePlans = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.cycle_plans)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.cycle_plans.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
+  const desktopEvaluationLabPortfolioAttentionQueue = useMemo(
+    () =>
+      Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.attention_queue)
+        ? desktopEvaluationLabPortfolioDiagnosticsState.attention_queue.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopEvaluationLabPortfolioDiagnosticsState]
+  );
   const desktopEvaluationLatestLabProgram = useMemo(
     () => asObjectRecord(desktopEvaluationLabPrograms.latest_program),
     [desktopEvaluationLabPrograms]
@@ -13893,9 +13915,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   );
 
   const configureDesktopEvaluationPortfolioDaemon = useCallback(
-    async (enabled: boolean) => {
+    async (enabled: boolean, adaptiveBudgetingOverride?: boolean) => {
       setDesktopEvaluationPortfolioDaemonBusy(true);
       try {
+        const adaptiveBudgeting =
+          adaptiveBudgetingOverride ??
+          (desktopEvaluationPortfolioDaemon.adaptive_budgeting !== undefined
+            ? Boolean(desktopEvaluationPortfolioDaemon.adaptive_budgeting)
+            : Boolean(desktopEvaluationPortfolioDaemonRecommendation.adaptive_budgeting));
+        const adaptiveGoal =
+          String(
+            desktopEvaluationPortfolioDaemon.adaptive_goal ??
+              desktopEvaluationPortfolioDaemonRecommendation.adaptive_goal ??
+              'balanced'
+          ).trim() || 'balanced';
         const payload = await backendClient.desktopEvaluationConfigurePortfolioDaemon({
           enabled,
           interval_s: Number(desktopEvaluationPortfolioDaemon.interval_s ?? 300),
@@ -13907,6 +13940,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
           max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
           history_limit: Number(desktopEvaluationPortfolioDaemon.history_limit ?? 8),
+          adaptive_budgeting: adaptiveBudgeting,
+          adaptive_goal: adaptiveGoal,
           portfolio_status: String(desktopEvaluationPortfolioDaemon.portfolio_status ?? '').trim() || undefined,
           pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationPortfolioDaemon.pack ?? '').trim() || undefined,
           app_name:
@@ -13922,6 +13957,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           title: enabled ? 'Portfolio Daemon Enabled' : 'Portfolio Daemon Paused',
           description:
             `${enabled ? 'Background replay portfolio cycles will keep running.' : 'Background replay portfolio cycles are paused.'}` +
+            ` | adaptive:${String(payload.adaptive_budgeting ? payload.adaptive_goal ?? 'on' : 'off')}` +
             ` | max portfolios:${Number(payload.max_portfolios ?? 0)}` +
             ` | max waves:${Number(payload.max_waves_per_portfolio ?? 0)}`,
         });
@@ -13941,6 +13977,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       desktopEvaluationAppFilter,
       desktopEvaluationPackFilter,
       desktopEvaluationPortfolioDaemon,
+      desktopEvaluationPortfolioDaemonRecommendation,
       refreshDesktopEvaluationLabPortfolios,
       toast,
     ]
@@ -14738,6 +14775,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   const triggerDesktopEvaluationPortfolioDaemon = useCallback(async () => {
     setDesktopEvaluationPortfolioDaemonTriggerBusy(true);
     try {
+      const adaptiveBudgeting =
+        desktopEvaluationPortfolioDaemon.adaptive_budgeting !== undefined
+          ? Boolean(desktopEvaluationPortfolioDaemon.adaptive_budgeting)
+          : Boolean(desktopEvaluationPortfolioDaemonRecommendation.adaptive_budgeting);
+      const adaptiveGoal =
+        String(
+          desktopEvaluationPortfolioDaemon.adaptive_goal ??
+            desktopEvaluationPortfolioDaemonRecommendation.adaptive_goal ??
+            'balanced'
+        ).trim() || 'balanced';
       const payload = await backendClient.desktopEvaluationTriggerPortfolioDaemon({
         max_portfolios: Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 2),
         max_waves_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_waves_per_portfolio ?? 2),
@@ -14747,6 +14794,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
         max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
         history_limit: Number(desktopEvaluationPortfolioDaemon.history_limit ?? 8),
+        adaptive_budgeting: adaptiveBudgeting,
+        adaptive_goal: adaptiveGoal,
         portfolio_status: String(desktopEvaluationPortfolioDaemon.portfolio_status ?? '').trim() || undefined,
         pack: desktopEvaluationPackFilter.trim() || String(desktopEvaluationPortfolioDaemon.pack ?? '').trim() || undefined,
         app_name:
@@ -14772,6 +14821,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         title: 'Portfolio Daemon Tick Ran',
         description:
           `${String(payload.status ?? 'success')}` +
+          ` | adaptive:${adaptiveBudgeting ? adaptiveGoal : 'off'}` +
           ` | executed:${Number(asObjectRecord(payload.result).executed_portfolio_count ?? 0)}`,
       });
       return payload;
@@ -14789,6 +14839,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     desktopEvaluationAppFilter,
     desktopEvaluationPackFilter,
     desktopEvaluationPortfolioDaemon,
+    desktopEvaluationPortfolioDaemonRecommendation,
     refreshDesktopEvaluationHistory,
     refreshDesktopEvaluationLabCampaigns,
     refreshDesktopEvaluationLabPortfolios,
@@ -19930,6 +19981,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         {' • '}app:{String(desktopEvaluationPortfolioDaemon.app_name ?? 'any') || 'any'}
                                       </p>
                                       <p className="mt-1 text-[10px] text-muted-foreground">
+                                        adaptive:
+                                        {desktopEvaluationPortfolioDaemon.adaptive_budgeting ? ' on' : ' off'}
+                                        {' • '}goal:{String(desktopEvaluationPortfolioDaemon.adaptive_goal ?? 'balanced')}
+                                        {' • '}profiles:
+                                        {Object.keys(asObjectRecord(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).budget_profile_counts)).length > 0
+                                          ? ` ${Object.entries(
+                                              asObjectRecord(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).budget_profile_counts)
+                                            )
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${Number(value ?? 0)}`)
+                                              .join(' • ')}`
+                                          : ' n/a'}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
                                         last:{String(desktopEvaluationPortfolioDaemon.last_result_status ?? 'idle')}
                                         {' • '}executed:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_portfolio_count ?? 0)}
                                         {' • '}waves:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_wave_count ?? 0)}
@@ -19937,6 +20002,17 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         {' • '}stable:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).stable_portfolio_count ?? 0)}
                                         {' • '}stable campaigns:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).stable_campaign_count ?? 0)}
                                         {' • '}auto-created:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).auto_created_portfolio_count ?? 0)}
+                                      </p>
+                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                        adaptive portfolios:{Number(
+                                          asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).adaptive_portfolio_count ?? 0
+                                        )}
+                                        {' • '}planned waves:{Number(
+                                          asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).planned_wave_budget_total ?? 0
+                                        )}
+                                        {' • '}planned programs:{Number(
+                                          asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).planned_program_budget_total ?? 0
+                                        )}
                                       </p>
                                       <p className="mt-1 text-[10px] text-muted-foreground">
                                         portfolios:{Number(desktopEvaluationPortfolioDaemonPortfolios.count ?? 0)}
@@ -19992,6 +20068,20 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           disabled={desktopEvaluationPortfolioDaemonBusy}
                                         >
                                           {desktopEvaluationPortfolioDaemon.enabled ? 'Pause' : 'Enable'}
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                          onClick={() =>
+                                            void configureDesktopEvaluationPortfolioDaemon(
+                                              Boolean(desktopEvaluationPortfolioDaemon.enabled),
+                                              !Boolean(desktopEvaluationPortfolioDaemon.adaptive_budgeting)
+                                            )
+                                          }
+                                          disabled={desktopEvaluationPortfolioDaemonBusy}
+                                        >
+                                          {desktopEvaluationPortfolioDaemon.adaptive_budgeting ? 'Adaptive On' : 'Adaptive Off'}
                                         </Button>
                                         <Button
                                           type="button"
@@ -20358,6 +20448,47 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     .join(' • ')}`
                                                 : ' n/a'}
                                             </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              daemon:
+                                              {desktopEvaluationPortfolioDaemonRecommendation.adaptive_budgeting ? ' adaptive' : ' fixed'}
+                                              {' • '}goal:{String(desktopEvaluationPortfolioDaemonRecommendation.adaptive_goal ?? 'balanced')}
+                                              {' • '}queue:{Number(desktopEvaluationPortfolioDaemonRecommendation.queue_size ?? 0)}
+                                              {' • '}top:{String(desktopEvaluationPortfolioDaemonRecommendation.top_plan_label ?? 'n/a')}
+                                            </p>
+                                            {desktopEvaluationLabPortfolioCyclePlans.length ? (
+                                              <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
+                                                <p className="font-semibold uppercase tracking-wider text-primary/75">
+                                                  Adaptive Cycle Plans
+                                                </p>
+                                                <div className="mt-1 space-y-1">
+                                                  {desktopEvaluationLabPortfolioCyclePlans.slice(0, 3).map((plan, index) => (
+                                                    <p key={`portfolio-cycle-plan-${String(plan.portfolio_id ?? index)}`}>
+                                                      {String(plan.label ?? plan.portfolio_id ?? `plan-${index + 1}`)}
+                                                      {' • '}profile:{String(plan.budget_profile ?? 'steady')}
+                                                      {' • '}waves:{Number(plan.recommended_max_waves ?? 0)}
+                                                      {' • '}programs:{Number(plan.recommended_max_programs ?? 0)}
+                                                      {' • '}reason:
+                                                      {Array.isArray(plan.reasons) && plan.reasons.length > 0
+                                                        ? ` ${plan.reasons
+                                                            .slice(0, 2)
+                                                            .map((reason) => String(reason))
+                                                            .join(' / ')}`
+                                                        : ' n/a'}
+                                                    </p>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            ) : null}
+                                            {desktopEvaluationLabPortfolioAttentionQueue.length ? (
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                attention queue:
+                                                {' '}
+                                                {desktopEvaluationLabPortfolioAttentionQueue
+                                                  .slice(0, 3)
+                                                  .map((item) => String(item.label ?? item.portfolio_id ?? 'portfolio'))
+                                                  .join(' • ')}
+                                              </p>
+                                            ) : null}
                                           </div>
                                           <div className="rounded border border-primary/10 bg-black/10 p-2">
                                             <p className="font-semibold uppercase tracking-wider text-primary/70">Latest Portfolio</p>

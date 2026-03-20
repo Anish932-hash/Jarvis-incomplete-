@@ -1741,6 +1741,8 @@ def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatc
         max_sessions=2,
         max_replays_per_session=2,
         history_limit=6,
+        adaptive_budgeting=True,
+        adaptive_goal="stabilize",
         pack="long_horizon_and_replay",
         trigger_source="daemon",
     )
@@ -1755,6 +1757,11 @@ def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatc
     assert payload["stable_portfolio_count"] == 1
     assert payload["campaign_stop_reason_counts"]["stable"] == 1
     assert payload["auto_created_app_names"] == ["settings"]
+    assert payload["adaptive_budgeting"] is True
+    assert payload["adaptive_goal"] == "stabilize"
+    assert payload["adaptive_portfolio_count"] == 1
+    assert payload["planned_wave_budget_total"] >= 1
+    assert payload["budget_profile_counts"]["stabilize"] >= 1
     assert create_calls and create_calls[0]["app"] == "settings"
     assert cycle_calls == ["portfolio-settings"]
 
@@ -1870,6 +1877,9 @@ def test_evaluation_runner_portfolio_diagnostics_surfaces_hotspots(monkeypatch) 
     assert payload["stop_reason_leaderboard"][0]["stop_reason"] == "regression"
     assert payload["campaign_stop_reason_leaderboard"][0]["stop_reason"] == "regression_detected"
     assert payload["focus_leaderboard"][0]["focus_area"] == "desktop_workflow"
+    assert payload["cycle_plans"][0]["budget_profile"] == "stabilize"
+    assert payload["daemon_recommendation"]["adaptive_budgeting"] is True
+    assert payload["daemon_recommendation"]["max_waves_per_portfolio"] >= 1
 
 
 def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_signals(monkeypatch) -> None:

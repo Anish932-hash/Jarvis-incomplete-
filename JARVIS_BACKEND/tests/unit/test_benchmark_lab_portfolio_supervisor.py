@@ -25,6 +25,8 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
         max_sessions=3,
         max_replays_per_session=2,
         history_limit=10,
+        adaptive_budgeting=True,
+        adaptive_goal="stabilize",
         portfolio_status="ready",
         pack="long_horizon_and_replay",
         app_name="settings",
@@ -35,6 +37,8 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
     assert status["max_portfolios"] == 3
     assert status["max_waves_per_portfolio"] == 4
     assert status["max_programs_per_portfolio"] == 4
+    assert status["adaptive_budgeting"] is True
+    assert status["adaptive_goal"] == "stabilize"
     assert status["portfolio_status"] == "ready"
 
     reloaded = DesktopBenchmarkLabPortfolioSupervisor(state_path=str(state_path))
@@ -44,6 +48,8 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
     assert reloaded_status["max_portfolios"] == 3
     assert reloaded_status["max_waves_per_portfolio"] == 4
     assert reloaded_status["max_programs_per_portfolio"] == 4
+    assert reloaded_status["adaptive_budgeting"] is True
+    assert reloaded_status["adaptive_goal"] == "stabilize"
     assert reloaded_status["pack"] == "long_horizon_and_replay"
     assert reloaded_status["app_name"] == "settings"
 
@@ -76,6 +82,12 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
             "error_count": 0,
             "latest_portfolio_label": "settings replay portfolio",
             "auto_created_portfolio_count": 1,
+            "adaptive_budgeting": True,
+            "adaptive_goal": "throughput",
+            "adaptive_portfolio_count": 2,
+            "planned_wave_budget_total": 5,
+            "planned_program_budget_total": 6,
+            "budget_profile_counts": {"throughput": 2},
             "wave_stop_reason_counts": {"stable": 1, "max_programs_reached": 1},
             "trend_direction_counts": {"improving": 1, "regressing": 1},
         }
@@ -97,6 +109,8 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
             max_sessions=2,
             max_replays_per_session=2,
             history_limit=6,
+            adaptive_budgeting=True,
+            adaptive_goal="throughput",
             pack="long_horizon_and_replay",
             app_name="settings",
         )
@@ -104,6 +118,8 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
         assert calls[0]["max_portfolios"] == 3
         assert calls[0]["max_waves_per_portfolio"] == 3
         assert calls[0]["max_programs_per_portfolio"] == 4
+        assert calls[0]["adaptive_budgeting"] is True
+        assert calls[0]["adaptive_goal"] == "throughput"
         status = supervisor.status()
         assert status["run_count"] == 1
         assert status["manual_trigger_count"] == 1
@@ -112,6 +128,8 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
         assert status["last_summary"]["executed_wave_count"] == 3
         assert status["last_summary"]["executed_program_count"] == 4
         assert status["last_summary"]["auto_created_portfolio_count"] == 1
+        assert status["last_summary"]["adaptive_portfolio_count"] == 2
+        assert status["last_summary"]["planned_wave_budget_total"] == 5
     finally:
         supervisor.stop()
 

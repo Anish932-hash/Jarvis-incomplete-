@@ -9070,6 +9070,8 @@ class DesktopBackendService:
         max_sessions: int = 3,
         max_replays_per_session: int = 2,
         history_limit: int = 8,
+        adaptive_budgeting: bool = False,
+        adaptive_goal: str = "",
         portfolio_status: str = "",
         pack: str = "",
         app_name: str = "",
@@ -9088,6 +9090,8 @@ class DesktopBackendService:
                 max_sessions=max_sessions,
                 max_replays_per_session=max_replays_per_session,
                 history_limit=history_limit,
+                adaptive_budgeting=adaptive_budgeting,
+                adaptive_goal=adaptive_goal,
                 portfolio_status=portfolio_status,
                 pack=pack,
                 app_name=app_name,
@@ -9160,6 +9164,8 @@ class DesktopBackendService:
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
+        adaptive_budgeting: Optional[bool] = None,
+        adaptive_goal: Optional[str] = None,
         portfolio_status: Optional[str] = None,
         pack: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -9180,6 +9186,8 @@ class DesktopBackendService:
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
+            adaptive_budgeting=adaptive_budgeting,
+            adaptive_goal=adaptive_goal,
             portfolio_status=portfolio_status,
             pack=pack,
             app_name=app_name,
@@ -9198,6 +9206,8 @@ class DesktopBackendService:
         max_sessions: Optional[int] = None,
         max_replays_per_session: Optional[int] = None,
         history_limit: Optional[int] = None,
+        adaptive_budgeting: Optional[bool] = None,
+        adaptive_goal: Optional[str] = None,
         portfolio_status: Optional[str] = None,
         pack: Optional[str] = None,
         app_name: Optional[str] = None,
@@ -9217,6 +9227,8 @@ class DesktopBackendService:
             max_sessions=max_sessions,
             max_replays_per_session=max_replays_per_session,
             history_limit=history_limit,
+            adaptive_budgeting=adaptive_budgeting,
+            adaptive_goal=adaptive_goal,
             portfolio_status=portfolio_status,
             pack=pack,
             app_name=app_name,
@@ -45605,6 +45617,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if body.get("history_limit") is not None
                         else None
                     ),
+                    adaptive_budgeting=(
+                        bool(body.get("adaptive_budgeting"))
+                        if body.get("adaptive_budgeting") is not None
+                        else None
+                    ),
+                    adaptive_goal=(
+                        str(body.get("adaptive_goal", "") or "").strip()
+                        if body.get("adaptive_goal") is not None
+                        else None
+                    ),
                     portfolio_status=(
                         str(body.get("portfolio_status", body.get("status", "")) or "").strip()
                         if body.get("portfolio_status") is not None or body.get("status") is not None
@@ -45821,6 +45843,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     history_limit=(
                         self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64)
                         if body.get("history_limit") is not None
+                        else None
+                    ),
+                    adaptive_budgeting=(
+                        bool(body.get("adaptive_budgeting"))
+                        if body.get("adaptive_budgeting") is not None
+                        else None
+                    ),
+                    adaptive_goal=(
+                        str(body.get("adaptive_goal", "") or "").strip()
+                        if body.get("adaptive_goal") is not None
                         else None
                     ),
                     portfolio_status=(
