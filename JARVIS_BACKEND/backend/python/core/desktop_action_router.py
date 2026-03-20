@@ -9369,6 +9369,21 @@ class DesktopActionRouter:
             "native_expected_campaign_descendant_sequence_title": str(
                 window_reacquisition.get("expected_campaign_descendant_sequence_title", "") or ""
             ).strip(),
+            "native_descendant_anchor_recovery_available": bool(
+                window_reacquisition.get("descendant_anchor_recovery_available", False)
+            ),
+            "native_descendant_anchor_recovery_match_score": float(
+                window_reacquisition.get("descendant_anchor_recovery_match_score", 0.0) or 0.0
+            ),
+            "native_descendant_anchor_recovery_pressure": float(
+                window_reacquisition.get("descendant_anchor_recovery_pressure", 0.0) or 0.0
+            ),
+            "native_expected_program_descendant_sequence_title": str(
+                window_reacquisition.get("expected_program_descendant_sequence_title", "") or ""
+            ).strip(),
+            "native_expected_anchor_recovery_title": str(
+                window_reacquisition.get("expected_anchor_recovery_title", "") or ""
+            ).strip(),
             "native_child_dialog_like_visible": bool(native_window_topology.get("child_dialog_like_visible", False)),
             "native_topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(
@@ -10331,6 +10346,23 @@ class DesktopActionRouter:
         native_expected_campaign_descendant_sequence_title = str(
             state_summary.get("native_expected_campaign_descendant_sequence_title", "") or ""
         ).strip()
+        native_descendant_anchor_recovery_available = bool(
+            state_summary.get("native_descendant_anchor_recovery_available", False)
+        )
+        native_descendant_anchor_recovery_match_score = max(
+            0.0,
+            min(float(state_summary.get("native_descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_descendant_anchor_recovery_pressure = max(
+            0.0,
+            min(float(state_summary.get("native_descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0),
+        )
+        native_expected_program_descendant_sequence_title = str(
+            state_summary.get("native_expected_program_descendant_sequence_title", "") or ""
+        ).strip()
+        native_expected_anchor_recovery_title = str(
+            state_summary.get("native_expected_anchor_recovery_title", "") or ""
+        ).strip()
         native_child_dialog_like_visible = bool(state_summary.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(state_summary.get("native_modal_chain_signature", "") or "").strip()
         native_child_chain_signature = str(state_summary.get("native_child_chain_signature", "") or "").strip()
@@ -10408,6 +10440,11 @@ class DesktopActionRouter:
             "preferred_descendant_hwnd": preferred_descendant_hwnd,
             "native_expected_descendant_sequence_title": native_expected_descendant_sequence_title,
             "native_expected_campaign_descendant_sequence_title": native_expected_campaign_descendant_sequence_title,
+            "native_descendant_anchor_recovery_available": native_descendant_anchor_recovery_available,
+            "native_descendant_anchor_recovery_match_score": native_descendant_anchor_recovery_match_score,
+            "native_descendant_anchor_recovery_pressure": native_descendant_anchor_recovery_pressure,
+            "native_expected_program_descendant_sequence_title": native_expected_program_descendant_sequence_title,
+            "native_expected_anchor_recovery_title": native_expected_anchor_recovery_title,
             "native_child_dialog_like_visible": native_child_dialog_like_visible,
             "native_topology_signature": str(state_summary.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": native_modal_chain_signature,
@@ -10602,6 +10639,23 @@ class DesktopActionRouter:
         )
         native_expected_campaign_descendant_sequence_title = self._normalize_probe_text(
             branch_context.get("native_expected_campaign_descendant_sequence_title", "")
+        )
+        native_descendant_anchor_recovery_available = bool(
+            branch_context.get("native_descendant_anchor_recovery_available", False)
+        )
+        native_descendant_anchor_recovery_match_score = max(
+            0.0,
+            min(float(branch_context.get("native_descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_descendant_anchor_recovery_pressure = max(
+            0.0,
+            min(float(branch_context.get("native_descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0),
+        )
+        native_expected_program_descendant_sequence_title = self._normalize_probe_text(
+            branch_context.get("native_expected_program_descendant_sequence_title", "")
+        )
+        native_expected_anchor_recovery_title = self._normalize_probe_text(
+            branch_context.get("native_expected_anchor_recovery_title", "")
         )
         native_child_dialog_like_visible = bool(branch_context.get("native_child_dialog_like_visible", False))
         native_modal_chain_signature = str(branch_context.get("native_modal_chain_signature", "") or "").strip()
@@ -10853,6 +10907,14 @@ class DesktopActionRouter:
                 self._text_match_score(label, hint),
                 self._text_match_score(action_payload.get("window_title", ""), hint),
             )
+        expected_program_descendant_overlap = max(
+            self._text_match_score(label, native_expected_program_descendant_sequence_title),
+            self._text_match_score(action_payload.get("window_title", ""), native_expected_program_descendant_sequence_title),
+        ) if native_expected_program_descendant_sequence_title else 0.0
+        expected_anchor_recovery_overlap = max(
+            self._text_match_score(label, native_expected_anchor_recovery_title),
+            self._text_match_score(action_payload.get("window_title", ""), native_expected_anchor_recovery_title),
+        ) if native_expected_anchor_recovery_title else 0.0
         if native_descendant_chain_titles and self._normalize_probe_text(label) in native_descendant_chain_titles:
             score += 0.06
         if native_descendant_chain_titles and self._normalize_probe_text(action_payload.get("window_title", "")) in native_descendant_chain_titles:
@@ -10901,6 +10963,15 @@ class DesktopActionRouter:
                 )
                 if expected_campaign_overlap > 0.0:
                     score += min(0.07, 0.02 + (0.06 * expected_campaign_overlap))
+            if native_descendant_anchor_recovery_available:
+                score += min(
+                    0.1,
+                    0.03 + (native_descendant_anchor_recovery_match_score * 0.08),
+                )
+            if expected_program_descendant_overlap > 0.0:
+                score += min(0.08, 0.03 + (0.05 * expected_program_descendant_overlap))
+            if expected_anchor_recovery_overlap > 0.0:
+                score += min(0.09, 0.03 + (0.06 * expected_anchor_recovery_overlap))
             if native_child_chain_signature:
                 score += 0.05
             if current_reacquired_hwnd and preferred_descendant_hwnd and current_reacquired_hwnd == preferred_descendant_hwnd:
@@ -10918,6 +10989,15 @@ class DesktopActionRouter:
                     score += min(0.06, 0.02 + (0.04 * target_campaign_sequence_overlap))
                 if benchmark_target_app_matched and descendant_chain_pressure > 0.0:
                     score += 0.03 + (0.08 * descendant_chain_pressure)
+                if native_descendant_anchor_recovery_available:
+                    score += min(
+                        0.14,
+                        0.04
+                        + (0.08 * max(
+                            native_descendant_anchor_recovery_pressure,
+                            descendant_chain_pressure,
+                        )),
+                    )
         if native_descendant_adoption_available and focus_like_action:
             score += min(0.1, 0.03 + (native_descendant_adoption_match_score * 0.08))
         navigation_actions = {
@@ -11229,6 +11309,11 @@ class DesktopActionRouter:
             "preferred_descendant_hwnd": int(branch_context.get("preferred_descendant_hwnd", 0) or 0),
             "native_expected_descendant_sequence_title": str(branch_context.get("native_expected_descendant_sequence_title", "") or "").strip(),
             "native_expected_campaign_descendant_sequence_title": str(branch_context.get("native_expected_campaign_descendant_sequence_title", "") or "").strip(),
+            "native_descendant_anchor_recovery_available": bool(branch_context.get("native_descendant_anchor_recovery_available", False)),
+            "native_descendant_anchor_recovery_match_score": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0)),
+            "native_descendant_anchor_recovery_pressure": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0)),
+            "native_expected_program_descendant_sequence_title": str(branch_context.get("native_expected_program_descendant_sequence_title", "") or "").strip(),
+            "native_expected_anchor_recovery_title": str(branch_context.get("native_expected_anchor_recovery_title", "") or "").strip(),
             "native_child_dialog_like_visible": bool(branch_context.get("native_child_dialog_like_visible", False)),
             "native_topology_signature": str(branch_context.get("native_topology_signature", "") or "").strip(),
             "native_modal_chain_signature": str(branch_context.get("native_modal_chain_signature", "") or "").strip(),

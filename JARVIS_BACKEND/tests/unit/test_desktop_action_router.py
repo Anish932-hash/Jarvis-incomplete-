@@ -768,6 +768,110 @@ def test_desktop_action_router_branch_scoring_prefers_native_descendant_chain_fo
     assert chain_score > plain_focus_score
 
 
+def test_desktop_action_router_branch_scoring_prefers_native_descendant_chain_recovery_focus() -> None:
+    router = _build_router({})
+    branch_context = {
+        "active": True,
+        "current_window_title": "Bluetooth & devices",
+        "current_window_app_name": "settings",
+        "current_surface_path": ["Devices", "Bluetooth"],
+        "current_reacquired_title": "Confirm pairing",
+        "current_reacquired_app_name": "settings",
+        "current_reacquired_hwnd": 5003,
+        "native_same_root_owner_window_count": 3,
+        "native_same_root_owner_dialog_like_count": 2,
+        "native_descendant_chain_depth": 3,
+        "native_descendant_dialog_chain_depth": 2,
+        "native_descendant_query_match_count": 2,
+        "native_descendant_adoption_available": True,
+        "native_descendant_adoption_match_score": 0.9,
+        "native_descendant_focus_strength": 0.95,
+        "native_preferred_descendant_match_score": 0.97,
+        "native_descendant_hint_title_match_count": 2,
+        "native_campaign_descendant_hint_title_match_count": 2,
+        "native_descendant_sequence_match_count": 2,
+        "native_campaign_descendant_sequence_match_count": 2,
+        "native_descendant_chain_titles": ["Pair device", "Confirm pairing", "Allow device"],
+        "preferred_descendant_title": "Confirm pairing",
+        "preferred_descendant_hwnd": 5003,
+        "native_expected_descendant_sequence_title": "Allow device",
+        "native_expected_campaign_descendant_sequence_title": "Allow device",
+        "native_descendant_anchor_recovery_available": True,
+        "native_descendant_anchor_recovery_match_score": 0.88,
+        "native_descendant_anchor_recovery_pressure": 0.82,
+        "native_expected_program_descendant_sequence_title": "Allow device",
+        "native_expected_anchor_recovery_title": "Allow device",
+        "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+        "native_branch_family_signature": "5000|2|Confirm pairing|Allow device",
+        "latest_branch_occurrences": 1,
+        "latest_branch_family_signature": "5000|2|Confirm pairing|Allow device",
+        "branch_family_repeat_count": 1,
+        "branch_family_switch_count": 0,
+        "branch_family_continuity": True,
+        "branch_cascade_count": 1,
+        "branch_cascade_kind_count": 1,
+        "branch_cascade_signature": "child_window_chain",
+        "benchmark_descendant_focus_pressure": 0.86,
+        "benchmark_reacquire_pressure": 0.8,
+        "benchmark_native_focus_pressure": 0.78,
+        "benchmark_target_app_name": "settings",
+        "benchmark_target_app_matched": True,
+        "benchmark_target_app_match_score": 1.0,
+        "benchmark_target_descendant_title_hints": ["Confirm pairing", "Allow device"],
+        "benchmark_target_descendant_title_sequence": ["Pair device", "Confirm pairing"],
+        "benchmark_target_descendant_hint_query": "confirm pairing | allow device",
+        "benchmark_target_preferred_window_title": "Confirm pairing",
+        "benchmark_target_hint_query": "confirm pairing | allow device",
+        "benchmark_target_descendant_focus_pressure": 0.94,
+        "benchmark_target_reacquire_pressure": 0.88,
+        "benchmark_target_native_focus_pressure": 0.84,
+        "benchmark_target_campaign_pressure": 1.8,
+        "benchmark_target_replay_pressure": 1.2,
+        "benchmark_target_campaign_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+        "benchmark_target_program_descendant_title_sequence": ["Allow device"],
+        "recent_selection_keys": set(),
+    }
+    chain_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window_chain",
+        "candidate_id": "5003",
+        "label": "Adopt child surface chain: Allow device",
+        "action_payload": {
+            "action": "focus_related_window_chain",
+            "window_title": "Allow device",
+            "title": "Allow device",
+            "preferred_title": "Confirm pairing",
+            "hwnd": 5001,
+            "follow_descendant_chain": True,
+            "max_descendant_focus_steps": 4,
+        },
+    }
+    plain_focus_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window",
+        "candidate_id": "5003",
+        "label": "Adopt child surface: Confirm pairing",
+        "action_payload": {
+            "action": "focus_related_window",
+            "window_title": "Confirm pairing",
+            "title": "Confirm pairing",
+            "preferred_title": "Confirm pairing",
+            "hwnd": 5001,
+        },
+    }
+
+    chain_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=chain_row,
+        branch_context=branch_context,
+    )
+    plain_focus_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=plain_focus_row,
+        branch_context=branch_context,
+    )
+
+    assert chain_score > plain_focus_score
+
+
 def test_desktop_action_router_branch_scoring_uses_native_descendant_focus_strength() -> None:
     router = _build_router({})
     branch_context = {

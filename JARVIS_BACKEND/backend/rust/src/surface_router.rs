@@ -114,6 +114,16 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_expected_campaign_descendant_sequence_title: String,
     #[serde(default)]
+    pub native_descendant_anchor_recovery_available: bool,
+    #[serde(default)]
+    pub native_descendant_anchor_recovery_match_score: f64,
+    #[serde(default)]
+    pub native_descendant_anchor_recovery_pressure: f64,
+    #[serde(default)]
+    pub native_expected_program_descendant_sequence_title: String,
+    #[serde(default)]
+    pub native_expected_anchor_recovery_title: String,
+    #[serde(default)]
     pub native_child_dialog_like_visible: bool,
     #[serde(default)]
     pub native_topology_signature: String,
@@ -608,6 +618,20 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         normalize_text(&input.native_expected_campaign_descendant_sequence_title);
     let native_expected_campaign_descendant_sequence_tokens =
         tokenize(&native_expected_campaign_descendant_sequence_title);
+    let native_descendant_anchor_recovery_available =
+        input.native_descendant_anchor_recovery_available;
+    let native_descendant_anchor_recovery_match_score =
+        input.native_descendant_anchor_recovery_match_score.clamp(0.0, 1.0);
+    let native_descendant_anchor_recovery_pressure =
+        input.native_descendant_anchor_recovery_pressure.clamp(0.0, 1.0);
+    let native_expected_program_descendant_sequence_title =
+        normalize_text(&input.native_expected_program_descendant_sequence_title);
+    let native_expected_program_descendant_sequence_tokens =
+        tokenize(&native_expected_program_descendant_sequence_title);
+    let native_expected_anchor_recovery_title =
+        normalize_text(&input.native_expected_anchor_recovery_title);
+    let native_expected_anchor_recovery_tokens =
+        tokenize(&native_expected_anchor_recovery_title);
     let native_child_dialog_visible = input.native_child_dialog_like_visible
         || topology
             .get("dialog_like_count")
@@ -906,6 +930,12 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             &native_expected_campaign_descendant_sequence_tokens,
             &label_tokens,
         );
+        let expected_program_descendant_sequence_overlap = token_overlap(
+            &native_expected_program_descendant_sequence_tokens,
+            &label_tokens,
+        );
+        let expected_anchor_recovery_overlap =
+            token_overlap(&native_expected_anchor_recovery_tokens, &label_tokens);
         let preferred_descendant_focus = kind == "branch_action"
             && focus_like_action
             && ((!preferred_descendant_title.is_empty() && preferred_descendant_overlap > 0)
@@ -980,6 +1010,27 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     expected_campaign_descendant_sequence_overlap
                 ));
             }
+            if native_descendant_anchor_recovery_available {
+                rust_score +=
+                    (0.03 + (native_descendant_anchor_recovery_match_score * 0.08)).min(0.1);
+                reasons.push("descendant_anchor_recovery_available".to_string());
+            }
+            if expected_program_descendant_sequence_overlap > 0 {
+                rust_score +=
+                    (0.03 + (expected_program_descendant_sequence_overlap as f64 * 0.05)).min(0.08);
+                reasons.push(format!(
+                    "expected_program_descendant_sequence_overlap:{}",
+                    expected_program_descendant_sequence_overlap
+                ));
+            }
+            if expected_anchor_recovery_overlap > 0 {
+                rust_score +=
+                    (0.03 + (expected_anchor_recovery_overlap as f64 * 0.06)).min(0.09);
+                reasons.push(format!(
+                    "expected_anchor_recovery_overlap:{}",
+                    expected_anchor_recovery_overlap
+                ));
+            }
             if requested_descendant_chain && native_descendant_chain_depth > 1 {
                 let chain_boost = (0.05
                     + (native_descendant_chain_depth.min(3) as f64 * 0.03)
@@ -990,6 +1041,18 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     "descendant_focus_chain_request:{}",
                     native_descendant_chain_depth
                 ));
+                if native_descendant_anchor_recovery_available {
+                    let recovery_boost = (0.04
+                        + (0.08
+                            * native_descendant_anchor_recovery_pressure
+                                .max(benchmark_target_descendant_focus_pressure)))
+                        .min(0.14);
+                    rust_score += recovery_boost;
+                    reasons.push(format!(
+                        "descendant_anchor_recovery_pressure:{:.2}",
+                        native_descendant_anchor_recovery_pressure
+                    ));
+                }
             }
         }
         if benchmark_dialog_pressure > 0.0 && selected_action == "press_dialog_button" {
@@ -1699,6 +1762,12 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             && selected_action == "press_dialog_button"
         {
             "prefer_branch_family_dialog"
+        } else if requested_descendant_chain
+            && preferred_descendant_focus
+            && native_descendant_anchor_recovery_available
+            && native_descendant_anchor_recovery_pressure >= 0.55
+        {
+            "prefer_descendant_surface_chain_recovery"
         } else if requested_descendant_chain && preferred_descendant_focus {
             "prefer_descendant_surface_chain_adoption"
         } else if preferred_descendant_focus {
@@ -1818,6 +1887,16 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             native_expected_descendant_sequence_title,
         "native_expected_campaign_descendant_sequence_title":
             native_expected_campaign_descendant_sequence_title,
+        "native_descendant_anchor_recovery_available":
+            native_descendant_anchor_recovery_available,
+        "native_descendant_anchor_recovery_match_score":
+            native_descendant_anchor_recovery_match_score,
+        "native_descendant_anchor_recovery_pressure":
+            native_descendant_anchor_recovery_pressure,
+        "native_expected_program_descendant_sequence_title":
+            native_expected_program_descendant_sequence_title,
+        "native_expected_anchor_recovery_title":
+            native_expected_anchor_recovery_title,
         "native_modal_chain_signature": native_modal_chain_signature,
         "native_child_chain_signature": native_child_chain_signature,
         "native_branch_family_signature": native_branch_family_signature,
@@ -2318,6 +2397,89 @@ mod tests {
             value
                 .as_str()
                 .map(|reason| reason.starts_with("descendant_focus_chain_request:"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn route_surface_exploration_prefers_preferred_descendant_chain_recovery() {
+        let payload = json!({
+            "query": "Allow device",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Confirm pairing",
+            "current_reacquired_app_name": "settings",
+            "native_direct_child_window_count": 1,
+            "native_descendant_chain_depth": 3,
+            "native_descendant_dialog_chain_depth": 2,
+            "native_descendant_query_match_count": 2,
+            "native_descendant_adoption_available": true,
+            "native_descendant_adoption_match_score": 0.9,
+            "native_descendant_focus_strength": 0.95,
+            "native_preferred_descendant_match_score": 0.97,
+            "native_descendant_hint_title_match_count": 2,
+            "native_campaign_descendant_hint_title_match_count": 2,
+            "native_descendant_sequence_match_count": 2,
+            "native_campaign_descendant_sequence_match_count": 2,
+            "preferred_descendant_title": "Confirm pairing",
+            "preferred_descendant_hwnd": 5003,
+            "native_expected_descendant_sequence_title": "Allow device",
+            "native_expected_campaign_descendant_sequence_title": "Allow device",
+            "native_descendant_anchor_recovery_available": true,
+            "native_descendant_anchor_recovery_match_score": 0.88,
+            "native_descendant_anchor_recovery_pressure": 0.81,
+            "native_expected_program_descendant_sequence_title": "Allow device",
+            "native_expected_anchor_recovery_title": "Allow device",
+            "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_descendant_focus_pressure": 0.96,
+            "benchmark_target_campaign_pressure": 1.9,
+            "benchmark_target_replay_pressure": 1.3,
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5003|focus_related_window_chain|adopt child surface chain: allow device",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface chain: Allow device",
+                    "selected_action": "focus_related_window_chain",
+                    "confidence": 0.82
+                },
+                {
+                    "selection_key": "branch_action|5003|focus_related_window|adopt child surface: allow device",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface: Allow device",
+                    "selected_action": "focus_related_window",
+                    "confidence": 0.81
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus_related_window_chain")
+        );
+        assert_eq!(
+            result.get("router_hint").and_then(Value::as_str),
+            Some("prefer_descendant_surface_chain_recovery")
+        );
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| reason == "descendant_anchor_recovery_available")
                 .unwrap_or(false)
         }));
     }

@@ -99,6 +99,23 @@ class WindowManager:
         return cls._normalize_title_sequence(merged)
 
     @classmethod
+    def _dedupe_strings(cls, values: Any) -> List[str]:
+        if not isinstance(values, (list, tuple, set)):
+            return []
+        merged: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            clean = str(value or "").strip()
+            key = cls._normalize_text(clean)
+            if not clean or not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(clean)
+            if len(merged) >= 16:
+                break
+        return merged
+
+    @classmethod
     def _derive_app_name(cls, *, exe: str = "", process_name: str = "", title: str = "") -> str:
         base = Path(str(exe or "")).stem.strip().lower()
         if base:
@@ -225,6 +242,178 @@ class WindowManager:
         return round(overlap / max(1, len(needle_tokens)), 4)
 
     @classmethod
+    def _best_title_match(
+        cls,
+        value: Any,
+        candidates: List[str] | tuple[str, ...] | set[str] | None,
+    ) -> tuple[str, float]:
+        clean_value = str(value or "").strip()
+        if not clean_value or not candidates:
+            return "", 0.0
+        best_title = ""
+        best_score = 0.0
+        for item in candidates:
+            clean_item = str(item or "").strip()
+            if not clean_item:
+                continue
+            score = max(
+                cls._text_match_score(clean_value, clean_item),
+                cls._text_match_score(clean_item, clean_value),
+            )
+            if score > best_score:
+                best_title = clean_item
+                best_score = score
+        return best_title, round(best_score, 4)
+
+    @classmethod
+    def _first_unmatched_sequence_title(
+        cls,
+        sequence: Any,
+        observed_titles: Any,
+    ) -> str:
+        normalized_sequence = cls._normalize_title_sequence(sequence)
+        observed = [
+            str(item).strip()
+            for item in observed_titles
+            if str(item).strip()
+        ] if isinstance(observed_titles, (list, tuple, set)) else []
+        if not normalized_sequence:
+            return ""
+        if not observed:
+            return normalized_sequence[0]
+        for entry in normalized_sequence:
+            clean_entry = str(entry or "").strip()
+            if not clean_entry:
+                continue
+            _matched_title, matched_score = cls._best_title_match(clean_entry, observed)
+            if matched_score < 0.72:
+                return clean_entry
+        return ""
+
+    @classmethod
+    def _program_chain_recovery_pressure(
+        cls,
+        *,
+        program_pressure: float = 0.0,
+        program_regression_cycle_count: int = 0,
+        program_long_horizon_pending_count: int = 0,
+        program_latest_cycle_stop_reason: str = "",
+    ) -> float:
+        pressure = min(
+            1.0,
+            (0.18 * min(max(program_pressure, 0.0), 4.0))
+            + (0.08 * min(max(program_regression_cycle_count, 0), 4))
+            + (0.06 * min(max(program_long_horizon_pending_count, 0), 4)),
+        )
+        stop_reason = cls._normalize_text(program_latest_cycle_stop_reason)
+        if stop_reason and any(
+            token in stop_reason
+            for token in ("descendant", "chain", "focus", "reacquire", "dialog", "anchor")
+        ):
+            pressure += 0.18
+        if stop_reason in {"stable", "stable_no_further_descendant", "complete", "success"}:
+            pressure -= 0.06
+        return round(max(0.0, min(pressure, 1.0)), 4)
+
+    @classmethod
+    def _descendant_anchor_recovery_signal(
+        cls,
+        *,
+        windows: List[Dict[str, Any]],
+        candidate_hwnd: int = 0,
+        query: str = "",
+        window_title: str = "",
+        descendant_hint_query: str = "",
+        campaign_hint_query: str = "",
+        preferred_window_title: str = "",
+        campaign_preferred_window_title: str = "",
+        expected_descendant_sequence_title: str = "",
+        expected_campaign_descendant_sequence_title: str = "",
+        expected_program_descendant_sequence_title: str = "",
+        program_chain_recovery_pressure: float = 0.0,
+    ) -> Dict[str, Any]:
+        expected_titles = cls._dedupe_strings(
+            [
+                str(expected_program_descendant_sequence_title or "").strip(),
+                str(expected_descendant_sequence_title or "").strip(),
+                str(expected_campaign_descendant_sequence_title or "").strip(),
+                str(campaign_preferred_window_title or "").strip(),
+                str(preferred_window_title or "").strip(),
+            ]
+        )
+        best_title = ""
+        best_reason = ""
+        best_score = 0.0
+        best_expected_title = expected_titles[0] if expected_titles else ""
+        for row in windows:
+            row_hwnd = int(row.get("hwnd", 0) or 0)
+            row_title = str(row.get("title", "") or "").strip()
+            if row_hwnd <= 0 or row_hwnd == int(candidate_hwnd or 0) or not row_title:
+                continue
+            matched_expected_title, expected_score = cls._best_title_match(row_title, expected_titles)
+            query_score = max(
+                cls._text_match_score(row_title, query),
+                cls._text_match_score(query, row_title),
+            ) if str(query or "").strip() else 0.0
+            descendant_hint_score = max(
+                cls._text_match_score(row_title, descendant_hint_query),
+                cls._text_match_score(descendant_hint_query, row_title),
+            ) if str(descendant_hint_query or "").strip() else 0.0
+            campaign_hint_score = max(
+                cls._text_match_score(row_title, campaign_hint_query),
+                cls._text_match_score(campaign_hint_query, row_title),
+            ) if str(campaign_hint_query or "").strip() else 0.0
+            window_title_score = max(
+                cls._text_match_score(row_title, window_title),
+                cls._text_match_score(window_title, row_title),
+            ) if str(window_title or "").strip() else 0.0
+            score = max(
+                expected_score,
+                query_score,
+                descendant_hint_score,
+                campaign_hint_score,
+                window_title_score,
+            )
+            if isinstance(row.get("surface_hints", {}), dict) and bool(row.get("surface_hints", {}).get("dialog_like", False)):
+                score = min(1.0, score + 0.08)
+            if bool(row.get("is_foreground", False)):
+                score = min(1.0, score + 0.05)
+            score = min(1.0, score + min(0.08, 0.02 * max(0, int(row.get("owner_chain_depth", 0) or 0))))
+            if score > best_score:
+                best_title = row_title
+                best_score = round(score, 4)
+                best_expected_title = matched_expected_title or best_expected_title
+                if matched_expected_title and matched_expected_title == str(expected_program_descendant_sequence_title or "").strip():
+                    best_reason = "expected_program_descendant_sequence_title"
+                elif matched_expected_title and matched_expected_title == str(expected_descendant_sequence_title or "").strip():
+                    best_reason = "expected_descendant_sequence_title"
+                elif matched_expected_title and matched_expected_title == str(expected_campaign_descendant_sequence_title or "").strip():
+                    best_reason = "expected_campaign_descendant_sequence_title"
+                elif descendant_hint_score >= max(query_score, campaign_hint_score, window_title_score):
+                    best_reason = "descendant_hint_query"
+                elif campaign_hint_score >= max(query_score, window_title_score):
+                    best_reason = "campaign_hint_query"
+                elif query_score >= window_title_score:
+                    best_reason = "query"
+                else:
+                    best_reason = "same_root_owner_family"
+        available = bool(best_title and best_score >= 0.72)
+        pressure = max(0.0, min(float(program_chain_recovery_pressure or 0.0), 1.0))
+        if available:
+            pressure = max(pressure, min(1.0, 0.34 + (best_score * 0.46)))
+            if best_reason.startswith("expected_"):
+                pressure = min(1.0, pressure + 0.08)
+        return {
+            "descendant_anchor_recovery_available": available,
+            "descendant_anchor_recovery_match_score": round(best_score, 4),
+            "descendant_anchor_recovery_pressure": round(pressure, 4),
+            "expected_program_descendant_sequence_title": str(expected_program_descendant_sequence_title or "").strip(),
+            "expected_anchor_recovery_title": str(best_expected_title or "").strip(),
+            "descendant_anchor_recovery_title": best_title,
+            "descendant_anchor_recovery_reason": best_reason,
+        }
+
+    @classmethod
     def _benchmark_native_target_context(
         cls,
         *,
@@ -279,7 +468,20 @@ class WindowManager:
                 "campaign_preferred_window_title": "",
                 "campaign_latest_sweep_status": "",
                 "campaign_latest_sweep_regression_status": "",
+                "program_count": 0,
+                "program_cycle_count": 0,
+                "program_pending_campaign_count": 0,
+                "program_attention_campaign_count": 0,
+                "program_pending_app_target_count": 0,
+                "program_regression_cycle_count": 0,
+                "program_long_horizon_pending_count": 0,
+                "program_pressure": 0.0,
+                "program_descendant_title_hints": [],
                 "program_descendant_title_sequence": [],
+                "program_descendant_hint_query": "",
+                "program_preferred_window_title": "",
+                "program_latest_cycle_status": "",
+                "program_latest_cycle_stop_reason": "",
                 "session_cycle_count": 0,
                 "session_regression_cycle_count": 0,
                 "session_long_horizon_pending_count": 0,
@@ -476,11 +678,28 @@ class WindowManager:
             "campaign_preferred_window_title": str(best_row.get("campaign_preferred_window_title", "") or "").strip(),
             "campaign_latest_sweep_status": str(best_row.get("campaign_latest_sweep_status", "") or "").strip(),
             "campaign_latest_sweep_regression_status": str(best_row.get("campaign_latest_sweep_regression_status", "") or "").strip(),
+            "program_count": max(0, int(best_row.get("program_count", 0) or 0)),
+            "program_cycle_count": max(0, int(best_row.get("program_cycle_count", 0) or 0)),
+            "program_pending_campaign_count": max(0, int(best_row.get("program_pending_campaign_count", 0) or 0)),
+            "program_attention_campaign_count": max(0, int(best_row.get("program_attention_campaign_count", 0) or 0)),
+            "program_pending_app_target_count": max(0, int(best_row.get("program_pending_app_target_count", 0) or 0)),
+            "program_regression_cycle_count": max(0, int(best_row.get("program_regression_cycle_count", 0) or 0)),
+            "program_long_horizon_pending_count": max(0, int(best_row.get("program_long_horizon_pending_count", 0) or 0)),
+            "program_pressure": round(float(best_row.get("program_pressure", 0.0) or 0.0), 6),
+            "program_descendant_title_hints": [
+                str(item).strip()
+                for item in best_row.get("program_descendant_title_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("program_descendant_title_hints", []), list) else [],
             "program_descendant_title_sequence": [
                 str(item).strip()
                 for item in cls._normalize_title_sequence(best_row.get("program_descendant_title_sequence", []))
                 if str(item).strip()
             ][:8],
+            "program_descendant_hint_query": str(best_row.get("program_descendant_hint_query", "") or "").strip(),
+            "program_preferred_window_title": str(best_row.get("program_preferred_window_title", "") or "").strip(),
+            "program_latest_cycle_status": str(best_row.get("program_latest_cycle_status", "") or "").strip(),
+            "program_latest_cycle_stop_reason": str(best_row.get("program_latest_cycle_stop_reason", "") or "").strip(),
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
             "session_regression_cycle_count": max(0, int(best_row.get("session_regression_cycle_count", 0) or 0)),
             "session_long_horizon_pending_count": max(0, int(best_row.get("session_long_horizon_pending_count", 0) or 0)),
@@ -1535,6 +1754,20 @@ class WindowManager:
             "descendant_focus_chain_stable": bool(
                 payload.get("descendant_focus_chain_stable", False)
             ),
+            "descendant_focus_chain_anchor_recovered": bool(
+                payload.get("descendant_focus_chain_anchor_recovered", False)
+            ),
+            "descendant_focus_chain_anchor_recovery_count": max(
+                0,
+                int(payload.get("descendant_focus_chain_anchor_recovery_count", 0) or 0),
+            ),
+            "descendant_focus_chain_anchor_recovery_reason": str(
+                payload.get("descendant_focus_chain_anchor_recovery_reason", "") or ""
+            ).strip(),
+            "descendant_focus_chain_anchor_recovery_match_score": max(
+                0.0,
+                min(float(payload.get("descendant_focus_chain_anchor_recovery_match_score", 0.0) or 0.0), 1.0),
+            ),
             "descendant_focus_chain_stop_reason": str(
                 payload.get("descendant_focus_chain_stop_reason", "") or ""
             ).strip(),
@@ -1555,6 +1788,16 @@ class WindowManager:
                 for item in payload.get("descendant_focus_chain_hwnds", [])
                 if int(item or 0) > 0
             ][:8] if isinstance(payload.get("descendant_focus_chain_hwnds", []), list) else [],
+            "descendant_focus_chain_anchor_recovery_titles": [
+                str(item).strip()
+                for item in payload.get("descendant_focus_chain_anchor_recovery_titles", [])
+                if str(item).strip()
+            ][:8] if isinstance(payload.get("descendant_focus_chain_anchor_recovery_titles", []), list) else [],
+            "descendant_focus_chain_anchor_recovery_hwnds": [
+                int(item or 0)
+                for item in payload.get("descendant_focus_chain_anchor_recovery_hwnds", [])
+                if int(item or 0) > 0
+            ][:8] if isinstance(payload.get("descendant_focus_chain_anchor_recovery_hwnds", []), list) else [],
             "descendant_chain_titles": [
                 str(item).strip()
                 for item in payload.get("descendant_chain_titles", [])
@@ -1709,8 +1952,29 @@ class WindowManager:
             target_app_context.get("campaign_descendant_title_sequence", []),
             target_app_context.get("program_descendant_title_sequence", []),
         )
+        program_descendant_title_sequence = self._normalize_title_sequence(
+            target_app_context.get("program_descendant_title_sequence", [])
+        )
         campaign_preferred_window_title = str(
             target_app_context.get("campaign_preferred_window_title", "") or ""
+        ).strip()
+        program_descendant_hint_query = str(
+            target_app_context.get("program_descendant_hint_query", "") or ""
+        ).strip()
+        program_preferred_window_title = str(
+            target_app_context.get("program_preferred_window_title", "") or ""
+        ).strip()
+        target_program_pressure = max(0.0, float(target_app_context.get("program_pressure", 0.0) or 0.0))
+        target_program_regression_cycle_count = max(
+            0,
+            int(target_app_context.get("program_regression_cycle_count", 0) or 0),
+        )
+        target_program_long_horizon_pending_count = max(
+            0,
+            int(target_app_context.get("program_long_horizon_pending_count", 0) or 0),
+        )
+        target_program_latest_cycle_stop_reason = str(
+            target_app_context.get("program_latest_cycle_stop_reason", "") or ""
         ).strip()
         try:
             payload = self._native_runtime.reacquire_related_window(
@@ -2056,6 +2320,62 @@ class WindowManager:
                 )
             descendant_adoption_match_score += min(0.12, descendant_rerank_pressure * 0.12)
             descendant_adoption_match_score = min(1.0, descendant_adoption_match_score)
+        observed_descendant_titles = self._dedupe_strings(
+            [
+                str(candidate.get("title", "") or "").strip(),
+                str(
+                    child_chain_trace.get("preferred_descendant", {}).get("title", "")
+                    if isinstance(child_chain_trace.get("preferred_descendant", {}), dict)
+                    else ""
+                ).strip(),
+                *(
+                    [
+                        str(item).strip()
+                        for item in child_chain_trace.get("descendant_chain_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(child_chain_trace.get("descendant_chain_titles", []), list)
+                    else []
+                ),
+                *(
+                    [
+                        str(item).strip()
+                        for item in child_chain_trace.get("direct_child_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(child_chain_trace.get("direct_child_titles", []), list)
+                    else []
+                ),
+            ]
+        )
+        expected_program_descendant_sequence_title = self._first_unmatched_sequence_title(
+            program_descendant_title_sequence,
+            observed_descendant_titles,
+        )
+        program_chain_recovery_pressure = self._program_chain_recovery_pressure(
+            program_pressure=target_program_pressure,
+            program_regression_cycle_count=target_program_regression_cycle_count,
+            program_long_horizon_pending_count=target_program_long_horizon_pending_count,
+            program_latest_cycle_stop_reason=target_program_latest_cycle_stop_reason,
+        )
+        descendant_anchor_recovery_signal = self._descendant_anchor_recovery_signal(
+            windows=same_root_owner_windows,
+            candidate_hwnd=candidate_hwnd,
+            query=query,
+            window_title=window_title,
+            descendant_hint_query=program_descendant_hint_query or descendant_hint_query,
+            campaign_hint_query=campaign_hint_query,
+            preferred_window_title=program_preferred_window_title or preferred_window_title,
+            campaign_preferred_window_title=campaign_preferred_window_title,
+            expected_descendant_sequence_title=str(
+                child_chain_trace.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            expected_campaign_descendant_sequence_title=str(
+                child_chain_trace.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            expected_program_descendant_sequence_title=expected_program_descendant_sequence_title,
+            program_chain_recovery_pressure=program_chain_recovery_pressure,
+        )
         return {
             "status": "success",
             "backend": backend,
@@ -2130,6 +2450,27 @@ class WindowManager:
             ).strip(),
             "expected_campaign_descendant_sequence_title": str(
                 child_chain_trace.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_program_descendant_sequence_title": expected_program_descendant_sequence_title,
+            "descendant_anchor_recovery_available": bool(
+                descendant_anchor_recovery_signal.get("descendant_anchor_recovery_available", False)
+            ),
+            "descendant_anchor_recovery_match_score": max(
+                0.0,
+                min(float(descendant_anchor_recovery_signal.get("descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "descendant_anchor_recovery_pressure": max(
+                0.0,
+                min(float(descendant_anchor_recovery_signal.get("descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0),
+            ),
+            "expected_anchor_recovery_title": str(
+                descendant_anchor_recovery_signal.get("expected_anchor_recovery_title", "") or ""
+            ).strip(),
+            "descendant_anchor_recovery_title": str(
+                descendant_anchor_recovery_signal.get("descendant_anchor_recovery_title", "") or ""
+            ).strip(),
+            "descendant_anchor_recovery_reason": str(
+                descendant_anchor_recovery_signal.get("descendant_anchor_recovery_reason", "") or ""
             ).strip(),
             "message": str(payload.get("message", "candidate_reacquired") or "candidate_reacquired").strip(),
         }
@@ -2422,6 +2763,13 @@ class WindowManager:
             native_payload["app_name"] = str(app_name or "").strip()
             native_payload["window_signature"] = str(window_signature or "").strip()
             return native_payload
+        guidance_payload = dict(benchmark_guidance) if isinstance(benchmark_guidance, dict) else {}
+        target_context = self._benchmark_native_target_context(
+            benchmark_guidance=guidance_payload,
+            requested_app_name=app_name,
+            query=query,
+            window_title=window_title,
+        )
         windows = self.list_windows()[:bounded]
         anchor_window = next(
             (
@@ -2615,6 +2963,102 @@ class WindowManager:
         ][:8] if isinstance(child_chain_metrics.get("descendant_chain_titles", []), list) else []
         payload["child_chain_signature"] = str(child_chain_metrics.get("child_chain_signature", "") or "").strip()
         payload["preferred_descendant"] = dict(child_chain_metrics.get("preferred_descendant", {})) if isinstance(child_chain_metrics.get("preferred_descendant", {}), dict) else {}
+        observed_descendant_titles = self._dedupe_strings(
+            [
+                str(candidate.get("title", "") or "").strip(),
+                str(
+                    child_chain_metrics.get("preferred_descendant", {}).get("title", "")
+                    if isinstance(child_chain_metrics.get("preferred_descendant", {}), dict)
+                    else ""
+                ).strip(),
+                *(
+                    [
+                        str(item).strip()
+                        for item in child_chain_metrics.get("descendant_chain_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(child_chain_metrics.get("descendant_chain_titles", []), list)
+                    else []
+                ),
+                *(
+                    [
+                        str(item).strip()
+                        for item in child_chain_metrics.get("direct_child_titles", [])
+                        if str(item).strip()
+                    ]
+                    if isinstance(child_chain_metrics.get("direct_child_titles", []), list)
+                    else []
+                ),
+            ]
+        )
+        expected_program_descendant_sequence_title = self._first_unmatched_sequence_title(
+            target_context.get("program_descendant_title_sequence", []),
+            observed_descendant_titles,
+        )
+        descendant_anchor_recovery_signal = self._descendant_anchor_recovery_signal(
+            windows=same_root_owner_windows,
+            candidate_hwnd=candidate_hwnd,
+            query=query,
+            window_title=window_title,
+            descendant_hint_query=str(
+                target_context.get("program_descendant_hint_query", "")
+                or target_context.get("descendant_hint_query", "")
+                or ""
+            ).strip(),
+            campaign_hint_query=str(
+                target_context.get("campaign_hint_query", "")
+                or target_context.get("campaign_descendant_hint_query", "")
+                or ""
+            ).strip(),
+            preferred_window_title=str(
+                target_context.get("program_preferred_window_title", "")
+                or target_context.get("preferred_window_title", "")
+                or ""
+            ).strip(),
+            campaign_preferred_window_title=str(
+                target_context.get("campaign_preferred_window_title", "") or ""
+            ).strip(),
+            expected_descendant_sequence_title=str(
+                child_chain_metrics.get("expected_descendant_sequence_title", "") or ""
+            ).strip(),
+            expected_campaign_descendant_sequence_title=str(
+                child_chain_metrics.get("expected_campaign_descendant_sequence_title", "") or ""
+            ).strip(),
+            expected_program_descendant_sequence_title=expected_program_descendant_sequence_title,
+            program_chain_recovery_pressure=self._program_chain_recovery_pressure(
+                program_pressure=float(target_context.get("program_pressure", 0.0) or 0.0),
+                program_regression_cycle_count=int(
+                    target_context.get("program_regression_cycle_count", 0) or 0
+                ),
+                program_long_horizon_pending_count=int(
+                    target_context.get("program_long_horizon_pending_count", 0) or 0
+                ),
+                program_latest_cycle_stop_reason=str(
+                    target_context.get("program_latest_cycle_stop_reason", "") or ""
+                ).strip(),
+            ),
+        )
+        payload["expected_program_descendant_sequence_title"] = expected_program_descendant_sequence_title
+        payload["descendant_anchor_recovery_available"] = bool(
+            descendant_anchor_recovery_signal.get("descendant_anchor_recovery_available", False)
+        )
+        payload["descendant_anchor_recovery_match_score"] = max(
+            0.0,
+            min(float(descendant_anchor_recovery_signal.get("descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0),
+        )
+        payload["descendant_anchor_recovery_pressure"] = max(
+            0.0,
+            min(float(descendant_anchor_recovery_signal.get("descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0),
+        )
+        payload["expected_anchor_recovery_title"] = str(
+            descendant_anchor_recovery_signal.get("expected_anchor_recovery_title", "") or ""
+        ).strip()
+        payload["descendant_anchor_recovery_title"] = str(
+            descendant_anchor_recovery_signal.get("descendant_anchor_recovery_title", "") or ""
+        ).strip()
+        payload["descendant_anchor_recovery_reason"] = str(
+            descendant_anchor_recovery_signal.get("descendant_anchor_recovery_reason", "") or ""
+        ).strip()
         if include_candidates:
             payload["candidates"] = [dict(row) for row in candidates]
             payload["related_windows"] = [dict(row) for row in related_windows]
@@ -2925,6 +3369,14 @@ class WindowManager:
             "executed_descendant_focus_steps": 0,
             "descendant_focus_chain_hops": 0,
             "descendant_focus_chain_stable": False,
+            "descendant_focus_chain_anchor_recovered": False,
+            "descendant_focus_chain_anchor_recovery_count": 0,
+            "descendant_focus_chain_anchor_recovery_reason": (
+                "fallback_single_focus"
+                if resolved_follow_descendant_chain
+                else "not_requested"
+            ),
+            "descendant_focus_chain_anchor_recovery_match_score": 0.0,
             "descendant_focus_chain_stop_reason": (
                 "fallback_single_focus"
                 if resolved_follow_descendant_chain
@@ -2934,6 +3386,8 @@ class WindowManager:
             "descendant_focus_chain_signature": "",
             "descendant_focus_chain_titles": [],
             "descendant_focus_chain_hwnds": [],
+            "descendant_focus_chain_anchor_recovery_titles": [],
+            "descendant_focus_chain_anchor_recovery_hwnds": [],
             "direct_child_window_count": int(reacquired.get("direct_child_window_count", 0) or 0),
             "direct_child_dialog_like_count": int(reacquired.get("direct_child_dialog_like_count", 0) or 0),
             "direct_child_titles": [

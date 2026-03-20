@@ -391,11 +391,17 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
                 "executed_descendant_focus_steps": 2,
                 "descendant_focus_chain_hops": 1,
                 "descendant_focus_chain_stable": True,
+                "descendant_focus_chain_anchor_recovered": True,
+                "descendant_focus_chain_anchor_recovery_count": 1,
+                "descendant_focus_chain_anchor_recovery_reason": "expected_descendant_sequence_title",
+                "descendant_focus_chain_anchor_recovery_match_score": 0.88,
                 "descendant_focus_chain_stop_reason": "stable_no_further_descendant",
                 "descendant_focus_chain_quality": 0.88,
                 "descendant_focus_chain_signature": "5001|2|2|Pair device|Confirm pairing",
                 "descendant_focus_chain_titles": ["Pair device", "Confirm pairing"],
                 "descendant_focus_chain_hwnds": [5002, 5003],
+                "descendant_focus_chain_anchor_recovery_titles": ["Confirm pairing"],
+                "descendant_focus_chain_anchor_recovery_hwnds": [5003],
                 "descendant_chain_titles": ["Confirm pairing"],
                 "child_chain_signature": "5001|1|2|Pair device|Confirm pairing",
             }
@@ -427,6 +433,10 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
     assert payload["executed_descendant_focus_steps"] == 2
     assert payload["descendant_focus_chain_hops"] == 1
     assert payload["descendant_focus_chain_stable"] is True
+    assert payload["descendant_focus_chain_anchor_recovered"] is True
+    assert payload["descendant_focus_chain_anchor_recovery_count"] == 1
+    assert payload["descendant_focus_chain_anchor_recovery_reason"] == "expected_descendant_sequence_title"
+    assert payload["descendant_focus_chain_anchor_recovery_match_score"] == pytest.approx(0.88)
     assert payload["descendant_sequence_match_count"] == 2
     assert payload["campaign_descendant_sequence_match_count"] == 2
     assert payload["expected_descendant_sequence_title"] == "Confirm pairing"
@@ -438,6 +448,8 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
     assert payload["descendant_focus_chain_signature"] == "5001|2|2|Pair device|Confirm pairing"
     assert payload["descendant_focus_chain_titles"] == ["Pair device", "Confirm pairing"]
     assert payload["descendant_focus_chain_hwnds"] == [5002, 5003]
+    assert payload["descendant_focus_chain_anchor_recovery_titles"] == ["Confirm pairing"]
+    assert payload["descendant_focus_chain_anchor_recovery_hwnds"] == [5003]
 
 
 def test_window_manager_tracks_owner_window_topology_and_reacquisition() -> None:
@@ -764,20 +776,34 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "owner_chain_depth": 2,
                         "match_score": 0.7,
                     },
+                    {
+                        "hwnd": 5003,
+                        "title": "Confirm pairing",
+                        "pid": 777,
+                        "exe": r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+                        "process_name": "SystemSettings.exe",
+                        "class_name": "#32770",
+                        "visible": True,
+                        "enabled": True,
+                        "owner_hwnd": 5001,
+                        "root_owner_hwnd": 5000,
+                        "owner_chain_depth": 2,
+                        "match_score": 0.66,
+                    },
                 ],
-                "same_process_window_count": 2,
-                "related_window_count": 2,
-                "owner_link_count": 2,
+                "same_process_window_count": 3,
+                "related_window_count": 3,
+                "owner_link_count": 3,
                 "owner_chain_visible": True,
-                "same_root_owner_window_count": 2,
-                "same_root_owner_dialog_like_count": 1,
+                "same_root_owner_window_count": 3,
+                "same_root_owner_dialog_like_count": 2,
                 "candidate_root_owner_hwnd": 5000,
                 "candidate_owner_chain_depth": 1,
                 "max_owner_chain_depth": 2,
                 "child_dialog_like_visible": True,
                 "owner_chain_titles": ["Settings", "Bluetooth & devices"],
-                "same_root_owner_titles": ["Bluetooth & devices", "Pair device"],
-                "same_root_owner_dialog_titles": ["Pair device"],
+                "same_root_owner_titles": ["Bluetooth & devices", "Pair device", "Confirm pairing"],
+                "same_root_owner_dialog_titles": ["Pair device", "Confirm pairing"],
             }
 
         def trace_related_window_chain(
@@ -869,6 +895,13 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "campaign_preferred_window_title": "Confirm pairing",
                         "campaign_latest_sweep_status": "success",
                         "campaign_latest_sweep_regression_status": "regression",
+                        "program_descendant_title_sequence": ["Confirm pairing", "Allow device"],
+                        "program_descendant_hint_query": "Confirm pairing | Allow device",
+                        "program_preferred_window_title": "Confirm pairing",
+                        "program_regression_cycle_count": 2,
+                        "program_long_horizon_pending_count": 1,
+                        "program_pressure": 1.4,
+                        "program_latest_cycle_stop_reason": "descendant_chain_limit_reached",
                         "session_cycle_count": 3,
                         "session_regression_cycle_count": 2,
                         "session_long_horizon_pending_count": 1,
@@ -893,14 +926,14 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert calls["reacquire_descendant_title_sequence"] == ["Pair device", "Confirm pairing"]
     assert calls["reacquire_campaign_hint_query"] == "pair device | confirm pairing"
     assert calls["reacquire_campaign_preferred_title"] == "Confirm pairing"
-    assert calls["reacquire_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing"]
+    assert calls["reacquire_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing", "Allow device"]
     assert calls["reacquire_preferred_title"] == "Pair device"
     assert calls["trace_hint_query"] == "pair device | confirm pairing"
     assert calls["trace_descendant_hint_query"] == "Pair device | Confirm pairing"
     assert calls["trace_descendant_title_sequence"] == ["Pair device", "Confirm pairing"]
     assert calls["trace_campaign_hint_query"] == "pair device | confirm pairing"
     assert calls["trace_campaign_preferred_title"] == "Confirm pairing"
-    assert calls["trace_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing"]
+    assert calls["trace_campaign_descendant_title_sequence"] == ["Pair device", "Confirm pairing", "Allow device"]
     assert calls["trace_preferred_title"] == "Pair device"
     assert "benchmark_deeper_owner_chain" in payload["candidate"]["match_reasons"]
     assert "benchmark_native_descendant_pressure" in payload["candidate"]["match_reasons"]
@@ -918,6 +951,11 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["preferred_descendant_match_score"] == pytest.approx(0.94)
     assert payload["descendant_hint_title_match_count"] == 2
     assert payload["campaign_descendant_hint_title_match_count"] == 2
+    assert payload["expected_program_descendant_sequence_title"] == "Confirm pairing"
+    assert payload["descendant_anchor_recovery_available"] is True
+    assert payload["descendant_anchor_recovery_match_score"] >= 0.8
+    assert payload["descendant_anchor_recovery_pressure"] >= 0.7
+    assert payload["expected_anchor_recovery_title"] == "Confirm pairing"
 
 
 def test_native_window_runtime_delegates_to_loaded_extension() -> None:
