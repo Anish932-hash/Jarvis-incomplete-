@@ -277,3 +277,84 @@ def test_benchmark_lab_memory_tracks_campaign_trends_and_priority(tmp_path) -> N
     assert updated["campaign"]["latest_sweep_score"] == 0.84
     assert trend_summary["direction"] in {"improving", "volatile"}
     assert updated["campaign"]["campaign_priority"] in {"stable", "steady", "elevated", "critical"}
+
+
+def test_benchmark_lab_memory_records_programs_and_program_cycles(tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    first_session = memory.record_session(
+        filters={"pack": "long_horizon_and_replay", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.78}, "replay_candidates": [{"scenario": "settings_long_horizon", "apps": ["settings"], "horizon_steps": 6}]},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+    )["session"]
+    second_session = memory.record_session(
+        filters={"pack": "long_horizon_and_replay", "app": "vscode", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.74}, "replay_candidates": [{"scenario": "vscode_long_horizon", "apps": ["vscode"], "horizon_steps": 5}]},
+        native_targets_payload={"target_apps": [{"app_name": "vscode"}]},
+    )["session"]
+    first_campaign = memory.record_campaign(
+        filters={"pack": "long_horizon_and_replay", "app": "settings", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.78}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        session_ids=[str(first_session["session_id"])],
+        app_targets=["settings"],
+        session_rows=[dict(first_session)],
+    )["campaign"]
+    second_campaign = memory.record_campaign(
+        filters={"pack": "long_horizon_and_replay", "app": "vscode", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.74}},
+        native_targets_payload={"target_apps": [{"app_name": "vscode"}]},
+        session_ids=[str(second_session["session_id"])],
+        app_targets=["vscode"],
+        session_rows=[dict(second_session)],
+    )["campaign"]
+
+    created = memory.record_program(
+        filters={"pack": "long_horizon_and_replay", "limit": 8},
+        lab_payload={"latest_summary": {"weighted_score": 0.76}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        campaign_ids=[str(first_campaign["campaign_id"]), str(second_campaign["campaign_id"])],
+        app_targets=["settings", "vscode"],
+        campaign_rows=[dict(first_campaign), dict(second_campaign)],
+        source="unit_test",
+        label="desktop replay program",
+    )
+
+    assert created["status"] == "success"
+    program = created["program"]
+    assert program["label"] == "desktop replay program"
+    assert program["campaign_count"] == 2
+    assert program["target_app_count"] == 2
+
+    updated = memory.record_program_cycle(
+        program_id=str(program["program_id"]),
+        cycle_payload={
+            "status": "success",
+            "stop_reason": "stable",
+            "executed_campaign_count": 2,
+            "created_campaign_count": 0,
+            "executed_sweep_count": 3,
+            "stable_campaign_count": 2,
+            "regression_campaign_count": 0,
+            "pending_session_count": 0,
+            "attention_session_count": 0,
+            "pending_app_target_count": 0,
+            "long_horizon_pending_count": 1,
+            "weighted_score": 0.88,
+            "weighted_pass_rate": 0.9,
+            "trend_direction": "stable",
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.88, "weighted_pass_rate": 0.9}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        campaign_rows=[dict(first_campaign), dict(second_campaign)],
+    )
+
+    assert updated["status"] == "success"
+    assert updated["program"]["cycle_count"] == 1
+    assert updated["program"]["latest_cycle_stop_reason"] == "stable"
+    assert updated["program"]["program_priority"] in {"steady", "active", "elevated", "critical"}
+
+    history = memory.program_history(limit=5)
+    assert history["status"] == "success"
+    assert history["count"] == 1
+    assert history["latest_program"]["program_id"] == program["program_id"]
+    assert history["summary"]["campaign_count"] == 2

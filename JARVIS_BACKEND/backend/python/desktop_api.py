@@ -8255,6 +8255,22 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_lab_programs(
+        self,
+        *,
+        limit: int = 12,
+        program_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.lab_programs(limit=limit, program_id=program_id, status=status)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab programs payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -8333,6 +8349,48 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_create_lab_program(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_campaigns: int = 3,
+        max_sessions_per_campaign: int = 3,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.create_lab_program(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app=app_name,
+                limit=limit,
+                history_limit=history_limit,
+                source=source,
+                label=label,
+                max_campaigns=max_campaigns,
+                max_sessions_per_campaign=max_sessions_per_campaign,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab program create payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def desktop_evaluation_replay_lab_session(
         self,
         *,
@@ -8393,6 +8451,34 @@ class DesktopBackendService:
                 stop_on_stable=stop_on_stable,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab campaign cycle payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_evaluation_run_lab_program_cycle(
+        self,
+        *,
+        program_id: str = "",
+        max_campaigns: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_program_cycle(
+                program_id=program_id,
+                max_campaigns=max_campaigns,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab program cycle payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -42378,6 +42464,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/programs":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=256)
+                payload = self.server.service.desktop_evaluation_lab_programs(
+                    limit=limit,
+                    program_id=str(query.get("program_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
                 history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
                 payload = self.server.service.desktop_evaluation_campaign_supervisor_status(
@@ -44587,6 +44682,27 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/programs":
+                payload = self.server.service.desktop_evaluation_create_lab_program(
+                    scenario_name=str(body.get("scenario_name", "") or "").strip(),
+                    pack=str(body.get("pack", "") or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                    capability=str(body.get("capability", "") or "").strip(),
+                    risk_level=str(body.get("risk_level", "") or "").strip(),
+                    autonomy_tier=str(body.get("autonomy_tier", "") or "").strip(),
+                    mission_family=str(body.get("mission_family", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    limit=self._parse_int(body.get("limit", 200), 200, minimum=1, maximum=5000),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    source=str(body.get("source", "") or "").strip(),
+                    label=str(body.get("label", "") or "").strip(),
+                    max_campaigns=self._parse_int(body.get("max_campaigns", 3), 3, minimum=1, maximum=8),
+                    max_sessions_per_campaign=self._parse_int(
+                        body.get("max_sessions_per_campaign", 3), 3, minimum=1, maximum=8
+                    ),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/sessions/replay":
                 payload = self.server.service.desktop_evaluation_replay_lab_session(
                     session_id=str(body.get("session_id", "") or "").strip(),
@@ -44608,6 +44724,22 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     replay_status=str(body.get("replay_status", "") or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/programs/run-cycle":
+                payload = self.server.service.desktop_evaluation_run_lab_program_cycle(
+                    program_id=str(body.get("program_id", "") or "").strip(),
+                    max_campaigns=self._parse_int(body.get("max_campaigns", 3), 3, minimum=1, maximum=8),
+                    max_sweeps_per_campaign=self._parse_int(
+                        body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8
+                    ),
+                    max_sessions=self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8),
+                    max_replays_per_session=self._parse_int(
+                        body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8
+                    ),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    stop_on_stable=self._parse_bool(body.get("stop_on_stable", True), default=True),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
                 payload = self.server.service.configure_desktop_evaluation_campaign_supervisor(

@@ -19,6 +19,7 @@ class DesktopBenchmarkLabMemory:
         store_path: str = "data/desktop_benchmark_lab_memory.json",
         max_sessions: int = 200,
         max_campaigns: int = 128,
+        max_programs: int = 64,
         max_replay_events: int = 16,
         max_run_cycles: int = 24,
         max_sweep_runs: int = 32,
@@ -26,12 +27,14 @@ class DesktopBenchmarkLabMemory:
         self.store_path = Path(store_path)
         self.max_sessions = self._coerce_int(max_sessions, minimum=8, maximum=5000, default=200)
         self.max_campaigns = self._coerce_int(max_campaigns, minimum=4, maximum=2000, default=128)
+        self.max_programs = self._coerce_int(max_programs, minimum=2, maximum=512, default=64)
         self.max_replay_events = self._coerce_int(max_replay_events, minimum=2, maximum=128, default=16)
         self.max_run_cycles = self._coerce_int(max_run_cycles, minimum=1, maximum=256, default=24)
         self.max_sweep_runs = self._coerce_int(max_sweep_runs, minimum=1, maximum=256, default=32)
         self._lock = RLock()
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._campaigns: Dict[str, Dict[str, Any]] = {}
+        self._programs: Dict[str, Dict[str, Any]] = {}
         self._updates_since_save = 0
         self._last_save_monotonic = 0.0
         self._load()
@@ -151,6 +154,64 @@ class DesktopBenchmarkLabMemory:
             if not isinstance(row, dict):
                 return {"status": "error", "message": "benchmark lab campaign not found"}
             return {"status": "success", "campaign": self._public_row(row)}
+
+    def record_program(
+        self,
+        *,
+        filters: Dict[str, Any] | None,
+        lab_payload: Dict[str, Any] | None,
+        native_targets_payload: Dict[str, Any] | None,
+        guidance_payload: Dict[str, Any] | None = None,
+        source: str = "",
+        label: str = "",
+        campaign_ids: List[str] | None = None,
+        app_targets: List[str] | None = None,
+        campaign_rows: List[Dict[str, Any]] | None = None,
+        cycle_runs: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        clean_filters = dict(filters) if isinstance(filters, dict) else {}
+        lab_snapshot = dict(lab_payload) if isinstance(lab_payload, dict) else {}
+        native_snapshot = dict(native_targets_payload) if isinstance(native_targets_payload, dict) else {}
+        guidance_snapshot = dict(guidance_payload) if isinstance(guidance_payload, dict) else {}
+        clean_campaign_ids = self._dedupe_strings([str(item).strip() for item in (campaign_ids or []) if str(item).strip()])
+        clean_app_targets = self._dedupe_strings([str(item).strip() for item in (app_targets or []) if str(item).strip()])
+        now = datetime.now(timezone.utc).isoformat()
+        program_id = f"benchprogram-{uuid.uuid4().hex[:12]}"
+        with self._lock:
+            hydrated_campaign_rows = self._hydrate_program_campaigns(
+                campaign_ids=clean_campaign_ids,
+                campaign_rows=campaign_rows,
+            )
+            row = self._program_row(
+                program_id=program_id,
+                created_at=now,
+                updated_at=now,
+                filters=clean_filters,
+                lab_snapshot=lab_snapshot,
+                native_targets_snapshot=native_snapshot,
+                guidance_snapshot=guidance_snapshot,
+                source=source,
+                label=label,
+                campaign_ids=clean_campaign_ids,
+                app_targets=clean_app_targets,
+                campaign_rows=hydrated_campaign_rows,
+                cycle_runs=cycle_runs or [],
+            )
+            self._programs[program_id] = row
+            self._trim_locked()
+            self._updates_since_save += 1
+            self._maybe_save_locked(force=True)
+        return {"status": "success", "program": self._public_row(row)}
+
+    def get_program(self, program_id: str) -> Dict[str, Any]:
+        clean_id = str(program_id or "").strip()
+        if not clean_id:
+            return {"status": "error", "message": "program_id required"}
+        with self._lock:
+            row = self._programs.get(clean_id)
+            if not isinstance(row, dict):
+                return {"status": "error", "message": "benchmark lab program not found"}
+            return {"status": "success", "program": self._public_row(row)}
 
     def session_history(
         self,
@@ -273,6 +334,73 @@ class DesktopBenchmarkLabMemory:
                 "priority_counts": self._sorted_count_map(priority_counts),
                 "campaign_pressure_total": round(pressure_total, 6),
                 "campaign_pressure_avg": round(pressure_total / len(rows), 6) if rows else 0.0,
+            },
+        }
+
+    def program_history(
+        self,
+        *,
+        limit: int = 12,
+        program_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        normalized_limit = self._coerce_int(limit, minimum=1, maximum=self.max_programs, default=12)
+        clean_program_id = str(program_id or "").strip()
+        clean_status = str(status or "").strip().lower()
+        with self._lock:
+            rows = sorted(
+                (dict(item) for item in self._programs.values() if isinstance(item, dict)),
+                key=lambda item: str(item.get("updated_at", "") or ""),
+                reverse=True,
+            )
+        if clean_program_id:
+            rows = [row for row in rows if str(row.get("program_id", "") or "").strip() == clean_program_id]
+        if clean_status:
+            rows = [row for row in rows if str(row.get("status", "") or "").strip().lower() == clean_status]
+        selected = rows[:normalized_limit]
+        status_counts: Dict[str, int] = {}
+        latest_cycle_status_counts: Dict[str, int] = {}
+        trend_direction_counts: Dict[str, int] = {}
+        priority_counts: Dict[str, int] = {}
+        pressure_total = 0.0
+        for row in rows:
+            self._increment_count(status_counts, str(row.get("status", "") or "ready"))
+            self._increment_count(
+                latest_cycle_status_counts,
+                str(row.get("latest_cycle_status", "") or "idle"),
+            )
+            trend_summary = dict(row.get("trend_summary", {})) if isinstance(row.get("trend_summary", {}), dict) else {}
+            self._increment_count(
+                trend_direction_counts,
+                str(trend_summary.get("direction", row.get("history_direction", "")) or "stable"),
+            )
+            self._increment_count(priority_counts, str(row.get("program_priority", "") or "steady"))
+            pressure_total += float(row.get("program_pressure_score", 0.0) or 0.0)
+        latest = selected[0] if selected else {}
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(rows),
+            "limit": normalized_limit,
+            "items": [self._public_row(row) for row in selected],
+            "latest_program": self._public_row(latest) if latest else {},
+            "summary": {
+                "status_counts": self._sorted_count_map(status_counts),
+                "latest_cycle_status_counts": self._sorted_count_map(latest_cycle_status_counts),
+                "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+                "priority_counts": self._sorted_count_map(priority_counts),
+                "campaign_count": sum(int(row.get("campaign_count", 0) or 0) for row in rows),
+                "pending_campaigns": sum(int(row.get("pending_campaign_count", 0) or 0) for row in rows),
+                "attention_campaigns": sum(int(row.get("attention_campaign_count", 0) or 0) for row in rows),
+                "pending_sessions": sum(int(row.get("pending_session_count", 0) or 0) for row in rows),
+                "attention_sessions": sum(int(row.get("attention_session_count", 0) or 0) for row in rows),
+                "pending_app_targets": sum(int(row.get("pending_app_target_count", 0) or 0) for row in rows),
+                "cycle_count": sum(int(row.get("cycle_count", 0) or 0) for row in rows),
+                "completed_cycles": sum(int(row.get("completed_cycle_count", 0) or 0) for row in rows),
+                "stable_cycles": sum(int(row.get("stable_cycle_count", 0) or 0) for row in rows),
+                "regression_cycles": sum(int(row.get("regression_cycle_count", 0) or 0) for row in rows),
+                "program_pressure_total": round(pressure_total, 6),
+                "program_pressure_avg": round(pressure_total / len(rows), 6) if rows else 0.0,
             },
         }
 
@@ -486,6 +614,91 @@ class DesktopBenchmarkLabMemory:
             "sweep": dict(sweep_runs[-1]) if sweep_runs else {},
         }
 
+    def record_program_cycle(
+        self,
+        *,
+        program_id: str,
+        cycle_payload: Dict[str, Any] | None,
+        lab_payload: Dict[str, Any] | None = None,
+        native_targets_payload: Dict[str, Any] | None = None,
+        guidance_payload: Dict[str, Any] | None = None,
+        campaign_ids: List[str] | None = None,
+        app_targets: List[str] | None = None,
+        campaign_rows: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        clean_id = str(program_id or "").strip()
+        if not clean_id:
+            return {"status": "error", "message": "program_id required"}
+        cycle_snapshot = dict(cycle_payload) if isinstance(cycle_payload, dict) else {}
+        with self._lock:
+            existing = self._programs.get(clean_id)
+            if not isinstance(existing, dict):
+                return {"status": "error", "message": "benchmark lab program not found"}
+            now = datetime.now(timezone.utc).isoformat()
+            clean_campaign_ids = self._dedupe_strings(
+                [
+                    *(
+                        [str(item).strip() for item in existing.get("campaign_ids", [])]
+                        if isinstance(existing.get("campaign_ids", []), list)
+                        else []
+                    ),
+                    *([str(item).strip() for item in (campaign_ids or []) if str(item).strip()]),
+                ]
+            )
+            clean_app_targets = self._dedupe_strings(
+                [
+                    *(
+                        [str(item).strip() for item in existing.get("app_targets", [])]
+                        if isinstance(existing.get("app_targets", []), list)
+                        else []
+                    ),
+                    *([str(item).strip() for item in (app_targets or []) if str(item).strip()]),
+                ]
+            )
+            hydrated_campaign_rows = self._hydrate_program_campaigns(
+                campaign_ids=clean_campaign_ids,
+                campaign_rows=campaign_rows,
+            )
+            cycle_runs = self._normalize_program_cycle_runs(existing.get("cycle_runs", []))
+            cycle_runs.append(
+                self._program_cycle_row(
+                    recorded_at=now,
+                    cycle_payload=cycle_snapshot,
+                )
+            )
+            cycle_runs = cycle_runs[-self.max_run_cycles :]
+            row = self._program_row(
+                program_id=clean_id,
+                created_at=str(existing.get("created_at", "") or now),
+                updated_at=now,
+                filters=dict(existing.get("filters", {})) if isinstance(existing.get("filters", {}), dict) else {},
+                lab_snapshot=dict(lab_payload) if isinstance(lab_payload, dict) else dict(existing.get("lab_snapshot", {})),
+                native_targets_snapshot=(
+                    dict(native_targets_payload)
+                    if isinstance(native_targets_payload, dict)
+                    else dict(existing.get("native_targets_snapshot", {}))
+                ),
+                guidance_snapshot=(
+                    dict(guidance_payload)
+                    if isinstance(guidance_payload, dict)
+                    else dict(existing.get("guidance_snapshot", {}))
+                ),
+                source=str(existing.get("source", "") or ""),
+                label=str(existing.get("label", "") or ""),
+                campaign_ids=clean_campaign_ids,
+                app_targets=clean_app_targets,
+                campaign_rows=hydrated_campaign_rows,
+                cycle_runs=cycle_runs,
+            )
+            self._programs[clean_id] = row
+            self._updates_since_save += 1
+            self._maybe_save_locked(force=True)
+        return {
+            "status": "success",
+            "program": self._public_row(row),
+            "cycle": dict(cycle_runs[-1]) if cycle_runs else {},
+        }
+
     def record_run_cycle(
         self,
         *,
@@ -687,6 +900,158 @@ class DesktopBenchmarkLabMemory:
             "trend_summary": trend_summary,
             "campaign_pressure_score": campaign_pressure_score,
             "campaign_priority": campaign_priority,
+            "lab_snapshot": dict(lab_snapshot),
+            "native_targets_snapshot": dict(native_targets_snapshot),
+            "guidance_snapshot": dict(guidance_snapshot),
+        }
+
+    def _program_row(
+        self,
+        *,
+        program_id: str,
+        created_at: str,
+        updated_at: str,
+        filters: Dict[str, Any],
+        lab_snapshot: Dict[str, Any],
+        native_targets_snapshot: Dict[str, Any],
+        guidance_snapshot: Dict[str, Any],
+        source: str,
+        label: str,
+        campaign_ids: List[str],
+        app_targets: List[str],
+        campaign_rows: List[Dict[str, Any]],
+        cycle_runs: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        clean_campaign_ids = self._dedupe_strings([str(item).strip() for item in campaign_ids if str(item).strip()])
+        clean_campaigns = self._normalize_program_campaigns(campaign_rows)
+        clean_cycle_runs = self._normalize_program_cycle_runs(cycle_runs or [])
+        target_apps = self._dedupe_strings(
+            [
+                *app_targets,
+                *(
+                    [
+                        str(item.get("app_name", "") or "").strip()
+                        for item in native_targets_snapshot.get("target_apps", [])
+                        if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+                    ]
+                    if isinstance(native_targets_snapshot.get("target_apps", []), list)
+                    else []
+                ),
+            ]
+        )[:20]
+        represented_apps = {
+            str(app_name).strip().lower()
+            for campaign in clean_campaigns
+            for app_name in campaign.get("target_apps", [])
+            if str(app_name).strip()
+        }
+        pending_campaign_count = sum(
+            1 for item in clean_campaigns if str(item.get("status", "") or "ready").strip().lower() != "complete"
+        )
+        attention_campaign_count = sum(
+            1 for item in clean_campaigns if str(item.get("status", "") or "").strip().lower() == "attention"
+        )
+        complete_campaign_count = sum(
+            1 for item in clean_campaigns if str(item.get("status", "") or "").strip().lower() == "complete"
+        )
+        pending_session_count = sum(int(item.get("pending_session_count", 0) or 0) for item in clean_campaigns)
+        attention_session_count = sum(int(item.get("attention_session_count", 0) or 0) for item in clean_campaigns)
+        complete_session_count = sum(int(item.get("complete_session_count", 0) or 0) for item in clean_campaigns)
+        pending_replay_count = sum(int(item.get("pending_replay_count", 0) or 0) for item in clean_campaigns)
+        failed_replay_count = sum(int(item.get("failed_replay_count", 0) or 0) for item in clean_campaigns)
+        completed_replay_count = sum(int(item.get("completed_replay_count", 0) or 0) for item in clean_campaigns)
+        pending_app_target_count = sum(
+            1 for app_name in target_apps if str(app_name).strip().lower() not in represented_apps
+        )
+        long_horizon_pending_count = sum(
+            int(item.get("long_horizon_pending_count", 0) or 0) for item in clean_campaigns
+        )
+        sweep_count = sum(int(item.get("sweep_count", 0) or 0) for item in clean_campaigns)
+        cycle_summary = self._program_trend_summary(clean_cycle_runs, clean_campaigns)
+        program_pressure_score = self._program_pressure_score(
+            pending_campaign_count=pending_campaign_count,
+            attention_campaign_count=attention_campaign_count,
+            pending_session_count=pending_session_count,
+            attention_session_count=attention_session_count,
+            pending_app_target_count=pending_app_target_count,
+            long_horizon_pending_count=long_horizon_pending_count,
+            regression_cycle_streak=int(cycle_summary.get("regression_cycle_streak", 0) or 0),
+        )
+        program_priority = self._program_priority(program_pressure_score, cycle_summary)
+        latest_cycle = clean_cycle_runs[-1] if clean_cycle_runs else {}
+        program_status = "ready"
+        if (
+            attention_campaign_count > 0
+            or str(latest_cycle.get("status", "") or "").strip().lower() in {"error", "failed"}
+            or str(latest_cycle.get("trend_direction", "") or "").strip().lower() in {"regressing", "degraded"}
+        ):
+            program_status = "attention"
+        elif clean_campaigns and pending_campaign_count == 0 and pending_app_target_count == 0:
+            program_status = "complete"
+        label_text = str(label or "").strip() or self._default_program_label(
+            filters=filters,
+            target_apps=target_apps,
+            native_targets_snapshot=native_targets_snapshot,
+        )
+        return {
+            "program_id": program_id,
+            "status": program_status,
+            "label": label_text,
+            "source": str(source or "").strip() or "operator_panel",
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "filters": dict(filters),
+            "focus_summary": self._dedupe_strings(
+                [
+                    *(
+                        [str(item).strip() for item in native_targets_snapshot.get("focus_summary", [])]
+                        if isinstance(native_targets_snapshot.get("focus_summary", []), list)
+                        else []
+                    ),
+                    *(
+                        [str(item).strip() for item in guidance_snapshot.get("focus_summary", [])]
+                        if isinstance(guidance_snapshot.get("focus_summary", []), list)
+                        else []
+                    ),
+                ]
+            )[:10],
+            "campaign_ids": clean_campaign_ids,
+            "campaigns": clean_campaigns[:10],
+            "campaign_count": len(clean_campaigns),
+            "pending_campaign_count": pending_campaign_count,
+            "attention_campaign_count": attention_campaign_count,
+            "complete_campaign_count": complete_campaign_count,
+            "pending_session_count": pending_session_count,
+            "attention_session_count": attention_session_count,
+            "complete_session_count": complete_session_count,
+            "pending_replay_count": pending_replay_count,
+            "failed_replay_count": failed_replay_count,
+            "completed_replay_count": completed_replay_count,
+            "sweep_count": sweep_count,
+            "target_app_count": len(target_apps),
+            "target_apps": target_apps,
+            "app_targets": target_apps,
+            "pending_app_target_count": pending_app_target_count,
+            "cycle_runs": clean_cycle_runs[-self.max_run_cycles :],
+            "cycle_count": len(clean_cycle_runs),
+            "completed_cycle_count": int(cycle_summary.get("completed_cycle_count", 0) or 0),
+            "stable_cycle_count": int(cycle_summary.get("stable_cycle_count", 0) or 0),
+            "regression_cycle_count": int(cycle_summary.get("regression_cycle_count", 0) or 0),
+            "stable_cycle_streak": int(cycle_summary.get("stable_cycle_streak", 0) or 0),
+            "regression_cycle_streak": int(cycle_summary.get("regression_cycle_streak", 0) or 0),
+            "latest_cycle_status": str(latest_cycle.get("status", "") or "").strip().lower(),
+            "latest_cycle_stop_reason": str(latest_cycle.get("stop_reason", "") or "").strip().lower(),
+            "latest_cycle_executed_at": str(latest_cycle.get("executed_at", "") or "").strip(),
+            "latest_cycle_executed_campaign_count": int(latest_cycle.get("executed_campaign_count", 0) or 0),
+            "latest_cycle_executed_sweep_count": int(latest_cycle.get("executed_sweep_count", 0) or 0),
+            "latest_cycle_weighted_score": round(float(latest_cycle.get("weighted_score", 0.0) or 0.0), 6),
+            "latest_cycle_weighted_pass_rate": round(float(latest_cycle.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "latest_cycle_trend_direction": str(latest_cycle.get("trend_direction", "") or "").strip().lower(),
+            "history_direction": str(cycle_summary.get("direction", "") or "").strip().lower(),
+            "trend_summary": cycle_summary,
+            "program_pressure_score": program_pressure_score,
+            "program_priority": program_priority,
+            "long_horizon_pending_count": long_horizon_pending_count,
             "lab_snapshot": dict(lab_snapshot),
             "native_targets_snapshot": dict(native_targets_snapshot),
             "guidance_snapshot": dict(guidance_snapshot),
@@ -1078,6 +1443,246 @@ class DesktopBenchmarkLabMemory:
                     return f"{name} replay campaign"
         return "benchmark replay campaign"
 
+    @staticmethod
+    def _default_program_label(
+        *,
+        filters: Dict[str, Any],
+        target_apps: List[str],
+        native_targets_snapshot: Dict[str, Any],
+    ) -> str:
+        pack = str(filters.get("pack", "") or "").strip()
+        category = str(filters.get("category", "") or "").strip()
+        app_name = str(filters.get("app", "") or filters.get("app_name", "") or "").strip()
+        if pack:
+            return f"{pack} replay program"
+        if category:
+            return f"{category} replay program"
+        if app_name:
+            return f"{app_name} replay program"
+        if target_apps:
+            return f"{target_apps[0]} replay program"
+        target_rows = native_targets_snapshot.get("target_apps", []) if isinstance(native_targets_snapshot.get("target_apps", []), list) else []
+        for item in target_rows:
+            if isinstance(item, dict):
+                name = str(item.get("app_name", "") or "").strip()
+                if name:
+                    return f"{name} replay program"
+        return "desktop replay program"
+
+    def _program_cycle_row(
+        self,
+        *,
+        recorded_at: str,
+        cycle_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {
+            "cycle_id": str(cycle_payload.get("cycle_id", "") or "").strip() or f"program-cycle-{uuid.uuid4().hex[:10]}",
+            "recorded_at": recorded_at,
+            "executed_at": str(cycle_payload.get("executed_at", "") or recorded_at).strip(),
+            "status": str(cycle_payload.get("status", "") or "success").strip().lower() or "success",
+            "stop_reason": str(cycle_payload.get("stop_reason", "") or "").strip().lower(),
+            "executed_campaign_count": self._coerce_int(
+                cycle_payload.get("executed_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "created_campaign_count": self._coerce_int(
+                cycle_payload.get("created_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "executed_sweep_count": self._coerce_int(
+                cycle_payload.get("executed_sweep_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "stable_campaign_count": self._coerce_int(
+                cycle_payload.get("stable_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "regression_campaign_count": self._coerce_int(
+                cycle_payload.get("regression_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_session_count": self._coerce_int(
+                cycle_payload.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "attention_session_count": self._coerce_int(
+                cycle_payload.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_app_target_count": self._coerce_int(
+                cycle_payload.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "long_horizon_pending_count": self._coerce_int(
+                cycle_payload.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "weighted_score": round(float(cycle_payload.get("weighted_score", 0.0) or 0.0), 6),
+            "weighted_pass_rate": round(float(cycle_payload.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "trend_direction": str(cycle_payload.get("trend_direction", "") or "").strip().lower(),
+            "query": dict(cycle_payload.get("query", {})) if isinstance(cycle_payload.get("query", {}), dict) else {},
+        }
+
+    def _normalize_program_campaigns(self, campaigns: Any) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if not isinstance(campaigns, list):
+            return rows
+        for item in campaigns:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                {
+                    "campaign_id": str(item.get("campaign_id", "") or "").strip(),
+                    "label": str(item.get("label", "") or "").strip(),
+                    "status": str(item.get("status", "") or "ready").strip().lower() or "ready",
+                    "session_count": self._coerce_int(item.get("session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "pending_session_count": self._coerce_int(item.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "attention_session_count": self._coerce_int(item.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "complete_session_count": self._coerce_int(item.get("complete_session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "pending_replay_count": self._coerce_int(item.get("pending_replay_count", 0), minimum=0, maximum=100_000, default=0),
+                    "failed_replay_count": self._coerce_int(item.get("failed_replay_count", 0), minimum=0, maximum=100_000, default=0),
+                    "completed_replay_count": self._coerce_int(item.get("completed_replay_count", 0), minimum=0, maximum=100_000, default=0),
+                    "cycle_count": self._coerce_int(item.get("cycle_count", 0), minimum=0, maximum=100_000, default=0),
+                    "regression_cycle_count": self._coerce_int(item.get("regression_cycle_count", 0), minimum=0, maximum=100_000, default=0),
+                    "long_horizon_pending_count": self._coerce_int(item.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0),
+                    "sweep_count": self._coerce_int(item.get("sweep_count", 0), minimum=0, maximum=100_000, default=0),
+                    "target_app_count": self._coerce_int(item.get("target_app_count", 0), minimum=0, maximum=100_000, default=0),
+                    "target_apps": [
+                        str(app_name).strip()
+                        for app_name in item.get("target_apps", [])
+                        if str(app_name).strip()
+                    ][:8] if isinstance(item.get("target_apps", []), list) else [],
+                    "pending_app_target_count": self._coerce_int(item.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0),
+                    "latest_sweep_status": str(item.get("latest_sweep_status", "") or "").strip().lower(),
+                    "latest_sweep_regression_status": str(item.get("latest_sweep_regression_status", "") or "").strip().lower(),
+                    "history_direction": str(item.get("history_direction", "") or "").strip().lower(),
+                    "campaign_pressure_score": round(float(item.get("campaign_pressure_score", 0.0) or 0.0), 6),
+                    "campaign_priority": str(item.get("campaign_priority", "") or "").strip().lower(),
+                }
+            )
+        return rows[:16]
+
+    def _normalize_program_cycle_runs(self, cycles: Any) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if not isinstance(cycles, list):
+            return rows
+        for item in cycles:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                {
+                    "cycle_id": str(item.get("cycle_id", "") or "").strip() or f"program-cycle-{uuid.uuid4().hex[:10]}",
+                    "recorded_at": str(item.get("recorded_at", "") or "").strip(),
+                    "executed_at": str(item.get("executed_at", "") or "").strip(),
+                    "status": str(item.get("status", "") or "success").strip().lower() or "success",
+                    "stop_reason": str(item.get("stop_reason", "") or "").strip().lower(),
+                    "executed_campaign_count": self._coerce_int(item.get("executed_campaign_count", 0), minimum=0, maximum=100_000, default=0),
+                    "created_campaign_count": self._coerce_int(item.get("created_campaign_count", 0), minimum=0, maximum=100_000, default=0),
+                    "executed_sweep_count": self._coerce_int(item.get("executed_sweep_count", 0), minimum=0, maximum=100_000, default=0),
+                    "stable_campaign_count": self._coerce_int(item.get("stable_campaign_count", 0), minimum=0, maximum=100_000, default=0),
+                    "regression_campaign_count": self._coerce_int(item.get("regression_campaign_count", 0), minimum=0, maximum=100_000, default=0),
+                    "pending_session_count": self._coerce_int(item.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "attention_session_count": self._coerce_int(item.get("attention_session_count", 0), minimum=0, maximum=100_000, default=0),
+                    "pending_app_target_count": self._coerce_int(item.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0),
+                    "long_horizon_pending_count": self._coerce_int(item.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0),
+                    "weighted_score": round(float(item.get("weighted_score", 0.0) or 0.0), 6),
+                    "weighted_pass_rate": round(float(item.get("weighted_pass_rate", 0.0) or 0.0), 6),
+                    "trend_direction": str(item.get("trend_direction", "") or "").strip().lower(),
+                    "query": dict(item.get("query", {})) if isinstance(item.get("query", {}), dict) else {},
+                }
+            )
+        return rows[-self.max_run_cycles :]
+
+    @staticmethod
+    def _program_trend_summary(
+        cycle_runs: List[Dict[str, Any]],
+        campaign_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        stable_streak = 0
+        regression_streak = 0
+        for item in reversed(cycle_runs):
+            trend = str(item.get("trend_direction", "") or "").strip().lower()
+            status = str(item.get("status", "") or "").strip().lower()
+            if trend in {"regressing", "degraded"} or status in {"error", "failed"}:
+                regression_streak += 1
+                break
+            if trend in {"stable", "improving", "warming"} and status in {"success", "completed"}:
+                stable_streak += 1
+            else:
+                break
+        for item in reversed(cycle_runs):
+            trend = str(item.get("trend_direction", "") or "").strip().lower()
+            status = str(item.get("status", "") or "").strip().lower()
+            if trend in {"regressing", "degraded"} or status in {"error", "failed"}:
+                regression_streak += 1
+            else:
+                break
+        latest = cycle_runs[-1] if cycle_runs else {}
+        direction = str(latest.get("trend_direction", "") or "").strip().lower()
+        if not direction:
+            attention_campaigns = sum(
+                1 for row in campaign_rows if str(row.get("status", "") or "").strip().lower() == "attention"
+            )
+            pending_campaigns = sum(
+                1 for row in campaign_rows if str(row.get("status", "") or "").strip().lower() != "complete"
+            )
+            if attention_campaigns > 0:
+                direction = "regressing"
+            elif pending_campaigns > 0:
+                direction = "warming"
+            else:
+                direction = "stable"
+        return {
+            "direction": direction,
+            "completed_cycle_count": sum(
+                1 for item in cycle_runs if str(item.get("status", "") or "").strip().lower() in {"success", "completed"}
+            ),
+            "stable_cycle_count": sum(
+                1
+                for item in cycle_runs
+                if str(item.get("trend_direction", "") or "").strip().lower() in {"stable", "improving"}
+            ),
+            "regression_cycle_count": sum(
+                1
+                for item in cycle_runs
+                if str(item.get("trend_direction", "") or "").strip().lower() in {"regressing", "degraded"}
+                or str(item.get("status", "") or "").strip().lower() in {"error", "failed"}
+            ),
+            "stable_cycle_streak": stable_streak,
+            "regression_cycle_streak": regression_streak,
+            "executed_campaign_total": sum(int(item.get("executed_campaign_count", 0) or 0) for item in cycle_runs),
+            "executed_sweep_total": sum(int(item.get("executed_sweep_count", 0) or 0) for item in cycle_runs),
+            "stable_campaign_total": sum(int(item.get("stable_campaign_count", 0) or 0) for item in cycle_runs),
+            "regression_campaign_total": sum(int(item.get("regression_campaign_count", 0) or 0) for item in cycle_runs),
+        }
+
+    @staticmethod
+    def _program_pressure_score(
+        *,
+        pending_campaign_count: int,
+        attention_campaign_count: int,
+        pending_session_count: int,
+        attention_session_count: int,
+        pending_app_target_count: int,
+        long_horizon_pending_count: int,
+        regression_cycle_streak: int,
+    ) -> float:
+        return round(
+            float(
+                (attention_campaign_count * 2.4)
+                + (pending_campaign_count * 1.3)
+                + (attention_session_count * 1.15)
+                + (pending_session_count * 0.55)
+                + (pending_app_target_count * 1.35)
+                + (long_horizon_pending_count * 0.28)
+                + (regression_cycle_streak * 1.9)
+            ),
+            6,
+        )
+
+    @staticmethod
+    def _program_priority(program_pressure_score: float, trend_summary: Dict[str, Any]) -> str:
+        direction = str(trend_summary.get("direction", "") or "").strip().lower()
+        regression_streak = int(trend_summary.get("regression_cycle_streak", 0) or 0)
+        if program_pressure_score >= 18.0 or regression_streak >= 2 or direction == "regressing":
+            return "critical"
+        if program_pressure_score >= 10.0 or direction in {"warming", "volatile"}:
+            return "elevated"
+        if program_pressure_score >= 4.0:
+            return "active"
+        return "steady"
+
     def _load(self) -> None:
         try:
             if not self.store_path.exists():
@@ -1087,6 +1692,7 @@ class DesktopBenchmarkLabMemory:
             return
         rows = raw.get("sessions", []) if isinstance(raw, dict) else []
         campaign_rows = raw.get("campaigns", []) if isinstance(raw, dict) else []
+        program_rows = raw.get("programs", []) if isinstance(raw, dict) else []
         loaded: Dict[str, Dict[str, Any]] = {}
         for item in rows:
             if not isinstance(item, dict):
@@ -1106,6 +1712,16 @@ class DesktopBenchmarkLabMemory:
                     continue
                 loaded_campaigns[campaign_id] = dict(item)
         self._campaigns = loaded_campaigns
+        loaded_programs: Dict[str, Dict[str, Any]] = {}
+        if isinstance(program_rows, list):
+            for item in program_rows:
+                if not isinstance(item, dict):
+                    continue
+                program_id = str(item.get("program_id", "") or "").strip()
+                if not program_id:
+                    continue
+                loaded_programs[program_id] = dict(item)
+        self._programs = loaded_programs
 
     def _save_locked(self) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1119,7 +1735,12 @@ class DesktopBenchmarkLabMemory:
             key=lambda item: str(item.get("updated_at", "") or ""),
             reverse=True,
         )[: self.max_campaigns]
-        payload = {"sessions": rows, "campaigns": campaigns}
+        programs = sorted(
+            (dict(item) for item in self._programs.values() if isinstance(item, dict)),
+            key=lambda item: str(item.get("updated_at", "") or ""),
+            reverse=True,
+        )[: self.max_programs]
+        payload = {"sessions": rows, "campaigns": campaigns, "programs": programs}
         self.store_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
         self._updates_since_save = 0
         self._last_save_monotonic = time.monotonic()
@@ -1151,6 +1772,17 @@ class DesktopBenchmarkLabMemory:
                 str(item.get("campaign_id", "") or ""): dict(item)
                 for item in rows[: self.max_campaigns]
                 if str(item.get("campaign_id", "") or "").strip()
+            }
+        if len(self._programs) > self.max_programs:
+            rows = sorted(
+                self._programs.values(),
+                key=lambda item: str(item.get("updated_at", "") or ""),
+                reverse=True,
+            )
+            self._programs = {
+                str(item.get("program_id", "") or ""): dict(item)
+                for item in rows[: self.max_programs]
+                if str(item.get("program_id", "") or "").strip()
             }
 
     @staticmethod
@@ -1209,6 +1841,30 @@ class DesktopBenchmarkLabMemory:
             if not clean_id or clean_id in known_ids:
                 continue
             current = self._sessions.get(clean_id)
+            if isinstance(current, dict):
+                rows.append(dict(current))
+                known_ids.add(clean_id)
+        return rows
+
+    def _hydrate_program_campaigns(
+        self,
+        *,
+        campaign_ids: List[str],
+        campaign_rows: List[Dict[str, Any]] | None,
+    ) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if isinstance(campaign_rows, list):
+            rows.extend(dict(item) for item in campaign_rows if isinstance(item, dict))
+        known_ids = {
+            str(item.get("campaign_id", "") or "").strip()
+            for item in rows
+            if isinstance(item, dict) and str(item.get("campaign_id", "") or "").strip()
+        }
+        for campaign_id in campaign_ids:
+            clean_id = str(campaign_id or "").strip()
+            if not clean_id or clean_id in known_ids:
+                continue
+            current = self._campaigns.get(clean_id)
             if isinstance(current, dict):
                 rows.append(dict(current))
                 known_ids.add(clean_id)

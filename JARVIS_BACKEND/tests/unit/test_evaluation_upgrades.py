@@ -1151,3 +1151,102 @@ def test_evaluation_runner_campaign_watchdog_auto_creates_campaigns_from_native_
     assert "auto-created 1 replay campaign(s)" in str(payload.get("message", ""))
     assert create_calls and create_calls[0]["app"] == "settings"
     assert cycle_calls == ["camp-settings"]
+
+
+def test_evaluation_runner_creates_and_cycles_lab_program(monkeypatch, tmp_path) -> None:
+    memory = DesktopBenchmarkLabMemory(store_path=str(tmp_path / "benchmark_lab_memory.json"))
+    runner = EvaluationRunner(history_limit=4, lab_memory=memory)
+
+    def _lab(**kwargs):  # noqa: ANN001
+        filters = {key: value for key, value in kwargs.items() if value not in {"", None}}
+        return {
+            "status": "success",
+            "filters": filters,
+            "latest_summary": {"weighted_score": 0.78, "weighted_pass_rate": 0.8},
+            "latest_regression": {"status": "stable"},
+            "latest_run": {"executed_at": "2026-03-20T10:00:00+00:00"},
+            "catalog_summary": {"scenario_count": 4},
+            "coverage": {"long_horizon": {"count": 2, "ratio": 0.5}},
+            "history_trend": {"direction": "warming", "run_count": 3},
+            "replay_candidates": [
+                {
+                    "scenario": "settings_long_horizon_replay",
+                    "apps": ["settings"],
+                    "horizon_steps": 6,
+                    "replay_status": "pending",
+                    "replay_query": {"scenario_name": "settings_long_horizon_replay", "limit": 1},
+                }
+            ],
+        }
+
+    def _native_targets(**kwargs):  # noqa: ANN001
+        app_name = str(kwargs.get("app", "") or kwargs.get("app_name", "") or "").strip()
+        if app_name:
+            target_apps = [{"app_name": app_name, "priority": 1.0}]
+        else:
+            target_apps = [{"app_name": "settings", "priority": 1.0}, {"app_name": "vscode", "priority": 0.9}]
+        return {
+            "status": "success",
+            "focus_summary": ["long_horizon_and_replay", "desktop_workflow"],
+            "target_apps": target_apps,
+            "strongest_tactics": {"descendant_focus": 0.86, "native_focus": 0.72},
+            "coverage_gap_apps": ["outlook"],
+        }
+
+    monkeypatch.setattr(runner, "lab", _lab)
+    monkeypatch.setattr(runner, "native_control_targets", _native_targets)
+    monkeypatch.setattr(
+        runner,
+        "control_guidance",
+        lambda: {"status": "success", "focus_summary": ["desktop_workflow"], "control_biases": {"native_focus": 0.7}},
+    )
+
+    created = runner.create_lab_program(
+        pack="long_horizon_and_replay",
+        source="unit_test",
+        label="desktop replay program",
+        max_campaigns=2,
+        max_sessions_per_campaign=1,
+    )
+
+    assert created["status"] == "success"
+    assert created["created_campaign_count"] == 2
+    program = created["program"]
+    assert program["campaign_count"] == 2
+    assert program["target_app_count"] == 2
+
+    def _cycle_campaign(*, campaign_id: str, **kwargs):  # noqa: ANN001
+        del kwargs
+        campaign = memory.get_campaign(campaign_id)["campaign"]
+        return {
+            "status": "success",
+            "campaign": {
+                **dict(campaign),
+                "status": "complete",
+                "pending_session_count": 0,
+                "attention_session_count": 0,
+                "pending_app_target_count": 0,
+                "latest_sweep_score": 0.9,
+                "latest_sweep_pass_rate": 0.92,
+                "latest_sweep_regression_status": "stable",
+            },
+            "cycle": {"executed_sweep_count": 2, "stop_reason": "stable"},
+        }
+
+    monkeypatch.setattr(runner, "run_lab_campaign_cycle", _cycle_campaign)
+
+    cycled = runner.run_lab_program_cycle(
+        program_id=str(program["program_id"]),
+        max_campaigns=2,
+        max_sweeps_per_campaign=2,
+        max_sessions=1,
+        max_replays_per_session=1,
+        history_limit=4,
+    )
+
+    assert cycled["status"] == "success"
+    assert cycled["created_campaign_count"] == 0
+    assert len(cycled["results"]) == 2
+    assert cycled["program"]["cycle_count"] == 1
+    assert cycled["program"]["latest_cycle_stop_reason"] in {"stable", "max_campaigns_reached"}
+    assert cycled["cycle"]["executed_campaign_count"] == 2

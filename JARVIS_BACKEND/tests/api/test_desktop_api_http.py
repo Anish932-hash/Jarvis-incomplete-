@@ -869,6 +869,7 @@ class FakeDesktopService:
         self.desktop_evaluation_history_items: list[Dict[str, Any]] = [dict(self.desktop_evaluation_last_run)]
         self.desktop_evaluation_lab_sessions_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_lab_campaigns_items: list[Dict[str, Any]] = []
+        self.desktop_evaluation_lab_programs_items: list[Dict[str, Any]] = []
         self.desktop_evaluation_campaign_daemon_state: Dict[str, Any] = {
             "status": "success",
             "active": True,
@@ -13700,6 +13701,258 @@ class FakeDesktopService:
             },
         }
 
+    def _desktop_evaluation_refresh_program_row(self, program: Dict[str, Any]) -> Dict[str, Any]:
+        campaign_ids = [
+            str(item).strip()
+            for item in program.get("campaign_ids", [])
+            if str(item).strip()
+        ] if isinstance(program.get("campaign_ids", []), list) else []
+        campaigns = [
+            self._desktop_evaluation_refresh_campaign_row(dict(item))
+            for item in self.desktop_evaluation_lab_campaigns_items
+            if str(item.get("campaign_id", "") or "").strip() in campaign_ids
+        ]
+        cycle_runs = [
+            dict(item)
+            for item in program.get("cycle_runs", [])
+            if isinstance(item, dict)
+        ]
+        latest_cycle = cycle_runs[-1] if cycle_runs else {}
+        target_apps = [
+            str(item).strip()
+            for item in program.get("target_apps", program.get("app_targets", []))
+            if str(item).strip()
+        ] if isinstance(program.get("target_apps", program.get("app_targets", [])), list) else []
+        represented_apps = {
+            str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "")
+            .strip()
+            .lower()
+            for item in campaigns
+            if isinstance(item.get("filters", {}), dict)
+            and str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "").strip()
+        }
+        direction_counts: Dict[str, int] = {}
+        for item in cycle_runs:
+            direction = str(item.get("trend_direction", "") or "").strip().lower()
+            if direction:
+                direction_counts[direction] = int(direction_counts.get(direction, 0) or 0) + 1
+        latest_direction = str(
+            latest_cycle.get(
+                "trend_direction",
+                latest_cycle.get("history_direction", program.get("history_direction", "")),
+            )
+            or ""
+        ).strip().lower()
+        trend_direction = latest_direction or (
+            max(direction_counts.items(), key=lambda entry: entry[1])[0]
+            if direction_counts
+            else ""
+        )
+        stable_cycle_count = sum(
+            1
+            for item in cycle_runs
+            if bool(item.get("stable", False))
+            or str(item.get("stop_reason", "") or "").strip().lower() == "stable"
+        )
+        regression_cycle_count = sum(
+            1
+            for item in cycle_runs
+            if str(item.get("trend_direction", item.get("latest_regression_status", "")) or "").strip().lower()
+            in {"regression", "failed", "error"}
+        )
+        stable_cycle_streak = 0
+        regression_cycle_streak = 0
+        for item in reversed(cycle_runs):
+            if (
+                bool(item.get("stable", False))
+                or str(item.get("stop_reason", "") or "").strip().lower() == "stable"
+            ):
+                stable_cycle_streak += 1
+            else:
+                break
+        for item in reversed(cycle_runs):
+            if str(item.get("trend_direction", item.get("latest_regression_status", "")) or "").strip().lower() in {
+                "regression",
+                "failed",
+                "error",
+            }:
+                regression_cycle_streak += 1
+            else:
+                break
+        pending_campaign_count = sum(
+            1 for item in campaigns if str(item.get("status", "") or "").strip().lower() != "complete"
+        )
+        attention_campaign_count = sum(
+            1 for item in campaigns if str(item.get("status", "") or "").strip().lower() == "attention"
+        )
+        complete_campaign_count = sum(
+            1 for item in campaigns if str(item.get("status", "") or "").strip().lower() == "complete"
+        )
+        pending_session_count = sum(int(item.get("pending_session_count", 0) or 0) for item in campaigns)
+        attention_session_count = sum(int(item.get("attention_session_count", 0) or 0) for item in campaigns)
+        complete_session_count = sum(int(item.get("complete_session_count", 0) or 0) for item in campaigns)
+        pending_replay_count = sum(int(item.get("pending_replay_count", 0) or 0) for item in campaigns)
+        failed_replay_count = sum(int(item.get("failed_replay_count", 0) or 0) for item in campaigns)
+        completed_replay_count = sum(int(item.get("completed_replay_count", 0) or 0) for item in campaigns)
+        sweep_count = sum(int(item.get("sweep_count", 0) or 0) for item in campaigns)
+        long_horizon_pending_count = sum(int(item.get("long_horizon_pending_count", 0) or 0) for item in campaigns)
+        pending_app_target_count = max(0, len(target_apps) - len(represented_apps))
+        program_pressure_score = round(
+            float(attention_campaign_count * 3)
+            + float(pending_campaign_count)
+            + float(pending_session_count) * 0.4
+            + float(long_horizon_pending_count) * 0.25
+            + float(regression_cycle_count) * 1.5,
+            6,
+        )
+        program_priority = (
+            "critical"
+            if attention_campaign_count > 0 or regression_cycle_count > 0
+            else ("elevated" if pending_campaign_count > 0 or pending_app_target_count > 0 else "normal")
+        )
+        latest_weighted_score = round(
+            float(
+                latest_cycle.get(
+                    "weighted_score",
+                    latest_cycle.get("latest_weighted_score", program.get("latest_cycle_weighted_score", 0.0)),
+                )
+                or 0.0
+            ),
+            6,
+        )
+        latest_weighted_pass_rate = round(
+            float(
+                latest_cycle.get(
+                    "weighted_pass_rate",
+                    latest_cycle.get(
+                        "latest_weighted_pass_rate",
+                        program.get("latest_cycle_weighted_pass_rate", 0.0),
+                    ),
+                )
+                or 0.0
+            ),
+            6,
+        )
+        program["campaigns"] = [
+            {
+                "campaign_id": str(item.get("campaign_id", "") or ""),
+                "label": str(item.get("label", "") or ""),
+                "status": str(item.get("status", "") or "ready"),
+                "pending_session_count": int(item.get("pending_session_count", 0) or 0),
+                "attention_session_count": int(item.get("attention_session_count", 0) or 0),
+                "pending_app_target_count": int(item.get("pending_app_target_count", 0) or 0),
+                "sweep_count": int(item.get("sweep_count", 0) or 0),
+                "campaign_priority": str(item.get("campaign_priority", "") or ""),
+            }
+            for item in campaigns[:8]
+        ]
+        program["campaign_count"] = len(campaigns)
+        program["pending_campaign_count"] = pending_campaign_count
+        program["attention_campaign_count"] = attention_campaign_count
+        program["complete_campaign_count"] = complete_campaign_count
+        program["pending_session_count"] = pending_session_count
+        program["attention_session_count"] = attention_session_count
+        program["complete_session_count"] = complete_session_count
+        program["pending_replay_count"] = pending_replay_count
+        program["failed_replay_count"] = failed_replay_count
+        program["completed_replay_count"] = completed_replay_count
+        program["sweep_count"] = sweep_count
+        program["pending_app_target_count"] = pending_app_target_count
+        program["target_apps"] = list(target_apps)
+        program["app_targets"] = list(target_apps)
+        program["target_app_count"] = len(target_apps)
+        program["long_horizon_pending_count"] = long_horizon_pending_count
+        program["cycle_count"] = len(cycle_runs)
+        program["completed_cycle_count"] = len(cycle_runs)
+        program["stable_cycle_count"] = stable_cycle_count
+        program["regression_cycle_count"] = regression_cycle_count
+        program["stable_cycle_streak"] = stable_cycle_streak
+        program["regression_cycle_streak"] = regression_cycle_streak
+        program["latest_cycle_status"] = str(latest_cycle.get("status", "") or "")
+        program["latest_cycle_stop_reason"] = str(latest_cycle.get("stop_reason", "") or "")
+        program["latest_cycle_executed_at"] = str(latest_cycle.get("executed_at", "") or "")
+        program["latest_cycle_executed_campaign_count"] = int(latest_cycle.get("executed_campaign_count", 0) or 0)
+        program["latest_cycle_executed_sweep_count"] = int(latest_cycle.get("executed_sweep_count", 0) or 0)
+        program["latest_cycle_weighted_score"] = latest_weighted_score
+        program["latest_cycle_weighted_pass_rate"] = latest_weighted_pass_rate
+        program["latest_cycle_trend_direction"] = trend_direction
+        program["history_direction"] = trend_direction
+        program["trend_summary"] = {
+            "direction": trend_direction,
+            "counts": direction_counts,
+            "cycle_count": len(cycle_runs),
+        }
+        program["program_pressure_score"] = program_pressure_score
+        program["program_priority"] = program_priority
+        program["status"] = (
+            "attention"
+            if attention_campaign_count > 0 or regression_cycle_count > 0
+            else ("complete" if pending_campaign_count == 0 and campaigns else "ready")
+        )
+        program["updated_at"] = str(
+            latest_cycle.get(
+                "executed_at",
+                campaigns[0].get("updated_at", program.get("updated_at", program.get("created_at", "")))
+                if campaigns
+                else program.get("updated_at", program.get("created_at", "")),
+            )
+            or ""
+        )
+        return program
+
+    def desktop_evaluation_lab_programs(
+        self,
+        *,
+        limit: int = 12,
+        program_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        selected = [
+            self._desktop_evaluation_refresh_program_row(dict(item))
+            for item in self.desktop_evaluation_lab_programs_items
+        ]
+        if str(program_id or "").strip():
+            selected = [
+                item
+                for item in selected
+                if str(item.get("program_id", "") or "").strip() == str(program_id or "").strip()
+            ]
+        if str(status or "").strip():
+            normalized_status = str(status or "").strip().lower()
+            selected = [
+                item
+                for item in selected
+                if str(item.get("status", "") or "").strip().lower() == normalized_status
+            ]
+        selected = selected[: max(1, int(limit))]
+        all_rows = [
+            self._desktop_evaluation_refresh_program_row(dict(item))
+            for item in self.desktop_evaluation_lab_programs_items
+        ]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(all_rows),
+            "limit": max(1, int(limit)),
+            "items": selected,
+            "latest_program": dict(selected[0]) if selected else {},
+            "summary": {
+                "campaign_count": sum(int(item.get("campaign_count", 0) or 0) for item in all_rows),
+                "pending_campaigns": sum(int(item.get("pending_campaign_count", 0) or 0) for item in all_rows),
+                "attention_campaigns": sum(int(item.get("attention_campaign_count", 0) or 0) for item in all_rows),
+                "pending_sessions": sum(int(item.get("pending_session_count", 0) or 0) for item in all_rows),
+                "attention_sessions": sum(int(item.get("attention_session_count", 0) or 0) for item in all_rows),
+                "pending_app_targets": sum(int(item.get("pending_app_target_count", 0) or 0) for item in all_rows),
+                "cycle_count": sum(int(item.get("cycle_count", 0) or 0) for item in all_rows),
+                "stable_cycles": sum(int(item.get("stable_cycle_count", 0) or 0) for item in all_rows),
+                "regression_cycles": sum(int(item.get("regression_cycle_count", 0) or 0) for item in all_rows),
+                "program_pressure_total": round(
+                    sum(float(item.get("program_pressure_score", 0.0) or 0.0) for item in all_rows),
+                    6,
+                ),
+            },
+        }
+
     def desktop_evaluation_create_lab_session(
         self,
         *,
@@ -14409,6 +14662,360 @@ class FakeDesktopService:
             "lab": dict(final_payload.get("lab", {})) if isinstance(final_payload.get("lab", {}), dict) else {},
             "native_targets": dict(final_payload.get("native_targets", {})) if isinstance(final_payload.get("native_targets", {}), dict) else {},
             "guidance": dict(final_payload.get("guidance", {})) if isinstance(final_payload.get("guidance", {}), dict) else {},
+        }
+
+    def desktop_evaluation_create_lab_program(
+        self,
+        *,
+        scenario_name: str = "",
+        pack: str = "",
+        category: str = "",
+        capability: str = "",
+        risk_level: str = "",
+        autonomy_tier: str = "",
+        mission_family: str = "",
+        app_name: str = "",
+        limit: int = 200,
+        history_limit: int = 8,
+        source: str = "",
+        label: str = "",
+        max_campaigns: int = 3,
+        max_sessions_per_campaign: int = 3,
+    ) -> Dict[str, Any]:
+        lab = self.desktop_evaluation_lab(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=scenario_name,
+            pack=pack,
+            category=category,
+            capability=capability,
+            risk_level=risk_level,
+            autonomy_tier=autonomy_tier,
+            mission_family=mission_family,
+            app_name=app_name,
+            limit=limit,
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        normalized_max_campaigns = max(1, int(max_campaigns or 3))
+        normalized_max_sessions = max(1, int(max_sessions_per_campaign or 3))
+        target_apps: list[str] = []
+        if str(app_name or "").strip():
+            target_apps.append(str(app_name).strip())
+        for item in native_targets.get("target_apps", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("app_name", "") or "").strip()
+            if name and name.lower() not in {value.lower() for value in target_apps}:
+                target_apps.append(name)
+        target_apps = target_apps[:normalized_max_campaigns]
+        if not target_apps:
+            target_apps = ["settings"]
+        created_campaigns: list[Dict[str, Any]] = []
+        campaign_ids: list[str] = []
+        base_label = str(label or pack or category or app_name or "benchmark replay program")
+        for target_app in target_apps[:normalized_max_campaigns]:
+            campaign_label = (
+                f"{base_label} / {target_app}"
+                if base_label and len(target_apps) > 1
+                else (base_label or f"{target_app} replay program")
+            )
+            payload = self.desktop_evaluation_create_lab_campaign(
+                scenario_name=scenario_name,
+                pack=pack,
+                category=category,
+                capability=capability,
+                risk_level=risk_level,
+                autonomy_tier=autonomy_tier,
+                mission_family=mission_family,
+                app_name=target_app,
+                limit=limit,
+                history_limit=history_limit,
+                source=source or "benchmark_program",
+                label=campaign_label,
+                max_sessions=normalized_max_sessions,
+            )
+            if str(payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            created_campaigns.append(dict(payload))
+            campaign = dict(payload.get("campaign", {})) if isinstance(payload.get("campaign", {}), dict) else {}
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            if campaign_id:
+                campaign_ids.append(campaign_id)
+        program_id = f"benchprogram-test-{len(self.desktop_evaluation_lab_programs_items) + 1}"
+        created_at = datetime.now(timezone.utc).isoformat()
+        program = {
+            "program_id": program_id,
+            "status": "ready",
+            "label": base_label,
+            "source": str(source or "action_control_panel"),
+            "created_at": created_at,
+            "updated_at": created_at,
+            "filters": dict(lab.get("filters", {})),
+            "focus_summary": list(native_targets.get("focus_summary", [])),
+            "campaign_ids": list(campaign_ids),
+            "target_apps": list(target_apps),
+            "app_targets": list(target_apps),
+            "target_app_count": len(target_apps),
+            "cycle_runs": [],
+            "cycle_count": 0,
+            "completed_cycle_count": 0,
+            "stable_cycle_count": 0,
+            "regression_cycle_count": 0,
+            "stable_cycle_streak": 0,
+            "regression_cycle_streak": 0,
+            "latest_cycle_status": "",
+            "latest_cycle_stop_reason": "",
+            "latest_cycle_executed_at": "",
+            "latest_cycle_executed_campaign_count": 0,
+            "latest_cycle_executed_sweep_count": 0,
+            "latest_cycle_weighted_score": 0.0,
+            "latest_cycle_weighted_pass_rate": 0.0,
+            "latest_cycle_trend_direction": "",
+            "history_direction": "",
+            "trend_summary": {},
+            "lab_snapshot": dict(lab),
+            "native_targets_snapshot": dict(native_targets),
+            "guidance_snapshot": dict(guidance),
+        }
+        program = self._desktop_evaluation_refresh_program_row(program)
+        self.desktop_evaluation_lab_programs_items.insert(0, program)
+        self.desktop_evaluation_lab_programs_items = self.desktop_evaluation_lab_programs_items[:8]
+        created_session_count = sum(
+            int(item.get("created_session_count", 0) or 0)
+            for item in created_campaigns
+            if isinstance(item, dict)
+        )
+        return {
+            "status": "success",
+            "program": dict(program),
+            "created_campaigns": created_campaigns,
+            "created_campaign_count": len(created_campaigns),
+            "created_session_count": created_session_count,
+            "lab": dict(lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
+        }
+
+    def desktop_evaluation_run_lab_program_cycle(
+        self,
+        *,
+        program_id: str = "",
+        max_campaigns: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_max_campaigns = max(1, int(max_campaigns or 3))
+        selected: Dict[str, Any] | None = None
+        selected_index = -1
+        for index, item in enumerate(self.desktop_evaluation_lab_programs_items):
+            if str(item.get("program_id", "") or "").strip() == str(program_id or "").strip():
+                selected = self._desktop_evaluation_refresh_program_row(dict(item))
+                selected_index = index
+                break
+        if selected is None:
+            return {"status": "error", "message": "benchmark lab program not found"}
+        filters = dict(selected.get("filters", {})) if isinstance(selected.get("filters", {}), dict) else {}
+        program_campaign_ids = [
+            str(item).strip()
+            for item in selected.get("campaign_ids", [])
+            if str(item).strip()
+        ] if isinstance(selected.get("campaign_ids", []), list) else []
+        current_campaigns = [
+            self._desktop_evaluation_refresh_campaign_row(dict(item))
+            for item in self.desktop_evaluation_lab_campaigns_items
+            if str(item.get("campaign_id", "") or "").strip() in program_campaign_ids
+        ]
+        represented_apps = {
+            str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "")
+            .strip()
+            .lower()
+            for item in current_campaigns
+            if isinstance(item.get("filters", {}), dict)
+            and str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "").strip()
+        }
+        app_targets = [
+            str(item).strip()
+            for item in selected.get("target_apps", selected.get("app_targets", []))
+            if str(item).strip()
+        ] if isinstance(selected.get("target_apps", selected.get("app_targets", [])), list) else []
+        created_campaigns: list[Dict[str, Any]] = []
+        for target_app in app_targets:
+            if target_app.strip().lower() in represented_apps:
+                continue
+            if len(current_campaigns) + len(created_campaigns) >= max(normalized_max_campaigns, len(current_campaigns)):
+                break
+            payload = self.desktop_evaluation_create_lab_campaign(
+                scenario_name=str(filters.get("scenario_name", "") or ""),
+                pack=str(filters.get("pack", "") or ""),
+                category=str(filters.get("category", "") or ""),
+                capability=str(filters.get("capability", "") or ""),
+                risk_level=str(filters.get("risk_level", "") or ""),
+                autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+                mission_family=str(filters.get("mission_family", "") or ""),
+                app_name=target_app,
+                limit=int(filters.get("limit", 200) or 200),
+                history_limit=history_limit,
+                source="benchmark_program_cycle",
+                label=f"{str(selected.get('label', '') or 'replay program').strip()} / {target_app}",
+                max_sessions=max(1, int(max_sessions or 3)),
+            )
+            if str(payload.get("status", "") or "").strip().lower() != "success":
+                continue
+            created_campaigns.append(dict(payload))
+            campaign = dict(payload.get("campaign", {})) if isinstance(payload.get("campaign", {}), dict) else {}
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            if campaign_id and campaign_id not in program_campaign_ids:
+                program_campaign_ids.append(campaign_id)
+                current_campaigns.append(self._desktop_evaluation_refresh_campaign_row(campaign))
+        ranked_campaigns = sorted(
+            current_campaigns,
+            key=lambda item: (
+                1 if str(item.get("status", "") or "").strip().lower() == "attention" else 0,
+                int(item.get("attention_session_count", 0) or 0),
+                int(item.get("pending_session_count", 0) or 0),
+                int(item.get("pending_app_target_count", 0) or 0),
+                int(item.get("long_horizon_pending_count", 0) or 0),
+            ),
+            reverse=True,
+        )[:normalized_max_campaigns]
+        results: list[Dict[str, Any]] = []
+        for campaign in ranked_campaigns:
+            campaign_id = str(campaign.get("campaign_id", "") or "").strip()
+            if not campaign_id:
+                continue
+            results.append(
+                self.desktop_evaluation_run_lab_campaign_cycle(
+                    campaign_id=campaign_id,
+                    max_sweeps=max_sweeps_per_campaign,
+                    max_sessions=max_sessions,
+                    max_replays_per_session=max_replays_per_session,
+                    history_limit=history_limit,
+                    stop_on_stable=stop_on_stable,
+                )
+            )
+        refreshed_campaigns = [
+            self._desktop_evaluation_refresh_campaign_row(dict(item))
+            for item in self.desktop_evaluation_lab_campaigns_items
+            if str(item.get("campaign_id", "") or "").strip() in program_campaign_ids
+        ]
+        selected["campaign_ids"] = list(program_campaign_ids)
+        selected["target_apps"] = list(
+            dict.fromkeys(
+                [
+                    *app_targets,
+                    *[
+                        str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "")
+                        .strip()
+                        for item in refreshed_campaigns
+                        if isinstance(item.get("filters", {}), dict)
+                        and str(item.get("filters", {}).get("app", item.get("filters", {}).get("app_name", "")) or "").strip()
+                    ],
+                ]
+            )
+        )
+        lab = self.desktop_evaluation_lab(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        native_targets = self.desktop_evaluation_native_targets(
+            scenario_name=str(filters.get("scenario_name", "") or ""),
+            pack=str(filters.get("pack", "") or ""),
+            category=str(filters.get("category", "") or ""),
+            capability=str(filters.get("capability", "") or ""),
+            risk_level=str(filters.get("risk_level", "") or ""),
+            autonomy_tier=str(filters.get("autonomy_tier", "") or ""),
+            mission_family=str(filters.get("mission_family", "") or ""),
+            app_name=str(filters.get("app", filters.get("app_name", "")) or ""),
+            limit=int(filters.get("limit", 200) or 200),
+            history_limit=history_limit,
+        )
+        guidance = self.desktop_evaluation_guidance()
+        stable = bool(results) and all(bool(dict(item.get("cycle", {})).get("stable", False)) for item in results)
+        trend_direction = (
+            "regression"
+            if any(
+                str(dict(item.get("campaign", {})).get("latest_sweep_regression_status", "") or "").strip().lower()
+                in {"regression", "failed", "error"}
+                for item in results
+            )
+            else str(dict(lab.get("history_trend", {})).get("direction", "") or "").strip().lower()
+        )
+        cycle_row = {
+            "cycle_id": f"{str(selected.get('program_id', '') or program_id).strip()}-cycle-{int(selected.get('cycle_count', 0) or 0) + 1}",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "success" if results else "idle",
+            "stop_reason": "stable" if stable and stop_on_stable else ("idle" if not results else "campaign_budget_reached"),
+            "stable": stable,
+            "executed_campaign_count": len(results),
+            "executed_sweep_count": sum(
+                int(dict(item.get("cycle", {})).get("executed_sweep_count", 0) or 0)
+                for item in results
+            ),
+            "created_campaign_count": len(created_campaigns),
+            "created_session_count": sum(
+                int(item.get("created_session_count", 0) or 0)
+                for item in created_campaigns
+                if isinstance(item, dict)
+            ),
+            "weighted_score": round(
+                float(dict(lab.get("latest_summary", {})).get("weighted_score", 0.0) or 0.0),
+                6,
+            ),
+            "weighted_pass_rate": round(
+                float(dict(lab.get("latest_summary", {})).get("weighted_pass_rate", 0.0) or 0.0),
+                6,
+            ),
+            "trend_direction": trend_direction,
+            "program_priority": "critical" if trend_direction == "regression" else "elevated",
+        }
+        selected.setdefault("cycle_runs", [])
+        if not isinstance(selected.get("cycle_runs", []), list):
+            selected["cycle_runs"] = []
+        selected["cycle_runs"].append(cycle_row)
+        selected["lab_snapshot"] = dict(lab)
+        selected["native_targets_snapshot"] = dict(native_targets)
+        selected["guidance_snapshot"] = dict(guidance)
+        selected = self._desktop_evaluation_refresh_program_row(selected)
+        if 0 <= selected_index < len(self.desktop_evaluation_lab_programs_items):
+            self.desktop_evaluation_lab_programs_items[selected_index] = selected
+        return {
+            "status": "success",
+            "program": dict(selected),
+            "cycle": dict(cycle_row),
+            "results": results,
+            "created_campaigns": created_campaigns,
+            "created_campaign_count": len(created_campaigns),
+            "created_session_count": sum(
+                int(item.get("created_session_count", 0) or 0)
+                for item in created_campaigns
+                if isinstance(item, dict)
+            ),
+            "lab": dict(lab),
+            "native_targets": dict(native_targets),
+            "guidance": dict(guidance),
         }
 
     def desktop_evaluation_campaign_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
@@ -19404,6 +20011,75 @@ def test_desktop_evaluation_lab_campaign_cycle_route(api_server: tuple[str, Fake
     assert cycled["status"] == "success"
     assert cycled["campaign"]["campaign_id"] == campaign_id
     assert int(cycled["cycle"]["executed_sweep_count"]) >= 1
+    assert isinstance(cycled["results"], list)
+
+
+def test_desktop_evaluation_lab_program_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/programs",
+        payload={
+            "pack": "long_horizon_and_replay",
+            "history_limit": 6,
+            "source": "http_test",
+            "max_campaigns": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+    assert str(created["program"]["program_id"]).startswith("benchprogram-test-")
+    assert int(created["created_campaign_count"]) >= 1
+    assert int(created["created_session_count"]) >= 1
+
+    status, programs = request_json(
+        "GET",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/programs?limit=4",
+    )
+    assert status == 200
+    assert programs["status"] == "success"
+    assert programs["count"] >= 1
+    assert programs["latest_program"]["program_id"] == created["program"]["program_id"]
+    assert int(programs["summary"]["campaign_count"]) >= 1
+
+
+def test_desktop_evaluation_lab_program_cycle_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/programs",
+        payload={
+            "pack": "unsupported_and_recovery",
+            "app_name": "settings",
+            "history_limit": 6,
+            "max_campaigns": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    program_id = str(created["program"]["program_id"])
+
+    status, cycled = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/programs/run-cycle",
+        payload={
+            "program_id": program_id,
+            "max_campaigns": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "stop_on_stable": True,
+        },
+    )
+    assert status == 200
+    assert cycled["status"] == "success"
+    assert cycled["program"]["program_id"] == program_id
+    assert int(cycled["cycle"]["executed_campaign_count"]) >= 1
+    assert int(cycled["program"]["cycle_count"]) >= 1
     assert isinstance(cycled["results"], list)
 
 
