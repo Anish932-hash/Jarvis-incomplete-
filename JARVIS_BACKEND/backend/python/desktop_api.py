@@ -355,6 +355,14 @@ class DesktopBackendService:
             query=str(os.getenv("JARVIS_DESKTOP_APP_MEMORY_DAEMON_QUERY", "") or "").strip(),
             category=str(os.getenv("JARVIS_DESKTOP_APP_MEMORY_DAEMON_CATEGORY", "") or "").strip(),
             ensure_app_launch=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_ENSURE_LAUNCH", True),
+            probe_controls=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_PROBE_CONTROLS", True),
+            max_probe_controls=self._env_int(
+                "JARVIS_DESKTOP_APP_MEMORY_DAEMON_MAX_PROBE_CONTROLS",
+                4,
+                minimum=1,
+                maximum=12,
+            ),
+            allow_risky_probes=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_ALLOW_RISKY_PROBES", False),
         )
         self.desktop_governance_policy = DesktopGovernancePolicyManager(
             policy_profile=str(os.getenv("JARVIS_DESKTOP_GOVERNANCE_PROFILE", "balanced") or "balanced").strip(),
@@ -8201,6 +8209,10 @@ class DesktopBackendService:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -8216,6 +8228,10 @@ class DesktopBackendService:
                 include_elements=include_elements,
                 include_workflow_probes=include_workflow_probes,
                 include_exploration=include_exploration,
+                probe_controls=probe_controls,
+                max_probe_controls=max_probe_controls,
+                allow_risky_probes=allow_risky_probes,
+                include_ocr_targets=include_ocr_targets,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory survey payload"}
         except Exception as exc:  # noqa: BLE001
@@ -8233,6 +8249,10 @@ class DesktopBackendService:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
@@ -8249,6 +8269,10 @@ class DesktopBackendService:
                 include_elements=include_elements,
                 include_workflow_probes=include_workflow_probes,
                 include_exploration=include_exploration,
+                probe_controls=probe_controls,
+                max_probe_controls=max_probe_controls,
+                allow_risky_probes=allow_risky_probes,
+                include_ocr_targets=include_ocr_targets,
                 source=source,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
@@ -8309,6 +8333,9 @@ class DesktopBackendService:
         query: Optional[str] = None,
         category: Optional[str] = None,
         ensure_app_launch: Optional[bool] = None,
+        probe_controls: Optional[bool] = None,
+        max_probe_controls: Optional[int] = None,
+        allow_risky_probes: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8324,6 +8351,9 @@ class DesktopBackendService:
             query=query,
             category=category,
             ensure_app_launch=ensure_app_launch,
+            probe_controls=probe_controls,
+            max_probe_controls=max_probe_controls,
+            allow_risky_probes=allow_risky_probes,
             source=source,
         )
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
@@ -8337,6 +8367,9 @@ class DesktopBackendService:
         query: Optional[str] = None,
         category: Optional[str] = None,
         ensure_app_launch: Optional[bool] = None,
+        probe_controls: Optional[bool] = None,
+        max_probe_controls: Optional[int] = None,
+        allow_risky_probes: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8350,6 +8383,9 @@ class DesktopBackendService:
             query=query,
             category=category,
             ensure_app_launch=ensure_app_launch,
+            probe_controls=probe_controls,
+            max_probe_controls=max_probe_controls,
+            allow_risky_probes=allow_risky_probes,
             source=source,
         )
         payload["supervisor"] = _to_jsonable(
@@ -9138,6 +9174,9 @@ class DesktopBackendService:
         query: str = "",
         category: str = "",
         ensure_app_launch: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
         source: str = "daemon",
     ) -> Dict[str, Any]:
         payload = self.survey_desktop_app_memory_batch(
@@ -9150,6 +9189,10 @@ class DesktopBackendService:
             include_elements=True,
             include_workflow_probes=True,
             include_exploration=True,
+            probe_controls=probe_controls,
+            max_probe_controls=max_probe_controls,
+            allow_risky_probes=allow_risky_probes,
+            include_ocr_targets=True,
             source=source,
         )
         return _to_jsonable(payload)
@@ -45601,6 +45644,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     include_elements=self._parse_bool(body.get("include_elements", True), default=True),
                     include_workflow_probes=self._parse_bool(body.get("include_workflow_probes", True), default=True),
                     include_exploration=self._parse_bool(body.get("include_exploration", True), default=True),
+                    probe_controls=self._parse_bool(body.get("probe_controls", True), default=True),
+                    max_probe_controls=self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12),
+                    allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
+                    include_ocr_targets=self._parse_bool(body.get("include_ocr_targets", True), default=True),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
@@ -45615,6 +45662,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     include_elements=self._parse_bool(body.get("include_elements", True), default=True),
                     include_workflow_probes=self._parse_bool(body.get("include_workflow_probes", True), default=True),
                     include_exploration=self._parse_bool(body.get("include_exploration", True), default=True),
+                    probe_controls=self._parse_bool(body.get("probe_controls", True), default=True),
+                    max_probe_controls=self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12),
+                    allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
+                    include_ocr_targets=self._parse_bool(body.get("include_ocr_targets", True), default=True),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
@@ -45637,6 +45688,9 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     query=(str(body.get("query", "")) if "query" in body else None),
                     category=(str(body.get("category", "")) if "category" in body else None),
                     ensure_app_launch=(self._parse_bool(body.get("ensure_app_launch"), default=True) if "ensure_app_launch" in body else None),
+                    probe_controls=(self._parse_bool(body.get("probe_controls"), default=True) if "probe_controls" in body else None),
+                    max_probe_controls=(self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12) if "max_probe_controls" in body else None),
+                    allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45650,6 +45704,9 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     query=(str(body.get("query", "")) if "query" in body else None),
                     category=(str(body.get("category", "")) if "category" in body else None),
                     ensure_app_launch=(self._parse_bool(body.get("ensure_app_launch"), default=True) if "ensure_app_launch" in body else None),
+                    probe_controls=(self._parse_bool(body.get("probe_controls"), default=True) if "probe_controls" in body else None),
+                    max_probe_controls=(self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12) if "max_probe_controls" in body else None),
+                    allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )

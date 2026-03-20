@@ -8260,6 +8260,10 @@ class DesktopActionRouter:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = False,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_app_name = str(app_name or "").strip()
@@ -8275,6 +8279,7 @@ class DesktopActionRouter:
             query=clean_query,
             limit=max(12, min(int(limit or 32), 80)),
             include_observation=include_observation,
+            include_ocr_targets=bool(include_ocr_targets or probe_controls),
             include_elements=include_elements,
             include_workflow_probes=include_workflow_probes,
         )
@@ -8322,6 +8327,17 @@ class DesktopActionRouter:
                 query=clean_query,
                 limit=max(4, min(int(limit or 8), 12)),
             )
+        probe_report: Dict[str, Any] = {}
+        if probe_controls:
+            probe_report = self._probe_app_memory_controls(
+                snapshot=dict(snapshot),
+                app_name=clean_app_name,
+                window_title=clean_window_title,
+                query=clean_query,
+                max_probe_controls=max_probe_controls,
+                allow_risky_probes=allow_risky_probes,
+                include_ocr_targets=include_ocr_targets,
+            )
         memory_entry = self._app_memory.record_survey(
             app_name=clean_app_name,
             window_title=clean_window_title,
@@ -8330,6 +8346,7 @@ class DesktopActionRouter:
             launch_result=launch_result,
             snapshot=snapshot,
             exploration_plan=exploration_plan,
+            probe_report=probe_report,
             survey_status="success",
             error_message="",
             source=clean_source,
@@ -8351,6 +8368,15 @@ class DesktopActionRouter:
         message_parts.append(
             f"Learned {discovered_control_count} controls and {command_candidate_count} command candidates across {survey_count} survey run{'s' if survey_count != 1 else ''}."
         )
+        if isinstance(probe_report, dict) and probe_report:
+            attempted_count = int(probe_report.get("attempted_count", 0) or 0)
+            successful_count = int(probe_report.get("successful_count", 0) or 0)
+            blocked_count = int(probe_report.get("blocked_count", 0) or 0)
+            ocr_target_count = int(probe_report.get("ocr_target_count", 0) or 0)
+            if attempted_count or blocked_count or ocr_target_count:
+                message_parts.append(
+                    f"Vision-guided probing tested {attempted_count} control{'s' if attempted_count != 1 else ''}, learned {successful_count} verified effect{'s' if successful_count != 1 else ''}, and skipped {blocked_count} risky target{'s' if blocked_count != 1 else ''} from {ocr_target_count} OCR target{'s' if ocr_target_count != 1 else ''}."
+                )
         if isinstance(exploration_plan, dict) and exploration_plan:
             branch_action_count = int(exploration_plan.get("branch_action_count", 0) or 0)
             hypothesis_count = int(exploration_plan.get("hypothesis_count", 0) or 0)
@@ -8364,6 +8390,7 @@ class DesktopActionRouter:
             "launch_result": launch_result,
             "surface_snapshot": snapshot,
             "exploration_plan": exploration_plan,
+            "probe_report": probe_report,
             "memory_entry": memory_entry,
             "app_memory": app_memory,
         }
@@ -8380,6 +8407,10 @@ class DesktopActionRouter:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = False,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
         source: str = "batch",
     ) -> Dict[str, Any]:
         bounded_max_apps = max(1, min(int(max_apps or 4), 32))
@@ -8418,6 +8449,10 @@ class DesktopActionRouter:
                     include_elements=include_elements,
                     include_workflow_probes=include_workflow_probes,
                     include_exploration=include_exploration,
+                    probe_controls=probe_controls,
+                    max_probe_controls=max_probe_controls,
+                    allow_risky_probes=allow_risky_probes,
+                    include_ocr_targets=include_ocr_targets,
                     source=clean_source,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -8474,6 +8509,467 @@ class DesktopActionRouter:
             },
             "app_memory": app_memory,
         }
+
+    def _probe_app_memory_controls(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
+    ) -> Dict[str, Any]:
+        capabilities = self._capabilities()
+        accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
+        vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
+        bounded = max(1, min(int(max_probe_controls or 4), 8))
+        candidates = self._app_memory_probe_candidates(
+            snapshot=snapshot,
+            query=query,
+            limit=bounded,
+            include_ocr_targets=include_ocr_targets,
+        )
+        if not candidates:
+            return {
+                "status": "skipped",
+                "message": "No safe probe candidates were available on the current surface.",
+                "candidate_count": 0,
+                "ocr_target_count": 0,
+                "attempted_count": 0,
+                "successful_count": 0,
+                "blocked_count": 0,
+                "error_count": 0,
+                "items": [],
+            }
+
+        focus_title = str(
+            snapshot.get("target_window", {}).get("title", "")
+            if isinstance(snapshot.get("target_window", {}), dict)
+            else ""
+        ).strip() or str(window_title or "").strip() or str(app_name or "").strip()
+        baseline = self._app_memory_probe_observation(
+            snapshot=snapshot,
+            window_title=focus_title,
+            include_ocr_targets=include_ocr_targets,
+            vision_ready=vision_ready,
+        )
+        items: List[Dict[str, Any]] = []
+        attempted_count = 0
+        successful_count = 0
+        blocked_count = 0
+        error_count = 0
+        previous_observation = baseline
+
+        for candidate in candidates[:bounded]:
+            candidate_payload = dict(candidate)
+            risk_flags = [
+                str(item).strip()
+                for item in candidate_payload.get("risk_flags", [])
+                if str(item).strip()
+            ]
+            if risk_flags and not allow_risky_probes:
+                blocked_count += 1
+                items.append(
+                    {
+                        **candidate_payload,
+                        "probe_status": "blocked",
+                        "method": "blocked",
+                        "message": "Skipped during autonomous learning because the control looks risky or confirmatory.",
+                        "effect_kind": "blocked_for_review",
+                        "semantic_role": "review_required",
+                        "effect_summary": "Control was discovered and memorized, but probing was withheld pending operator review.",
+                    }
+                )
+                continue
+
+            attempted_count += 1
+            action_result: Dict[str, Any] = {"status": "error", "message": "no probe action attempted"}
+            method = "unavailable"
+            if accessibility_ready and (
+                str(candidate_payload.get("element_id", "") or "").strip()
+                or str(candidate_payload.get("query", "") or "").strip()
+            ):
+                invoke_payload: Dict[str, Any] = {
+                    "action": "click",
+                }
+                if focus_title:
+                    invoke_payload["window_title"] = focus_title
+                if str(candidate_payload.get("element_id", "") or "").strip():
+                    invoke_payload["element_id"] = str(candidate_payload.get("element_id", "") or "").strip()
+                else:
+                    invoke_payload["query"] = str(candidate_payload.get("query", "") or "").strip()
+                if str(candidate_payload.get("control_type", "") or "").strip():
+                    invoke_payload["control_type"] = str(candidate_payload.get("control_type", "") or "").strip()
+                action_result = self._call("accessibility_invoke_element", invoke_payload)
+                method = "accessibility_invoke_element"
+
+            if (str(action_result.get("status", "") or "").strip().lower() != "success") and vision_ready:
+                click_payload: Dict[str, Any] = {
+                    "query": str(candidate_payload.get("query", "") or candidate_payload.get("label", "") or "").strip(),
+                    "verify_mode": "none",
+                    "attempts": 1,
+                    "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
+                    "target_mode": "ocr" if str(candidate_payload.get("source", "") or "").strip().lower() == "ocr" else "auto",
+                }
+                if focus_title:
+                    click_payload["window_title"] = focus_title
+                if str(candidate_payload.get("control_type", "") or "").strip():
+                    click_payload["control_type"] = str(candidate_payload.get("control_type", "") or "").strip()
+                action_result = self._call("computer_click_target", click_payload)
+                method = "computer_click_target"
+
+            if self.settle_delay_s > 0:
+                time.sleep(min(self.settle_delay_s, 0.6))
+
+            post_observation = self._app_memory_probe_observation(
+                snapshot={},
+                window_title=focus_title,
+                include_ocr_targets=include_ocr_targets,
+                vision_ready=vision_ready,
+            )
+            effect_kind, effect_summary = self._classify_app_memory_probe_effect(
+                candidate=candidate_payload,
+                before=previous_observation,
+                after=post_observation,
+            )
+            semantic_role = self._app_memory_probe_semantic_role(
+                candidate=candidate_payload,
+                effect_kind=effect_kind,
+            )
+            probe_status = str(action_result.get("status", "") or "error").strip().lower() or "error"
+            if probe_status == "success":
+                successful_count += 1
+            else:
+                error_count += 1
+            screen_changed = bool(
+                str(previous_observation.get("screen_hash", "") or "").strip()
+                and str(post_observation.get("screen_hash", "") or "").strip()
+                and str(previous_observation.get("screen_hash", "") or "").strip()
+                != str(post_observation.get("screen_hash", "") or "").strip()
+            )
+            items.append(
+                {
+                    **candidate_payload,
+                    "probe_status": probe_status,
+                    "method": method,
+                    "message": str(action_result.get("message", "") or "").strip(),
+                    "effect_kind": effect_kind,
+                    "semantic_role": semantic_role,
+                    "effect_summary": effect_summary,
+                    "screen_changed": screen_changed,
+                    "pre_hash": str(previous_observation.get("screen_hash", "") or "").strip(),
+                    "post_hash": str(post_observation.get("screen_hash", "") or "").strip(),
+                    "pre_window_title": str(previous_observation.get("active_window_title", "") or "").strip(),
+                    "post_window_title": str(post_observation.get("active_window_title", "") or "").strip(),
+                    "post_visible_text": str(post_observation.get("text", "") or "").strip()[:400],
+                }
+            )
+            previous_observation = post_observation or previous_observation
+
+        ocr_target_count = len(
+            [
+                row
+                for row in baseline.get("targets", [])
+                if isinstance(row, dict)
+            ]
+        )
+        successful_items = [row for row in items if str(row.get("probe_status", "") or "").strip().lower() == "success"]
+        status = "success" if successful_items else ("partial" if items else "skipped")
+        return {
+            "status": status,
+            "message": (
+                f"App learner probed {attempted_count} safe control(s), learned {successful_count} verified effect(s), "
+                f"and skipped {blocked_count} risky target(s)."
+            ),
+            "candidate_count": len(candidates),
+            "ocr_target_count": ocr_target_count,
+            "attempted_count": attempted_count,
+            "successful_count": successful_count,
+            "blocked_count": blocked_count,
+            "error_count": error_count,
+            "items": items[:bounded],
+        }
+
+    def _app_memory_probe_observation(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        window_title: str = "",
+        include_ocr_targets: bool = True,
+        vision_ready: bool = True,
+    ) -> Dict[str, Any]:
+        observation = (
+            dict(snapshot.get("observation", {}))
+            if isinstance(snapshot.get("observation", {}), dict)
+            else {}
+        )
+        if vision_ready and (
+            not observation
+            or str(observation.get("status", "") or "").strip().lower() in {"", "skipped"}
+        ):
+            observation = self._call("computer_observe", {"include_targets": bool(include_ocr_targets)})
+        active_window = self._active_window()
+        active_window_payload = dict(active_window) if isinstance(active_window, dict) else {}
+        normalized_targets = [
+            {
+                "text": str(row.get("text", "") or "").strip(),
+                "confidence": float(row.get("confidence", 0.0) or 0.0),
+            }
+            for row in observation.get("targets", [])
+            if isinstance(row, dict) and str(row.get("text", "") or "").strip()
+        ] if include_ocr_targets and isinstance(observation.get("targets", []), list) else []
+        return {
+            "status": str(observation.get("status", "skipped") or "skipped"),
+            "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+            "text": str(observation.get("text", "") or "").strip(),
+            "screenshot_path": str(observation.get("screenshot_path", "") or "").strip(),
+            "targets": normalized_targets[:40],
+            "window_title": str(window_title or "").strip(),
+            "active_window_title": str(active_window_payload.get("title", "") or window_title or "").strip(),
+        }
+
+    def _app_memory_probe_candidates(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        query: str = "",
+        limit: int = 4,
+        include_ocr_targets: bool = True,
+    ) -> List[Dict[str, Any]]:
+        summary = snapshot.get("surface_summary", {}) if isinstance(snapshot.get("surface_summary", {}), dict) else {}
+        observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
+        element_rows = [
+            dict(row)
+            for row in snapshot.get("elements", {}).get("items", [])
+            if isinstance(snapshot.get("elements", {}), dict) and isinstance(row, dict)
+        ]
+        query_candidates = [dict(row) for row in summary.get("query_candidates", []) if isinstance(row, dict)]
+        target_control_state = (
+            dict(snapshot.get("target_control_state", {}))
+            if isinstance(snapshot.get("target_control_state", {}), dict)
+            else {}
+        )
+        related_rows = [dict(row) for row in snapshot.get("query_related_candidates", []) if isinstance(row, dict)]
+        selection_rows = [dict(row) for row in snapshot.get("selection_candidates", []) if isinstance(row, dict)]
+        inventory_rows = [dict(row) for row in summary.get("control_inventory", []) if isinstance(row, dict)]
+        ocr_targets = [dict(row) for row in observation.get("targets", []) if isinstance(row, dict)] if include_ocr_targets else []
+        bounded = max(1, min(int(limit or 4), 12))
+        candidates: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        allowed_control_types = {
+            "button",
+            "splitbutton",
+            "menuitem",
+            "tabitem",
+            "treeitem",
+            "listitem",
+            "hyperlink",
+            "checkbox",
+            "radiobutton",
+            "togglebutton",
+        }
+        source_priority = {
+            "query_candidate": 0,
+            "target_control": 1,
+            "related_candidate": 2,
+            "selection_candidate": 3,
+            "element": 4,
+            "inventory": 5,
+            "ocr": 6,
+        }
+
+        def _append_candidate(raw: Dict[str, Any], *, source: str) -> None:
+            label = str(
+                raw.get("name", "")
+                or raw.get("label", "")
+                or raw.get("text", "")
+                or raw.get("automation_id", "")
+                or ""
+            ).strip()
+            normalized_label = self._normalize_probe_text(label)
+            if not normalized_label:
+                return
+            control_type = self._normalize_probe_text(raw.get("control_type", "")) or ("ocr_target" if source == "ocr" else "unknown")
+            if source != "ocr" and control_type not in allowed_control_types:
+                return
+            identity = self._element_identity_key(raw) or f"{source}|{normalized_label}|{control_type}"
+            if identity in seen:
+                return
+            seen.add(identity)
+            vision_labels = self._dedupe_strings(
+                [
+                    label,
+                    str(raw.get("automation_id", "") or "").strip(),
+                    str(raw.get("text", "") or "").strip(),
+                ]
+            )
+            candidate = {
+                "identity": identity,
+                "source": source,
+                "label": label,
+                "query": label,
+                "survey_query": str(query or "").strip(),
+                "control_type": control_type,
+                "element_id": str(raw.get("element_id", "") or "").strip(),
+                "automation_id": str(raw.get("automation_id", "") or "").strip(),
+                "state_text": str(raw.get("state_text", "") or "").strip(),
+                "class_name": str(raw.get("class_name", "") or "").strip(),
+                "vision_labels": vision_labels[:10],
+                "risk_flags": self._app_memory_probe_risk_flags(candidate_row=raw, summary=summary),
+                "priority": source_priority.get(source, 9),
+                "query_match_score": self._element_query_match_score(
+                    {"name": label, "state_text": str(raw.get("state_text", "") or "").strip()},
+                    str(query or "").strip(),
+                ) if str(query or "").strip() else 0.0,
+            }
+            candidates.append(candidate)
+
+        for row in query_candidates:
+            _append_candidate(row, source="query_candidate")
+        if target_control_state:
+            _append_candidate(target_control_state, source="target_control")
+        for row in related_rows:
+            _append_candidate(row, source="related_candidate")
+        for row in selection_rows:
+            _append_candidate(row, source="selection_candidate")
+        for row in element_rows:
+            _append_candidate(row, source="element")
+        for row in inventory_rows:
+            _append_candidate(row, source="inventory")
+        for row in ocr_targets:
+            _append_candidate(row, source="ocr")
+
+        candidates.sort(
+            key=lambda row: (
+                -float(row.get("query_match_score", 0.0) or 0.0),
+                int(row.get("priority", 9) or 9),
+                0 if not row.get("risk_flags") else 1,
+                self._normalize_probe_text(row.get("label", "")),
+            )
+        )
+        return candidates[:bounded]
+
+    def _app_memory_probe_risk_flags(
+        self,
+        *,
+        candidate_row: Dict[str, Any],
+        summary: Dict[str, Any],
+    ) -> List[str]:
+        label = self._normalize_probe_text(
+            " ".join(
+                value
+                for value in (
+                    candidate_row.get("name", ""),
+                    candidate_row.get("label", ""),
+                    candidate_row.get("text", ""),
+                    candidate_row.get("automation_id", ""),
+                    candidate_row.get("state_text", ""),
+                )
+                if str(value or "").strip()
+            )
+        )
+        if not label:
+            return ["empty_label"]
+        destructive_candidates = {
+            self._normalize_probe_text(item)
+            for item in summary.get("destructive_candidates", [])
+            if str(item).strip()
+        }
+        confirmation_candidates = {
+            self._normalize_probe_text(item)
+            for item in summary.get("confirmation_candidates", [])
+            if str(item).strip()
+        }
+        risky_terms = {
+            "apply",
+            "delete",
+            "remove",
+            "uninstall",
+            "install",
+            "save",
+            "save as",
+            "finish",
+            "submit",
+            "send",
+            "publish",
+            "sync",
+            "reset",
+            "restore",
+            "format",
+            "erase",
+            "clear data",
+            "yes",
+            "ok",
+            "allow",
+            "grant",
+            "accept",
+            "run",
+            "execute",
+            "restart",
+            "reboot",
+            "shutdown",
+            "close",
+            "exit",
+            "quit",
+            "next",
+        }
+        flags: List[str] = []
+        if label in destructive_candidates:
+            flags.append("destructive_candidate")
+        if label in confirmation_candidates:
+            flags.append("confirmation_candidate")
+        if any(term in label for term in risky_terms):
+            flags.append("risky_keyword")
+        return self._dedupe_strings(flags)
+
+    def _classify_app_memory_probe_effect(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        before: Dict[str, Any],
+        after: Dict[str, Any],
+    ) -> tuple[str, str]:
+        before_hash = str(before.get("screen_hash", "") or "").strip()
+        after_hash = str(after.get("screen_hash", "") or "").strip()
+        before_title = self._normalize_probe_text(before.get("active_window_title", "") or before.get("window_title", ""))
+        after_title = self._normalize_probe_text(after.get("active_window_title", "") or after.get("window_title", ""))
+        control_type = self._normalize_probe_text(candidate.get("control_type", ""))
+        label = str(candidate.get("label", "") or candidate.get("query", "") or "").strip()
+        changed = bool(before_hash and after_hash and before_hash != after_hash)
+        if after_title and before_title and after_title != before_title:
+            return ("window_transition", f"Focused or opened a different window after invoking '{label}'.")
+        if changed and control_type in {"checkbox", "radiobutton", "togglebutton"}:
+            return ("toggle_or_state_change", f"Invoking '{label}' changed a selection or toggle state.")
+        if changed and control_type in {"tabitem", "treeitem", "listitem", "menuitem", "hyperlink"}:
+            return ("navigation", f"Invoking '{label}' changed the visible app surface or navigated content.")
+        if changed:
+            return ("surface_change", f"Invoking '{label}' changed the visible surface.")
+        return ("no_observed_change", f"Invoking '{label}' did not produce a reliable visible change in this bounded probe.")
+
+    def _app_memory_probe_semantic_role(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        effect_kind: str,
+    ) -> str:
+        control_type = self._normalize_probe_text(candidate.get("control_type", ""))
+        if effect_kind == "blocked_for_review":
+            return "review_required"
+        if effect_kind == "window_transition":
+            return "window_launcher"
+        if effect_kind == "navigation":
+            return "navigator"
+        if effect_kind == "toggle_or_state_change":
+            return "toggle"
+        if control_type in {"menuitem", "button", "splitbutton"}:
+            return "action"
+        if control_type in {"tabitem", "treeitem", "listitem", "hyperlink"}:
+            return "selector"
+        if effect_kind == "surface_change":
+            return "surface_action"
+        return "inspection_target"
 
     def app_memory_reset(
         self,
@@ -8635,6 +9131,7 @@ class DesktopActionRouter:
         query: str = "",
         limit: int = 24,
         include_observation: bool = True,
+        include_ocr_targets: bool = False,
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         preferred_actions: Optional[List[str]] = None,
@@ -8708,7 +9205,7 @@ class DesktopActionRouter:
 
         observation: Dict[str, Any] = {}
         if include_observation and vision_ready:
-            observation = self._call("computer_observe", {"include_targets": False})
+            observation = self._call("computer_observe", {"include_targets": bool(include_ocr_targets)})
 
         element_rows: List[Dict[str, Any]] = []
         elements_result: Dict[str, Any] = {}
@@ -8952,6 +9449,18 @@ class DesktopActionRouter:
                 "screen_hash": str(observation.get("screen_hash", "") or ""),
                 "text": str(observation.get("text", "") or ""),
                 "screenshot_path": str(observation.get("screenshot_path", "") or ""),
+                "targets": [
+                    dict(row)
+                    for row in observation.get("targets", [])
+                    if isinstance(row, dict)
+                ][:40]
+                if include_ocr_targets and isinstance(observation.get("targets", []), list)
+                else [],
+                "target_count": len(
+                    [row for row in observation.get("targets", []) if isinstance(row, dict)]
+                )
+                if include_ocr_targets and isinstance(observation.get("targets", []), list)
+                else 0,
             },
             "native_window_topology": native_window_topology,
             "window_reacquisition": window_reacquisition,

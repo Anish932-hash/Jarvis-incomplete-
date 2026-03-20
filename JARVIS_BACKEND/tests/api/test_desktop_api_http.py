@@ -571,12 +571,24 @@ class FakeDesktopService:
                 "metrics": {
                     "survey_count": 2,
                     "launch_success_count": 2,
+                    "probe_attempt_count": 1,
+                    "probe_success_count": 1,
+                    "ocr_target_count": 3,
                 },
                 "top_controls": [
                     {"label": "Save", "control_type": "button", "sample_count": 2},
                     {"label": "File", "control_type": "menuitem", "sample_count": 1},
                 ],
                 "command_candidates": [{"value": "save", "count": 2}],
+                "tested_controls": [{"label": "File", "count": 1}],
+                "probe_effects": [{"value": "navigation", "count": 1}],
+                "probe_summary": {
+                    "attempted_count": 1,
+                    "successful_count": 1,
+                    "blocked_count": 0,
+                    "error_count": 0,
+                    "ocr_target_count": 3,
+                },
             }
         ]
         self.desktop_app_memory_daemon_state: Dict[str, Any] = {
@@ -590,6 +602,9 @@ class FakeDesktopService:
             "query": "",
             "category": "",
             "ensure_app_launch": True,
+            "probe_controls": True,
+            "max_probe_controls": 4,
+            "allow_risky_probes": False,
             "last_tick_at": "",
             "last_success_at": "",
             "last_error_at": "",
@@ -13416,8 +13431,12 @@ class FakeDesktopService:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
     ) -> Dict[str, Any]:
-        del limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration
+        del limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
         entry = {
             "key": f"{app_name or 'desktop'}|survey",
             "app_name": app_name or "desktop",
@@ -13427,9 +13446,34 @@ class FakeDesktopService:
             "window_title": window_title or f"{app_name or 'Desktop'} Window",
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "discovered_control_count": 3,
-            "metrics": {"survey_count": 1, "launch_success_count": 1},
+            "metrics": {
+                "survey_count": 1,
+                "launch_success_count": 1,
+                "probe_attempt_count": int(max_probe_controls) if probe_controls else 0,
+                "probe_success_count": int(max_probe_controls) if probe_controls else 0,
+                "probe_blocked_count": 0 if probe_controls else 0,
+                "probe_error_count": 0,
+                "ocr_target_count": 5 if probe_controls else 0,
+            },
             "top_controls": [{"label": "Save", "control_type": "button", "sample_count": 1}],
             "command_candidates": [{"value": query or "save", "count": 1}],
+            "tested_controls": (
+                [{"label": "Open", "count": int(max_probe_controls)}]
+                if probe_controls
+                else []
+            ),
+            "probe_effects": (
+                [{"value": "navigation", "count": int(max_probe_controls)}]
+                if probe_controls
+                else []
+            ),
+            "probe_summary": {
+                "attempted_count": int(max_probe_controls) if probe_controls else 0,
+                "successful_count": int(max_probe_controls) if probe_controls else 0,
+                "blocked_count": 0,
+                "error_count": 0,
+                "ocr_target_count": 5 if probe_controls else 0,
+            },
         }
         self.desktop_app_memory_items.insert(0, entry)
         return {
@@ -13438,6 +13482,14 @@ class FakeDesktopService:
             "launch_result": {"status": "success", "requested_app": app_name},
             "surface_snapshot": {"status": "success", "filters": {"app_name": app_name, "query": query}},
             "exploration_plan": {"status": "success", "hypothesis_count": 1, "branch_action_count": 1},
+            "probe_report": {
+                "status": "success" if probe_controls else "skipped",
+                "attempted_count": int(max_probe_controls) if probe_controls else 0,
+                "successful_count": int(max_probe_controls) if probe_controls else 0,
+                "blocked_count": 0,
+                "error_count": 0,
+                "ocr_target_count": 5 if probe_controls else 0,
+            },
             "memory_entry": entry,
             "app_memory": self.desktop_app_memory_status(app_name=app_name or "", profile_id="", category=""),
         }
@@ -13454,13 +13506,23 @@ class FakeDesktopService:
         include_elements: bool = True,
         include_workflow_probes: bool = True,
         include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        include_ocr_targets: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
-        del category, per_app_limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration
+        del category, per_app_limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
         candidates = [query] if query else ["notepad", "calculator", "paint"]
         items: list[Dict[str, Any]] = []
         for app_name in candidates[: max(1, int(max_apps))]:
-            payload = self.survey_desktop_app_memory(app_name=app_name, query=query or "save")
+            payload = self.survey_desktop_app_memory(
+                app_name=app_name,
+                query=query or "save",
+                probe_controls=probe_controls,
+                max_probe_controls=max_probe_controls,
+                allow_risky_probes=allow_risky_probes,
+            )
             items.append(
                 {
                     "app_name": app_name,
@@ -13581,6 +13643,9 @@ class FakeDesktopService:
         query: str | None = None,
         category: str | None = None,
         ensure_app_launch: bool | None = None,
+        probe_controls: bool | None = None,
+        max_probe_controls: int | None = None,
+        allow_risky_probes: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13600,6 +13665,12 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["category"] = category
         if ensure_app_launch is not None:
             self.desktop_app_memory_daemon_state["ensure_app_launch"] = bool(ensure_app_launch)
+        if probe_controls is not None:
+            self.desktop_app_memory_daemon_state["probe_controls"] = bool(probe_controls)
+        if max_probe_controls is not None:
+            self.desktop_app_memory_daemon_state["max_probe_controls"] = int(max_probe_controls)
+        if allow_risky_probes is not None:
+            self.desktop_app_memory_daemon_state["allow_risky_probes"] = bool(allow_risky_probes)
         self.desktop_app_memory_daemon_state["last_config_source"] = source
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
 
@@ -13612,6 +13683,9 @@ class FakeDesktopService:
         query: str | None = None,
         category: str | None = None,
         ensure_app_launch: bool | None = None,
+        probe_controls: bool | None = None,
+        max_probe_controls: int | None = None,
+        allow_risky_probes: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13624,6 +13698,21 @@ class FakeDesktopService:
                 self.desktop_app_memory_daemon_state.get("ensure_app_launch", True)
                 if ensure_app_launch is None
                 else ensure_app_launch
+            ),
+            probe_controls=bool(
+                self.desktop_app_memory_daemon_state.get("probe_controls", True)
+                if probe_controls is None
+                else probe_controls
+            ),
+            max_probe_controls=int(
+                max_probe_controls
+                if max_probe_controls is not None
+                else self.desktop_app_memory_daemon_state.get("max_probe_controls", 4) or 4
+            ),
+            allow_risky_probes=bool(
+                self.desktop_app_memory_daemon_state.get("allow_risky_probes", False)
+                if allow_risky_probes is None
+                else allow_risky_probes
             ),
             source=source,
         )
@@ -21695,11 +21784,12 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     status, survey = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/survey",
-        payload={"app_name": "calculator", "query": "save"},
+        payload={"app_name": "calculator", "query": "save", "probe_controls": True, "max_probe_controls": 3},
     )
     assert status == 200
     assert survey["status"] == "success"
     assert survey["memory_entry"]["app_name"] == "calculator"
+    assert int(dict(survey["memory_entry"].get("probe_summary", {})).get("attempted_count", 0) or 0) >= 1
     assert survey["app_memory"]["status"] == "success"
 
     status, cleared = request_json(
@@ -21718,7 +21808,7 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     status, batch = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/survey/batch",
-        payload={"query": "note", "max_apps": 2},
+        payload={"query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
     )
     assert status == 200
     assert batch["status"] == "success"
@@ -21728,16 +21818,17 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     status, configured = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/daemon",
-        payload={"enabled": True, "query": "note", "max_apps": 2},
+        payload={"enabled": True, "query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
     )
     assert status == 200
     assert configured["status"] == "success"
     assert configured["enabled"] is True
+    assert configured["probe_controls"] is True
 
     status, triggered = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/daemon/trigger",
-        payload={"query": "note", "max_apps": 2},
+        payload={"query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
     )
     assert status == 200
     assert triggered["status"] == "success"

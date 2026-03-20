@@ -13557,6 +13557,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         include_elements: true,
         include_workflow_probes: true,
         include_exploration: true,
+        probe_controls: true,
+        max_probe_controls: 4,
+        allow_risky_probes: false,
+        include_ocr_targets: true,
       });
       setDesktopAppMemorySurveyState(payload);
       const memoryPayload = isObjectRecord(payload.app_memory) ? (payload.app_memory as DesktopAppMemoryResponse) : null;
@@ -13608,6 +13612,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         include_elements: true,
         include_workflow_probes: true,
         include_exploration: true,
+        probe_controls: true,
+        max_probe_controls: 4,
+        allow_risky_probes: false,
+        include_ocr_targets: true,
         source: 'manual',
       });
       setDesktopAppMemoryBatchState(payload);
@@ -13673,6 +13681,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         enabled,
         query: desktopCoworkerAppName.trim() || undefined,
         ensure_app_launch: desktopCoworkerEnsureLaunch,
+        probe_controls: true,
+        max_probe_controls: 4,
+        allow_risky_probes: false,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13704,6 +13715,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
         per_app_limit: 24,
         ensure_app_launch: desktopCoworkerEnsureLaunch,
+        probe_controls: true,
+        max_probe_controls: 4,
+        allow_risky_probes: false,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -19410,6 +19424,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}controls:{Number(desktopAppMemorySummary.discovered_control_total ?? 0)}
                                               {' • '}commands:{Number(desktopAppMemorySummary.command_candidate_total ?? 0)}
                                             </p>
+                                            <p className="mt-1">
+                                              probes:{Number(desktopAppMemorySummary.probe_attempt_total ?? 0)}
+                                              {' • '}verified:{Number(desktopAppMemorySummary.probe_success_total ?? 0)}
+                                              {' • '}blocked:{Number(desktopAppMemorySummary.probe_blocked_total ?? 0)}
+                                              {' • '}ocr targets:{Number(desktopAppMemorySummary.ocr_target_total ?? 0)}
+                                            </p>
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
                                               {Object.entries(asObjectRecord(desktopAppMemorySummary.category_counts))
                                                 .slice(0, 4)
@@ -19457,6 +19477,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   asObjectRecord(desktopLatestAppMemory.learning_health).status ?? 'idle'
                                                 )}
                                               </p>
+                                              <p className="mt-1">
+                                                probes:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).attempted_count ?? 0)}
+                                                {' • '}verified:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).successful_count ?? 0)}
+                                                {' • '}blocked:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).blocked_count ?? 0)}
+                                                {' • '}ocr:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).ocr_target_count ?? 0)}
+                                              </p>
                                               {Array.isArray(desktopLatestAppMemory.recommended_actions) &&
                                               desktopLatestAppMemory.recommended_actions.length > 0 ? (
                                                 <p className="mt-2">
@@ -19496,6 +19522,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               max apps:{Number(desktopAppMemoryDaemonState.max_apps ?? 0)}
                                               {' • '}query:{String(desktopAppMemoryDaemonState.query ?? 'all')}
                                               {' • '}category:{String(desktopAppMemoryDaemonState.category ?? 'all')}
+                                            </p>
+                                            <p className="mt-1">
+                                              probing:{String(Boolean(desktopAppMemoryDaemonState.probe_controls))}
+                                              {' • '}max probes:{Number(desktopAppMemoryDaemonState.max_probe_controls ?? 0)}
+                                              {' • '}risky:{String(Boolean(desktopAppMemoryDaemonState.allow_risky_probes))}
                                             </p>
                                             <p className="mt-1">
                                               history:{Number(desktopAppMemoryDaemonHistory.count ?? 0)}
@@ -19547,6 +19578,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       controls:{Number(item.discovered_control_count ?? 0)}
                                                       {' • '}commands:{Array.isArray(item.command_candidates) ? item.command_candidates.length : 0}
                                                       {' • '}branches:{Array.isArray(item.branch_actions) ? item.branch_actions.length : 0}
+                                                    </p>
+                                                    <p className="mt-1">
+                                                      tested:{Array.isArray(item.tested_controls) ? item.tested_controls.length : 0}
+                                                      {' • '}effects:{Array.isArray(item.probe_effects) ? item.probe_effects.length : 0}
+                                                      {' • '}verified:{Number(asObjectRecord(item.probe_summary).successful_count ?? 0)}
                                                     </p>
                                                     {topControls.length > 0 ? (
                                                       <p className="mt-1">

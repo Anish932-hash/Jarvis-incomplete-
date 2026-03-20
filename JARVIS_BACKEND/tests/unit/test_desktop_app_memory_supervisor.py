@@ -50,6 +50,8 @@ def test_desktop_app_memory_supervisor_configure_updates_query_filters(tmp_path:
         query="settings",
         category="system",
         max_apps=3,
+        probe_controls=True,
+        max_probe_controls=5,
         source="unit_test",
     )
     assert payload["status"] == "success"
@@ -57,3 +59,5 @@ def test_desktop_app_memory_supervisor_configure_updates_query_filters(tmp_path:
     assert payload["query"] == "settings"
     assert payload["category"] == "system"
     assert payload["max_apps"] == 3
+    assert payload["probe_controls"] is True
+    assert payload["max_probe_controls"] == 5

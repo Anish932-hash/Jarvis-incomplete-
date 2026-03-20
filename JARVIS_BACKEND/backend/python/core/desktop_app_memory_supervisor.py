@@ -36,6 +36,9 @@ class DesktopAppMemorySupervisor:
         query: str = "",
         category: str = "",
         ensure_app_launch: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
     ) -> None:
         self._store = LocalStore(state_path)
         self._lock = threading.RLock()
@@ -52,6 +55,9 @@ class DesktopAppMemorySupervisor:
             query=query,
             category=category,
             ensure_app_launch=ensure_app_launch,
+            probe_controls=probe_controls,
+            max_probe_controls=max_probe_controls,
+            allow_risky_probes=allow_risky_probes,
         )
         self._runtime = self._default_runtime()
         self._history: list[Dict[str, Any]] = []
@@ -199,6 +205,9 @@ class DesktopAppMemorySupervisor:
         query: Optional[str] = None,
         category: Optional[str] = None,
         ensure_app_launch: Optional[bool] = None,
+        probe_controls: Optional[bool] = None,
+        max_probe_controls: Optional[int] = None,
+        allow_risky_probes: Optional[bool] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -218,6 +227,12 @@ class DesktopAppMemorySupervisor:
                 self._config["category"] = str(category or "").strip()
             if ensure_app_launch is not None:
                 self._config["ensure_app_launch"] = bool(ensure_app_launch)
+            if probe_controls is not None:
+                self._config["probe_controls"] = bool(probe_controls)
+            if max_probe_controls is not None:
+                self._config["max_probe_controls"] = self._coerce_int(max_probe_controls, minimum=1, maximum=12, default=4)
+            if allow_risky_probes is not None:
+                self._config["allow_risky_probes"] = bool(allow_risky_probes)
             self._runtime["last_config_source"] = str(source or "manual").strip().lower() or "manual"
             self._runtime["updated_at"] = _utc_now_iso()
             self._persist_locked()
@@ -234,6 +249,9 @@ class DesktopAppMemorySupervisor:
         query: Optional[str] = None,
         category: Optional[str] = None,
         ensure_app_launch: Optional[bool] = None,
+        probe_controls: Optional[bool] = None,
+        max_probe_controls: Optional[int] = None,
+        allow_risky_probes: Optional[bool] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -245,6 +263,9 @@ class DesktopAppMemorySupervisor:
                 query=query,
                 category=category,
                 ensure_app_launch=ensure_app_launch,
+                probe_controls=probe_controls,
+                max_probe_controls=max_probe_controls,
+                allow_risky_probes=allow_risky_probes,
             )
         self._wakeup.set()
         return payload
@@ -275,6 +296,9 @@ class DesktopAppMemorySupervisor:
         query: Optional[str] = None,
         category: Optional[str] = None,
         ensure_app_launch: Optional[bool] = None,
+        probe_controls: Optional[bool] = None,
+        max_probe_controls: Optional[int] = None,
+        allow_risky_probes: Optional[bool] = None,
     ) -> Dict[str, Any]:
         callback = self._execute_callback
         if callback is None:
@@ -305,6 +329,22 @@ class DesktopAppMemorySupervisor:
             if ensure_app_launch is None
             else ensure_app_launch
         )
+        probe_controls_value = bool(
+            self._config.get("probe_controls", True)
+            if probe_controls is None
+            else probe_controls
+        )
+        max_probe_controls_value = self._coerce_int(
+            max_probe_controls if max_probe_controls is not None else self._config.get("max_probe_controls", 4),
+            minimum=1,
+            maximum=12,
+            default=4,
+        )
+        allow_risky_probes_value = bool(
+            self._config.get("allow_risky_probes", False)
+            if allow_risky_probes is None
+            else allow_risky_probes
+        )
 
         started_at = time.time()
         started_iso = _iso_from_ts(started_at)
@@ -321,6 +361,9 @@ class DesktopAppMemorySupervisor:
                 query=query_value,
                 category=category_value,
                 ensure_app_launch=ensure_launch_value,
+                probe_controls=probe_controls_value,
+                max_probe_controls=max_probe_controls_value,
+                allow_risky_probes=allow_risky_probes_value,
                 source=str(source or "manual").strip().lower() or "manual",
             )
         except Exception as exc:  # noqa: BLE001
@@ -344,6 +387,9 @@ class DesktopAppMemorySupervisor:
             "category": category_value,
             "max_apps": max_apps_value,
             "ensure_app_launch": ensure_launch_value,
+            "probe_controls": probe_controls_value,
+            "max_probe_controls": max_probe_controls_value,
+            "allow_risky_probes": allow_risky_probes_value,
             "failed_apps": [
                 dict(item)
                 for item in result.get("failed_apps", [])
@@ -403,6 +449,9 @@ class DesktopAppMemorySupervisor:
             "query": str(self._config.get("query", "") or "").strip(),
             "category": str(self._config.get("category", "") or "").strip(),
             "ensure_app_launch": bool(self._config.get("ensure_app_launch", True)),
+            "probe_controls": bool(self._config.get("probe_controls", True)),
+            "max_probe_controls": self._coerce_int(self._config.get("max_probe_controls", 4), minimum=1, maximum=12, default=4),
+            "allow_risky_probes": bool(self._config.get("allow_risky_probes", False)),
             "last_tick_at": str(self._runtime.get("last_tick_at", "") or ""),
             "last_success_at": str(self._runtime.get("last_success_at", "") or ""),
             "last_error_at": str(self._runtime.get("last_error_at", "") or ""),
@@ -449,6 +498,9 @@ class DesktopAppMemorySupervisor:
             "query": str(config.get("query", self._config["query"]) or "").strip(),
             "category": str(config.get("category", self._config["category"]) or "").strip(),
             "ensure_app_launch": bool(config.get("ensure_app_launch", self._config["ensure_app_launch"])),
+            "probe_controls": bool(config.get("probe_controls", self._config["probe_controls"])),
+            "max_probe_controls": self._coerce_int(config.get("max_probe_controls", self._config["max_probe_controls"]), minimum=1, maximum=12, default=4),
+            "allow_risky_probes": bool(config.get("allow_risky_probes", self._config["allow_risky_probes"])),
         })
         self._runtime.update({
             "last_tick_at": str(runtime.get("last_tick_at", "") or ""),
@@ -482,6 +534,9 @@ class DesktopAppMemorySupervisor:
         query: str,
         category: str,
         ensure_app_launch: bool,
+        probe_controls: bool,
+        max_probe_controls: int,
+        allow_risky_probes: bool,
     ) -> Dict[str, Any]:
         return {
             "enabled": bool(enabled),
@@ -492,6 +547,9 @@ class DesktopAppMemorySupervisor:
             "query": str(query or "").strip(),
             "category": str(category or "").strip(),
             "ensure_app_launch": bool(ensure_app_launch),
+            "probe_controls": bool(probe_controls),
+            "max_probe_controls": int(max_probe_controls),
+            "allow_risky_probes": bool(allow_risky_probes),
         }
 
     @staticmethod

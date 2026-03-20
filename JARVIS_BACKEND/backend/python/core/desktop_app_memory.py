@@ -47,6 +47,7 @@ class DesktopAppMemory:
         launch_result: Dict[str, Any] | None = None,
         snapshot: Dict[str, Any] | None = None,
         exploration_plan: Dict[str, Any] | None = None,
+        probe_report: Dict[str, Any] | None = None,
         survey_status: str = "success",
         error_message: str = "",
         source: str = "manual",
@@ -55,6 +56,7 @@ class DesktopAppMemory:
         launch_payload = dict(launch_result) if isinstance(launch_result, dict) else {}
         snapshot_payload = dict(snapshot) if isinstance(snapshot, dict) else {}
         exploration_payload = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
+        probe_payload = dict(probe_report) if isinstance(probe_report, dict) else {}
         target_window = (
             snapshot_payload.get("target_window", {})
             if isinstance(snapshot_payload.get("target_window", {}), dict)
@@ -145,6 +147,11 @@ class DesktopAppMemory:
             metrics["workflow_surface_count"] = self._coerce_int(metrics.get("workflow_surface_count", 0), minimum=0, maximum=10_000_000, default=0) + len([row for row in snapshot_payload.get("workflow_surfaces", []) if isinstance(row, dict)])
             metrics["branch_action_count"] = self._coerce_int(metrics.get("branch_action_count", 0), minimum=0, maximum=10_000_000, default=0) + len([row for row in exploration_payload.get("branch_actions", []) if isinstance(row, dict)])
             metrics["top_hypothesis_count"] = self._coerce_int(metrics.get("top_hypothesis_count", 0), minimum=0, maximum=10_000_000, default=0) + len([row for row in exploration_payload.get("top_hypotheses", []) if isinstance(row, dict)])
+            metrics["ocr_target_count"] = self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_attempt_count"] = self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_success_count"] = self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_blocked_count"] = self._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_error_count"] = self._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0)
             if clean_source == "daemon":
                 metrics["background_survey_count"] = self._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             elif clean_source == "batch":
@@ -167,6 +174,16 @@ class DesktopAppMemory:
             entry["last_survey_status"] = clean_survey_status
             entry["last_survey_source"] = clean_source
             entry["last_error_message"] = clean_error_message
+            entry["last_probe_summary"] = {
+                "attempted_count": self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "successful_count": self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "blocked_count": self._coerce_int(probe_payload.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "error_count": self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "ocr_target_count": self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "candidate_count": self._coerce_int(probe_payload.get("candidate_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "status": str(probe_payload.get("status", "") or "").strip(),
+                "updated_at": now,
+            }
 
             for label_row in summary.get("top_labels", []):
                 if not isinstance(label_row, dict):
@@ -229,6 +246,10 @@ class DesktopAppMemory:
                 if not isinstance(hypothesis, dict):
                     continue
                 self._increment_count(entry.setdefault("exploration_target_counts", {}), str(hypothesis.get("label", "") or hypothesis.get("target_name", "") or "").strip())
+            for probe_item in probe_payload.get("items", []):
+                if not isinstance(probe_item, dict):
+                    continue
+                self._record_probe_result(entry=entry, row=probe_item, observed_at=now)
 
             native_summary = entry.get("native_summary", {}) if isinstance(entry.get("native_summary", {}), dict) else {}
             native_summary["last_signature"] = str(native_window_topology.get("signature", "") or "").strip()
@@ -258,6 +279,13 @@ class DesktopAppMemory:
                 "top_controls": self._top_controls(entry.get("controls", {}), limit=6),
                 "branch_actions": self._top_count_rows(entry.get("branch_action_counts", {}), limit=4),
                 "exploration_targets": self._top_count_rows(entry.get("exploration_target_counts", {}), limit=4),
+                "probe_summary": {
+                    "attempted_count": self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    "successful_count": self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    "blocked_count": self._coerce_int(probe_payload.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    "error_count": self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    "ocr_target_count": self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
+                },
                 "native_summary": dict(native_summary),
             }
             survey_history = [dict(item) for item in entry.get("survey_history", []) if isinstance(item, dict)]
@@ -393,6 +421,43 @@ class DesktopAppMemory:
         current["query_examples"] = seen_queries[-6:]
         controls[identity] = current
 
+    def _record_probe_result(self, *, entry: Dict[str, Any], row: Dict[str, Any], observed_at: str) -> None:
+        identity = self._control_identity(row) or self._normalize_text(row.get("label", "") or row.get("query", "") or row.get("expected_text", ""))
+        if not identity:
+            return
+        controls = entry.setdefault("controls", {})
+        current = controls.get(identity, {}) if isinstance(controls.get(identity, {}), dict) else {}
+        current["identity"] = identity
+        current["label"] = str(row.get("label", "") or current.get("label", "") or "").strip()
+        current["control_type"] = self._normalize_text(row.get("control_type", "") or current.get("control_type", "")) or "unknown"
+        current["element_id"] = str(row.get("element_id", "") or current.get("element_id", "") or "").strip()
+        current["automation_id"] = str(row.get("automation_id", "") or current.get("automation_id", "") or "").strip()
+        current["probe_count"] = self._coerce_int(current.get("probe_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        probe_status = self._normalize_text(row.get("probe_status", ""))
+        if probe_status == "success":
+            current["probe_success_count"] = self._coerce_int(current.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        elif probe_status in {"blocked", "skipped"}:
+            current["probe_blocked_count"] = self._coerce_int(current.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        elif probe_status:
+            current["probe_error_count"] = self._coerce_int(current.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["last_probe_status"] = probe_status
+        current["last_probe_at"] = observed_at
+        current["last_probe_method"] = str(row.get("method", "") or "").strip()
+        current["last_probe_effect"] = str(row.get("effect_kind", "") or "").strip()
+        current["learned_role"] = str(row.get("semantic_role", "") or current.get("learned_role", "") or "").strip()
+        current["last_probe_summary"] = str(row.get("effect_summary", "") or row.get("message", "") or "").strip()
+        current["expected_text"] = str(row.get("expected_text", "") or current.get("expected_text", "") or "").strip()
+        current["vision_labels"] = self._merge_recent_strings(
+            current.get("vision_labels", []),
+            [str(item).strip() for item in row.get("vision_labels", []) if str(item).strip()] if isinstance(row.get("vision_labels", []), list) else [],
+            limit=10,
+        )
+        controls[identity] = current
+        self._increment_count(entry.setdefault("probe_status_counts", {}), probe_status)
+        self._increment_count(entry.setdefault("probe_effect_counts", {}), str(row.get("effect_kind", "") or "").strip())
+        self._increment_count(entry.setdefault("probe_role_counts", {}), str(row.get("semantic_role", "") or "").strip())
+        self._increment_count(entry.setdefault("tested_control_counts", {}), current.get("label", identity))
+
     def _trim_entry_locked(self, entry: Dict[str, Any]) -> None:
         entry["window_title_counts"] = self._trim_count_map(entry.get("window_title_counts", {}), limit=24)
         entry["surface_role_counts"] = self._trim_count_map(entry.get("surface_role_counts", {}), limit=16)
@@ -410,6 +475,10 @@ class DesktopAppMemory:
         entry["workflow_action_counts"] = self._trim_count_map(entry.get("workflow_action_counts", {}), limit=32)
         entry["branch_action_counts"] = self._trim_count_map(entry.get("branch_action_counts", {}), limit=24)
         entry["exploration_target_counts"] = self._trim_count_map(entry.get("exploration_target_counts", {}), limit=24, skip_empty=True)
+        entry["probe_status_counts"] = self._trim_count_map(entry.get("probe_status_counts", {}), limit=12, skip_empty=True)
+        entry["probe_effect_counts"] = self._trim_count_map(entry.get("probe_effect_counts", {}), limit=24, skip_empty=True)
+        entry["probe_role_counts"] = self._trim_count_map(entry.get("probe_role_counts", {}), limit=24, skip_empty=True)
+        entry["tested_control_counts"] = self._trim_count_map(entry.get("tested_control_counts", {}), limit=32, skip_empty=True)
         shortcut_actions = entry.get("shortcut_actions", {}) if isinstance(entry.get("shortcut_actions", {}), dict) else {}
         if len(shortcut_actions) > 40:
             ordered_shortcuts = sorted(
@@ -446,6 +515,10 @@ class DesktopAppMemory:
         item["workflow_actions"] = self._top_count_rows(row.get("workflow_action_counts", {}), limit=8)
         item["branch_actions"] = self._top_count_rows(row.get("branch_action_counts", {}), limit=8)
         item["exploration_targets"] = self._top_count_rows(row.get("exploration_target_counts", {}), limit=8)
+        item["probe_statuses"] = self._top_count_rows(row.get("probe_status_counts", {}), limit=8)
+        item["tested_controls"] = self._top_count_rows(row.get("tested_control_counts", {}), limit=8, label_field="label")
+        item["probe_effects"] = self._top_count_rows(row.get("probe_effect_counts", {}), limit=8)
+        item["probe_roles"] = self._top_count_rows(row.get("probe_role_counts", {}), limit=8)
         item["surface_roles"] = self._top_count_rows(row.get("surface_role_counts", {}), limit=6)
         item["interaction_modes"] = self._top_count_rows(row.get("interaction_mode_counts", {}), limit=6)
         item["survey_statuses"] = self._top_count_rows(row.get("survey_status_counts", {}), limit=6)
@@ -455,6 +528,11 @@ class DesktopAppMemory:
         item["surface_signatures"] = self._top_count_rows(row.get("surface_signature_counts", {}), limit=4)
         item["metrics"] = self._normalize_metrics(row.get("metrics", {}))
         item["native_summary"] = dict(row.get("native_summary", {})) if isinstance(row.get("native_summary", {}), dict) else {}
+        item["probe_summary"] = (
+            dict(row.get("last_probe_summary", {}))
+            if isinstance(row.get("last_probe_summary", {}), dict)
+            else {}
+        )
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
         item["survey_history"] = history_rows[-self.max_history_per_entry :]
@@ -483,6 +561,11 @@ class DesktopAppMemory:
         control_type_counts: Dict[str, int] = {}
         survey_count_total = 0
         survey_failure_total = 0
+        probe_blocked_total = 0
+        probe_error_total = 0
+        ocr_target_total = 0
+        probe_attempt_total = 0
+        probe_success_total = 0
         discovered_control_total = 0
         command_candidate_total = 0
         healthy_app_count = 0
@@ -504,6 +587,11 @@ class DesktopAppMemory:
             metrics = self._normalize_metrics(row.get("metrics", {}))
             survey_count_total += self._coerce_int(metrics.get("survey_count", 0), minimum=0, maximum=10_000_000, default=0)
             survey_failure_total += self._coerce_int(metrics.get("survey_failure_count", 0), minimum=0, maximum=10_000_000, default=0)
+            probe_blocked_total += self._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
+            probe_error_total += self._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0)
+            ocr_target_total += self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
+            probe_attempt_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
+            probe_success_total += self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
             discovered_control_total += len(row.get("controls", {})) if isinstance(row.get("controls", {}), dict) else 0
             command_candidate_total += len(self._trim_count_map(row.get("command_candidate_counts", {}), limit=32))
             learning_health = self._learning_health_snapshot(row)
@@ -533,6 +621,11 @@ class DesktopAppMemory:
             "entry_count": len(rows),
             "survey_count_total": survey_count_total,
             "survey_failure_total": survey_failure_total,
+            "probe_blocked_total": probe_blocked_total,
+            "probe_error_total": probe_error_total,
+            "ocr_target_total": ocr_target_total,
+            "probe_attempt_total": probe_attempt_total,
+            "probe_success_total": probe_success_total,
             "discovered_control_total": discovered_control_total,
             "command_candidate_total": command_candidate_total,
             "healthy_app_count": healthy_app_count,
@@ -730,6 +823,11 @@ class DesktopAppMemory:
             "workflow_surface_count": DesktopAppMemory._coerce_int(metrics.get("workflow_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
             "branch_action_count": DesktopAppMemory._coerce_int(metrics.get("branch_action_count", 0), minimum=0, maximum=10_000_000, default=0),
             "top_hypothesis_count": DesktopAppMemory._coerce_int(metrics.get("top_hypothesis_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "ocr_target_count": DesktopAppMemory._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_attempt_count": DesktopAppMemory._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_success_count": DesktopAppMemory._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_blocked_count": DesktopAppMemory._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_error_count": DesktopAppMemory._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0),
             "manual_survey_count": DesktopAppMemory._coerce_int(metrics.get("manual_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "batch_survey_count": DesktopAppMemory._coerce_int(metrics.get("batch_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "background_survey_count": DesktopAppMemory._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
@@ -771,8 +869,13 @@ class DesktopAppMemory:
         survey_count = cls._coerce_int(metrics.get("survey_count", 0), minimum=0, maximum=10_000_000, default=0)
         success_count = cls._coerce_int(metrics.get("survey_success_count", 0), minimum=0, maximum=10_000_000, default=0)
         failure_count = cls._coerce_int(metrics.get("survey_failure_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_attempt_count = cls._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_success_count = cls._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_blocked_count = cls._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_error_count = cls._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0)
         last_status = cls._normalize_text(row.get("last_survey_status", "")) or "unknown"
         success_rate = round(float(success_count) / float(survey_count), 4) if survey_count > 0 else 0.0
+        probe_success_rate = round(float(probe_success_count) / float(probe_attempt_count), 4) if probe_attempt_count > 0 else 0.0
         status = "learning"
         if survey_count <= 0:
             status = "idle"
@@ -788,6 +891,11 @@ class DesktopAppMemory:
             "success_count": success_count,
             "failure_count": failure_count,
             "success_rate": success_rate,
+            "probe_attempt_count": probe_attempt_count,
+            "probe_success_count": probe_success_count,
+            "probe_blocked_count": probe_blocked_count,
+            "probe_error_count": probe_error_count,
+            "probe_success_rate": probe_success_rate,
             "last_status": last_status,
             "last_source": str(row.get("last_survey_source", "") or "").strip(),
             "last_error_message": str(row.get("last_error_message", "") or "").strip(),

@@ -260,3 +260,165 @@ def test_desktop_app_memory_tracks_learning_health_and_aliases(tmp_path: Path) -
     snapshot = memory.snapshot(app_name="settings")
     assert snapshot["summary"]["survey_failure_total"] == 1
     assert snapshot["summary"]["survey_source_counts"]["daemon"] == 1
+
+
+def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+    entry = memory.record_survey(
+        app_name="explorer",
+        query="view",
+        snapshot={
+            "status": "success",
+            "surface_summary": {
+                "query_candidates": [{"name": "View", "control_type": "menuitem"}],
+            },
+            "surface_intelligence": {"surface_role": "file_manager"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "view_menu",
+                        "name": "View",
+                        "control_type": "menuitem",
+                        "automation_id": "ViewMenu",
+                    }
+                ]
+            },
+        },
+        probe_report={
+            "status": "success",
+            "candidate_count": 2,
+            "ocr_target_count": 4,
+            "attempted_count": 1,
+            "successful_count": 1,
+            "blocked_count": 0,
+            "error_count": 0,
+            "items": [
+                {
+                    "element_id": "view_menu",
+                    "label": "View",
+                    "control_type": "menuitem",
+                    "automation_id": "ViewMenu",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "navigation",
+                    "semantic_role": "navigator",
+                    "effect_summary": "Invoking View changed the visible app surface.",
+                    "vision_labels": ["View"],
+                }
+            ],
+        },
+    )
+
+    assert entry["metrics"]["probe_attempt_count"] == 1
+    assert entry["metrics"]["probe_success_count"] == 1
+    assert entry["metrics"]["ocr_target_count"] == 4
+    assert entry["probe_summary"]["successful_count"] == 1
+    assert entry["probe_effects"][0]["value"] == "navigation"
+    assert entry["tested_controls"][0]["label"] == "view"
+    assert entry["top_controls"][0]["last_probe_effect"] == "navigation"
+
+    snapshot = memory.snapshot(app_name="explorer")
+    assert snapshot["summary"]["probe_attempt_total"] == 1
+    assert snapshot["summary"]["probe_success_total"] == 1
+    assert snapshot["summary"]["ocr_target_total"] == 4
+
+
+def test_desktop_action_router_surveys_app_memory_with_safe_probe_learning() -> None:
+    observe_calls = {"count": 0}
+
+    def _computer_observe(payload: Dict[str, Any]) -> Dict[str, Any]:
+        observe_calls["count"] += 1
+        include_targets = bool(payload.get("include_targets", False))
+        if observe_calls["count"] == 1:
+            return {
+                "status": "success",
+                "screen_hash": "hash-before",
+                "text": "Notepad File Edit View",
+                "screenshot_path": "before.png",
+                "targets": (
+                    [
+                        {"text": "File", "confidence": 91.0},
+                        {"text": "View", "confidence": 88.0},
+                    ]
+                    if include_targets
+                    else []
+                ),
+            }
+        return {
+            "status": "success",
+            "screen_hash": "hash-after",
+            "text": "Notepad View menu open",
+            "screenshot_path": "after.png",
+            "targets": (
+                [
+                    {"text": "Zoom", "confidence": 90.0},
+                        {"text": "Layout", "confidence": 84.0},
+                    ]
+                    if include_targets
+                    else []
+                ),
+        }
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 501, "title": "Untitled - Notepad", "exe": r"C:\Windows\notepad.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 501, "title": "Untitled - Notepad"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "open_app": lambda _payload: {"status": "success", "requested_app": "notepad", "launch_method": "system_path"},
+            "computer_observe": _computer_observe,
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {
+                        "element_id": "file_menu",
+                        "name": "File",
+                        "control_type": "menuitem",
+                        "automation_id": "FileMenu",
+                        "root_window_title": "Untitled - Notepad",
+                    },
+                    {
+                        "element_id": "view_menu",
+                        "name": "View",
+                        "control_type": "menuitem",
+                        "automation_id": "ViewMenu",
+                        "root_window_title": "Untitled - Notepad",
+                    },
+                ],
+            },
+            "accessibility_invoke_element": lambda payload: {
+                "status": "success",
+                "message": f"invoked {payload.get('element_id', payload.get('query', 'unknown'))}",
+            },
+            "computer_click_target": lambda payload: {
+                "status": "success",
+                "message": f"clicked {payload.get('query', 'unknown')}",
+            },
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory(
+        app_name="notepad",
+        query="view",
+        ensure_app_launch=True,
+        probe_controls=True,
+        max_probe_controls=1,
+        include_ocr_targets=True,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["probe_report"]["attempted_count"] == 1
+    assert payload["probe_report"]["successful_count"] == 1
+    assert payload["probe_report"]["ocr_target_count"] >= 2
+    assert payload["memory_entry"]["metrics"]["probe_success_count"] == 1
+    assert payload["memory_entry"]["tested_controls"][0]["label"] == "view"
+    assert payload["memory_entry"]["probe_effects"][0]["value"] in {"navigation", "surface_change"}
