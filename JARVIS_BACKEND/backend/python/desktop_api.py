@@ -28,6 +28,7 @@ from backend.python.core.oauth_flow import OAuthFlowManager
 from backend.python.core.oauth_token_store import OAuthTokenStore
 from backend.python.core.provider_credentials import ProviderCredentialManager
 from backend.python.core.desktop_action_router import DesktopActionRouter
+from backend.python.core.desktop_app_memory_supervisor import DesktopAppMemorySupervisor
 from backend.python.core.desktop_governance_policy import DesktopGovernancePolicyManager
 from backend.python.core.desktop_governance_policy import desktop_governance_profile_catalog
 from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
@@ -324,6 +325,36 @@ class DesktopBackendService:
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
             benchmark_guidance_provider=self._desktop_benchmark_control_guidance,
+        )
+        self.desktop_app_memory_supervisor = DesktopAppMemorySupervisor(
+            enabled=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_ENABLED", False),
+            interval_s=self._env_float(
+                "JARVIS_DESKTOP_APP_MEMORY_DAEMON_INTERVAL_S",
+                420.0,
+                minimum=10.0,
+                maximum=3600.0,
+            ),
+            max_apps=self._env_int(
+                "JARVIS_DESKTOP_APP_MEMORY_DAEMON_MAX_APPS",
+                2,
+                minimum=1,
+                maximum=32,
+            ),
+            per_app_limit=self._env_int(
+                "JARVIS_DESKTOP_APP_MEMORY_DAEMON_PER_APP_LIMIT",
+                24,
+                minimum=4,
+                maximum=80,
+            ),
+            history_limit=self._env_int(
+                "JARVIS_DESKTOP_APP_MEMORY_DAEMON_HISTORY_LIMIT",
+                8,
+                minimum=1,
+                maximum=64,
+            ),
+            query=str(os.getenv("JARVIS_DESKTOP_APP_MEMORY_DAEMON_QUERY", "") or "").strip(),
+            category=str(os.getenv("JARVIS_DESKTOP_APP_MEMORY_DAEMON_CATEGORY", "") or "").strip(),
+            ensure_app_launch=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_ENSURE_LAUNCH", True),
         )
         self.desktop_governance_policy = DesktopGovernancePolicyManager(
             policy_profile=str(os.getenv("JARVIS_DESKTOP_GOVERNANCE_PROFILE", "balanced") or "balanced").strip(),
@@ -1755,6 +1786,7 @@ class DesktopBackendService:
         future = asyncio.run_coroutine_threadsafe(self.kernel.start(), self._loop)
         future.result(timeout=20)
         self.desktop_recovery_supervisor.start(self._execute_desktop_recovery_supervisor_tick)
+        self.desktop_app_memory_supervisor.start(self._execute_desktop_app_memory_supervisor_tick)
         self.desktop_evaluation_campaign_supervisor.start(self._execute_desktop_evaluation_campaign_supervisor_tick)
         self.desktop_evaluation_program_supervisor.start(self._execute_desktop_evaluation_program_supervisor_tick)
         self.desktop_evaluation_portfolio_supervisor.start(self._execute_desktop_evaluation_portfolio_supervisor_tick)
@@ -1842,6 +1874,10 @@ class DesktopBackendService:
             self.desktop_recovery_supervisor.stop()
         except Exception as exc:  # noqa: BLE001
             self.log.warning(f"Desktop recovery supervisor stop failed: {exc}")
+        try:
+            self.desktop_app_memory_supervisor.stop()
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning(f"Desktop app memory supervisor stop failed: {exc}")
         try:
             self.desktop_evaluation_campaign_supervisor.stop()
         except Exception as exc:  # noqa: BLE001
@@ -8131,6 +8167,196 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_app_memory_status(
+        self,
+        *,
+        limit: int = 200,
+        app_name: str = "",
+        profile_id: str = "",
+        category: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.app_memory_snapshot(
+                limit=limit,
+                app_name=app_name,
+                profile_id=profile_id,
+                category=category,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def survey_desktop_app_memory(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 32,
+        ensure_app_launch: bool = True,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.survey_app_memory(
+                app_name=app_name,
+                window_title=window_title,
+                query=query,
+                limit=limit,
+                ensure_app_launch=ensure_app_launch,
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+                include_exploration=include_exploration,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory survey payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def survey_desktop_app_memory_batch(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        max_apps: int = 4,
+        per_app_limit: int = 24,
+        ensure_app_launch: bool = True,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.survey_app_memory_batch(
+                query=query,
+                category=category,
+                max_apps=max_apps,
+                per_app_limit=per_app_limit,
+                ensure_app_launch=ensure_app_launch,
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+                include_exploration=include_exploration,
+                source=source,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_memory_supervisor_status(
+        self,
+        *,
+        history_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.status()
+        payload["app_memory"] = _to_jsonable(
+            self.desktop_app_memory_status(limit=max(8, min(int(history_limit or 6) * 8, 96)))
+        )
+        return _to_jsonable(payload)
+
+    def desktop_app_memory_supervisor_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.history(limit=limit, status=status, source=source)
+        return _to_jsonable(payload)
+
+    def reset_desktop_app_memory_supervisor_history(
+        self,
+        *,
+        status: str = "",
+        source: str = "",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.reset_history(status=status, source=source)
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
+        )
+        return _to_jsonable(payload)
+
+    def configure_desktop_app_memory_supervisor(
+        self,
+        *,
+        enabled: Optional[bool] = None,
+        interval_s: Optional[float] = None,
+        max_apps: Optional[int] = None,
+        per_app_limit: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        query: Optional[str] = None,
+        category: Optional[str] = None,
+        ensure_app_launch: Optional[bool] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        supervisor.configure(
+            enabled=enabled,
+            interval_s=interval_s,
+            max_apps=max_apps,
+            per_app_limit=per_app_limit,
+            history_limit=history_limit,
+            query=query,
+            category=category,
+            ensure_app_launch=ensure_app_launch,
+            source=source,
+        )
+        return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
+
+    def trigger_desktop_app_memory_supervisor(
+        self,
+        *,
+        max_apps: Optional[int] = None,
+        per_app_limit: Optional[int] = None,
+        history_limit: Optional[int] = None,
+        query: Optional[str] = None,
+        category: Optional[str] = None,
+        ensure_app_launch: Optional[bool] = None,
+        source: str = "manual",
+        history_response_limit: int = 6,
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.trigger_now(
+            max_apps=max_apps,
+            per_app_limit=per_app_limit,
+            history_limit=history_limit,
+            query=query,
+            category=category,
+            ensure_app_launch=ensure_app_launch,
+            source=source,
+        )
+        payload["supervisor"] = _to_jsonable(
+            self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
+        )
+        return _to_jsonable(payload)
+
     def desktop_workflows(
         self,
         *,
@@ -8904,6 +9130,30 @@ class DesktopBackendService:
         )
         return _to_jsonable(payload)
 
+    def _execute_desktop_app_memory_supervisor_tick(
+        self,
+        *,
+        max_apps: int = 2,
+        per_app_limit: int = 24,
+        query: str = "",
+        category: str = "",
+        ensure_app_launch: bool = True,
+        source: str = "daemon",
+    ) -> Dict[str, Any]:
+        payload = self.survey_desktop_app_memory_batch(
+            query=query,
+            category=category,
+            max_apps=max_apps,
+            per_app_limit=per_app_limit,
+            ensure_app_launch=ensure_app_launch,
+            include_observation=True,
+            include_elements=True,
+            include_workflow_probes=True,
+            include_exploration=True,
+            source=source,
+        )
+        return _to_jsonable(payload)
+
     def _execute_desktop_evaluation_program_supervisor_tick(
         self,
         *,
@@ -9363,6 +9613,26 @@ class DesktopBackendService:
                 intent=intent,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid workflow memory reset payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def reset_desktop_app_memory(
+        self,
+        *,
+        app_name: str = "",
+        profile_id: str = "",
+        category: str = "",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.app_memory_reset(
+                app_name=app_name,
+                profile_id=profile_id,
+                category=category,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory reset payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -42973,6 +43243,32 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
+            if path == "/runtime/desktop-app-memory":
+                limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
+                payload = self.server.service.desktop_app_memory_status(
+                    limit=limit,
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    profile_id=str(query.get("profile_id", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/daemon":
+                history_limit = self._parse_int(str(query.get("history_limit", ["6"])[0]), 6, minimum=1, maximum=32)
+                payload = self.server.service.desktop_app_memory_supervisor_status(
+                    history_limit=history_limit
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/daemon/history":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
+                payload = self.server.service.desktop_app_memory_supervisor_history(
+                    limit=limit,
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    source=str(query.get("source", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/desktop/workflows":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
                 payload = self.server.service.desktop_workflows(
@@ -45291,6 +45587,79 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                     profile_id=str(body.get("profile_id", "") or "").strip(),
                     intent=str(body.get("intent", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/survey":
+                payload = self.server.service.survey_desktop_app_memory(
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    window_title=str(body.get("window_title", "") or "").strip(),
+                    query=str(body.get("query", "") or "").strip(),
+                    limit=self._parse_int(body.get("limit", 32), 32, minimum=4, maximum=80),
+                    ensure_app_launch=self._parse_bool(body.get("ensure_app_launch", True), default=True),
+                    include_observation=self._parse_bool(body.get("include_observation", True), default=True),
+                    include_elements=self._parse_bool(body.get("include_elements", True), default=True),
+                    include_workflow_probes=self._parse_bool(body.get("include_workflow_probes", True), default=True),
+                    include_exploration=self._parse_bool(body.get("include_exploration", True), default=True),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/survey/batch":
+                payload = self.server.service.survey_desktop_app_memory_batch(
+                    query=str(body.get("query", body.get("app_name", body.get("app", ""))) or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                    max_apps=self._parse_int(body.get("max_apps", 4), 4, minimum=1, maximum=32),
+                    per_app_limit=self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80),
+                    ensure_app_launch=self._parse_bool(body.get("ensure_app_launch", True), default=True),
+                    include_observation=self._parse_bool(body.get("include_observation", True), default=True),
+                    include_elements=self._parse_bool(body.get("include_elements", True), default=True),
+                    include_workflow_probes=self._parse_bool(body.get("include_workflow_probes", True), default=True),
+                    include_exploration=self._parse_bool(body.get("include_exploration", True), default=True),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/reset":
+                payload = self.server.service.reset_desktop_app_memory(
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    profile_id=str(body.get("profile_id", "") or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/daemon":
+                payload = self.server.service.configure_desktop_app_memory_supervisor(
+                    enabled=(self._parse_bool(body.get("enabled"), default=False) if "enabled" in body else None),
+                    interval_s=(float(body.get("interval_s")) if body.get("interval_s") is not None else None),
+                    max_apps=(self._parse_int(body.get("max_apps", 2), 2, minimum=1, maximum=32) if "max_apps" in body else None),
+                    per_app_limit=(self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80) if "per_app_limit" in body else None),
+                    history_limit=(self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64) if "history_limit" in body else None),
+                    query=(str(body.get("query", "")) if "query" in body else None),
+                    category=(str(body.get("category", "")) if "category" in body else None),
+                    ensure_app_launch=(self._parse_bool(body.get("ensure_app_launch"), default=True) if "ensure_app_launch" in body else None),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/daemon/trigger":
+                payload = self.server.service.trigger_desktop_app_memory_supervisor(
+                    max_apps=(self._parse_int(body.get("max_apps", 2), 2, minimum=1, maximum=32) if "max_apps" in body else None),
+                    per_app_limit=(self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80) if "per_app_limit" in body else None),
+                    history_limit=(self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64) if "history_limit" in body else None),
+                    query=(str(body.get("query", "")) if "query" in body else None),
+                    category=(str(body.get("category", "")) if "category" in body else None),
+                    ensure_app_launch=(self._parse_bool(body.get("ensure_app_launch"), default=True) if "ensure_app_launch" in body else None),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/daemon/history/reset":
+                payload = self.server.service.reset_desktop_app_memory_supervisor_history(
+                    status=str(body.get("status", "") or "").strip(),
+                    source=str(body.get("source", "") or "").strip(),
+                    history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return

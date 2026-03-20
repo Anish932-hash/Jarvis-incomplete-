@@ -59,6 +59,10 @@ import {
   type CoworkerStackRecoverResponse,
   type CoworkerStackRecoveryPlanResponse,
   type CoworkerStackStatusResponse,
+  type DesktopAppMemoryResponse,
+  type DesktopAppMemoryBatchResponse,
+  type DesktopAppMemoryDaemonStatusResponse,
+  type DesktopAppMemorySurveyResponse,
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
   type DesktopEvaluationCatalogResponse,
@@ -1174,6 +1178,16 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopRecoveryWatchdogBusy, setDesktopRecoveryWatchdogBusy] = useState(false);
   const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
   const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
+  const [desktopAppMemoryState, setDesktopAppMemoryState] = useState<DesktopAppMemoryResponse | null>(null);
+  const [desktopAppMemorySurveyState, setDesktopAppMemorySurveyState] = useState<DesktopAppMemorySurveyResponse | null>(null);
+  const [desktopAppMemoryBatchState, setDesktopAppMemoryBatchState] = useState<DesktopAppMemoryBatchResponse | null>(null);
+  const [desktopAppMemoryDaemonState, setDesktopAppMemoryDaemonState] = useState<DesktopAppMemoryDaemonStatusResponse | null>(null);
+  const [desktopAppMemoryBusy, setDesktopAppMemoryBusy] = useState(false);
+  const [desktopAppMemorySurveyBusy, setDesktopAppMemorySurveyBusy] = useState(false);
+  const [desktopAppMemoryBatchBusy, setDesktopAppMemoryBatchBusy] = useState(false);
+  const [desktopAppMemoryResetBusy, setDesktopAppMemoryResetBusy] = useState(false);
+  const [desktopAppMemoryDaemonBusy, setDesktopAppMemoryDaemonBusy] = useState(false);
+  const [desktopAppMemoryDaemonTriggerBusy, setDesktopAppMemoryDaemonTriggerBusy] = useState(false);
   const [desktopEvaluationCatalogState, setDesktopEvaluationCatalogState] =
     useState<DesktopEvaluationCatalogResponse | null>(null);
   const [desktopEvaluationRunState, setDesktopEvaluationRunState] =
@@ -2208,6 +2222,34 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         ? desktopEvaluationNativeTargets.target_apps.filter((item): item is Record<string, unknown> => isObjectRecord(item))
         : [],
     [desktopEvaluationNativeTargets]
+  );
+  const desktopAppMemory = useMemo(() => asObjectRecord(desktopAppMemoryState), [desktopAppMemoryState]);
+  const desktopAppMemorySummary = useMemo(() => asObjectRecord(desktopAppMemory.summary), [desktopAppMemory]);
+  const desktopLatestAppMemory = useMemo(() => {
+    const latest = asObjectRecord(desktopAppMemory.latest_entry);
+    if (Object.keys(latest).length > 0) {
+      return latest;
+    }
+    if (Array.isArray(desktopAppMemoryState?.items) && desktopAppMemoryState.items.length > 0) {
+      return asObjectRecord(desktopAppMemoryState.items[0]);
+    }
+    return {};
+  }, [desktopAppMemory, desktopAppMemoryState]);
+  const desktopAppMemoryRows = useMemo(
+    () =>
+      Array.isArray(desktopAppMemoryState?.items)
+        ? desktopAppMemoryState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopAppMemoryState]
+  );
+  const desktopAppMemoryDaemon = useMemo(() => asObjectRecord(desktopAppMemoryDaemonState), [desktopAppMemoryDaemonState]);
+  const desktopAppMemoryDaemonHistory = useMemo(
+    () => asObjectRecord(desktopAppMemoryDaemon.history),
+    [desktopAppMemoryDaemon]
+  );
+  const desktopAppMemoryDaemonLatestRun = useMemo(
+    () => asObjectRecord(desktopAppMemoryDaemon.latest_run),
+    [desktopAppMemoryDaemon]
   );
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
@@ -13444,6 +13486,253 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }
   }, [desktopCoworkerAppName, toast]);
 
+  const refreshDesktopAppMemory = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    setDesktopAppMemoryBusy(true);
+    try {
+      const payload = await backendClient.desktopAppMemory({
+        app_name: desktopCoworkerAppName.trim() || undefined,
+        limit: desktopCoworkerAppName.trim() ? 24 : 80,
+      });
+      setDesktopAppMemoryState(payload);
+      if (!quiet) {
+        toast({
+          title: 'Learned App Memory Ready',
+          description:
+            desktopCoworkerAppName.trim()
+              ? `${Number(payload.count ?? 0)} learned app-memory record(s) matched ${desktopCoworkerAppName.trim()}.`
+              : `${Number(payload.total ?? payload.count ?? 0)} learned app-memory record(s) are available.`,
+        });
+      }
+      return payload;
+    } catch (error) {
+      if (!quiet) {
+        toast({
+          variant: 'destructive',
+          title: 'Learned App Memory Failed',
+          description: getErrorMessage(error),
+        });
+      }
+      return null;
+    } finally {
+      setDesktopAppMemoryBusy(false);
+    }
+  }, [desktopCoworkerAppName, toast]);
+
+  const refreshDesktopAppMemoryDaemon = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    setDesktopAppMemoryDaemonBusy(true);
+    try {
+      const payload = await backendClient.desktopAppMemoryDaemon({ history_limit: 6 });
+      setDesktopAppMemoryDaemonState(payload);
+      if (!quiet) {
+        toast({
+          title: 'App Memory Daemon Ready',
+          description: `daemon:${String(payload.last_result_status ?? 'idle')} • runs:${Number(payload.run_count ?? 0)}`,
+        });
+      }
+      return payload;
+    } catch (error) {
+      if (!quiet) {
+        toast({
+          variant: 'destructive',
+          title: 'App Memory Daemon Failed',
+          description: getErrorMessage(error),
+        });
+      }
+      return null;
+    } finally {
+      setDesktopAppMemoryDaemonBusy(false);
+    }
+  }, [toast]);
+
+  const surveyDesktopAppMemory = useCallback(async () => {
+    setDesktopAppMemorySurveyBusy(true);
+    try {
+      const payload = await backendClient.desktopSurveyAppMemory({
+        app_name: desktopCoworkerAppName.trim() || undefined,
+        window_title: desktopCoworkerWindowTitle.trim() || undefined,
+        query: desktopCoworkerQuery.trim() || undefined,
+        limit: 32,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        include_observation: true,
+        include_elements: true,
+        include_workflow_probes: true,
+        include_exploration: true,
+      });
+      setDesktopAppMemorySurveyState(payload);
+      const memoryPayload = isObjectRecord(payload.app_memory) ? (payload.app_memory as DesktopAppMemoryResponse) : null;
+      if (memoryPayload) {
+        setDesktopAppMemoryState(memoryPayload);
+      } else if (isObjectRecord(payload.memory_entry)) {
+        setDesktopAppMemoryState({
+          status: 'success',
+          count: 1,
+          total: 1,
+          items: [payload.memory_entry],
+          latest_entry: payload.memory_entry,
+          summary: {},
+        });
+      }
+      toast({
+        title: 'App Memory Surveyed',
+        description: String(payload.message ?? 'JARVIS learned the current app surface and stored new control memory.'),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Memory Survey Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemorySurveyBusy(false);
+    }
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    desktopCoworkerQuery,
+    desktopCoworkerWindowTitle,
+    toast,
+  ]);
+
+  const surveyDesktopAppMemoryBatch = useCallback(async () => {
+    setDesktopAppMemoryBatchBusy(true);
+    try {
+      const payload = await backendClient.desktopSurveyAppMemoryBatch({
+        query: desktopCoworkerAppName.trim() || undefined,
+        category: undefined,
+        max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
+        per_app_limit: 24,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        include_observation: true,
+        include_elements: true,
+        include_workflow_probes: true,
+        include_exploration: true,
+        source: 'manual',
+      });
+      setDesktopAppMemoryBatchState(payload);
+      if (isObjectRecord(payload.app_memory)) {
+        setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
+      }
+      void refreshDesktopAppMemoryDaemon({ quiet: true });
+      toast({
+        title: 'App Memory Batch Complete',
+        description: String(
+          payload.message ??
+            `JARVIS surveyed ${Number(payload.surveyed_app_count ?? 0)} app profile(s) to grow learned app memory.`
+        ),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Memory Batch Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemoryBatchBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, refreshDesktopAppMemoryDaemon, toast]);
+
+  const resetDesktopAppMemory = useCallback(async () => {
+    setDesktopAppMemoryResetBusy(true);
+    try {
+      const payload = await backendClient.resetDesktopAppMemory({
+        app_name: desktopCoworkerAppName.trim() || undefined,
+      });
+      if (desktopCoworkerAppName.trim()) {
+        void refreshDesktopAppMemory({ quiet: true });
+      } else {
+        setDesktopAppMemoryState(null);
+      }
+      toast({
+        title: 'Learned App Memory Cleared',
+        description:
+          desktopCoworkerAppName.trim()
+            ? `${Number(payload.removed ?? 0)} learned app-memory record(s) removed for ${desktopCoworkerAppName.trim()}.`
+            : `${Number(payload.removed ?? 0)} learned app-memory record(s) removed.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Memory Reset Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemoryResetBusy(false);
+    }
+  }, [desktopCoworkerAppName, refreshDesktopAppMemory, toast]);
+
+  const toggleDesktopAppMemoryDaemon = useCallback(async (enabled: boolean) => {
+    setDesktopAppMemoryDaemonBusy(true);
+    try {
+      const payload = await backendClient.configureDesktopAppMemoryDaemon({
+        enabled,
+        query: desktopCoworkerAppName.trim() || undefined,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        source: 'manual',
+        history_response_limit: 6,
+      });
+      setDesktopAppMemoryDaemonState(payload);
+      toast({
+        title: enabled ? 'App Memory Daemon Enabled' : 'App Memory Daemon Paused',
+        description: enabled
+          ? 'JARVIS can now keep surveying app profiles in bounded background passes.'
+          : 'Background learned-app surveys are paused.',
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Memory Daemon Update Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemoryDaemonBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, toast]);
+
+  const triggerDesktopAppMemoryDaemon = useCallback(async () => {
+    setDesktopAppMemoryDaemonTriggerBusy(true);
+    try {
+      const payload = await backendClient.triggerDesktopAppMemoryDaemon({
+        query: desktopCoworkerAppName.trim() || undefined,
+        max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
+        per_app_limit: 24,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        source: 'manual',
+        history_response_limit: 6,
+      });
+      setDesktopAppMemoryBatchState(payload);
+      if (isObjectRecord(payload.supervisor)) {
+        setDesktopAppMemoryDaemonState(payload.supervisor as DesktopAppMemoryDaemonStatusResponse);
+      } else {
+        void refreshDesktopAppMemoryDaemon({ quiet: true });
+      }
+      if (isObjectRecord(payload.app_memory)) {
+        setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
+      }
+      toast({
+        title: 'App Memory Daemon Triggered',
+        description: String(payload.message ?? 'JARVIS ran a bounded background app-learning pass.'),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Memory Daemon Trigger Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemoryDaemonTriggerBusy(false);
+    }
+  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, refreshDesktopAppMemoryDaemon, toast]);
+
   const buildDesktopEvaluationQueryInput = useCallback(() => {
     const appName = desktopEvaluationAppFilter.trim();
     return {
@@ -18981,6 +19270,314 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         Load the catalog to browse the app-specific profiles generated from `E:\\apps.txt` and `C:\\apps.txt`.
                                       </p>
                                     )}
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Learned App Memory
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          Launch an app, survey its live controls, and let JARVIS build a separate memory of buttons, options, commands, shortcuts, and safe follow-up branches.
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {desktopAppMemoryState ? (
+                                          <Badge variant="outline">
+                                            memory:{Number(desktopAppMemoryState.count ?? 0)} / {Number(desktopAppMemoryState.total ?? 0)}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="secondary">memory:idle</Badge>
+                                        )}
+                                        {desktopAppMemorySurveyState ? (
+                                          <Badge variant="secondary">
+                                            survey:{String(desktopAppMemorySurveyState.status ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
+                                        {desktopAppMemoryBatchState ? (
+                                          <Badge variant="secondary">
+                                            batch:{String(desktopAppMemoryBatchState.status ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
+                                        {desktopAppMemoryDaemonState ? (
+                                          <Badge variant="outline">
+                                            daemon:{String(desktopAppMemoryDaemonState.last_result_status ?? (desktopAppMemoryDaemonState.enabled ? 'armed' : 'idle'))}
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      <div className="flex items-center gap-2 rounded border border-primary/20 bg-background/20 px-2 py-1">
+                                        <Switch
+                                          checked={Boolean(desktopAppMemoryDaemonState?.enabled)}
+                                          onCheckedChange={(checked) => void toggleDesktopAppMemoryDaemon(checked)}
+                                          disabled={desktopAppMemoryDaemonBusy}
+                                        />
+                                        <span className="text-[10px] text-muted-foreground">Daemon</span>
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopAppMemory()}
+                                        disabled={desktopAppMemoryBusy}
+                                      >
+                                        {desktopAppMemoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Database className="h-4 w-4" />
+                                        )}
+                                        Refresh Memory
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void surveyDesktopAppMemory()}
+                                        disabled={desktopAppMemorySurveyBusy}
+                                      >
+                                        {desktopAppMemorySurveyBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileSearch className="h-4 w-4" />
+                                        )}
+                                        Survey App
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void surveyDesktopAppMemoryBatch()}
+                                        disabled={desktopAppMemoryBatchBusy}
+                                      >
+                                        {desktopAppMemoryBatchBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Layers3 className="h-4 w-4" />
+                                        )}
+                                        Survey Batch
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopAppMemoryDaemon()}
+                                        disabled={desktopAppMemoryDaemonBusy}
+                                      >
+                                        {desktopAppMemoryDaemonBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="h-4 w-4" />
+                                        )}
+                                        Refresh Daemon
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void triggerDesktopAppMemoryDaemon()}
+                                        disabled={desktopAppMemoryDaemonTriggerBusy}
+                                      >
+                                        {desktopAppMemoryDaemonTriggerBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Radar className="h-4 w-4" />
+                                        )}
+                                        Trigger Daemon
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void resetDesktopAppMemory()}
+                                        disabled={desktopAppMemoryResetBusy}
+                                      >
+                                        {desktopAppMemoryResetBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-4 w-4" />
+                                        )}
+                                        Clear Memory
+                                      </Button>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1.1fr_1fr]">
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Memory Summary</p>
+                                        {desktopAppMemoryState ? (
+                                          <>
+                                            <p className="mt-2">
+                                              apps:{Number(desktopAppMemorySummary.entry_count ?? 0)}
+                                              {' • '}surveys:{Number(desktopAppMemorySummary.survey_count_total ?? 0)}
+                                              {' • '}failures:{Number(desktopAppMemorySummary.survey_failure_total ?? 0)}
+                                              {' • '}controls:{Number(desktopAppMemorySummary.discovered_control_total ?? 0)}
+                                              {' • '}commands:{Number(desktopAppMemorySummary.command_candidate_total ?? 0)}
+                                            </p>
+                                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                              {Object.entries(asObjectRecord(desktopAppMemorySummary.category_counts))
+                                                .slice(0, 4)
+                                                .map(([label, count]) => (
+                                                  <Badge key={`desktop-app-memory-category-${label}`} variant="outline">
+                                                    {label}:{String(count)}
+                                                  </Badge>
+                                                ))}
+                                              {Object.entries(asObjectRecord(desktopAppMemorySummary.surface_role_counts))
+                                                .slice(0, 3)
+                                                .map(([label, count]) => (
+                                                  <Badge key={`desktop-app-memory-role-${label}`} variant="secondary">
+                                                    {label}:{String(count)}
+                                                  </Badge>
+                                                ))}
+                                            </div>
+                                            <div className="mt-3 rounded border border-primary/10 bg-background/30 p-2">
+                                              <p className="font-semibold text-primary/80">
+                                                {String(
+                                                  desktopLatestAppMemory.app_name ??
+                                                    desktopLatestAppMemory.profile_name ??
+                                                    'No learned app selected'
+                                                )}
+                                              </p>
+                                              <p className="mt-1">
+                                                profile:{String(desktopLatestAppMemory.profile_id ?? 'generic')}
+                                                {' • '}surveys:{Number(asObjectRecord(desktopLatestAppMemory.metrics).survey_count ?? 0)}
+                                                {' • '}controls:{Number(desktopLatestAppMemory.discovered_control_count ?? 0)}
+                                              </p>
+                                              <p className="mt-1">
+                                                window:{String(desktopLatestAppMemory.window_title ?? 'n/a')}
+                                                {' • '}role:{String(
+                                                  asObjectRecord(desktopLatestAppMemory.latest_survey).surface_role ?? 'n/a'
+                                                )}
+                                                {' • '}mode:{String(
+                                                  asObjectRecord(desktopLatestAppMemory.latest_survey).interaction_mode ?? 'n/a'
+                                                )}
+                                              </p>
+                                              <p className="mt-1">
+                                                query:{String(asObjectRecord(desktopLatestAppMemory.latest_survey).query ?? 'n/a')}
+                                                {' • '}launch:{String(
+                                                  asObjectRecord(desktopLatestAppMemory.latest_survey).launch_status ?? 'idle'
+                                                )}
+                                                {' • '}health:{String(
+                                                  asObjectRecord(desktopLatestAppMemory.learning_health).status ?? 'idle'
+                                                )}
+                                              </p>
+                                              {Array.isArray(desktopLatestAppMemory.recommended_actions) &&
+                                              desktopLatestAppMemory.recommended_actions.length > 0 ? (
+                                                <p className="mt-2">
+                                                  actions:{' '}
+                                                  {desktopLatestAppMemory.recommended_actions
+                                                    .slice(0, 4)
+                                                    .map((item) => `${String(asObjectRecord(item).value ?? 'unknown')}:${String(asObjectRecord(item).count ?? 0)}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {Array.isArray(desktopLatestAppMemory.command_candidates) &&
+                                              desktopLatestAppMemory.command_candidates.length > 0 ? (
+                                                <p className="mt-1">
+                                                  commands:{' '}
+                                                  {desktopLatestAppMemory.command_candidates
+                                                    .slice(0, 4)
+                                                    .map((item) => `${String(asObjectRecord(item).value ?? 'unknown')}:${String(asObjectRecord(item).count ?? 0)}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <p className="mt-2">
+                                            Run `Survey App` to let JARVIS open the app, inspect the live surface, and build separate memory for discovered controls and command-like affordances.
+                                          </p>
+                                        )}
+                                        {desktopAppMemoryDaemonState ? (
+                                          <div className="mt-3 rounded border border-primary/10 bg-background/30 p-2">
+                                            <p className="font-semibold text-primary/80">Background Learner</p>
+                                            <p className="mt-1">
+                                              enabled:{String(Boolean(desktopAppMemoryDaemonState.enabled))}
+                                              {' • '}runs:{Number(desktopAppMemoryDaemonState.run_count ?? 0)}
+                                              {' • '}last:{String(desktopAppMemoryDaemonState.last_result_status ?? 'idle')}
+                                            </p>
+                                            <p className="mt-1">
+                                              max apps:{Number(desktopAppMemoryDaemonState.max_apps ?? 0)}
+                                              {' • '}query:{String(desktopAppMemoryDaemonState.query ?? 'all')}
+                                              {' • '}category:{String(desktopAppMemoryDaemonState.category ?? 'all')}
+                                            </p>
+                                            <p className="mt-1">
+                                              history:{Number(desktopAppMemoryDaemonHistory.count ?? 0)}
+                                              {' • '}manual:{Number(desktopAppMemoryDaemonState.manual_trigger_count ?? 0)}
+                                              {' • '}auto:{Number(desktopAppMemoryDaemonState.auto_trigger_count ?? 0)}
+                                            </p>
+                                            <p className="mt-1">
+                                              last summary:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).surveyed_app_count ?? 0)} surveyed
+                                              {' • '}success:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).success_count ?? 0)}
+                                              {' • '}partial:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).partial_count ?? 0)}
+                                              {' • '}error:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).error_count ?? 0)}
+                                            </p>
+                                            {Object.keys(desktopAppMemoryDaemonLatestRun).length > 0 ? (
+                                              <p className="mt-1">
+                                                latest:{' '}
+                                                {String(desktopAppMemoryDaemonLatestRun.source ?? 'manual')}
+                                                {' • '}
+                                                {String(desktopAppMemoryDaemonLatestRun.completed_at ?? desktopAppMemoryDaemonLatestRun.started_at ?? 'n/a')}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Learned Controls</p>
+                                        {desktopAppMemoryRows.length > 0 ? (
+                                          <ScrollArea className="mt-2 h-[220px] rounded border border-primary/10 bg-black/10 p-2">
+                                            <div className="space-y-2">
+                                              {desktopAppMemoryRows.slice(0, 4).map((row, index) => {
+                                                const item = asObjectRecord(row);
+                                                const topControls = Array.isArray(item.top_controls)
+                                                  ? item.top_controls.filter((control): control is Record<string, unknown> => isObjectRecord(control))
+                                                  : [];
+                                                const shortcuts = Array.isArray(item.shortcut_actions)
+                                                  ? item.shortcut_actions.filter((shortcut): shortcut is Record<string, unknown> => isObjectRecord(shortcut))
+                                                  : [];
+                                                return (
+                                                  <div
+                                                    key={`${String(item.key ?? item.app_name ?? 'desktop-app-memory')}-${index}`}
+                                                    className="rounded border border-primary/10 bg-background/30 p-2"
+                                                  >
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                      <p className="font-semibold text-primary/90">{String(item.app_name ?? item.profile_name ?? 'Desktop App')}</p>
+                                                      <Badge variant="outline">
+                                                        {Number(asObjectRecord(item.metrics).survey_count ?? 0)} survey(s)
+                                                      </Badge>
+                                                    </div>
+                                                    <p className="mt-1">
+                                                      controls:{Number(item.discovered_control_count ?? 0)}
+                                                      {' • '}commands:{Array.isArray(item.command_candidates) ? item.command_candidates.length : 0}
+                                                      {' • '}branches:{Array.isArray(item.branch_actions) ? item.branch_actions.length : 0}
+                                                    </p>
+                                                    {topControls.length > 0 ? (
+                                                      <p className="mt-1">
+                                                        top:{' '}
+                                                        {topControls
+                                                          .slice(0, 4)
+                                                          .map((control) => `${String(control.label ?? control.automation_id ?? control.control_type ?? 'control')} (${String(control.control_type ?? 'unknown')})`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {shortcuts.length > 0 ? (
+                                                      <p className="mt-1">
+                                                        shortcuts:{' '}
+                                                        {shortcuts
+                                                          .slice(0, 3)
+                                                          .map((shortcut) => `${String(shortcut.action ?? 'action')}=${Array.isArray(shortcut.hotkeys) ? shortcut.hotkeys.join('/') : 'n/a'}`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </ScrollArea>
+                                        ) : (
+                                          <p className="mt-2">
+                                            No learned app-memory rows yet. Survey an app to start capturing live buttons, options, command candidates, and shortcut hints.
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
                                   <div className="rounded-md border border-primary/20 bg-background/30 p-2">
                                     <div className="flex flex-wrap items-center justify-between gap-2">

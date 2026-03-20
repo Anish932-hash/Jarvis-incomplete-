@@ -6,6 +6,7 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from backend.python.core.desktop_app_memory import DesktopAppMemory
 from backend.python.core.desktop_app_profile_registry import DesktopAppProfileRegistry
 from backend.python.core.desktop_mission_memory import DesktopMissionMemory
 from backend.python.core.desktop_workflow_memory import DesktopWorkflowMemory
@@ -2717,6 +2718,7 @@ class DesktopActionRouter:
         *,
         action_handlers: Optional[Dict[str, ActionHandler]] = None,
         app_profile_registry: Optional[DesktopAppProfileRegistry] = None,
+        app_memory: Optional[DesktopAppMemory] = None,
         workflow_memory: Optional[DesktopWorkflowMemory] = None,
         mission_memory: Optional[DesktopMissionMemory] = None,
         rust_request_handler: Optional[RustRequestHandler] = None,
@@ -2727,6 +2729,7 @@ class DesktopActionRouter:
         if isinstance(action_handlers, dict):
             self._handlers.update({str(key): value for key, value in action_handlers.items() if callable(value)})
         self._app_profile_registry = app_profile_registry or DesktopAppProfileRegistry()
+        self._app_memory = app_memory or DesktopAppMemory.default()
         self._workflow_memory = workflow_memory or DesktopWorkflowMemory.default()
         self._mission_memory = mission_memory or DesktopMissionMemory.default()
         self._surface_intelligence = SurfaceIntelligenceAnalyzer()
@@ -8229,6 +8232,261 @@ class DesktopActionRouter:
 
     def app_profile_catalog(self, *, query: str = "", category: str = "", limit: int = 400) -> Dict[str, Any]:
         return self._app_profile_registry.catalog(query=query, category=category, limit=limit)
+
+    def app_memory_snapshot(
+        self,
+        *,
+        limit: int = 200,
+        app_name: str = "",
+        profile_id: str = "",
+        category: str = "",
+    ) -> Dict[str, Any]:
+        return self._app_memory.snapshot(
+            limit=limit,
+            app_name=app_name,
+            profile_id=profile_id,
+            category=category,
+        )
+
+    def survey_app_memory(
+        self,
+        *,
+        app_name: str = "",
+        window_title: str = "",
+        query: str = "",
+        limit: int = 32,
+        ensure_app_launch: bool = True,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        clean_app_name = str(app_name or "").strip()
+        clean_window_title = str(window_title or "").strip()
+        clean_query = str(query or "").strip()
+        clean_source = str(source or "manual").strip().lower() or "manual"
+        launch_result: Dict[str, Any] = {}
+        if ensure_app_launch and clean_app_name:
+            launch_result = self._call("open_app", {"app_name": clean_app_name})
+        snapshot = self.surface_snapshot(
+            app_name=clean_app_name,
+            window_title=clean_window_title,
+            query=clean_query,
+            limit=max(12, min(int(limit or 32), 80)),
+            include_observation=include_observation,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+        )
+        if not isinstance(snapshot, dict):
+            return {"status": "error", "message": "invalid desktop app memory snapshot"}
+        app_profile = snapshot.get("app_profile", {}) if isinstance(snapshot.get("app_profile", {}), dict) else {}
+        if not app_profile and clean_app_name:
+            matched_profile = self._app_profile_registry.match(app_name=clean_app_name, window_title=clean_window_title)
+            app_profile = matched_profile if isinstance(matched_profile, dict) and matched_profile.get("status") == "success" else {}
+        if str(snapshot.get("status", "") or "").strip().lower() != "success":
+            memory_entry = self._app_memory.record_survey(
+                app_name=clean_app_name,
+                window_title=clean_window_title,
+                query=clean_query,
+                app_profile=app_profile,
+                launch_result=launch_result,
+                snapshot=snapshot,
+                exploration_plan={},
+                survey_status="error",
+                error_message=str(snapshot.get("message", "") or snapshot.get("error", "") or "").strip(),
+                source=clean_source,
+            )
+            app_memory = self._app_memory.snapshot(
+                limit=max(1, min(int(limit or 12), 120)),
+                app_name=clean_app_name,
+                profile_id=str(memory_entry.get("profile_id", "") or "").strip(),
+            )
+            return {
+                "status": "partial",
+                "message": (
+                    "JARVIS recorded a failed learning attempt for this app surface so the learner can improve on the next pass."
+                ),
+                "launch_result": launch_result,
+                "surface_snapshot": snapshot,
+                "exploration_plan": {},
+                "memory_entry": memory_entry,
+                "app_memory": app_memory,
+            }
+        exploration_plan: Dict[str, Any] = {}
+        if include_exploration:
+            exploration_plan = self._surface_exploration_from_snapshot(
+                snapshot=dict(snapshot),
+                app_name=clean_app_name,
+                window_title=clean_window_title,
+                query=clean_query,
+                limit=max(4, min(int(limit or 8), 12)),
+            )
+        memory_entry = self._app_memory.record_survey(
+            app_name=clean_app_name,
+            window_title=clean_window_title,
+            query=clean_query,
+            app_profile=app_profile,
+            launch_result=launch_result,
+            snapshot=snapshot,
+            exploration_plan=exploration_plan,
+            survey_status="success",
+            error_message="",
+            source=clean_source,
+        )
+        app_memory = self._app_memory.snapshot(
+            limit=max(1, min(int(limit or 12), 120)),
+            app_name=clean_app_name,
+            profile_id=str(memory_entry.get("profile_id", "") or "").strip(),
+        )
+        discovered_control_count = int(memory_entry.get("discovered_control_count", 0) or 0)
+        command_candidate_count = len(memory_entry.get("command_candidates", []) if isinstance(memory_entry.get("command_candidates", []), list) else [])
+        survey_count = int(dict(memory_entry.get("metrics", {})).get("survey_count", 0) or 0) if isinstance(memory_entry.get("metrics", {}), dict) else 0
+        message_parts: List[str] = []
+        if launch_result:
+            if str(launch_result.get("status", "") or "").strip().lower() == "success":
+                message_parts.append("App launch and reacquisition succeeded.")
+            else:
+                message_parts.append("Launch did not succeed, but JARVIS still surveyed the current surface.")
+        message_parts.append(
+            f"Learned {discovered_control_count} controls and {command_candidate_count} command candidates across {survey_count} survey run{'s' if survey_count != 1 else ''}."
+        )
+        if isinstance(exploration_plan, dict) and exploration_plan:
+            branch_action_count = int(exploration_plan.get("branch_action_count", 0) or 0)
+            hypothesis_count = int(exploration_plan.get("hypothesis_count", 0) or 0)
+            if branch_action_count or hypothesis_count:
+                message_parts.append(
+                    f"Exploration memory captured {hypothesis_count} top targets and {branch_action_count} safe branch actions."
+                )
+        return {
+            "status": "success",
+            "message": " ".join(part for part in message_parts if part).strip(),
+            "launch_result": launch_result,
+            "surface_snapshot": snapshot,
+            "exploration_plan": exploration_plan,
+            "memory_entry": memory_entry,
+            "app_memory": app_memory,
+        }
+
+    def survey_app_memory_batch(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        max_apps: int = 4,
+        per_app_limit: int = 24,
+        ensure_app_launch: bool = True,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+        source: str = "batch",
+    ) -> Dict[str, Any]:
+        bounded_max_apps = max(1, min(int(max_apps or 4), 32))
+        bounded_per_app_limit = max(4, min(int(per_app_limit or 24), 80))
+        clean_query = str(query or "").strip()
+        clean_category = str(category or "").strip()
+        clean_source = str(source or "batch").strip().lower() or "batch"
+        catalog = self._app_profile_registry.catalog(
+            query=clean_query,
+            category=clean_category,
+            limit=max(bounded_max_apps, 32),
+        )
+        profiles = [
+            dict(item)
+            for item in catalog.get("items", [])
+            if isinstance(item, dict)
+        ]
+        selected_profiles = profiles[:bounded_max_apps]
+        items: List[Dict[str, Any]] = []
+        success_count = 0
+        partial_count = 0
+        error_count = 0
+        failed_apps: List[Dict[str, Any]] = []
+        for profile in selected_profiles:
+            target_app_name = str(profile.get("name", "") or profile.get("profile_id", "") or "").strip()
+            if not target_app_name:
+                continue
+            try:
+                survey_payload = self.survey_app_memory(
+                    app_name=target_app_name,
+                    window_title="",
+                    query=clean_query,
+                    limit=bounded_per_app_limit,
+                    ensure_app_launch=ensure_app_launch,
+                    include_observation=include_observation,
+                    include_elements=include_elements,
+                    include_workflow_probes=include_workflow_probes,
+                    include_exploration=include_exploration,
+                    source=clean_source,
+                )
+            except Exception as exc:  # noqa: BLE001
+                survey_payload = {
+                    "status": "error",
+                    "message": str(exc),
+                }
+            result_status = str(survey_payload.get("status", "") or "error").strip().lower() or "error"
+            memory_entry = survey_payload.get("memory_entry", {}) if isinstance(survey_payload.get("memory_entry", {}), dict) else {}
+            item = {
+                "app_name": target_app_name,
+                "profile_id": str(profile.get("profile_id", "") or "").strip(),
+                "profile_name": str(profile.get("name", "") or "").strip(),
+                "status": result_status,
+                "message": str(survey_payload.get("message", "") or "").strip(),
+                "memory_entry": memory_entry,
+            }
+            items.append(item)
+            if result_status == "success":
+                success_count += 1
+            elif result_status == "partial":
+                partial_count += 1
+                failed_apps.append({"app_name": target_app_name, "message": item["message"], "status": result_status})
+            else:
+                error_count += 1
+                failed_apps.append({"app_name": target_app_name, "message": item["message"], "status": result_status})
+        app_memory = self._app_memory.snapshot(
+            limit=max(8, bounded_max_apps * 4),
+            app_name=clean_query,
+            category=clean_category,
+        )
+        overall_status = "success"
+        if error_count and not success_count and not partial_count:
+            overall_status = "error"
+        elif error_count or partial_count:
+            overall_status = "partial"
+        return {
+            "status": overall_status,
+            "message": (
+                f"JARVIS surveyed {len(items)} app profile(s): "
+                f"{success_count} succeeded, {partial_count} partial, {error_count} failed."
+            ),
+            "query": clean_query,
+            "category": clean_category,
+            "surveyed_app_count": len(items),
+            "success_count": success_count,
+            "partial_count": partial_count,
+            "error_count": error_count,
+            "items": items,
+            "failed_apps": failed_apps[:8],
+            "catalog": {
+                "count": len(selected_profiles),
+                "total": int(catalog.get("total", len(profiles)) or len(profiles)),
+            },
+            "app_memory": app_memory,
+        }
+
+    def app_memory_reset(
+        self,
+        *,
+        app_name: str = "",
+        profile_id: str = "",
+        category: str = "",
+    ) -> Dict[str, Any]:
+        return self._app_memory.reset(
+            app_name=app_name,
+            profile_id=profile_id,
+            category=category,
+        )
 
     def workflow_catalog(
         self,
