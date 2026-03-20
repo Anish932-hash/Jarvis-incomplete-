@@ -31,6 +31,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         enabled: bool = False,
         interval_s: float = 300.0,
         max_portfolios: int = 2,
+        max_waves_per_portfolio: int = 2,
         max_programs_per_portfolio: int = 3,
         max_campaigns_per_program: int = 3,
         max_sweeps_per_campaign: int = 2,
@@ -51,6 +52,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             enabled=enabled,
             interval_s=interval_s,
             max_portfolios=max_portfolios,
+            max_waves_per_portfolio=max_waves_per_portfolio,
             max_programs_per_portfolio=max_programs_per_portfolio,
             max_campaigns_per_program=max_campaigns_per_program,
             max_sweeps_per_campaign=max_sweeps_per_campaign,
@@ -125,15 +127,22 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             trend_direction_counts: Dict[str, int] = {}
             wave_stop_reason_counts: Dict[str, int] = {}
             executed_portfolio_total = 0
+            executed_wave_total = 0
             executed_program_total = 0
             executed_campaign_total = 0
             executed_sweep_total = 0
             stable_portfolio_total = 0
+            stable_campaign_total = 0
+            regression_campaign_total = 0
+            campaign_stop_reason_counts: Dict[str, int] = {}
             for item in items:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 self._increment_count(source_counts, str(item.get("source", "") or "unknown"))
                 executed_portfolio_total += self._coerce_int(
                     item.get("executed_portfolio_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                executed_wave_total += self._coerce_int(
+                    item.get("executed_wave_count", 0), minimum=0, maximum=1_000_000, default=0
                 )
                 executed_program_total += self._coerce_int(
                     item.get("executed_program_count", 0), minimum=0, maximum=1_000_000, default=0
@@ -146,6 +155,12 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 )
                 stable_portfolio_total += self._coerce_int(
                     item.get("stable_portfolio_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                stable_campaign_total += self._coerce_int(
+                    item.get("stable_campaign_count", 0), minimum=0, maximum=1_000_000, default=0
+                )
+                regression_campaign_total += self._coerce_int(
+                    item.get("regression_campaign_count", 0), minimum=0, maximum=1_000_000, default=0
                 )
                 trend_counts = item.get("trend_direction_counts", {})
                 if isinstance(trend_counts, dict):
@@ -161,6 +176,13 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                         wave_stop_reason_counts[clean] = int(wave_stop_reason_counts.get(clean, 0)) + self._coerce_int(
                             value, minimum=0, maximum=1_000_000, default=0
                         )
+                campaign_stop_counts = item.get("campaign_stop_reason_counts", {})
+                if isinstance(campaign_stop_counts, dict):
+                    for key, value in campaign_stop_counts.items():
+                        clean = str(key or "").strip().lower() or "unknown"
+                        campaign_stop_reason_counts[clean] = int(
+                            campaign_stop_reason_counts.get(clean, 0)
+                        ) + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
             return {
                 "status": "success",
                 "count": len(limited),
@@ -176,11 +198,15 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                     "status_counts": self._sorted_count_map(status_counts),
                     "source_counts": self._sorted_count_map(source_counts),
                     "executed_portfolio_total": executed_portfolio_total,
+                    "executed_wave_total": executed_wave_total,
                     "executed_program_total": executed_program_total,
                     "executed_campaign_total": executed_campaign_total,
                     "executed_sweep_total": executed_sweep_total,
                     "stable_portfolio_total": stable_portfolio_total,
+                    "stable_campaign_total": stable_campaign_total,
+                    "regression_campaign_total": regression_campaign_total,
                     "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+                    "campaign_stop_reason_counts": self._sorted_count_map(campaign_stop_reason_counts),
                     "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
                 },
             }
@@ -233,6 +259,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         enabled: Optional[bool] = None,
         interval_s: Optional[float] = None,
         max_portfolios: Optional[int] = None,
+        max_waves_per_portfolio: Optional[int] = None,
         max_programs_per_portfolio: Optional[int] = None,
         max_campaigns_per_program: Optional[int] = None,
         max_sweeps_per_campaign: Optional[int] = None,
@@ -251,6 +278,10 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 self._config["interval_s"] = self._coerce_float(interval_s, minimum=5.0, maximum=3600.0, default=300.0)
             if max_portfolios is not None:
                 self._config["max_portfolios"] = self._coerce_int(max_portfolios, minimum=1, maximum=32, default=2)
+            if max_waves_per_portfolio is not None:
+                self._config["max_waves_per_portfolio"] = self._coerce_int(
+                    max_waves_per_portfolio, minimum=1, maximum=8, default=2
+                )
             if max_programs_per_portfolio is not None:
                 self._config["max_programs_per_portfolio"] = self._coerce_int(
                     max_programs_per_portfolio, minimum=1, maximum=8, default=3
@@ -289,6 +320,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         *,
         source: str = "manual",
         max_portfolios: Optional[int] = None,
+        max_waves_per_portfolio: Optional[int] = None,
         max_programs_per_portfolio: Optional[int] = None,
         max_campaigns_per_program: Optional[int] = None,
         max_sweeps_per_campaign: Optional[int] = None,
@@ -301,6 +333,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
     ) -> Dict[str, Any]:
         overrides = {
             "max_portfolios": max_portfolios,
+            "max_waves_per_portfolio": max_waves_per_portfolio,
             "max_programs_per_portfolio": max_programs_per_portfolio,
             "max_campaigns_per_program": max_campaigns_per_program,
             "max_sweeps_per_campaign": max_sweeps_per_campaign,
@@ -362,6 +395,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         try:
             result = callback(
                 max_portfolios=self._coerce_int(effective.get("max_portfolios", 2), minimum=1, maximum=32, default=2),
+                max_waves_per_portfolio=self._coerce_int(
+                    effective.get("max_waves_per_portfolio", 2), minimum=1, maximum=8, default=2
+                ),
                 max_programs_per_portfolio=self._coerce_int(
                     effective.get("max_programs_per_portfolio", 3), minimum=1, maximum=8, default=3
                 ),
@@ -434,6 +470,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "inflight": bool(self._runtime.get("inflight", False)),
             "interval_s": interval_s,
             "max_portfolios": self._coerce_int(self._config.get("max_portfolios", 2), minimum=1, maximum=32, default=2),
+            "max_waves_per_portfolio": self._coerce_int(
+                self._config.get("max_waves_per_portfolio", 2), minimum=1, maximum=8, default=2
+            ),
             "max_programs_per_portfolio": self._coerce_int(
                 self._config.get("max_programs_per_portfolio", 3), minimum=1, maximum=8, default=3
             ),
@@ -503,6 +542,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "executed_portfolio_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 payload.get("executed_portfolio_count", 0), minimum=0, maximum=100_000, default=0
             ),
+            "executed_wave_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("executed_wave_count", 0), minimum=0, maximum=100_000, default=0
+            ),
             "executed_program_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 payload.get("executed_program_count", 0), minimum=0, maximum=100_000, default=0
             ),
@@ -517,6 +559,12 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             ),
             "regression_portfolio_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 payload.get("regression_portfolio_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "stable_campaign_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("stable_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "regression_campaign_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                payload.get("regression_campaign_count", 0), minimum=0, maximum=100_000, default=0
             ),
             "pending_program_count": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 payload.get("pending_program_count", 0), minimum=0, maximum=100_000, default=0
@@ -546,6 +594,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "wave_stop_reason_counts": copy.deepcopy(payload.get("wave_stop_reason_counts", {}))
             if isinstance(payload.get("wave_stop_reason_counts", {}), dict)
             else {},
+            "campaign_stop_reason_counts": copy.deepcopy(payload.get("campaign_stop_reason_counts", {}))
+            if isinstance(payload.get("campaign_stop_reason_counts", {}), dict)
+            else {},
             "trend_direction_counts": copy.deepcopy(payload.get("trend_direction_counts", {}))
             if isinstance(payload.get("trend_direction_counts", {}), dict)
             else {},
@@ -557,6 +608,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
         enabled: bool,
         interval_s: float,
         max_portfolios: int,
+        max_waves_per_portfolio: int,
         max_programs_per_portfolio: int,
         max_campaigns_per_program: int,
         max_sweeps_per_campaign: int,
@@ -571,6 +623,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "enabled": bool(enabled),
             "interval_s": DesktopBenchmarkLabPortfolioSupervisor._coerce_float(interval_s, minimum=5.0, maximum=3600.0, default=300.0),
             "max_portfolios": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(max_portfolios, minimum=1, maximum=32, default=2),
+            "max_waves_per_portfolio": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
+                max_waves_per_portfolio, minimum=1, maximum=8, default=2
+            ),
             "max_programs_per_portfolio": DesktopBenchmarkLabPortfolioSupervisor._coerce_int(
                 max_programs_per_portfolio, minimum=1, maximum=8, default=3
             ),
@@ -631,6 +686,9 @@ class DesktopBenchmarkLabPortfolioSupervisor:
                 "portfolio_status": str(effective.get("portfolio_status", "") or "").strip(),
                 "pack": str(effective.get("pack", "") or "").strip(),
                 "app_name": str(effective.get("app_name", "") or "").strip(),
+                "max_waves_per_portfolio": self._coerce_int(
+                    effective.get("max_waves_per_portfolio", 2), minimum=1, maximum=8, default=2
+                ),
                 "max_programs_per_portfolio": self._coerce_int(
                     effective.get("max_programs_per_portfolio", 3), minimum=1, maximum=8, default=3
                 ),
@@ -656,6 +714,7 @@ class DesktopBenchmarkLabPortfolioSupervisor:
             "enabled",
             "interval_s",
             "max_portfolios",
+            "max_waves_per_portfolio",
             "max_programs_per_portfolio",
             "max_campaigns_per_program",
             "max_sweeps_per_campaign",

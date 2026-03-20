@@ -229,6 +229,7 @@ class DesktopBenchmarkLabMemory:
         app_targets: List[str] | None = None,
         program_rows: List[Dict[str, Any]] | None = None,
         wave_runs: List[Dict[str, Any]] | None = None,
+        campaign_runs: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         clean_filters = dict(filters) if isinstance(filters, dict) else {}
         lab_snapshot = dict(lab_payload) if isinstance(lab_payload, dict) else {}
@@ -257,6 +258,7 @@ class DesktopBenchmarkLabMemory:
                 app_targets=clean_app_targets,
                 program_rows=hydrated_program_rows,
                 wave_runs=wave_runs or [],
+                campaign_runs=campaign_runs or [],
             )
             self._portfolios[portfolio_id] = row
             self._trim_locked()
@@ -488,11 +490,14 @@ class DesktopBenchmarkLabMemory:
         selected = rows[:normalized_limit]
         status_counts: Dict[str, int] = {}
         latest_wave_status_counts: Dict[str, int] = {}
+        latest_campaign_status_counts: Dict[str, int] = {}
         trend_direction_counts: Dict[str, int] = {}
+        campaign_trend_direction_counts: Dict[str, int] = {}
         priority_counts: Dict[str, int] = {}
         app_target_counts: Dict[str, int] = {}
         focus_summary_counts: Dict[str, int] = {}
         wave_stop_reason_counts: Dict[str, int] = {}
+        campaign_stop_reason_counts: Dict[str, int] = {}
         pressure_total = 0.0
         for row in rows:
             self._increment_count(status_counts, str(row.get("status", "") or "ready"))
@@ -500,15 +505,32 @@ class DesktopBenchmarkLabMemory:
                 latest_wave_status_counts,
                 str(row.get("latest_wave_status", "") or "idle"),
             )
+            self._increment_count(
+                latest_campaign_status_counts,
+                str(row.get("latest_campaign_status", "") or "idle"),
+            )
             trend_summary = dict(row.get("trend_summary", {})) if isinstance(row.get("trend_summary", {}), dict) else {}
+            campaign_trend_summary = (
+                dict(row.get("campaign_trend_summary", {}))
+                if isinstance(row.get("campaign_trend_summary", {}), dict)
+                else {}
+            )
             self._increment_count(
                 trend_direction_counts,
                 str(trend_summary.get("direction", row.get("history_direction", "")) or "stable"),
+            )
+            self._increment_count(
+                campaign_trend_direction_counts,
+                str(campaign_trend_summary.get("direction", row.get("campaign_history_direction", "")) or "stable"),
             )
             self._increment_count(priority_counts, str(row.get("portfolio_priority", "") or "steady"))
             self._increment_count(
                 wave_stop_reason_counts,
                 str(row.get("latest_wave_stop_reason", "") or "idle"),
+            )
+            self._increment_count(
+                campaign_stop_reason_counts,
+                str(row.get("latest_campaign_stop_reason", "") or "idle"),
             )
             for app_name in row.get("target_apps", row.get("app_targets", [])) if isinstance(
                 row.get("target_apps", row.get("app_targets", [])),
@@ -547,8 +569,21 @@ class DesktopBenchmarkLabMemory:
                     else item.get("history_direction", "")
                 )
                 or "stable",
+                "campaign_trend_direction": str(
+                    dict(item.get("campaign_trend_summary", {})).get(
+                        "direction",
+                        item.get("campaign_history_direction", ""),
+                    )
+                    if isinstance(item.get("campaign_trend_summary", {}), dict)
+                    else item.get("campaign_history_direction", "")
+                )
+                or "stable",
                 "latest_wave_status": str(item.get("latest_wave_status", "") or "idle"),
                 "latest_wave_stop_reason": str(item.get("latest_wave_stop_reason", "") or "idle"),
+                "latest_campaign_status": str(item.get("latest_campaign_status", "") or "idle"),
+                "latest_campaign_stop_reason": str(item.get("latest_campaign_stop_reason", "") or "idle"),
+                "campaign_count": int(item.get("campaign_count", 0) or 0),
+                "latest_campaign_executed_wave_count": int(item.get("latest_campaign_executed_wave_count", 0) or 0),
                 "pending_program_count": int(item.get("pending_program_count", 0) or 0),
                 "pending_campaign_count": int(item.get("pending_campaign_count", 0) or 0),
                 "pending_session_count": int(item.get("pending_session_count", 0) or 0),
@@ -582,11 +617,14 @@ class DesktopBenchmarkLabMemory:
             "summary": {
                 "status_counts": self._sorted_count_map(status_counts),
                 "latest_wave_status_counts": self._sorted_count_map(latest_wave_status_counts),
+                "latest_campaign_status_counts": self._sorted_count_map(latest_campaign_status_counts),
                 "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
+                "campaign_trend_direction_counts": self._sorted_count_map(campaign_trend_direction_counts),
                 "priority_counts": self._sorted_count_map(priority_counts),
                 "app_target_counts": self._sorted_count_map(app_target_counts),
                 "focus_summary_counts": self._sorted_count_map(focus_summary_counts),
                 "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
+                "campaign_stop_reason_counts": self._sorted_count_map(campaign_stop_reason_counts),
                 "program_count": sum(int(row.get("program_count", 0) or 0) for row in rows),
                 "pending_programs": sum(int(row.get("pending_program_count", 0) or 0) for row in rows),
                 "attention_programs": sum(int(row.get("attention_program_count", 0) or 0) for row in rows),
@@ -599,6 +637,10 @@ class DesktopBenchmarkLabMemory:
                 "completed_waves": sum(int(row.get("completed_wave_count", 0) or 0) for row in rows),
                 "stable_waves": sum(int(row.get("stable_wave_count", 0) or 0) for row in rows),
                 "regression_waves": sum(int(row.get("regression_wave_count", 0) or 0) for row in rows),
+                "campaign_count": sum(int(row.get("campaign_count", 0) or 0) for row in rows),
+                "completed_campaigns": sum(int(row.get("completed_campaign_count", 0) or 0) for row in rows),
+                "stable_campaigns": sum(int(row.get("stable_campaign_count", 0) or 0) for row in rows),
+                "regression_campaigns": sum(int(row.get("regression_campaign_count", 0) or 0) for row in rows),
                 "portfolio_pressure_total": round(pressure_total, 6),
                 "portfolio_pressure_avg": round(pressure_total / len(rows), 6) if rows else 0.0,
             },
@@ -974,6 +1016,7 @@ class DesktopBenchmarkLabMemory:
                 app_targets=clean_app_targets,
                 program_rows=hydrated_program_rows,
                 wave_runs=wave_runs,
+                campaign_runs=self._normalize_portfolio_campaign_runs(existing.get("campaign_runs", [])),
             )
             self._portfolios[clean_id] = row
             self._updates_since_save += 1
@@ -982,6 +1025,92 @@ class DesktopBenchmarkLabMemory:
             "status": "success",
             "portfolio": self._public_row(row),
             "wave": dict(wave_runs[-1]) if wave_runs else {},
+        }
+
+    def record_portfolio_campaign(
+        self,
+        *,
+        portfolio_id: str,
+        campaign_payload: Dict[str, Any] | None,
+        lab_payload: Dict[str, Any] | None = None,
+        native_targets_payload: Dict[str, Any] | None = None,
+        guidance_payload: Dict[str, Any] | None = None,
+        program_ids: List[str] | None = None,
+        app_targets: List[str] | None = None,
+        program_rows: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        clean_id = str(portfolio_id or "").strip()
+        if not clean_id:
+            return {"status": "error", "message": "portfolio_id required"}
+        campaign_snapshot = dict(campaign_payload) if isinstance(campaign_payload, dict) else {}
+        with self._lock:
+            existing = self._portfolios.get(clean_id)
+            if not isinstance(existing, dict):
+                return {"status": "error", "message": "benchmark lab portfolio not found"}
+            now = datetime.now(timezone.utc).isoformat()
+            clean_program_ids = self._dedupe_strings(
+                [
+                    *(
+                        [str(item).strip() for item in existing.get("program_ids", [])]
+                        if isinstance(existing.get("program_ids", []), list)
+                        else []
+                    ),
+                    *([str(item).strip() for item in (program_ids or []) if str(item).strip()]),
+                ]
+            )
+            clean_app_targets = self._dedupe_strings(
+                [
+                    *(
+                        [str(item).strip() for item in existing.get("app_targets", [])]
+                        if isinstance(existing.get("app_targets", []), list)
+                        else []
+                    ),
+                    *([str(item).strip() for item in (app_targets or []) if str(item).strip()]),
+                ]
+            )
+            hydrated_program_rows = self._hydrate_portfolio_programs(
+                program_ids=clean_program_ids,
+                program_rows=program_rows,
+            )
+            campaign_runs = self._normalize_portfolio_campaign_runs(existing.get("campaign_runs", []))
+            campaign_runs.append(
+                self._portfolio_campaign_row(
+                    recorded_at=now,
+                    campaign_payload=campaign_snapshot,
+                )
+            )
+            campaign_runs = campaign_runs[-self.max_run_cycles :]
+            row = self._portfolio_row(
+                portfolio_id=clean_id,
+                created_at=str(existing.get("created_at", "") or now),
+                updated_at=now,
+                filters=dict(existing.get("filters", {})) if isinstance(existing.get("filters", {}), dict) else {},
+                lab_snapshot=dict(lab_payload) if isinstance(lab_payload, dict) else dict(existing.get("lab_snapshot", {})),
+                native_targets_snapshot=(
+                    dict(native_targets_payload)
+                    if isinstance(native_targets_payload, dict)
+                    else dict(existing.get("native_targets_snapshot", {}))
+                ),
+                guidance_snapshot=(
+                    dict(guidance_payload)
+                    if isinstance(guidance_payload, dict)
+                    else dict(existing.get("guidance_snapshot", {}))
+                ),
+                source=str(existing.get("source", "") or ""),
+                label=str(existing.get("label", "") or ""),
+                program_ids=clean_program_ids,
+                app_targets=clean_app_targets,
+                program_rows=hydrated_program_rows,
+                wave_runs=self._normalize_portfolio_wave_runs(existing.get("wave_runs", [])),
+                campaign_runs=campaign_runs,
+            )
+            self._portfolios[clean_id] = row
+            self._updates_since_save += 1
+            self._maybe_save_locked(force=True)
+        return {
+            "status": "success",
+            "portfolio": self._public_row(row),
+            "campaign": dict(campaign_runs[-1]) if campaign_runs else {},
         }
 
     def record_run_cycle(
@@ -1358,10 +1487,12 @@ class DesktopBenchmarkLabMemory:
         app_targets: List[str],
         program_rows: List[Dict[str, Any]],
         wave_runs: List[Dict[str, Any]] | None = None,
+        campaign_runs: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         clean_program_ids = self._dedupe_strings([str(item).strip() for item in program_ids if str(item).strip()])
         clean_programs = self._normalize_portfolio_programs(program_rows)
         clean_wave_runs = self._normalize_portfolio_wave_runs(wave_runs or [])
+        clean_campaign_runs = self._normalize_portfolio_campaign_runs(campaign_runs or [])
         target_apps = self._dedupe_strings(
             [
                 *app_targets,
@@ -1403,6 +1534,7 @@ class DesktopBenchmarkLabMemory:
         executed_campaign_total = sum(int(item.get("campaign_count", 0) or 0) for item in clean_programs)
         executed_sweep_total = sum(int(item.get("sweep_count", 0) or 0) for item in clean_programs)
         trend_summary = self._portfolio_trend_summary(clean_wave_runs, clean_programs)
+        campaign_trend_summary = self._portfolio_campaign_trend_summary(clean_campaign_runs)
         portfolio_pressure_score = self._portfolio_pressure_score(
             pending_program_count=pending_program_count,
             attention_program_count=attention_program_count,
@@ -1412,14 +1544,18 @@ class DesktopBenchmarkLabMemory:
             pending_app_target_count=pending_app_target_count,
             long_horizon_pending_count=long_horizon_pending_count,
             regression_wave_streak=int(trend_summary.get("regression_wave_streak", 0) or 0),
+            regression_campaign_streak=int(campaign_trend_summary.get("regression_campaign_streak", 0) or 0),
         )
         portfolio_priority = self._portfolio_priority(portfolio_pressure_score, trend_summary)
         latest_wave = clean_wave_runs[-1] if clean_wave_runs else {}
+        latest_campaign = clean_campaign_runs[-1] if clean_campaign_runs else {}
         portfolio_status = "ready"
         if (
             attention_program_count > 0
             or str(latest_wave.get("status", "") or "").strip().lower() in {"error", "failed"}
             or str(latest_wave.get("trend_direction", "") or "").strip().lower() in {"regressing", "degraded"}
+            or str(latest_campaign.get("status", "") or "").strip().lower() in {"error", "failed"}
+            or str(latest_campaign.get("trend_direction", "") or "").strip().lower() in {"regressing", "degraded"}
         ):
             portfolio_status = "attention"
         elif clean_programs and pending_program_count == 0 and pending_app_target_count == 0:
@@ -1471,6 +1607,13 @@ class DesktopBenchmarkLabMemory:
             "regression_wave_count": int(trend_summary.get("regression_wave_count", 0) or 0),
             "stable_wave_streak": int(trend_summary.get("stable_wave_streak", 0) or 0),
             "regression_wave_streak": int(trend_summary.get("regression_wave_streak", 0) or 0),
+            "campaign_runs": clean_campaign_runs[-self.max_run_cycles :],
+            "campaign_count": len(clean_campaign_runs),
+            "completed_campaign_count": int(campaign_trend_summary.get("completed_campaign_count", 0) or 0),
+            "stable_campaign_count": int(campaign_trend_summary.get("stable_campaign_count", 0) or 0),
+            "regression_campaign_count": int(campaign_trend_summary.get("regression_campaign_count", 0) or 0),
+            "stable_campaign_streak": int(campaign_trend_summary.get("stable_campaign_streak", 0) or 0),
+            "regression_campaign_streak": int(campaign_trend_summary.get("regression_campaign_streak", 0) or 0),
             "latest_wave_status": str(latest_wave.get("status", "") or "").strip().lower(),
             "latest_wave_stop_reason": str(latest_wave.get("stop_reason", "") or "").strip().lower(),
             "latest_wave_executed_at": str(latest_wave.get("executed_at", "") or "").strip(),
@@ -1480,8 +1623,22 @@ class DesktopBenchmarkLabMemory:
             "latest_wave_weighted_score": round(float(latest_wave.get("weighted_score", 0.0) or 0.0), 6),
             "latest_wave_weighted_pass_rate": round(float(latest_wave.get("weighted_pass_rate", 0.0) or 0.0), 6),
             "latest_wave_trend_direction": str(latest_wave.get("trend_direction", "") or "").strip().lower(),
+            "latest_campaign_status": str(latest_campaign.get("status", "") or "").strip().lower(),
+            "latest_campaign_stop_reason": str(latest_campaign.get("stop_reason", "") or "").strip().lower(),
+            "latest_campaign_executed_at": str(
+                latest_campaign.get("completed_at", latest_campaign.get("executed_at", "")) or ""
+            ).strip(),
+            "latest_campaign_executed_wave_count": int(latest_campaign.get("executed_wave_count", 0) or 0),
+            "latest_campaign_executed_program_count": int(latest_campaign.get("executed_program_count", 0) or 0),
+            "latest_campaign_executed_campaign_count": int(latest_campaign.get("executed_campaign_count", 0) or 0),
+            "latest_campaign_executed_sweep_count": int(latest_campaign.get("executed_sweep_count", 0) or 0),
+            "latest_campaign_weighted_score": round(float(latest_campaign.get("weighted_score", 0.0) or 0.0), 6),
+            "latest_campaign_weighted_pass_rate": round(float(latest_campaign.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "latest_campaign_trend_direction": str(latest_campaign.get("trend_direction", "") or "").strip().lower(),
             "history_direction": str(trend_summary.get("direction", "") or "").strip().lower(),
             "trend_summary": trend_summary,
+            "campaign_history_direction": str(campaign_trend_summary.get("direction", "") or "").strip().lower(),
+            "campaign_trend_summary": campaign_trend_summary,
             "portfolio_pressure_score": portfolio_pressure_score,
             "portfolio_priority": portfolio_priority,
             "long_horizon_pending_count": long_horizon_pending_count,
@@ -2026,6 +2183,73 @@ class DesktopBenchmarkLabMemory:
             "query": dict(wave_payload.get("query", {})) if isinstance(wave_payload.get("query", {}), dict) else {},
         }
 
+    def _portfolio_campaign_row(
+        self,
+        *,
+        recorded_at: str,
+        campaign_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {
+            "campaign_id": str(campaign_payload.get("campaign_id", "") or "").strip()
+            or f"portfolio-campaign-{uuid.uuid4().hex[:10]}",
+            "recorded_at": recorded_at,
+            "started_at": str(campaign_payload.get("started_at", "") or recorded_at).strip(),
+            "completed_at": str(
+                campaign_payload.get("completed_at", campaign_payload.get("executed_at", recorded_at)) or recorded_at
+            ).strip(),
+            "status": str(campaign_payload.get("status", "") or "success").strip().lower() or "success",
+            "stop_reason": str(campaign_payload.get("stop_reason", "") or "").strip().lower(),
+            "executed_wave_count": self._coerce_int(
+                campaign_payload.get("executed_wave_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "executed_program_count": self._coerce_int(
+                campaign_payload.get("executed_program_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "executed_campaign_count": self._coerce_int(
+                campaign_payload.get("executed_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "executed_sweep_count": self._coerce_int(
+                campaign_payload.get("executed_sweep_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "stable_wave_count": self._coerce_int(
+                campaign_payload.get("stable_wave_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "regression_wave_count": self._coerce_int(
+                campaign_payload.get("regression_wave_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "stable_program_count": self._coerce_int(
+                campaign_payload.get("stable_program_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "regression_program_count": self._coerce_int(
+                campaign_payload.get("regression_program_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_program_count": self._coerce_int(
+                campaign_payload.get("pending_program_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "attention_program_count": self._coerce_int(
+                campaign_payload.get("attention_program_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_campaign_count": self._coerce_int(
+                campaign_payload.get("pending_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "attention_campaign_count": self._coerce_int(
+                campaign_payload.get("attention_campaign_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_session_count": self._coerce_int(
+                campaign_payload.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "pending_app_target_count": self._coerce_int(
+                campaign_payload.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "long_horizon_pending_count": self._coerce_int(
+                campaign_payload.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0
+            ),
+            "weighted_score": round(float(campaign_payload.get("weighted_score", 0.0) or 0.0), 6),
+            "weighted_pass_rate": round(float(campaign_payload.get("weighted_pass_rate", 0.0) or 0.0), 6),
+            "trend_direction": str(campaign_payload.get("trend_direction", "") or "").strip().lower(),
+            "query": dict(campaign_payload.get("query", {})) if isinstance(campaign_payload.get("query", {}), dict) else {},
+        }
+
     def _normalize_program_campaigns(self, campaigns: Any) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         if not isinstance(campaigns, list):
@@ -2159,6 +2383,75 @@ class DesktopBenchmarkLabMemory:
                     "pending_session_count": self._coerce_int(item.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0),
                     "pending_app_target_count": self._coerce_int(item.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0),
                     "long_horizon_pending_count": self._coerce_int(item.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0),
+                    "weighted_score": round(float(item.get("weighted_score", 0.0) or 0.0), 6),
+                    "weighted_pass_rate": round(float(item.get("weighted_pass_rate", 0.0) or 0.0), 6),
+                    "trend_direction": str(item.get("trend_direction", "") or "").strip().lower(),
+                    "query": dict(item.get("query", {})) if isinstance(item.get("query", {}), dict) else {},
+                }
+            )
+        return rows[-self.max_run_cycles :]
+
+    def _normalize_portfolio_campaign_runs(self, campaigns: Any) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        if not isinstance(campaigns, list):
+            return rows
+        for item in campaigns:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                {
+                    "campaign_id": str(item.get("campaign_id", "") or "").strip()
+                    or f"portfolio-campaign-{uuid.uuid4().hex[:10]}",
+                    "recorded_at": str(item.get("recorded_at", "") or "").strip(),
+                    "started_at": str(item.get("started_at", "") or "").strip(),
+                    "completed_at": str(item.get("completed_at", item.get("executed_at", "")) or "").strip(),
+                    "status": str(item.get("status", "") or "success").strip().lower() or "success",
+                    "stop_reason": str(item.get("stop_reason", "") or "").strip().lower(),
+                    "executed_wave_count": self._coerce_int(
+                        item.get("executed_wave_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "executed_program_count": self._coerce_int(
+                        item.get("executed_program_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "executed_campaign_count": self._coerce_int(
+                        item.get("executed_campaign_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "executed_sweep_count": self._coerce_int(
+                        item.get("executed_sweep_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "stable_wave_count": self._coerce_int(
+                        item.get("stable_wave_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "regression_wave_count": self._coerce_int(
+                        item.get("regression_wave_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "stable_program_count": self._coerce_int(
+                        item.get("stable_program_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "regression_program_count": self._coerce_int(
+                        item.get("regression_program_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "pending_program_count": self._coerce_int(
+                        item.get("pending_program_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "attention_program_count": self._coerce_int(
+                        item.get("attention_program_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "pending_campaign_count": self._coerce_int(
+                        item.get("pending_campaign_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "attention_campaign_count": self._coerce_int(
+                        item.get("attention_campaign_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "pending_session_count": self._coerce_int(
+                        item.get("pending_session_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "pending_app_target_count": self._coerce_int(
+                        item.get("pending_app_target_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
+                    "long_horizon_pending_count": self._coerce_int(
+                        item.get("long_horizon_pending_count", 0), minimum=0, maximum=100_000, default=0
+                    ),
                     "weighted_score": round(float(item.get("weighted_score", 0.0) or 0.0), 6),
                     "weighted_pass_rate": round(float(item.get("weighted_pass_rate", 0.0) or 0.0), 6),
                     "trend_direction": str(item.get("trend_direction", "") or "").strip().lower(),
@@ -2341,6 +2634,7 @@ class DesktopBenchmarkLabMemory:
         pending_app_target_count: int,
         long_horizon_pending_count: int,
         regression_wave_streak: int,
+        regression_campaign_streak: int = 0,
     ) -> float:
         return round(
             float(
@@ -2352,6 +2646,7 @@ class DesktopBenchmarkLabMemory:
                 + (pending_app_target_count * 1.5)
                 + (long_horizon_pending_count * 0.32)
                 + (regression_wave_streak * 2.15)
+                + (regression_campaign_streak * 2.6)
             ),
             6,
         )
@@ -2367,6 +2662,55 @@ class DesktopBenchmarkLabMemory:
         if portfolio_pressure_score >= 5.0:
             return "active"
         return "steady"
+
+    @staticmethod
+    def _portfolio_campaign_trend_summary(campaign_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        stable_streak = 0
+        regression_streak = 0
+        for item in reversed(campaign_runs):
+            trend = str(item.get("trend_direction", "") or "").strip().lower()
+            status = str(item.get("status", "") or "").strip().lower()
+            if trend in {"regressing", "degraded"} or status in {"error", "failed"}:
+                regression_streak += 1
+                break
+            if trend in {"stable", "improving", "warming"} and status in {"success", "completed"}:
+                stable_streak += 1
+            else:
+                break
+        for item in reversed(campaign_runs):
+            trend = str(item.get("trend_direction", "") or "").strip().lower()
+            status = str(item.get("status", "") or "").strip().lower()
+            if trend in {"regressing", "degraded"} or status in {"error", "failed"}:
+                regression_streak += 1
+            else:
+                break
+        latest = campaign_runs[-1] if campaign_runs else {}
+        direction = str(latest.get("trend_direction", "") or "").strip().lower() or "stable"
+        return {
+            "direction": direction,
+            "completed_campaign_count": sum(
+                1
+                for item in campaign_runs
+                if str(item.get("status", "") or "").strip().lower() in {"success", "completed"}
+            ),
+            "stable_campaign_count": sum(
+                1
+                for item in campaign_runs
+                if str(item.get("trend_direction", "") or "").strip().lower() in {"stable", "improving"}
+            ),
+            "regression_campaign_count": sum(
+                1
+                for item in campaign_runs
+                if str(item.get("trend_direction", "") or "").strip().lower() in {"regressing", "degraded"}
+                or str(item.get("status", "") or "").strip().lower() in {"error", "failed"}
+            ),
+            "stable_campaign_streak": stable_streak,
+            "regression_campaign_streak": regression_streak,
+            "executed_wave_total": sum(int(item.get("executed_wave_count", 0) or 0) for item in campaign_runs),
+            "executed_program_total": sum(int(item.get("executed_program_count", 0) or 0) for item in campaign_runs),
+            "executed_campaign_total": sum(int(item.get("executed_campaign_count", 0) or 0) for item in campaign_runs),
+            "executed_sweep_total": sum(int(item.get("executed_sweep_count", 0) or 0) for item in campaign_runs),
+        }
 
     @staticmethod
     def _portfolio_trend_summary(
@@ -2443,6 +2787,7 @@ class DesktopBenchmarkLabMemory:
         pending_app_target_count: int,
         long_horizon_pending_count: int,
         regression_wave_streak: int,
+        regression_campaign_streak: int = 0,
     ) -> float:
         return round(
             float(
@@ -2454,6 +2799,7 @@ class DesktopBenchmarkLabMemory:
                 + (pending_app_target_count * 1.5)
                 + (long_horizon_pending_count * 0.32)
                 + (regression_wave_streak * 2.15)
+                + (regression_campaign_streak * 2.6)
             ),
             6,
         )

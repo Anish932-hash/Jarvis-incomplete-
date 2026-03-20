@@ -947,6 +947,7 @@ class FakeDesktopService:
             "inflight": False,
             "interval_s": 300.0,
             "max_portfolios": 2,
+            "max_waves_per_portfolio": 2,
             "max_programs_per_portfolio": 3,
             "max_campaigns_per_program": 3,
             "max_sweeps_per_campaign": 2,
@@ -14041,7 +14042,13 @@ class FakeDesktopService:
             for item in portfolio.get("wave_runs", [])
             if isinstance(item, dict)
         ]
+        campaign_runs = [
+            dict(item)
+            for item in portfolio.get("campaign_runs", [])
+            if isinstance(item, dict)
+        ]
         latest_wave = wave_runs[-1] if wave_runs else {}
+        latest_campaign = campaign_runs[-1] if campaign_runs else {}
         target_apps = [
             str(item).strip()
             for item in portfolio.get("target_apps", portfolio.get("app_targets", []))
@@ -14098,6 +14105,63 @@ class FakeDesktopService:
                 regression_wave_streak += 1
             else:
                 break
+        campaign_direction_counts: Dict[str, int] = {}
+        campaign_status_counts: Dict[str, int] = {}
+        campaign_stop_reason_counts: Dict[str, int] = {}
+        for item in campaign_runs:
+            direction = str(
+                item.get("trend_direction", item.get("campaign_trend_direction", ""))
+                or ""
+            ).strip().lower()
+            if direction:
+                campaign_direction_counts[direction] = int(campaign_direction_counts.get(direction, 0) or 0) + 1
+            campaign_status = str(item.get("status", "") or "").strip().lower()
+            if campaign_status:
+                campaign_status_counts[campaign_status] = int(campaign_status_counts.get(campaign_status, 0) or 0) + 1
+            stop_reason = str(item.get("stop_reason", "") or "").strip().lower()
+            if stop_reason:
+                campaign_stop_reason_counts[stop_reason] = int(campaign_stop_reason_counts.get(stop_reason, 0) or 0) + 1
+        latest_campaign_direction = str(
+            latest_campaign.get(
+                "trend_direction",
+                latest_campaign.get("campaign_trend_direction", portfolio.get("campaign_history_direction", "")),
+            )
+            or ""
+        ).strip().lower()
+        campaign_history_direction = latest_campaign_direction or (
+            max(campaign_direction_counts.items(), key=lambda entry: entry[1])[0]
+            if campaign_direction_counts
+            else ""
+        )
+        stable_campaign_count = sum(
+            1
+            for item in campaign_runs
+            if str(item.get("stop_reason", "") or "").strip().lower() == "stable"
+            or str(item.get("status", "") or "").strip().lower() == "stable"
+        )
+        regression_campaign_count = sum(
+            1
+            for item in campaign_runs
+            if str(item.get("stop_reason", "") or "").strip().lower() in {"regression_detected", "wave_error"}
+            or str(item.get("status", "") or "").strip().lower() in {"regression", "failed", "error"}
+            or str(item.get("trend_direction", "") or "").strip().lower() in {"regression", "failed", "error"}
+        )
+        stable_campaign_streak = 0
+        regression_campaign_streak = 0
+        for item in reversed(campaign_runs):
+            if str(item.get("stop_reason", "") or "").strip().lower() == "stable" or str(item.get("status", "") or "").strip().lower() == "stable":
+                stable_campaign_streak += 1
+            else:
+                break
+        for item in reversed(campaign_runs):
+            if (
+                str(item.get("stop_reason", "") or "").strip().lower() in {"regression_detected", "wave_error"}
+                or str(item.get("status", "") or "").strip().lower() in {"regression", "failed", "error"}
+                or str(item.get("trend_direction", "") or "").strip().lower() in {"regression", "failed", "error"}
+            ):
+                regression_campaign_streak += 1
+            else:
+                break
         pending_program_count = sum(
             1 for item in programs if str(item.get("status", "") or "").strip().lower() != "complete"
         )
@@ -14124,9 +14188,13 @@ class FakeDesktopService:
             + float(regression_wave_count) * 1.75,
             6,
         )
+        portfolio_pressure_score = round(
+            portfolio_pressure_score + float(regression_campaign_count) * 2.25,
+            6,
+        )
         portfolio_priority = (
             "critical"
-            if attention_program_count > 0 or regression_wave_count > 0
+            if attention_program_count > 0 or regression_wave_count > 0 or regression_campaign_count > 0
             else ("elevated" if pending_program_count > 0 or pending_app_target_count > 0 else "normal")
         )
         latest_weighted_score = round(
@@ -14172,6 +14240,32 @@ class FakeDesktopService:
         portfolio["regression_wave_count"] = regression_wave_count
         portfolio["stable_wave_streak"] = stable_wave_streak
         portfolio["regression_wave_streak"] = regression_wave_streak
+        portfolio["campaign_runs"] = campaign_runs[-8:]
+        portfolio["completed_campaign_count"] = len(campaign_runs)
+        portfolio["stable_campaign_count"] = stable_campaign_count
+        portfolio["regression_campaign_count"] = regression_campaign_count
+        portfolio["stable_campaign_streak"] = stable_campaign_streak
+        portfolio["regression_campaign_streak"] = regression_campaign_streak
+        portfolio["latest_campaign_status"] = str(latest_campaign.get("status", "") or "")
+        portfolio["latest_campaign_stop_reason"] = str(latest_campaign.get("stop_reason", "") or "")
+        portfolio["latest_campaign_executed_at"] = str(
+            latest_campaign.get("executed_at", latest_campaign.get("recorded_at", "")) or ""
+        )
+        portfolio["latest_campaign_executed_wave_count"] = int(latest_campaign.get("executed_wave_count", 0) or 0)
+        portfolio["latest_campaign_executed_program_count"] = int(latest_campaign.get("executed_program_count", 0) or 0)
+        portfolio["latest_campaign_executed_campaign_count"] = int(latest_campaign.get("executed_campaign_count", 0) or 0)
+        portfolio["latest_campaign_executed_sweep_count"] = int(latest_campaign.get("executed_sweep_count", 0) or 0)
+        portfolio["latest_campaign_weighted_score"] = round(float(latest_campaign.get("weighted_score", 0.0) or 0.0), 6)
+        portfolio["latest_campaign_weighted_pass_rate"] = round(float(latest_campaign.get("weighted_pass_rate", 0.0) or 0.0), 6)
+        portfolio["latest_campaign_trend_direction"] = campaign_history_direction
+        portfolio["campaign_history_direction"] = campaign_history_direction
+        portfolio["campaign_trend_summary"] = {
+            "direction": campaign_history_direction,
+            "status_counts": campaign_status_counts,
+            "stop_reason_counts": campaign_stop_reason_counts,
+            "counts": campaign_direction_counts,
+            "campaign_count": len(campaign_runs),
+        }
         portfolio["latest_wave_status"] = str(latest_wave.get("status", "") or "")
         portfolio["latest_wave_stop_reason"] = str(latest_wave.get("stop_reason", "") or "")
         portfolio["latest_wave_executed_at"] = str(latest_wave.get("executed_at", "") or "")
@@ -14191,7 +14285,7 @@ class FakeDesktopService:
         portfolio["portfolio_priority"] = portfolio_priority
         portfolio["status"] = (
             "attention"
-            if attention_program_count > 0 or regression_wave_count > 0
+            if attention_program_count > 0 or regression_wave_count > 0 or regression_campaign_count > 0
             else ("complete" if pending_program_count == 0 and programs else "ready")
         )
         portfolio["updated_at"] = str(
@@ -15786,6 +15880,136 @@ class FakeDesktopService:
             "guidance": dict(guidance),
         }
 
+    def desktop_evaluation_run_lab_portfolio_campaign(
+        self,
+        *,
+        portfolio_id: str = "",
+        max_waves: int = 2,
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+        stop_on_regression: bool = True,
+    ) -> Dict[str, Any]:
+        normalized_max_waves = max(1, int(max_waves or 2))
+        selected_index = -1
+        selected: Dict[str, Any] | None = None
+        for index, item in enumerate(self.desktop_evaluation_lab_portfolios_items):
+            if str(item.get("portfolio_id", "") or "").strip() == str(portfolio_id or "").strip():
+                selected_index = index
+                selected = self._desktop_evaluation_refresh_portfolio_row(dict(item))
+                break
+        if selected is None:
+            return {"status": "error", "message": "benchmark lab portfolio not found"}
+
+        wave_results: list[Dict[str, Any]] = []
+        stable_wave_count = 0
+        regression_wave_count = 0
+        stop_reason = "max_waves_reached"
+        status = "success"
+        for _ in range(normalized_max_waves):
+            cycle = self.desktop_evaluation_run_lab_portfolio_cycle(
+                portfolio_id=str(selected.get("portfolio_id", "") or portfolio_id).strip(),
+                max_programs=max_programs,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+            )
+            wave_results.append(cycle)
+            if str(cycle.get("status", "") or "").strip().lower() == "error":
+                status = "partial"
+                stop_reason = "wave_error"
+                break
+            wave = dict(cycle.get("wave", {})) if isinstance(cycle.get("wave", {}), dict) else {}
+            portfolio = dict(cycle.get("portfolio", {})) if isinstance(cycle.get("portfolio", {}), dict) else {}
+            wave_stop_reason = str(wave.get("stop_reason", "") or "").strip().lower()
+            latest_wave_status = str(portfolio.get("latest_wave_status", wave.get("trend_direction", "")) or "").strip().lower()
+            if bool(wave.get("stable", False)) or wave_stop_reason == "stable":
+                stable_wave_count += 1
+                if stop_on_stable:
+                    stop_reason = "stable"
+                    break
+            if latest_wave_status in {"regression", "failed", "error"} or wave_stop_reason in {"regression_detected", "wave_error"}:
+                regression_wave_count += 1
+                if stop_on_regression:
+                    status = "partial"
+                    stop_reason = "regression_detected"
+                    break
+            if wave_stop_reason == "idle":
+                status = "partial"
+                stop_reason = "no_progress"
+                break
+
+        selected = self._desktop_evaluation_refresh_portfolio_row(
+            dict(self.desktop_evaluation_lab_portfolios_items[selected_index])
+        )
+        campaign_row = {
+            "campaign_id": f"{str(selected.get('portfolio_id', '') or portfolio_id).strip()}-campaign-{int(selected.get('completed_campaign_count', 0) or 0) + 1}",
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "stable" if stop_reason == "stable" else status,
+            "stop_reason": stop_reason,
+            "executed_wave_count": len(wave_results),
+            "stable_wave_count": stable_wave_count,
+            "regression_wave_count": regression_wave_count,
+            "executed_program_count": sum(
+                int(dict(item.get("wave", {})).get("executed_program_count", 0) or 0)
+                for item in wave_results
+                if isinstance(item, dict)
+            ),
+            "executed_campaign_count": sum(
+                int(dict(item.get("wave", {})).get("executed_campaign_count", 0) or 0)
+                for item in wave_results
+                if isinstance(item, dict)
+            ),
+            "executed_sweep_count": sum(
+                int(dict(item.get("wave", {})).get("executed_sweep_count", 0) or 0)
+                for item in wave_results
+                if isinstance(item, dict)
+            ),
+            "weighted_score": round(
+                float(dict(dict(wave_results[-1] if wave_results else {}).get("wave", {})).get("weighted_score", 0.0) or 0.0),
+                6,
+            ),
+            "weighted_pass_rate": round(
+                float(dict(dict(wave_results[-1] if wave_results else {}).get("wave", {})).get("weighted_pass_rate", 0.0) or 0.0),
+                6,
+            ),
+            "trend_direction": str(
+                dict(dict(wave_results[-1] if wave_results else {}).get("wave", {})).get("trend_direction", "")
+                or ""
+            ).strip().lower(),
+        }
+        if not isinstance(selected.get("campaign_runs", []), list):
+            selected["campaign_runs"] = []
+        selected.setdefault("campaign_runs", [])
+        selected["campaign_runs"].append(campaign_row)
+        selected = self._desktop_evaluation_refresh_portfolio_row(selected)
+        if 0 <= selected_index < len(self.desktop_evaluation_lab_portfolios_items):
+            self.desktop_evaluation_lab_portfolios_items[selected_index] = selected
+        latest_lab = dict(wave_results[-1].get("lab", {})) if wave_results and isinstance(wave_results[-1], dict) else {}
+        latest_native_targets = dict(wave_results[-1].get("native_targets", {})) if wave_results and isinstance(wave_results[-1], dict) else {}
+        latest_guidance = dict(wave_results[-1].get("guidance", {})) if wave_results and isinstance(wave_results[-1], dict) else {}
+        return {
+            "status": status,
+            "portfolio": dict(selected),
+            "campaign": dict(campaign_row),
+            "wave_results": wave_results,
+            "executed_wave_count": len(wave_results),
+            "stable_wave_count": stable_wave_count,
+            "regression_wave_count": regression_wave_count,
+            "stop_reason": stop_reason,
+            "lab": latest_lab,
+            "native_targets": latest_native_targets,
+            "guidance": latest_guidance,
+        }
+
     def desktop_evaluation_campaign_supervisor_status(self, *, history_limit: int = 6) -> Dict[str, Any]:
         payload = dict(self.desktop_evaluation_campaign_daemon_state)
         payload["campaigns"] = self.desktop_evaluation_lab_campaigns(
@@ -16466,6 +16690,7 @@ class FakeDesktopService:
         enabled: bool | None = None,
         interval_s: float | None = None,
         max_portfolios: int | None = None,
+        max_waves_per_portfolio: int | None = None,
         max_programs_per_portfolio: int | None = None,
         max_campaigns_per_program: int | None = None,
         max_sweeps_per_campaign: int | None = None,
@@ -16484,6 +16709,8 @@ class FakeDesktopService:
             self.desktop_evaluation_portfolio_daemon_state["interval_s"] = float(interval_s)
         if max_portfolios is not None:
             self.desktop_evaluation_portfolio_daemon_state["max_portfolios"] = int(max_portfolios)
+        if max_waves_per_portfolio is not None:
+            self.desktop_evaluation_portfolio_daemon_state["max_waves_per_portfolio"] = int(max_waves_per_portfolio)
         if max_programs_per_portfolio is not None:
             self.desktop_evaluation_portfolio_daemon_state["max_programs_per_portfolio"] = int(max_programs_per_portfolio)
         if max_campaigns_per_program is not None:
@@ -16510,6 +16737,7 @@ class FakeDesktopService:
         self,
         *,
         max_portfolios: int | None = None,
+        max_waves_per_portfolio: int | None = None,
         max_programs_per_portfolio: int | None = None,
         max_campaigns_per_program: int | None = None,
         max_sweeps_per_campaign: int | None = None,
@@ -16523,6 +16751,9 @@ class FakeDesktopService:
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
         effective_max_portfolios = int(max_portfolios or self.desktop_evaluation_portfolio_daemon_state.get("max_portfolios", 2) or 2)
+        effective_max_waves = int(
+            max_waves_per_portfolio or self.desktop_evaluation_portfolio_daemon_state.get("max_waves_per_portfolio", 2) or 2
+        )
         effective_max_programs = int(
             max_programs_per_portfolio or self.desktop_evaluation_portfolio_daemon_state.get("max_programs_per_portfolio", 3) or 3
         )
@@ -16580,8 +16811,9 @@ class FakeDesktopService:
         )[:max(1, effective_max_portfolios)]
         results: list[Dict[str, Any]] = []
         for portfolio in ranked:
-            cycle = self.desktop_evaluation_run_lab_portfolio_cycle(
+            cycle = self.desktop_evaluation_run_lab_portfolio_campaign(
                 portfolio_id=str(portfolio.get("portfolio_id", "") or "").strip(),
+                max_waves=effective_max_waves,
                 max_programs=effective_max_programs,
                 max_campaigns_per_program=effective_max_campaigns,
                 max_sweeps_per_campaign=effective_max_sweeps,
@@ -16605,18 +16837,29 @@ class FakeDesktopService:
             "status": self.desktop_evaluation_portfolio_daemon_state["last_result_status"],
             "targeted_portfolio_count": len(ranked),
             "executed_portfolio_count": len(results),
-            "executed_program_count": sum(int(dict(item.get("wave", {})).get("executed_program_count", 0) or 0) for item in results),
-            "executed_campaign_count": sum(int(dict(item.get("wave", {})).get("executed_campaign_count", 0) or 0) for item in results),
-            "executed_sweep_count": sum(int(dict(item.get("wave", {})).get("executed_sweep_count", 0) or 0) for item in results),
+            "executed_wave_count": sum(int(item.get("executed_wave_count", 0) or 0) for item in results),
+            "executed_program_count": sum(int(dict(item.get("campaign", {})).get("executed_program_count", 0) or 0) for item in results),
+            "executed_campaign_count": sum(int(dict(item.get("campaign", {})).get("executed_campaign_count", 0) or 0) for item in results),
+            "executed_sweep_count": sum(int(dict(item.get("campaign", {})).get("executed_sweep_count", 0) or 0) for item in results),
             "stable_portfolio_count": sum(
                 1
                 for item in results
-                if str(dict(item.get("wave", {})).get("stop_reason", "") or "").strip().lower() == "stable"
+                if str(dict(item.get("campaign", {})).get("stop_reason", "") or "").strip().lower() == "stable"
             ),
             "regression_portfolio_count": sum(
                 1
                 for item in results
-                if str(dict(item.get("portfolio", {})).get("latest_wave_status", "") or "").strip().lower() == "regression"
+                if str(dict(item.get("campaign", {})).get("stop_reason", "") or "").strip().lower() in {"regression_detected", "wave_error"}
+            ),
+            "stable_campaign_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("campaign", {})).get("stop_reason", "") or "").strip().lower() == "stable"
+            ),
+            "regression_campaign_count": sum(
+                1
+                for item in results
+                if str(dict(item.get("campaign", {})).get("stop_reason", "") or "").strip().lower() in {"regression_detected", "wave_error"}
             ),
             "pending_program_count": sum(int(dict(item.get("portfolio", {})).get("pending_program_count", 0) or 0) for item in results),
             "attention_program_count": sum(int(dict(item.get("portfolio", {})).get("attention_program_count", 0) or 0) for item in results),
@@ -16628,7 +16871,11 @@ class FakeDesktopService:
             "latest_portfolio_label": str(dict(results[0].get("portfolio", {})).get("label", "") or "").strip() if results else "",
             "auto_created_portfolio_count": 0,
             "wave_stop_reason_counts": {
-                str(dict(item.get("wave", {})).get("stop_reason", "unknown") or "unknown"): 1
+                str(dict(item.get("wave_results", [{}])[-1]).get("wave", {}).get("stop_reason", "unknown") or "unknown"): 1
+                for item in results
+            },
+            "campaign_stop_reason_counts": {
+                str(dict(item.get("campaign", {})).get("stop_reason", "unknown") or "unknown"): 1
                 for item in results
             },
         }
@@ -16642,6 +16889,7 @@ class FakeDesktopService:
                 "portfolio_status": effective_status,
                 "pack": effective_pack,
                 "app_name": effective_app,
+                "max_waves_per_portfolio": effective_max_waves,
             },
             **dict(self.desktop_evaluation_portfolio_daemon_state["last_summary"]),
         }
@@ -16664,6 +16912,9 @@ class FakeDesktopService:
                 "message": self.desktop_evaluation_portfolio_daemon_state["last_result_message"],
                 "targeted_portfolio_count": len(ranked),
                 "executed_portfolio_count": len(results),
+                "executed_wave_count": int(self.desktop_evaluation_portfolio_daemon_state["last_summary"].get("executed_wave_count", 0) or 0),
+                "stable_campaign_count": int(self.desktop_evaluation_portfolio_daemon_state["last_summary"].get("stable_campaign_count", 0) or 0),
+                "regression_campaign_count": int(self.desktop_evaluation_portfolio_daemon_state["last_summary"].get("regression_campaign_count", 0) or 0),
                 "results": results,
             },
             "supervisor": self.desktop_evaluation_portfolio_supervisor_status(history_limit=history_response_limit),
@@ -21628,6 +21879,49 @@ def test_desktop_evaluation_lab_portfolio_cycle_route(api_server: tuple[str, Fak
     assert isinstance(cycled["results"], list)
 
 
+def test_desktop_evaluation_lab_portfolio_campaign_route(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios",
+        payload={
+            "pack": "unsupported_and_recovery",
+            "app_name": "settings",
+            "history_limit": 6,
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sessions_per_campaign": 2,
+        },
+    )
+    assert status == 200
+    portfolio_id = str(created["portfolio"]["portfolio_id"])
+
+    status, campaign = request_json(
+        "POST",
+        f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolios/run-campaign",
+        payload={
+            "portfolio_id": portfolio_id,
+            "max_waves": 2,
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2,
+            "max_sessions": 2,
+            "max_replays_per_session": 2,
+            "history_limit": 6,
+            "stop_on_stable": True,
+            "stop_on_regression": True,
+        },
+    )
+    assert status == 200
+    assert campaign["status"] in {"success", "partial"}
+    assert campaign["portfolio"]["portfolio_id"] == portfolio_id
+    assert int(campaign["executed_wave_count"]) >= 1
+    assert int(campaign["campaign"]["executed_wave_count"]) >= 1
+    assert int(campaign["portfolio"]["completed_campaign_count"]) >= 1
+    assert isinstance(campaign["wave_results"], list)
+
+
 def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:
     base_url, _ = api_server
 
@@ -21662,6 +21956,7 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
             "enabled": True,
             "interval_s": 360,
             "max_portfolios": 2,
+            "max_waves_per_portfolio": 3,
             "max_programs_per_portfolio": 3,
             "max_campaigns_per_program": 2,
             "max_sweeps_per_campaign": 2,
@@ -21676,6 +21971,7 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
     assert configured["status"] == "success"
     assert configured["enabled"] is True
     assert int(configured["max_portfolios"]) == 2
+    assert int(configured["max_waves_per_portfolio"]) == 3
     assert int(configured["max_programs_per_portfolio"]) == 3
     assert int(configured["max_campaigns_per_program"]) == 2
     assert str(configured["pack"]) == "long_horizon_and_replay"
@@ -21685,6 +21981,7 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
         f"{base_url}/runtime/evaluations/desktop-benchmarks/lab/portfolio-daemon/trigger",
         payload={
             "max_portfolios": 2,
+            "max_waves_per_portfolio": 2,
             "max_programs_per_portfolio": 2,
             "max_campaigns_per_program": 2,
             "max_sweeps_per_campaign": 2,
@@ -21700,8 +21997,10 @@ def test_desktop_evaluation_portfolio_daemon_routes(api_server: tuple[str, FakeD
     assert isinstance(triggered.get("result"), dict)
     assert isinstance(triggered.get("supervisor"), dict)
     assert int(triggered["supervisor"]["run_count"]) >= 1
+    assert int(triggered["supervisor"]["max_waves_per_portfolio"]) == 3
     assert int(triggered["supervisor"]["max_programs_per_portfolio"]) == 3
     assert int(triggered["supervisor"].get("history_count", 0) or 0) >= 1
+    assert int(triggered["result"].get("executed_wave_count", 0) or 0) >= 1
 
     status, history = request_json(
         "GET",

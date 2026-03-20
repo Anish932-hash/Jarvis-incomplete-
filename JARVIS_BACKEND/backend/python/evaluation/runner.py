@@ -296,6 +296,18 @@ class EvaluationRunner:
             summary.get("trend_direction_counts", {}),
             label_key="direction",
         )
+        campaign_trend_leaderboard = self._count_map_leaderboard(
+            summary.get("campaign_trend_direction_counts", {}),
+            label_key="direction",
+        )
+        campaign_status_leaderboard = self._count_map_leaderboard(
+            summary.get("latest_campaign_status_counts", {}),
+            label_key="status",
+        )
+        campaign_stop_reason_leaderboard = self._count_map_leaderboard(
+            summary.get("campaign_stop_reason_counts", {}),
+            label_key="stop_reason",
+        )
         app_target_leaderboard = self._count_map_leaderboard(
             summary.get("app_target_counts", {}),
             label_key="app_name",
@@ -309,6 +321,9 @@ class EvaluationRunner:
             "long_horizon_pending_count": int(summary.get("long_horizon_pending_count", 0) or 0),
             "stable_waves": int(summary.get("stable_waves", 0) or 0),
             "regression_waves": int(summary.get("regression_waves", 0) or 0),
+            "campaigns": int(summary.get("campaign_count", 0) or 0),
+            "stable_campaigns": int(summary.get("stable_campaigns", 0) or 0),
+            "regression_campaigns": int(summary.get("regression_campaigns", 0) or 0),
         }
         return {
             "status": "success",
@@ -328,14 +343,23 @@ class EvaluationRunner:
                 "top_app_name": str(dict(app_pressure_leaderboard[0]).get("app_name", "") or "") if app_pressure_leaderboard else "",
                 "top_stop_reason": str(dict(stop_reason_leaderboard[0]).get("stop_reason", "") or "") if stop_reason_leaderboard else "",
                 "top_focus_area": str(dict(focus_leaderboard[0]).get("focus_area", "") or "") if focus_leaderboard else "",
+                "top_campaign_status": str(dict(campaign_status_leaderboard[0]).get("status", "") or "")
+                if campaign_status_leaderboard
+                else "",
+                "top_campaign_stop_reason": str(dict(campaign_stop_reason_leaderboard[0]).get("stop_reason", "") or "")
+                if campaign_stop_reason_leaderboard
+                else "",
             },
             "backlog": backlog,
             "top_portfolios": top_portfolios,
             "app_pressure_leaderboard": app_pressure_leaderboard[:6],
             "app_target_leaderboard": app_target_leaderboard[:6],
             "stop_reason_leaderboard": stop_reason_leaderboard[:6],
+            "campaign_stop_reason_leaderboard": campaign_stop_reason_leaderboard[:6],
             "focus_leaderboard": focus_leaderboard[:6],
             "trend_leaderboard": trend_leaderboard[:6],
+            "campaign_trend_leaderboard": campaign_trend_leaderboard[:6],
+            "campaign_status_leaderboard": campaign_status_leaderboard[:6],
             "native_targets": native_targets_payload,
             "guidance": guidance_payload,
         }
@@ -1906,10 +1930,277 @@ class EvaluationRunner:
             "guidance": guidance_payload,
         }
 
+    def run_lab_portfolio_campaign(
+        self,
+        *,
+        portfolio_id: str,
+        max_waves: int = 2,
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+        stop_on_regression: bool = True,
+    ) -> Dict[str, object]:
+        memory = self.lab_memory
+        if memory is None:
+            return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
+        normalized_max_waves = max(1, min(int(max_waves or 2), 8))
+        wave_results: List[Dict[str, object]] = []
+        last_signature: tuple[int, int, int, int, int, str, str] | None = None
+        final_payload: Dict[str, object] = {}
+        stop_reason = "max_waves_reached"
+        error_count = 0
+        stable_wave_count = 0
+        regression_wave_count = 0
+
+        for wave_index in range(normalized_max_waves):
+            cycle_payload = self.run_lab_portfolio_cycle(
+                portfolio_id=portfolio_id,
+                max_programs=max_programs,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+            )
+            wave_results.append(dict(cycle_payload))
+            final_payload = dict(cycle_payload)
+
+            portfolio_row = (
+                dict(cycle_payload.get("portfolio", {}))
+                if isinstance(cycle_payload.get("portfolio", {}), dict)
+                else {}
+            )
+            wave_row = (
+                dict(cycle_payload.get("wave", {}))
+                if isinstance(cycle_payload.get("wave", {}), dict)
+                else {}
+            )
+            cycle_status = str(cycle_payload.get("status", "") or "").strip().lower()
+            latest_wave_status = str(
+                portfolio_row.get("latest_wave_status", wave_row.get("status", cycle_status)) or ""
+            ).strip().lower()
+            latest_trend_direction = str(
+                portfolio_row.get(
+                    "latest_wave_trend_direction",
+                    wave_row.get("trend_direction", portfolio_row.get("history_direction", "")),
+                )
+                or ""
+            ).strip().lower()
+            latest_stop_reason = str(
+                wave_row.get("stop_reason", portfolio_row.get("latest_wave_stop_reason", "")) or ""
+            ).strip().lower()
+
+            if cycle_status == "error" or latest_wave_status in {"error", "failed"}:
+                error_count += 1
+            if latest_stop_reason == "stable" or (
+                latest_trend_direction in {"stable", "improving"}
+                and int(portfolio_row.get("pending_program_count", 0) or 0) <= 0
+                and int(portfolio_row.get("pending_campaign_count", 0) or 0) <= 0
+                and int(portfolio_row.get("pending_session_count", 0) or 0) <= 0
+                and int(portfolio_row.get("pending_app_target_count", 0) or 0) <= 0
+            ):
+                stable_wave_count += 1
+            if (
+                latest_trend_direction in {"regressing", "degraded"}
+                or latest_wave_status in {"error", "failed"}
+                or latest_stop_reason in {"regression", "regression_attention", "error", "failed"}
+            ):
+                regression_wave_count += 1
+
+            signature = (
+                int(portfolio_row.get("pending_program_count", 0) or 0),
+                int(portfolio_row.get("attention_program_count", 0) or 0),
+                int(portfolio_row.get("pending_campaign_count", 0) or 0),
+                int(portfolio_row.get("pending_session_count", 0) or 0),
+                int(portfolio_row.get("pending_app_target_count", 0) or 0),
+                latest_wave_status,
+                latest_stop_reason,
+            )
+
+            if cycle_status == "error":
+                stop_reason = "wave_error"
+                break
+            if stop_on_regression and regression_wave_count > 0:
+                stop_reason = "regression_detected"
+                break
+            if stop_on_stable and stable_wave_count > 0:
+                stop_reason = "stable"
+                break
+            if last_signature is not None and signature == last_signature:
+                stop_reason = "no_progress"
+                break
+            last_signature = signature
+
+        portfolio_row = (
+            dict(final_payload.get("portfolio", {}))
+            if isinstance(final_payload.get("portfolio", {}), dict)
+            else {}
+        )
+        if not portfolio_row:
+            return {
+                "status": "idle",
+                "message": "portfolio campaign found no executable waves",
+                "portfolio": {},
+                "campaign": {},
+                "wave_results": [],
+            }
+
+        latest_lab = (
+            dict(final_payload.get("lab", {}))
+            if isinstance(final_payload.get("lab", {}), dict)
+            else dict(portfolio_row.get("lab_snapshot", {}))
+            if isinstance(portfolio_row.get("lab_snapshot", {}), dict)
+            else {}
+        )
+        latest_native_targets = (
+            dict(final_payload.get("native_targets", {}))
+            if isinstance(final_payload.get("native_targets", {}), dict)
+            else dict(portfolio_row.get("native_targets_snapshot", {}))
+            if isinstance(portfolio_row.get("native_targets_snapshot", {}), dict)
+            else {}
+        )
+        latest_guidance = (
+            dict(final_payload.get("guidance", {}))
+            if isinstance(final_payload.get("guidance", {}), dict)
+            else dict(portfolio_row.get("guidance_snapshot", {}))
+            if isinstance(portfolio_row.get("guidance_snapshot", {}), dict)
+            else {}
+        )
+        weighted_scores = [
+            float(dict(item.get("wave", {})).get("weighted_score", 0.0) or 0.0)
+            for item in wave_results
+            if isinstance(item, dict) and isinstance(item.get("wave", {}), dict)
+        ]
+        weighted_pass_rates = [
+            float(dict(item.get("wave", {})).get("weighted_pass_rate", 0.0) or 0.0)
+            for item in wave_results
+            if isinstance(item, dict) and isinstance(item.get("wave", {}), dict)
+        ]
+        campaign_update = memory.record_portfolio_campaign(
+            portfolio_id=portfolio_id,
+            campaign_payload={
+                "status": "error" if error_count > 0 else "success",
+                "started_at": str(
+                    dict(wave_results[0].get("wave", {})).get("executed_at", "")
+                    if wave_results and isinstance(wave_results[0].get("wave", {}), dict)
+                    else datetime.now(timezone.utc).isoformat()
+                ),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "stop_reason": stop_reason,
+                "executed_wave_count": len(wave_results),
+                "executed_program_count": sum(
+                    int(dict(item.get("wave", {})).get("executed_program_count", 0) or 0)
+                    for item in wave_results
+                    if isinstance(item, dict)
+                ),
+                "executed_campaign_count": sum(
+                    int(dict(item.get("wave", {})).get("executed_campaign_count", 0) or 0)
+                    for item in wave_results
+                    if isinstance(item, dict)
+                ),
+                "executed_sweep_count": sum(
+                    int(dict(item.get("wave", {})).get("executed_sweep_count", 0) or 0)
+                    for item in wave_results
+                    if isinstance(item, dict)
+                ),
+                "stable_wave_count": stable_wave_count,
+                "regression_wave_count": regression_wave_count,
+                "stable_program_count": int(portfolio_row.get("complete_program_count", 0) or 0),
+                "regression_program_count": int(portfolio_row.get("attention_program_count", 0) or 0),
+                "pending_program_count": int(portfolio_row.get("pending_program_count", 0) or 0),
+                "attention_program_count": int(portfolio_row.get("attention_program_count", 0) or 0),
+                "pending_campaign_count": int(portfolio_row.get("pending_campaign_count", 0) or 0),
+                "attention_campaign_count": int(portfolio_row.get("attention_campaign_count", 0) or 0),
+                "pending_session_count": int(portfolio_row.get("pending_session_count", 0) or 0),
+                "pending_app_target_count": int(portfolio_row.get("pending_app_target_count", 0) or 0),
+                "long_horizon_pending_count": int(portfolio_row.get("long_horizon_pending_count", 0) or 0),
+                "weighted_score": round(sum(weighted_scores) / len(weighted_scores), 6) if weighted_scores else 0.0,
+                "weighted_pass_rate": round(sum(weighted_pass_rates) / len(weighted_pass_rates), 6)
+                if weighted_pass_rates
+                else 0.0,
+                "trend_direction": str(
+                    portfolio_row.get("latest_wave_trend_direction", portfolio_row.get("history_direction", "")) or ""
+                ).strip().lower(),
+                "query": {
+                    **(
+                        dict(portfolio_row.get("filters", {}))
+                        if isinstance(portfolio_row.get("filters", {}), dict)
+                        else {}
+                    ),
+                    "history_limit": history_limit,
+                    "max_waves": normalized_max_waves,
+                    "max_programs": max_programs,
+                    "max_campaigns_per_program": max_campaigns_per_program,
+                    "max_sweeps_per_campaign": max_sweeps_per_campaign,
+                },
+            },
+            lab_payload=latest_lab,
+            native_targets_payload=latest_native_targets,
+            guidance_payload=latest_guidance,
+            program_ids=[
+                str(item).strip()
+                for item in portfolio_row.get("program_ids", [])
+                if str(item).strip()
+            ]
+            if isinstance(portfolio_row.get("program_ids", []), list)
+            else [],
+            app_targets=[
+                str(item).strip()
+                for item in portfolio_row.get("target_apps", portfolio_row.get("app_targets", []))
+                if str(item).strip()
+            ]
+            if isinstance(portfolio_row.get("target_apps", portfolio_row.get("app_targets", [])), list)
+            else [],
+            program_rows=[
+                dict(item)
+                for item in portfolio_row.get("programs", [])
+                if isinstance(item, dict)
+            ]
+            if isinstance(portfolio_row.get("programs", []), list)
+            else [],
+        )
+        updated_portfolio = (
+            dict(campaign_update.get("portfolio", {}))
+            if isinstance(campaign_update.get("portfolio", {}), dict)
+            else portfolio_row
+        )
+        campaign_row = (
+            dict(campaign_update.get("campaign", {}))
+            if isinstance(campaign_update.get("campaign", {}), dict)
+            else {}
+        )
+        status = "success"
+        if error_count > 0 and len(wave_results) <= 0:
+            status = "error"
+        elif error_count > 0:
+            status = "partial"
+        elif stop_reason == "no_progress":
+            status = "partial"
+        return {
+            "status": status,
+            "message": f"portfolio campaign executed {len(wave_results)} wave(s) | stop:{stop_reason}",
+            "portfolio": updated_portfolio,
+            "campaign": campaign_row,
+            "wave_results": wave_results,
+            "executed_wave_count": len(wave_results),
+            "stable_wave_count": stable_wave_count,
+            "regression_wave_count": regression_wave_count,
+            "stop_reason": stop_reason,
+            "lab": latest_lab,
+            "native_targets": latest_native_targets,
+            "guidance": latest_guidance,
+        }
+
     def run_lab_portfolio_watchdog(
         self,
         *,
         max_portfolios: int = 2,
+        max_waves_per_portfolio: int = 2,
         max_programs_per_portfolio: int = 3,
         max_campaigns_per_program: int = 3,
         max_sweeps_per_campaign: int = 2,
@@ -1925,6 +2216,7 @@ class EvaluationRunner:
         if memory is None:
             return {"status": "unavailable", "message": "desktop benchmark lab memory unavailable"}
         normalized_max_portfolios = max(1, min(int(max_portfolios or 2), 32))
+        normalized_max_waves = max(1, min(int(max_waves_per_portfolio or 2), 8))
         normalized_max_programs = max(1, min(int(max_programs_per_portfolio or 3), 8))
         normalized_max_campaigns = max(1, min(int(max_campaigns_per_program or 3), 8))
         normalized_max_sweeps = max(1, min(int(max_sweeps_per_campaign or 2), 8))
@@ -1996,28 +2288,33 @@ class EvaluationRunner:
                     "portfolio_status": normalized_status,
                     "pack": normalized_pack,
                     "app_name": normalized_app,
-                    "history_limit": normalized_history_limit,
-                    "max_programs_per_portfolio": normalized_max_programs,
-                    "max_campaigns_per_program": normalized_max_campaigns,
-                    "max_sweeps_per_campaign": normalized_max_sweeps,
-                },
-                "targeted_portfolio_count": 0,
-                "executed_portfolio_count": 0,
-                "executed_program_count": 0,
-                "executed_campaign_count": 0,
-                "executed_sweep_count": 0,
-                "stable_portfolio_count": 0,
-                "regression_portfolio_count": 0,
-                "pending_program_count": 0,
-                "attention_program_count": 0,
-                "pending_campaign_count": 0,
-                "pending_session_count": 0,
-                "pending_app_target_count": 0,
-                "long_horizon_pending_count": 0,
-                "error_count": 0,
-                "latest_portfolio_label": "",
-                "wave_stop_reason_counts": {},
-                "trend_direction_counts": {},
+                "history_limit": normalized_history_limit,
+                "max_waves_per_portfolio": normalized_max_waves,
+                "max_programs_per_portfolio": normalized_max_programs,
+                "max_campaigns_per_program": normalized_max_campaigns,
+                "max_sweeps_per_campaign": normalized_max_sweeps,
+            },
+            "targeted_portfolio_count": 0,
+            "executed_portfolio_count": 0,
+            "executed_wave_count": 0,
+            "executed_program_count": 0,
+            "executed_campaign_count": 0,
+            "executed_sweep_count": 0,
+            "stable_portfolio_count": 0,
+            "regression_portfolio_count": 0,
+            "stable_campaign_count": 0,
+            "regression_campaign_count": 0,
+            "pending_program_count": 0,
+            "attention_program_count": 0,
+            "pending_campaign_count": 0,
+            "pending_session_count": 0,
+            "pending_app_target_count": 0,
+            "long_horizon_pending_count": 0,
+            "error_count": 0,
+            "latest_portfolio_label": "",
+            "campaign_stop_reason_counts": {},
+            "wave_stop_reason_counts": {},
+            "trend_direction_counts": {},
                 "auto_created_portfolio_count": len(auto_created_portfolios),
                 "auto_created_portfolios": auto_created_portfolios,
                 "auto_created_app_names": self._unique_strings(
@@ -2037,11 +2334,14 @@ class EvaluationRunner:
         selected_portfolios = ranked_portfolios[:normalized_max_portfolios]
         results: List[Dict[str, object]] = []
         error_count = 0
+        executed_wave_count = 0
         executed_program_count = 0
         executed_campaign_count = 0
         executed_sweep_count = 0
         stable_portfolio_count = 0
         regression_portfolio_count = 0
+        stable_campaign_count = 0
+        regression_campaign_count = 0
         pending_program_count = 0
         attention_program_count = 0
         pending_campaign_count = 0
@@ -2049,6 +2349,7 @@ class EvaluationRunner:
         pending_app_target_count = 0
         long_horizon_pending_count = 0
         latest_portfolio_label = ""
+        campaign_stop_reason_counts: Dict[str, int] = {}
         wave_stop_reason_counts: Dict[str, int] = {}
         trend_direction_counts: Dict[str, int] = {}
 
@@ -2056,27 +2357,55 @@ class EvaluationRunner:
             portfolio_id_value = str(portfolio.get("portfolio_id", "") or "").strip()
             if not portfolio_id_value:
                 continue
-            cycle_payload = self.run_lab_portfolio_cycle(
+            cycle_payload = self.run_lab_portfolio_campaign(
                 portfolio_id=portfolio_id_value,
+                max_waves=normalized_max_waves,
                 max_programs=normalized_max_programs,
                 max_campaigns_per_program=normalized_max_campaigns,
                 max_sweeps_per_campaign=normalized_max_sweeps,
                 max_sessions=normalized_max_sessions,
                 max_replays_per_session=normalized_max_replays,
                 history_limit=normalized_history_limit,
+                stop_on_regression=True,
             )
             portfolio_row = dict(cycle_payload.get("portfolio", {})) if isinstance(cycle_payload.get("portfolio", {}), dict) else dict(portfolio)
-            wave_row = dict(cycle_payload.get("wave", {})) if isinstance(cycle_payload.get("wave", {}), dict) else {}
+            campaign_row = (
+                dict(cycle_payload.get("campaign", {}))
+                if isinstance(cycle_payload.get("campaign", {}), dict)
+                else {}
+            )
+            wave_rows = [
+                dict(item.get("wave", {}))
+                for item in cycle_payload.get("wave_results", [])
+                if isinstance(item, dict) and isinstance(item.get("wave", {}), dict)
+            ] if isinstance(cycle_payload.get("wave_results", []), list) else []
+            wave_row = wave_rows[-1] if wave_rows else {}
             latest_portfolio_label = latest_portfolio_label or str(portfolio_row.get("label", portfolio.get("label", "")) or "").strip()
             if str(cycle_payload.get("status", "") or "").strip().lower() == "error":
                 error_count += 1
-            if str(portfolio_row.get("latest_wave_status", "") or "").strip().lower() in {"regression", "failed", "error"}:
+            if (
+                str(portfolio_row.get("latest_wave_status", "") or "").strip().lower() in {"regression", "failed", "error"}
+                or str(campaign_row.get("stop_reason", "") or "").strip().lower() in {"regression_detected", "wave_error"}
+            ):
                 regression_portfolio_count += 1
-            executed_program_count += int(wave_row.get("executed_program_count", 0) or 0)
-            executed_campaign_count += int(wave_row.get("executed_campaign_count", 0) or 0)
-            executed_sweep_count += int(wave_row.get("executed_sweep_count", 0) or 0)
-            if str(wave_row.get("stop_reason", "") or "").strip().lower() == "stable" or int(portfolio_row.get("stable_wave_streak", 0) or 0) > 0:
+            executed_wave_count += int(cycle_payload.get("executed_wave_count", 0) or 0)
+            executed_program_count += int(
+                campaign_row.get("executed_program_count", wave_row.get("executed_program_count", 0)) or 0
+            )
+            executed_campaign_count += int(
+                campaign_row.get("executed_campaign_count", wave_row.get("executed_campaign_count", 0)) or 0
+            )
+            executed_sweep_count += int(
+                campaign_row.get("executed_sweep_count", wave_row.get("executed_sweep_count", 0)) or 0
+            )
+            if (
+                str(campaign_row.get("stop_reason", wave_row.get("stop_reason", "")) or "").strip().lower() == "stable"
+                or int(portfolio_row.get("stable_campaign_count", 0) or 0) > 0
+                or int(portfolio_row.get("stable_wave_streak", 0) or 0) > 0
+            ):
                 stable_portfolio_count += 1
+            stable_campaign_count += int(portfolio_row.get("stable_campaign_count", 0) or 0)
+            regression_campaign_count += int(portfolio_row.get("regression_campaign_count", 0) or 0)
             pending_program_count += int(portfolio_row.get("pending_program_count", 0) or 0)
             attention_program_count += int(portfolio_row.get("attention_program_count", 0) or 0)
             pending_campaign_count += int(portfolio_row.get("pending_campaign_count", 0) or 0)
@@ -2085,6 +2414,8 @@ class EvaluationRunner:
             long_horizon_pending_count += int(portfolio_row.get("long_horizon_pending_count", 0) or 0)
             stop_reason = str(wave_row.get("stop_reason", "") or "unknown").strip().lower() or "unknown"
             wave_stop_reason_counts[stop_reason] = int(wave_stop_reason_counts.get(stop_reason, 0)) + 1
+            campaign_stop_reason = str(campaign_row.get("stop_reason", cycle_payload.get("stop_reason", "")) or "unknown").strip().lower() or "unknown"
+            campaign_stop_reason_counts[campaign_stop_reason] = int(campaign_stop_reason_counts.get(campaign_stop_reason, 0)) + 1
             trend_direction = str(
                 dict(portfolio_row.get("trend_summary", {})).get("direction", portfolio_row.get("history_direction", ""))
                 if isinstance(portfolio_row.get("trend_summary", {}), dict)
@@ -2096,6 +2427,7 @@ class EvaluationRunner:
                     "portfolio_id": portfolio_id_value,
                     "label": str(portfolio_row.get("label", portfolio.get("label", "")) or "").strip(),
                     "status": str(cycle_payload.get("status", portfolio_row.get("status", "success")) or "success").strip() or "success",
+                    "executed_wave_count": int(cycle_payload.get("executed_wave_count", 0) or 0),
                     "pending_program_count": int(portfolio_row.get("pending_program_count", 0) or 0),
                     "attention_program_count": int(portfolio_row.get("attention_program_count", 0) or 0),
                     "pending_campaign_count": int(portfolio_row.get("pending_campaign_count", 0) or 0),
@@ -2103,9 +2435,17 @@ class EvaluationRunner:
                     "pending_app_target_count": int(portfolio_row.get("pending_app_target_count", 0) or 0),
                     "long_horizon_pending_count": int(portfolio_row.get("long_horizon_pending_count", 0) or 0),
                     "latest_wave_status": str(portfolio_row.get("latest_wave_status", "") or "").strip(),
-                    "executed_program_count": int(wave_row.get("executed_program_count", 0) or 0),
-                    "executed_campaign_count": int(wave_row.get("executed_campaign_count", 0) or 0),
-                    "executed_sweep_count": int(wave_row.get("executed_sweep_count", 0) or 0),
+                    "latest_campaign_status": str(portfolio_row.get("latest_campaign_status", "") or "").strip(),
+                    "campaign_stop_reason": campaign_stop_reason,
+                    "executed_program_count": int(
+                        campaign_row.get("executed_program_count", wave_row.get("executed_program_count", 0)) or 0
+                    ),
+                    "executed_campaign_count": int(
+                        campaign_row.get("executed_campaign_count", wave_row.get("executed_campaign_count", 0)) or 0
+                    ),
+                    "executed_sweep_count": int(
+                        campaign_row.get("executed_sweep_count", wave_row.get("executed_sweep_count", 0)) or 0
+                    ),
                     "created_program_count": int(cycle_payload.get("created_program_count", 0) or 0),
                     "wave_stop_reason": stop_reason,
                     "trend_direction": trend_direction,
@@ -2138,17 +2478,21 @@ class EvaluationRunner:
                 "pack": normalized_pack,
                 "app_name": normalized_app,
                 "history_limit": normalized_history_limit,
+                "max_waves_per_portfolio": normalized_max_waves,
                 "max_programs_per_portfolio": normalized_max_programs,
                 "max_campaigns_per_program": normalized_max_campaigns,
                 "max_sweeps_per_campaign": normalized_max_sweeps,
             },
             "targeted_portfolio_count": len(selected_portfolios),
             "executed_portfolio_count": executed_portfolio_count,
+            "executed_wave_count": executed_wave_count,
             "executed_program_count": executed_program_count,
             "executed_campaign_count": executed_campaign_count,
             "executed_sweep_count": executed_sweep_count,
             "stable_portfolio_count": stable_portfolio_count,
             "regression_portfolio_count": regression_portfolio_count,
+            "stable_campaign_count": stable_campaign_count,
+            "regression_campaign_count": regression_campaign_count,
             "pending_program_count": pending_program_count,
             "attention_program_count": attention_program_count,
             "pending_campaign_count": pending_campaign_count,
@@ -2157,8 +2501,9 @@ class EvaluationRunner:
             "long_horizon_pending_count": long_horizon_pending_count,
             "error_count": error_count,
             "latest_portfolio_label": latest_portfolio_label,
-            "wave_stop_reason_counts": wave_stop_reason_counts,
-            "trend_direction_counts": trend_direction_counts,
+            "campaign_stop_reason_counts": self._sorted_count_map(campaign_stop_reason_counts),
+            "wave_stop_reason_counts": self._sorted_count_map(wave_stop_reason_counts),
+            "trend_direction_counts": self._sorted_count_map(trend_direction_counts),
             "auto_created_portfolio_count": len(auto_created_portfolios),
             "auto_created_portfolios": auto_created_portfolios,
             "auto_created_app_names": self._unique_strings(

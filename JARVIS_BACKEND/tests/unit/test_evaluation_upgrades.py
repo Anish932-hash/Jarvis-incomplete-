@@ -1575,6 +1575,87 @@ def test_evaluation_runner_creates_and_cycles_lab_portfolio(monkeypatch, tmp_pat
     assert cycled["wave"]["executed_program_count"] == 2
 
 
+def test_evaluation_runner_portfolio_campaign_records_multi_wave_progress(monkeypatch) -> None:
+    runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
+    created = runner.lab_memory.record_portfolio(
+        filters={"pack": "long_horizon_and_replay", "app": "settings"},
+        lab_payload={"latest_summary": {"weighted_score": 0.7}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}]},
+        guidance_payload={"focus_summary": ["portfolio_campaign"]},
+        source="unit_test",
+        label="settings replay portfolio",
+        program_ids=[],
+        app_targets=["settings"],
+        program_rows=[],
+    )
+    portfolio_id = str(created["portfolio"]["portfolio_id"])
+    cycle_calls: list[str] = []
+    pending_program_values = [1, 0]
+
+    def _run_lab_portfolio_cycle(**kwargs):  # noqa: ANN001
+        cycle_calls.append(str(kwargs.get("portfolio_id", "")))
+        pending_program_count = pending_program_values.pop(0)
+        return {
+            "status": "success",
+            "portfolio": {
+                "portfolio_id": portfolio_id,
+                "label": "settings replay portfolio",
+                "status": "complete" if pending_program_count == 0 else "attention",
+                "filters": {"pack": "long_horizon_and_replay", "app": "settings"},
+                "program_ids": [],
+                "programs": [],
+                "target_apps": ["settings"],
+                "pending_program_count": pending_program_count,
+                "attention_program_count": 0,
+                "pending_campaign_count": pending_program_count,
+                "attention_campaign_count": 0,
+                "pending_session_count": pending_program_count,
+                "pending_app_target_count": pending_program_count,
+                "long_horizon_pending_count": pending_program_count,
+                "latest_wave_status": "success",
+                "latest_wave_stop_reason": "stable" if pending_program_count == 0 else "max_programs_reached",
+                "latest_wave_trend_direction": "improving" if pending_program_count == 0 else "warming",
+                "lab_snapshot": {"latest_summary": {"weighted_score": 0.85}},
+                "native_targets_snapshot": {"target_apps": [{"app_name": "settings"}]},
+                "guidance_snapshot": {"focus_summary": ["portfolio_campaign"]},
+            },
+            "wave": {
+                "executed_at": "2026-01-01T00:00:00+00:00",
+                "executed_program_count": 1,
+                "executed_campaign_count": 2,
+                "executed_sweep_count": 3,
+                "weighted_score": 0.84 if pending_program_count == 0 else 0.72,
+                "weighted_pass_rate": 0.88 if pending_program_count == 0 else 0.74,
+                "stop_reason": "stable" if pending_program_count == 0 else "max_programs_reached",
+                "trend_direction": "improving" if pending_program_count == 0 else "warming",
+            },
+            "lab": {"latest_summary": {"weighted_score": 0.85}},
+            "native_targets": {"target_apps": [{"app_name": "settings"}]},
+            "guidance": {"focus_summary": ["portfolio_campaign"]},
+        }
+
+    monkeypatch.setattr(runner, "run_lab_portfolio_cycle", _run_lab_portfolio_cycle)
+
+    payload = runner.run_lab_portfolio_campaign(
+        portfolio_id=portfolio_id,
+        max_waves=3,
+        max_programs=2,
+        max_campaigns_per_program=2,
+        max_sweeps_per_campaign=2,
+        max_sessions=1,
+        max_replays_per_session=1,
+        history_limit=4,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["executed_wave_count"] == 2
+    assert payload["stop_reason"] == "stable"
+    assert payload["portfolio"]["campaign_count"] == 1
+    assert payload["portfolio"]["latest_campaign_stop_reason"] == "stable"
+    assert payload["campaign"]["executed_wave_count"] == 2
+    assert cycle_calls == [portfolio_id, portfolio_id]
+
+
 def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatch) -> None:
     runner = EvaluationRunner(history_limit=4, lab_memory=DesktopBenchmarkLabMemory())
     portfolio_rows: list[dict] = []
@@ -1667,10 +1748,12 @@ def test_evaluation_runner_portfolio_watchdog_auto_creates_portfolios(monkeypatc
     assert payload["status"] == "success"
     assert payload["auto_created_portfolio_count"] == 1
     assert payload["executed_portfolio_count"] == 1
+    assert payload["executed_wave_count"] == 1
     assert payload["executed_program_count"] == 1
     assert payload["executed_campaign_count"] == 1
     assert payload["executed_sweep_count"] == 1
     assert payload["stable_portfolio_count"] == 1
+    assert payload["campaign_stop_reason_counts"]["stable"] == 1
     assert payload["auto_created_app_names"] == ["settings"]
     assert create_calls and create_calls[0]["app"] == "settings"
     assert cycle_calls == ["portfolio-settings"]
@@ -1707,6 +1790,9 @@ def test_evaluation_runner_portfolio_diagnostics_surfaces_hotspots(monkeypatch) 
                     "portfolio_priority": "critical",
                     "portfolio_pressure_score": 4.5,
                     "latest_wave_stop_reason": "regression",
+                    "latest_campaign_status": "success",
+                    "latest_campaign_stop_reason": "regression_detected",
+                    "campaign_count": 2,
                     "target_apps": ["settings"],
                     "focus_summary": ["desktop_workflow"],
                 }
@@ -1722,9 +1808,15 @@ def test_evaluation_runner_portfolio_diagnostics_surfaces_hotspots(monkeypatch) 
                 "long_horizon_pending_count": 2,
                 "stable_waves": 0,
                 "regression_waves": 1,
+                "campaign_count": 2,
+                "stable_campaigns": 0,
+                "regression_campaigns": 1,
                 "wave_stop_reason_counts": {"regression": 1, "stable": 1},
+                "campaign_stop_reason_counts": {"regression_detected": 1, "stable": 1},
                 "focus_summary_counts": {"desktop_workflow": 2, "native_focus": 1},
                 "trend_direction_counts": {"regression": 1, "stable": 1},
+                "campaign_trend_direction_counts": {"regressing": 1, "stable": 1},
+                "latest_campaign_status_counts": {"success": 1, "idle": 1},
                 "app_target_counts": {"settings": 2, "vscode": 1},
             },
         },
@@ -1770,10 +1862,13 @@ def test_evaluation_runner_portfolio_diagnostics_surfaces_hotspots(monkeypatch) 
     assert payload["status"] == "success"
     assert payload["summary"]["top_app_name"] == "settings"
     assert payload["summary"]["top_stop_reason"] == "regression"
+    assert payload["summary"]["top_campaign_stop_reason"] == "regression_detected"
     assert payload["backlog"]["pending_programs"] == 2
+    assert payload["backlog"]["campaigns"] == 2
     assert payload["top_portfolios"][0]["portfolio_id"] == "portfolio-settings"
     assert payload["app_pressure_leaderboard"][0]["app_name"] == "settings"
     assert payload["stop_reason_leaderboard"][0]["stop_reason"] == "regression"
+    assert payload["campaign_stop_reason_leaderboard"][0]["stop_reason"] == "regression_detected"
     assert payload["focus_leaderboard"][0]["focus_area"] == "desktop_workflow"
 
 

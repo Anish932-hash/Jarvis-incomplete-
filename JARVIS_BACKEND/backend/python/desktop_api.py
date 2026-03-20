@@ -275,6 +275,12 @@ class DesktopBackendService:
                 minimum=1,
                 maximum=32,
             ),
+            max_waves_per_portfolio=self._env_int(
+                "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_WAVES_PER_PORTFOLIO",
+                2,
+                minimum=1,
+                maximum=8,
+            ),
             max_programs_per_portfolio=self._env_int(
                 "JARVIS_DESKTOP_EVALUATION_PORTFOLIO_DAEMON_MAX_PROGRAMS_PER_PORTFOLIO",
                 3,
@@ -8715,6 +8721,40 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_evaluation_run_lab_portfolio_campaign(
+        self,
+        *,
+        portfolio_id: str = "",
+        max_waves: int = 2,
+        max_programs: int = 3,
+        max_campaigns_per_program: int = 3,
+        max_sweeps_per_campaign: int = 2,
+        max_sessions: int = 3,
+        max_replays_per_session: int = 2,
+        history_limit: int = 8,
+        stop_on_stable: bool = True,
+        stop_on_regression: bool = True,
+    ) -> Dict[str, Any]:
+        runner = getattr(self, "desktop_evaluation_runner", None)
+        if runner is None:
+            return {"status": "unavailable", "message": "desktop evaluation runner unavailable"}
+        try:
+            payload = runner.run_lab_portfolio_campaign(
+                portfolio_id=portfolio_id,
+                max_waves=max_waves,
+                max_programs=max_programs,
+                max_campaigns_per_program=max_campaigns_per_program,
+                max_sweeps_per_campaign=max_sweeps_per_campaign,
+                max_sessions=max_sessions,
+                max_replays_per_session=max_replays_per_session,
+                history_limit=history_limit,
+                stop_on_stable=stop_on_stable,
+                stop_on_regression=stop_on_regression,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid desktop evaluation lab portfolio campaign payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
     def _execute_desktop_evaluation_campaign_supervisor_tick(
         self,
         *,
@@ -9023,6 +9063,7 @@ class DesktopBackendService:
         self,
         *,
         max_portfolios: int = 2,
+        max_waves_per_portfolio: int = 2,
         max_programs_per_portfolio: int = 3,
         max_campaigns_per_program: int = 3,
         max_sweeps_per_campaign: int = 2,
@@ -9040,6 +9081,7 @@ class DesktopBackendService:
         try:
             payload = runner.run_lab_portfolio_watchdog(
                 max_portfolios=max_portfolios,
+                max_waves_per_portfolio=max_waves_per_portfolio,
                 max_programs_per_portfolio=max_programs_per_portfolio,
                 max_campaigns_per_program=max_campaigns_per_program,
                 max_sweeps_per_campaign=max_sweeps_per_campaign,
@@ -9111,6 +9153,7 @@ class DesktopBackendService:
         enabled: Optional[bool] = None,
         interval_s: Optional[float] = None,
         max_portfolios: Optional[int] = None,
+        max_waves_per_portfolio: Optional[int] = None,
         max_programs_per_portfolio: Optional[int] = None,
         max_campaigns_per_program: Optional[int] = None,
         max_sweeps_per_campaign: Optional[int] = None,
@@ -9130,6 +9173,7 @@ class DesktopBackendService:
             enabled=enabled,
             interval_s=interval_s,
             max_portfolios=max_portfolios,
+            max_waves_per_portfolio=max_waves_per_portfolio,
             max_programs_per_portfolio=max_programs_per_portfolio,
             max_campaigns_per_program=max_campaigns_per_program,
             max_sweeps_per_campaign=max_sweeps_per_campaign,
@@ -9147,6 +9191,7 @@ class DesktopBackendService:
         self,
         *,
         max_portfolios: Optional[int] = None,
+        max_waves_per_portfolio: Optional[int] = None,
         max_programs_per_portfolio: Optional[int] = None,
         max_campaigns_per_program: Optional[int] = None,
         max_sweeps_per_campaign: Optional[int] = None,
@@ -9165,6 +9210,7 @@ class DesktopBackendService:
         payload = supervisor.trigger_now(
             source=source,
             max_portfolios=max_portfolios,
+            max_waves_per_portfolio=max_waves_per_portfolio,
             max_programs_per_portfolio=max_programs_per_portfolio,
             max_campaigns_per_program=max_campaigns_per_program,
             max_sweeps_per_campaign=max_sweeps_per_campaign,
@@ -45387,6 +45433,27 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/evaluations/desktop-benchmarks/lab/portfolios/run-campaign":
+                payload = self.server.service.desktop_evaluation_run_lab_portfolio_campaign(
+                    portfolio_id=str(body.get("portfolio_id", "") or "").strip(),
+                    max_waves=self._parse_int(body.get("max_waves", 2), 2, minimum=1, maximum=8),
+                    max_programs=self._parse_int(body.get("max_programs", 3), 3, minimum=1, maximum=8),
+                    max_campaigns_per_program=self._parse_int(
+                        body.get("max_campaigns_per_program", 3), 3, minimum=1, maximum=8
+                    ),
+                    max_sweeps_per_campaign=self._parse_int(
+                        body.get("max_sweeps_per_campaign", 2), 2, minimum=1, maximum=8
+                    ),
+                    max_sessions=self._parse_int(body.get("max_sessions", 3), 3, minimum=1, maximum=8),
+                    max_replays_per_session=self._parse_int(
+                        body.get("max_replays_per_session", 2), 2, minimum=1, maximum=8
+                    ),
+                    history_limit=self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64),
+                    stop_on_stable=self._parse_bool(body.get("stop_on_stable", True), default=True),
+                    stop_on_regression=self._parse_bool(body.get("stop_on_regression", True), default=True),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
             if path == "/runtime/evaluations/desktop-benchmarks/lab/campaign-daemon":
                 payload = self.server.service.configure_desktop_evaluation_campaign_supervisor(
                     enabled=(bool(body.get("enabled")) if body.get("enabled") is not None else None),
@@ -45501,6 +45568,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     max_portfolios=(
                         self._parse_int(body.get("max_portfolios", 2), 2, minimum=1, maximum=32)
                         if body.get("max_portfolios") is not None
+                        else None
+                    ),
+                    max_waves_per_portfolio=(
+                        self._parse_int(body.get("max_waves_per_portfolio", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_waves_per_portfolio") is not None
                         else None
                     ),
                     max_programs_per_portfolio=(
@@ -45714,6 +45786,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     max_portfolios=(
                         self._parse_int(body.get("max_portfolios", 2), 2, minimum=1, maximum=32)
                         if body.get("max_portfolios") is not None
+                        else None
+                    ),
+                    max_waves_per_portfolio=(
+                        self._parse_int(body.get("max_waves_per_portfolio", 2), 2, minimum=1, maximum=8)
+                        if body.get("max_waves_per_portfolio") is not None
                         else None
                     ),
                     max_programs_per_portfolio=(

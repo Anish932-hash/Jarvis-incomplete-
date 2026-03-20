@@ -18,6 +18,7 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
         enabled=True,
         interval_s=420.0,
         max_portfolios=3,
+        max_waves_per_portfolio=4,
         max_programs_per_portfolio=4,
         max_campaigns_per_program=5,
         max_sweeps_per_campaign=3,
@@ -32,6 +33,7 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
     assert status["enabled"] is True
     assert status["interval_s"] == 420.0
     assert status["max_portfolios"] == 3
+    assert status["max_waves_per_portfolio"] == 4
     assert status["max_programs_per_portfolio"] == 4
     assert status["portfolio_status"] == "ready"
 
@@ -40,6 +42,7 @@ def test_benchmark_portfolio_supervisor_persists_configuration(tmp_path) -> None
     assert reloaded_status["enabled"] is True
     assert reloaded_status["interval_s"] == 420.0
     assert reloaded_status["max_portfolios"] == 3
+    assert reloaded_status["max_waves_per_portfolio"] == 4
     assert reloaded_status["max_programs_per_portfolio"] == 4
     assert reloaded_status["pack"] == "long_horizon_and_replay"
     assert reloaded_status["app_name"] == "settings"
@@ -56,11 +59,14 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
             "message": "portfolio watchdog executed 2 portfolio(s)",
             "targeted_portfolio_count": 2,
             "executed_portfolio_count": 2,
+            "executed_wave_count": 3,
             "executed_program_count": 4,
             "executed_campaign_count": 7,
             "executed_sweep_count": 9,
             "stable_portfolio_count": 1,
             "regression_portfolio_count": 1,
+            "stable_campaign_count": 1,
+            "regression_campaign_count": 1,
             "pending_program_count": 2,
             "attention_program_count": 1,
             "pending_campaign_count": 3,
@@ -84,6 +90,7 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
         payload = supervisor.trigger_now(
             source="manual_test",
             max_portfolios=3,
+            max_waves_per_portfolio=3,
             max_programs_per_portfolio=4,
             max_campaigns_per_program=3,
             max_sweeps_per_campaign=2,
@@ -95,12 +102,14 @@ def test_benchmark_portfolio_supervisor_manual_trigger_updates_runtime(tmp_path)
         )
         assert payload["status"] == "success"
         assert calls[0]["max_portfolios"] == 3
+        assert calls[0]["max_waves_per_portfolio"] == 3
         assert calls[0]["max_programs_per_portfolio"] == 4
         status = supervisor.status()
         assert status["run_count"] == 1
         assert status["manual_trigger_count"] == 1
         assert status["last_result_status"] == "success"
         assert status["last_summary"]["executed_portfolio_count"] == 2
+        assert status["last_summary"]["executed_wave_count"] == 3
         assert status["last_summary"]["executed_program_count"] == 4
         assert status["last_summary"]["auto_created_portfolio_count"] == 1
     finally:
@@ -146,11 +155,14 @@ def test_benchmark_portfolio_supervisor_history_persists_and_resets(tmp_path) ->
             "message": f"portfolio watchdog executed 1 portfolio(s) from {trigger_source}",
             "targeted_portfolio_count": 1,
             "executed_portfolio_count": 1,
+            "executed_wave_count": 2,
             "executed_program_count": 2,
             "executed_campaign_count": 3,
             "executed_sweep_count": 4,
             "stable_portfolio_count": 1,
             "regression_portfolio_count": 0,
+            "stable_campaign_count": 1,
+            "regression_campaign_count": 0,
             "pending_program_count": 1,
             "attention_program_count": 0,
             "pending_campaign_count": 1,
@@ -174,6 +186,7 @@ def test_benchmark_portfolio_supervisor_history_persists_and_resets(tmp_path) ->
         history = supervisor.history(limit=4)
         assert history["count"] == 2
         assert history["summary"]["executed_portfolio_total"] == 2
+        assert history["summary"]["executed_wave_total"] == 4
         assert history["summary"]["executed_program_total"] == 4
         assert history["latest_run"]["source"] == "ops_test"
 

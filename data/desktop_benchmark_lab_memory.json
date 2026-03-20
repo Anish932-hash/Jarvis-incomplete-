@@ -1,0 +1,157 @@
+{
+  "sessions": [],
+  "campaigns": [],
+  "programs": [],
+  "portfolios": [
+    {
+      "portfolio_id": "benchportfolio-b3474f4eec8b",
+      "status": "ready",
+      "label": "settings replay portfolio",
+      "source": "unit_test",
+      "created_at": "2026-03-20T21:33:39.433472+00:00",
+      "updated_at": "2026-03-20T21:33:39.438005+00:00",
+      "filters": {
+        "pack": "long_horizon_and_replay",
+        "app": "settings"
+      },
+      "focus_summary": [
+        "portfolio_campaign"
+      ],
+      "program_ids": [],
+      "programs": [],
+      "program_count": 0,
+      "pending_program_count": 0,
+      "attention_program_count": 0,
+      "complete_program_count": 0,
+      "pending_campaign_count": 0,
+      "attention_campaign_count": 0,
+      "pending_session_count": 0,
+      "target_app_count": 1,
+      "target_apps": [
+        "settings"
+      ],
+      "app_targets": [
+        "settings"
+      ],
+      "pending_app_target_count": 1,
+      "wave_runs": [],
+      "wave_count": 0,
+      "completed_wave_count": 0,
+      "stable_wave_count": 0,
+      "regression_wave_count": 0,
+      "stable_wave_streak": 0,
+      "regression_wave_streak": 0,
+      "campaign_runs": [
+        {
+          "campaign_id": "portfolio-campaign-6a85313075",
+          "recorded_at": "2026-03-20T21:33:39.438005+00:00",
+          "started_at": "2026-01-01T00:00:00+00:00",
+          "completed_at": "2026-03-20T21:33:39.437938+00:00",
+          "status": "success",
+          "stop_reason": "stable",
+          "executed_wave_count": 2,
+          "executed_program_count": 2,
+          "executed_campaign_count": 4,
+          "executed_sweep_count": 6,
+          "stable_wave_count": 1,
+          "regression_wave_count": 0,
+          "stable_program_count": 0,
+          "regression_program_count": 0,
+          "pending_program_count": 0,
+          "attention_program_count": 0,
+          "pending_campaign_count": 0,
+          "attention_campaign_count": 0,
+          "pending_session_count": 0,
+          "pending_app_target_count": 0,
+          "long_horizon_pending_count": 0,
+          "weighted_score": 0.78,
+          "weighted_pass_rate": 0.81,
+          "trend_direction": "improving",
+          "query": {
+            "pack": "long_horizon_and_replay",
+            "app": "settings",
+            "history_limit": 4,
+            "max_waves": 3,
+            "max_programs": 2,
+            "max_campaigns_per_program": 2,
+            "max_sweeps_per_campaign": 2
+          }
+        }
+      ],
+      "campaign_count": 1,
+      "completed_campaign_count": 1,
+      "stable_campaign_count": 1,
+      "regression_campaign_count": 0,
+      "stable_campaign_streak": 1,
+      "regression_campaign_streak": 0,
+      "latest_wave_status": "",
+      "latest_wave_stop_reason": "",
+      "latest_wave_executed_at": "",
+      "latest_wave_executed_program_count": 0,
+      "latest_wave_executed_campaign_count": 0,
+      "latest_wave_executed_sweep_count": 0,
+      "latest_wave_weighted_score": 0.0,
+      "latest_wave_weighted_pass_rate": 0.0,
+      "latest_wave_trend_direction": "",
+      "latest_campaign_status": "success",
+      "latest_campaign_stop_reason": "stable",
+      "latest_campaign_executed_at": "2026-03-20T21:33:39.437938+00:00",
+      "latest_campaign_executed_wave_count": 2,
+      "latest_campaign_executed_program_count": 2,
+      "latest_campaign_executed_campaign_count": 4,
+      "latest_campaign_executed_sweep_count": 6,
+      "latest_campaign_weighted_score": 0.78,
+      "latest_campaign_weighted_pass_rate": 0.81,
+      "latest_campaign_trend_direction": "improving",
+      "history_direction": "stable",
+      "trend_summary": {
+        "direction": "stable",
+        "completed_wave_count": 0,
+        "stable_wave_count": 0,
+        "regression_wave_count": 0,
+        "stable_wave_streak": 0,
+        "regression_wave_streak": 0,
+        "executed_program_total": 0,
+        "executed_campaign_total": 0,
+        "executed_sweep_total": 0,
+        "stable_program_total": 0,
+        "regression_program_total": 0
+      },
+      "campaign_history_direction": "improving",
+      "campaign_trend_summary": {
+        "direction": "improving",
+        "completed_campaign_count": 1,
+        "stable_campaign_count": 1,
+        "regression_campaign_count": 0,
+        "stable_campaign_streak": 1,
+        "regression_campaign_streak": 0,
+        "executed_wave_total": 2,
+        "executed_program_total": 2,
+        "executed_campaign_total": 4,
+        "executed_sweep_total": 6
+      },
+      "portfolio_pressure_score": 1.5,
+      "portfolio_priority": "steady",
+      "long_horizon_pending_count": 0,
+      "executed_campaign_total": 0,
+      "executed_sweep_total": 0,
+      "lab_snapshot": {
+        "latest_summary": {
+          "weighted_score": 0.85
+        }
+      },
+      "native_targets_snapshot": {
+        "target_apps": [
+          {
+            "app_name": "settings"
+          }
+        ]
+      },
+      "guidance_snapshot": {
+        "focus_summary": [
+          "portfolio_campaign"
+        ]
+      }
+    }
+  ]
+}

@@ -425,14 +425,48 @@ def test_benchmark_lab_memory_records_portfolios_and_wave_cycles(tmp_path) -> No
     assert updated["portfolio"]["latest_wave_stop_reason"] == "stable"
     assert updated["wave"]["executed_program_count"] == 2
 
+    campaign = memory.record_portfolio_campaign(
+        portfolio_id=str(portfolio["portfolio_id"]),
+        campaign_payload={
+            "status": "success",
+            "stop_reason": "stable",
+            "executed_wave_count": 2,
+            "executed_program_count": 3,
+            "executed_campaign_count": 4,
+            "executed_sweep_count": 5,
+            "stable_wave_count": 1,
+            "regression_wave_count": 0,
+            "stable_program_count": 2,
+            "regression_program_count": 0,
+            "pending_program_count": 0,
+            "pending_campaign_count": 0,
+            "pending_session_count": 0,
+            "pending_app_target_count": 0,
+            "weighted_score": 0.91,
+            "weighted_pass_rate": 0.93,
+            "trend_direction": "improving",
+        },
+        lab_payload={"latest_summary": {"weighted_score": 0.91, "weighted_pass_rate": 0.93}},
+        native_targets_payload={"target_apps": [{"app_name": "settings"}, {"app_name": "vscode"}]},
+        guidance_payload={"focus_summary": ["desktop_workflow", "native_focus"]},
+        program_rows=[dict(first_program), dict(second_program)],
+    )
+
+    assert campaign["status"] == "success"
+    assert campaign["portfolio"]["campaign_count"] == 1
+    assert campaign["portfolio"]["latest_campaign_stop_reason"] == "stable"
+    assert campaign["campaign"]["executed_wave_count"] == 2
+
     history = memory.portfolio_history(limit=5)
     assert history["status"] == "success"
     assert history["count"] == 1
     assert history["latest_portfolio"]["portfolio_id"] == portfolio["portfolio_id"]
     assert history["summary"]["program_count"] == 2
+    assert history["summary"]["campaign_count"] == 1
     assert history["summary"]["app_target_counts"]["settings"] == 1
     assert history["summary"]["focus_summary_counts"]["desktop_workflow"] == 1
     assert history["summary"]["wave_stop_reason_counts"]["stable"] == 1
+    assert history["summary"]["campaign_stop_reason_counts"]["stable"] == 1
     assert history["summary"]["long_horizon_pending_count"] >= 0
     assert len(history["top_portfolios"]) == 1
     assert history["top_portfolios"][0]["portfolio_id"] == portfolio["portfolio_id"]

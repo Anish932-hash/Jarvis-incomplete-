@@ -74,6 +74,7 @@ import {
   type DesktopEvaluationLabCampaignSweepResponse,
   type DesktopEvaluationLabCampaignsResponse,
   type DesktopEvaluationLabPortfolioDiagnosticsResponse,
+  type DesktopEvaluationLabPortfolioCampaignResponse,
   type DesktopEvaluationLabPortfolioCreateResponse,
   type DesktopEvaluationLabPortfolioCycleResponse,
   type DesktopEvaluationLabPortfolioRecord,
@@ -1217,6 +1218,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopEvaluationLabCampaignSweepResponse | null>(null);
   const [, setDesktopEvaluationLabCampaignCycleState] =
     useState<DesktopEvaluationLabCampaignCycleResponse | null>(null);
+  const [, setDesktopEvaluationLabPortfolioCampaignState] =
+    useState<DesktopEvaluationLabPortfolioCampaignResponse | null>(null);
   const [, setDesktopEvaluationLabPortfolioCycleState] =
     useState<DesktopEvaluationLabPortfolioCycleResponse | null>(null);
   const [, setDesktopEvaluationLabProgramCycleState] =
@@ -1250,6 +1253,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopEvaluationLabSessionAdvanceBusy, setDesktopEvaluationLabSessionAdvanceBusy] = useState(false);
   const [desktopEvaluationLabCampaignSweepBusy, setDesktopEvaluationLabCampaignSweepBusy] = useState(false);
   const [desktopEvaluationLabCampaignCycleBusy, setDesktopEvaluationLabCampaignCycleBusy] = useState(false);
+  const [desktopEvaluationLabPortfolioCampaignBusy, setDesktopEvaluationLabPortfolioCampaignBusy] = useState(false);
   const [desktopEvaluationLabPortfolioCycleBusy, setDesktopEvaluationLabPortfolioCycleBusy] = useState(false);
   const [desktopEvaluationLabProgramCycleBusy, setDesktopEvaluationLabProgramCycleBusy] = useState(false);
   const [desktopEvaluationCampaignDaemonTriggerBusy, setDesktopEvaluationCampaignDaemonTriggerBusy] =
@@ -13896,6 +13900,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           enabled,
           interval_s: Number(desktopEvaluationPortfolioDaemon.interval_s ?? 300),
           max_portfolios: Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 2),
+          max_waves_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_waves_per_portfolio ?? 2),
           max_programs_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
           max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
           max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
@@ -13917,7 +13922,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           title: enabled ? 'Portfolio Daemon Enabled' : 'Portfolio Daemon Paused',
           description:
             `${enabled ? 'Background replay portfolio cycles will keep running.' : 'Background replay portfolio cycles are paused.'}` +
-            ` | max portfolios:${Number(payload.max_portfolios ?? 0)}`,
+            ` | max portfolios:${Number(payload.max_portfolios ?? 0)}` +
+            ` | max waves:${Number(payload.max_waves_per_portfolio ?? 0)}`,
         });
         return payload;
       } catch (error) {
@@ -14514,6 +14520,69 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     ]
   );
 
+  const runDesktopEvaluationLabPortfolioCampaign = useCallback(
+    async (portfolioId: string) => {
+      setDesktopEvaluationLabPortfolioCampaignBusy(true);
+      try {
+        const payload = await backendClient.desktopEvaluationRunLabPortfolioCampaign({
+          portfolio_id: portfolioId,
+          max_waves: Number(desktopEvaluationPortfolioDaemon.max_waves_per_portfolio ?? 2),
+          max_programs: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
+          max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
+          max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
+          max_sessions: Number(desktopEvaluationPortfolioDaemon.max_sessions ?? 3),
+          max_replays_per_session: Number(desktopEvaluationPortfolioDaemon.max_replays_per_session ?? 2),
+          history_limit: 8,
+          stop_on_stable: true,
+          stop_on_regression: true,
+        });
+        setDesktopEvaluationLabPortfolioCampaignState(payload);
+        if (payload.lab && isObjectRecord(payload.lab)) {
+          setDesktopEvaluationLabState(payload.lab as DesktopEvaluationLabResponse);
+        }
+        if (payload.native_targets && isObjectRecord(payload.native_targets)) {
+          setDesktopEvaluationNativeTargetsState(payload.native_targets as DesktopEvaluationNativeTargetsResponse);
+        }
+        if (payload.guidance && isObjectRecord(payload.guidance)) {
+          setDesktopEvaluationGuidanceState(payload.guidance as DesktopEvaluationGuidanceResponse);
+        }
+        await refreshDesktopEvaluationHistory({ quiet: true });
+        await refreshDesktopEvaluationLabSessions({ quiet: true });
+        await refreshDesktopEvaluationLabCampaigns({ quiet: true });
+        await refreshDesktopEvaluationLabPrograms({ quiet: true });
+        await refreshDesktopEvaluationLabPortfolios({ quiet: true });
+        await refreshDesktopEvaluationPortfolioDaemonStatus({ quiet: true });
+        toast({
+          title: 'Replay Portfolio Campaign Ran',
+          description:
+            `${String(asObjectRecord(payload.portfolio).label ?? 'portfolio')}` +
+            ` • waves:${Number(payload.executed_wave_count ?? 0)}` +
+            ` • stop:${String(payload.stop_reason ?? 'n/a')}`,
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Replay Portfolio Campaign Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopEvaluationLabPortfolioCampaignBusy(false);
+      }
+    },
+    [
+      desktopEvaluationPortfolioDaemon,
+      refreshDesktopEvaluationHistory,
+      refreshDesktopEvaluationLabCampaigns,
+      refreshDesktopEvaluationLabPortfolios,
+      refreshDesktopEvaluationLabPrograms,
+      refreshDesktopEvaluationLabSessions,
+      refreshDesktopEvaluationPortfolioDaemonStatus,
+      toast,
+    ]
+  );
+
   const refreshDesktopEvaluationNativeTargets = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopEvaluationNativeTargetsBusy(true);
@@ -14671,6 +14740,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     try {
       const payload = await backendClient.desktopEvaluationTriggerPortfolioDaemon({
         max_portfolios: Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 2),
+        max_waves_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_waves_per_portfolio ?? 2),
         max_programs_per_portfolio: Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 3),
         max_campaigns_per_program: Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 3),
         max_sweeps_per_campaign: Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 2),
@@ -19848,6 +19918,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       <p className="mt-2">
                                         interval:{Number(desktopEvaluationPortfolioDaemon.interval_s ?? 0)}
                                         {' • '}max portfolios:{Number(desktopEvaluationPortfolioDaemon.max_portfolios ?? 0)}
+                                        {' • '}max waves:{Number(desktopEvaluationPortfolioDaemon.max_waves_per_portfolio ?? 0)}
                                         {' • '}max programs:{Number(desktopEvaluationPortfolioDaemon.max_programs_per_portfolio ?? 0)}
                                         {' • '}max campaigns:{Number(desktopEvaluationPortfolioDaemon.max_campaigns_per_program ?? 0)}
                                         {' • '}max sweeps:{Number(desktopEvaluationPortfolioDaemon.max_sweeps_per_campaign ?? 0)}
@@ -19861,8 +19932,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       <p className="mt-1 text-[10px] text-muted-foreground">
                                         last:{String(desktopEvaluationPortfolioDaemon.last_result_status ?? 'idle')}
                                         {' • '}executed:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_portfolio_count ?? 0)}
+                                        {' • '}waves:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_wave_count ?? 0)}
                                         {' • '}programs:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).executed_program_count ?? 0)}
                                         {' • '}stable:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).stable_portfolio_count ?? 0)}
+                                        {' • '}stable campaigns:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).stable_campaign_count ?? 0)}
                                         {' • '}auto-created:{Number(asObjectRecord(desktopEvaluationPortfolioDaemon.last_summary).auto_created_portfolio_count ?? 0)}
                                       </p>
                                       <p className="mt-1 text-[10px] text-muted-foreground">
@@ -19889,6 +19962,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {String(item.status ?? 'unknown')}
                                                 {' • '}source:{String(item.source ?? 'n/a')}
                                                 {' • '}executed:{Number(item.executed_portfolio_count ?? 0)}
+                                                {' • '}waves:{Number(item.executed_wave_count ?? 0)}
                                                 {' • '}programs:{Number(item.executed_program_count ?? 0)}
                                                 {' • '}campaigns:{Number(item.executed_campaign_count ?? 0)}
                                               </p>
@@ -20228,6 +20302,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).program_count ?? 0)}
                                             {' • '}pending programs:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).pending_programs ?? 0)}
                                             {' • '}waves:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).wave_count ?? 0)}
+                                            {' • '}campaigns:{Number(asObjectRecord(desktopEvaluationLabPortfolios.summary).campaign_count ?? 0)}
                                             {' • '}pressure:{Number(
                                               desktopEvaluationLabPortfolioDiagnosticsSummary.portfolio_pressure_total ?? 0
                                             ).toFixed(2)}
@@ -20252,6 +20327,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}focus:
                                               {desktopEvaluationLabPortfolioFocusRows.length > 0
                                                 ? ` ${String(desktopEvaluationLabPortfolioFocusRows[0].focus_area ?? 'n/a')}`
+                                                : ' n/a'}
+                                              {' • '}campaign stop:
+                                              {Array.isArray(desktopEvaluationLabPortfolioDiagnosticsState?.campaign_stop_reason_leaderboard) &&
+                                              desktopEvaluationLabPortfolioDiagnosticsState.campaign_stop_reason_leaderboard.length > 0
+                                                ? ` ${String(asObjectRecord(desktopEvaluationLabPortfolioDiagnosticsState.campaign_stop_reason_leaderboard[0]).stop_reason ?? 'n/a')}`
                                                 : ' n/a'}
                                             </p>
                                             <p className="mt-1 text-[10px] text-muted-foreground">
@@ -20300,6 +20380,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               pressure:{Number(desktopEvaluationLatestLabPortfolio.portfolio_pressure_score ?? 0).toFixed(2)}
                                               {' • '}priority:{String(desktopEvaluationLatestLabPortfolio.portfolio_priority ?? 'steady')}
                                               {' • '}stable streak:{Number(desktopEvaluationLatestLabPortfolio.stable_wave_streak ?? 0)}
+                                              {' • '}campaigns:{Number(desktopEvaluationLatestLabPortfolio.campaign_count ?? 0)}
                                             </p>
                                           </div>
                                           <ScrollArea className="h-[132px] rounded border border-primary/10 bg-black/10 p-2">
@@ -20316,22 +20397,40 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     <p className="text-[11px] text-primary/90">
                                                       {String(portfolio.label ?? portfolio.portfolio_id ?? 'portfolio')}
                                                     </p>
-                                                    <Button
-                                                      type="button"
-                                                      variant="outline"
-                                                      className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
-                                                      onClick={() =>
-                                                        void runDesktopEvaluationLabPortfolioCycle(
-                                                          String(portfolio.portfolio_id ?? '')
-                                                        )
-                                                      }
-                                                      disabled={
-                                                        desktopEvaluationLabPortfolioCycleBusy ||
-                                                        !String(portfolio.portfolio_id ?? '').trim()
-                                                      }
-                                                    >
-                                                      {desktopEvaluationLabPortfolioCycleBusy ? 'Cycling' : 'Run Cycle'}
-                                                    </Button>
+                                                    <div className="flex flex-wrap gap-2">
+                                                      <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                        onClick={() =>
+                                                          void runDesktopEvaluationLabPortfolioCampaign(
+                                                            String(portfolio.portfolio_id ?? '')
+                                                          )
+                                                        }
+                                                        disabled={
+                                                          desktopEvaluationLabPortfolioCampaignBusy ||
+                                                          !String(portfolio.portfolio_id ?? '').trim()
+                                                        }
+                                                      >
+                                                        {desktopEvaluationLabPortfolioCampaignBusy ? 'Campaigning' : 'Run Campaign'}
+                                                      </Button>
+                                                      <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                        onClick={() =>
+                                                          void runDesktopEvaluationLabPortfolioCycle(
+                                                            String(portfolio.portfolio_id ?? '')
+                                                          )
+                                                        }
+                                                        disabled={
+                                                          desktopEvaluationLabPortfolioCycleBusy ||
+                                                          !String(portfolio.portfolio_id ?? '').trim()
+                                                        }
+                                                      >
+                                                        {desktopEvaluationLabPortfolioCycleBusy ? 'Cycling' : 'Run Cycle'}
+                                                      </Button>
+                                                    </div>
                                                   </div>
                                                   <p className="mt-1">
                                                     programs:{Number(portfolio.program_count ?? 0)}
@@ -20347,6 +20446,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   </p>
                                                   <p className="mt-1 text-[10px] text-muted-foreground">
                                                     latest wave:{String(portfolio.latest_wave_status ?? 'idle')}
+                                                    {' • '}latest campaign:{String(portfolio.latest_campaign_status ?? 'idle')}
                                                     {' • '}pending sessions:{Number(portfolio.pending_session_count ?? 0)}
                                                     {' • '}pending apps:{Number(portfolio.pending_app_target_count ?? 0)}
                                                   </p>
@@ -20354,6 +20454,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     trend:{String(asObjectRecord(portfolio.trend_summary).direction ?? portfolio.history_direction ?? 'stable')}
                                                     {' • '}pressure:{Number(portfolio.portfolio_pressure_score ?? 0).toFixed(2)}
                                                     {' • '}priority:{String(portfolio.portfolio_priority ?? 'steady')}
+                                                    {' • '}campaign stop:{String(portfolio.latest_campaign_stop_reason ?? 'n/a')}
                                                   </p>
                                                 </div>
                                               ))}
