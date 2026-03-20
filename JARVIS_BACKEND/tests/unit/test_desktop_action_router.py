@@ -967,6 +967,8 @@ def test_desktop_action_router_branch_scoring_prefers_confirmation_chain_recover
         "native_confirmation_descendant_sequence_match_count": 2,
         "native_expected_confirmation_descendant_sequence_title": "Allow device",
         "native_preferred_confirmation_descendant_sequence_match_score": 0.91,
+        "native_confirmation_sequence_progress_score": 0.9,
+        "native_confirmation_chain_readiness": 0.94,
         "preferred_descendant_title": "Confirm pairing",
         "preferred_descendant_hwnd": 5003,
         "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
@@ -976,9 +978,18 @@ def test_desktop_action_router_branch_scoring_prefers_confirmation_chain_recover
         "benchmark_target_descendant_focus_pressure": 0.92,
         "benchmark_target_portfolio_pressure": 1.2,
         "benchmark_target_portfolio_confirmation_pressure": 0.95,
+        "benchmark_target_portfolio_campaign_confirmation_pressure": 1.0,
         "benchmark_target_portfolio_confirmation_title_sequence": ["Confirm pairing", "Allow device"],
         "benchmark_target_portfolio_confirmation_hint_query": "confirm pairing | allow device",
         "benchmark_target_portfolio_confirmation_preferred_window_title": "Allow device",
+        "benchmark_target_portfolio_completed_campaign_count": 4,
+        "benchmark_target_portfolio_stable_campaign_count": 2,
+        "benchmark_target_portfolio_regression_campaign_count": 3,
+        "benchmark_target_portfolio_stable_campaign_streak": 1,
+        "benchmark_target_portfolio_regression_campaign_streak": 2,
+        "benchmark_target_portfolio_latest_campaign_status": "failed",
+        "benchmark_target_portfolio_latest_campaign_stop_reason": "confirm_pairing_attention",
+        "benchmark_target_portfolio_latest_campaign_trend_direction": "regressing",
         "recent_selection_keys": set(),
     }
     chain_row = {
@@ -1313,6 +1324,15 @@ def test_desktop_action_router_benchmark_native_target_context_carries_replay_na
                         "campaign_preferred_window_title": "Confirm pairing",
                         "campaign_latest_sweep_status": "success",
                         "campaign_latest_sweep_regression_status": "regression",
+                        "portfolio_campaign_confirmation_pressure": 1.0,
+                        "portfolio_completed_campaign_count": 4,
+                        "portfolio_stable_campaign_count": 2,
+                        "portfolio_regression_campaign_count": 3,
+                        "portfolio_stable_campaign_streak": 1,
+                        "portfolio_regression_campaign_streak": 2,
+                        "portfolio_latest_campaign_status": "failed",
+                        "portfolio_latest_campaign_stop_reason": "confirm_pairing_attention",
+                        "portfolio_latest_campaign_trend_direction": "regressing",
                         "session_cycle_count": 3,
                         "session_regression_cycle_count": 2,
                         "session_long_horizon_pending_count": 1,
@@ -1346,6 +1366,15 @@ def test_desktop_action_router_benchmark_native_target_context_carries_replay_na
     assert payload["benchmark_target_campaign_descendant_title_hints"] == ["Pair device", "Confirm pairing"]
     assert payload["benchmark_target_campaign_preferred_window_title"] == "Confirm pairing"
     assert payload["benchmark_target_campaign_latest_sweep_regression_status"] == "regression"
+    assert payload["benchmark_target_portfolio_campaign_confirmation_pressure"] == 1.0
+    assert payload["benchmark_target_portfolio_completed_campaign_count"] == 4
+    assert payload["benchmark_target_portfolio_stable_campaign_count"] == 2
+    assert payload["benchmark_target_portfolio_regression_campaign_count"] == 3
+    assert payload["benchmark_target_portfolio_stable_campaign_streak"] == 1
+    assert payload["benchmark_target_portfolio_regression_campaign_streak"] == 2
+    assert payload["benchmark_target_portfolio_latest_campaign_status"] == "failed"
+    assert payload["benchmark_target_portfolio_latest_campaign_stop_reason"] == "confirm_pairing_attention"
+    assert payload["benchmark_target_portfolio_latest_campaign_trend_direction"] == "regressing"
     assert payload["benchmark_target_session_cycle_count"] == 3
     assert payload["benchmark_target_regression_cycle_count"] == 2
     assert payload["benchmark_target_long_horizon_pending_count"] == 1

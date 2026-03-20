@@ -533,10 +533,19 @@ class WindowManager:
                 "portfolio_preferred_window_title": "",
                 "portfolio_hint_query": "",
                 "portfolio_confirmation_pressure": 0.0,
+                "portfolio_campaign_confirmation_pressure": 0.0,
                 "portfolio_confirmation_title_hints": [],
                 "portfolio_confirmation_title_sequence": [],
                 "portfolio_confirmation_hint_query": "",
                 "portfolio_confirmation_preferred_window_title": "",
+                "portfolio_completed_campaign_count": 0,
+                "portfolio_stable_campaign_count": 0,
+                "portfolio_regression_campaign_count": 0,
+                "portfolio_stable_campaign_streak": 0,
+                "portfolio_regression_campaign_streak": 0,
+                "portfolio_latest_campaign_status": "",
+                "portfolio_latest_campaign_stop_reason": "",
+                "portfolio_latest_campaign_trend_direction": "",
                 "portfolio_latest_wave_status": "",
                 "portfolio_latest_wave_stop_reason": "",
                 "session_cycle_count": 0,
@@ -855,6 +864,7 @@ class WindowManager:
             "portfolio_preferred_window_title": str(best_row.get("portfolio_preferred_window_title", "") or "").strip(),
             "portfolio_hint_query": str(best_row.get("portfolio_hint_query", "") or "").strip(),
             "portfolio_confirmation_pressure": round(float(best_row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+            "portfolio_campaign_confirmation_pressure": round(float(best_row.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0), 6),
             "portfolio_confirmation_title_hints": [
                 str(item).strip()
                 for item in best_row.get("portfolio_confirmation_title_hints", [])
@@ -867,6 +877,14 @@ class WindowManager:
             ][:8],
             "portfolio_confirmation_hint_query": str(best_row.get("portfolio_confirmation_hint_query", "") or "").strip(),
             "portfolio_confirmation_preferred_window_title": str(best_row.get("portfolio_confirmation_preferred_window_title", "") or "").strip(),
+            "portfolio_completed_campaign_count": max(0, int(best_row.get("portfolio_completed_campaign_count", 0) or 0)),
+            "portfolio_stable_campaign_count": max(0, int(best_row.get("portfolio_stable_campaign_count", 0) or 0)),
+            "portfolio_regression_campaign_count": max(0, int(best_row.get("portfolio_regression_campaign_count", 0) or 0)),
+            "portfolio_stable_campaign_streak": max(0, int(best_row.get("portfolio_stable_campaign_streak", 0) or 0)),
+            "portfolio_regression_campaign_streak": max(0, int(best_row.get("portfolio_regression_campaign_streak", 0) or 0)),
+            "portfolio_latest_campaign_status": str(best_row.get("portfolio_latest_campaign_status", "") or "").strip(),
+            "portfolio_latest_campaign_stop_reason": str(best_row.get("portfolio_latest_campaign_stop_reason", "") or "").strip(),
+            "portfolio_latest_campaign_trend_direction": str(best_row.get("portfolio_latest_campaign_trend_direction", "") or "").strip(),
             "portfolio_latest_wave_status": str(best_row.get("portfolio_latest_wave_status", "") or "").strip(),
             "portfolio_latest_wave_stop_reason": str(best_row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
@@ -1381,6 +1399,54 @@ class WindowManager:
         target_campaign_latest_sweep_regression_status = str(
             target_app_context.get("campaign_latest_sweep_regression_status", "") or ""
         ).strip().lower()
+        target_portfolio_confirmation_pressure = max(
+            0.0,
+            float(target_app_context.get("portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
+        target_portfolio_campaign_confirmation_pressure = max(
+            0.0,
+            float(target_app_context.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+        )
+        target_portfolio_confirmation_hint_query = str(
+            target_app_context.get("portfolio_confirmation_hint_query", "") or ""
+        ).strip()
+        target_portfolio_confirmation_preferred_window_title = str(
+            target_app_context.get("portfolio_confirmation_preferred_window_title", "") or ""
+        ).strip()
+        target_portfolio_confirmation_title_sequence = [
+            str(item).strip()
+            for item in target_app_context.get("portfolio_confirmation_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(target_app_context.get("portfolio_confirmation_title_sequence", []), list) else []
+        target_portfolio_completed_campaign_count = max(
+            0,
+            int(target_app_context.get("portfolio_completed_campaign_count", 0) or 0),
+        )
+        target_portfolio_stable_campaign_count = max(
+            0,
+            int(target_app_context.get("portfolio_stable_campaign_count", 0) or 0),
+        )
+        target_portfolio_regression_campaign_count = max(
+            0,
+            int(target_app_context.get("portfolio_regression_campaign_count", 0) or 0),
+        )
+        target_portfolio_stable_campaign_streak = max(
+            0,
+            int(target_app_context.get("portfolio_stable_campaign_streak", 0) or 0),
+        )
+        target_portfolio_regression_campaign_streak = max(
+            0,
+            int(target_app_context.get("portfolio_regression_campaign_streak", 0) or 0),
+        )
+        target_portfolio_latest_campaign_status = str(
+            target_app_context.get("portfolio_latest_campaign_status", "") or ""
+        ).strip().lower()
+        target_portfolio_latest_campaign_stop_reason = str(
+            target_app_context.get("portfolio_latest_campaign_stop_reason", "") or ""
+        ).strip().lower()
+        target_portfolio_latest_campaign_trend_direction = str(
+            target_app_context.get("portfolio_latest_campaign_trend_direction", "") or ""
+        ).strip().lower()
         target_session_cycle_count = max(0, int(target_app_context.get("session_cycle_count", 0) or 0))
         target_regression_cycle_count = max(0, int(target_app_context.get("session_regression_cycle_count", 0) or 0))
         target_long_horizon_pending_count = max(0, int(target_app_context.get("session_long_horizon_pending_count", 0) or 0))
@@ -1459,6 +1525,25 @@ class WindowManager:
             self._text_match_score(candidate_title, target_campaign_preferred_window_title),
             self._text_match_score(candidate_signature, target_campaign_preferred_window_title),
         ) if target_campaign_preferred_window_title else 0.0
+        portfolio_confirmation_hint_score = 0.0
+        for hint in target_portfolio_confirmation_title_sequence:
+            portfolio_confirmation_hint_score = max(
+                portfolio_confirmation_hint_score,
+                self._text_match_score(candidate_title, hint),
+                self._text_match_score(candidate_signature, hint),
+            )
+        if target_portfolio_confirmation_hint_query:
+            portfolio_confirmation_hint_score = max(
+                portfolio_confirmation_hint_score,
+                self._text_match_score(candidate_title, target_portfolio_confirmation_hint_query),
+                self._text_match_score(candidate_signature, target_portfolio_confirmation_hint_query),
+                self._text_match_score(candidate_process, target_portfolio_confirmation_hint_query),
+                self._text_match_score(candidate_app_name, target_portfolio_confirmation_hint_query),
+            )
+        portfolio_confirmation_preferred_title_score = max(
+            self._text_match_score(candidate_title, target_portfolio_confirmation_preferred_window_title),
+            self._text_match_score(candidate_signature, target_portfolio_confirmation_preferred_window_title),
+        ) if target_portfolio_confirmation_preferred_window_title else 0.0
         if bool(target_app_context.get("matched", False)):
             score += min(0.28, 0.08 + (0.2 * float(target_app_context.get("match_score", 0.0) or 0.0)))
             reasons.append("benchmark_target_app_match")
@@ -1560,6 +1645,63 @@ class WindowManager:
             if target_long_horizon_pending_count > 0 and candidate_owner_chain_depth > owner_chain_depth:
                 score += min(0.1, 0.02 * min(target_long_horizon_pending_count, 3) + 0.02)
                 reasons.append("benchmark_long_horizon_pressure")
+            portfolio_campaign_confirmation_boost = 0.0
+            if target_portfolio_campaign_confirmation_pressure > 0.0:
+                portfolio_campaign_confirmation_boost += min(
+                    0.18,
+                    0.02 * min(target_portfolio_campaign_confirmation_pressure, 4.0)
+                    + (0.02 * min(target_portfolio_regression_campaign_count, 3))
+                    + (0.025 * min(target_portfolio_regression_campaign_streak, 3))
+                    + (0.01 * min(target_portfolio_completed_campaign_count, 4))
+                    + (0.01 * min(target_portfolio_stable_campaign_count, 4)),
+                )
+                if portfolio_confirmation_hint_score > 0.0:
+                    portfolio_campaign_confirmation_boost += min(0.1, 0.04 + (0.06 * portfolio_confirmation_hint_score))
+                if portfolio_confirmation_preferred_title_score > 0.0:
+                    portfolio_campaign_confirmation_boost += min(
+                        0.08,
+                        0.03 + (0.05 * portfolio_confirmation_preferred_title_score),
+                    )
+                if (
+                    isinstance(window.get("surface_hints", {}), dict)
+                    and bool(window.get("surface_hints", {}).get("dialog_like", False))
+                ):
+                    portfolio_campaign_confirmation_boost += min(
+                        0.08,
+                        0.02 + (0.05 * min(target_portfolio_campaign_confirmation_pressure, 1.0)),
+                    )
+                if candidate_owner_chain_depth > owner_chain_depth:
+                    portfolio_campaign_confirmation_boost += min(
+                        0.08,
+                        0.02 * max(1, candidate_owner_chain_depth - owner_chain_depth)
+                        + (0.03 * min(target_portfolio_campaign_confirmation_pressure, 1.0)),
+                    )
+                if target_portfolio_latest_campaign_status in {"failed", "error", "regression"}:
+                    portfolio_campaign_confirmation_boost += 0.04
+                if target_portfolio_latest_campaign_trend_direction in {"regressing", "regression"}:
+                    portfolio_campaign_confirmation_boost += 0.05
+                if target_portfolio_latest_campaign_stop_reason and (
+                    "confirm" in target_portfolio_latest_campaign_stop_reason
+                    or "allow" in target_portfolio_latest_campaign_stop_reason
+                    or "approve" in target_portfolio_latest_campaign_stop_reason
+                    or "permission" in target_portfolio_latest_campaign_stop_reason
+                    or "review" in target_portfolio_latest_campaign_stop_reason
+                ):
+                    portfolio_campaign_confirmation_boost += 0.05
+            if portfolio_campaign_confirmation_boost > 0.0:
+                score += min(0.34, portfolio_campaign_confirmation_boost)
+                reasons.append("benchmark_portfolio_campaign_confirmation_pressure")
+            elif target_portfolio_confirmation_pressure > 0.0 and (
+                portfolio_confirmation_hint_score > 0.0
+                or portfolio_confirmation_preferred_title_score > 0.0
+            ):
+                score += min(
+                    0.18,
+                    0.03
+                    + (0.05 * min(target_portfolio_confirmation_pressure, 1.0))
+                    + (0.05 * max(portfolio_confirmation_hint_score, portfolio_confirmation_preferred_title_score)),
+                )
+                reasons.append("benchmark_portfolio_confirmation_pressure")
         if hwnd and candidate_hwnd and candidate_hwnd == int(hwnd):
             score += 2.4
             reasons.append("exact_hwnd")
@@ -1932,6 +2074,14 @@ class WindowManager:
                 0.0,
                 min(float(payload.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
+            "confirmation_sequence_progress_score": max(
+                0.0,
+                min(float(payload.get("confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+            ),
+            "confirmation_chain_readiness": max(
+                0.0,
+                min(float(payload.get("confirmation_chain_readiness", 0.0) or 0.0), 1.0),
+            ),
             "preferred_descendant_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
@@ -2147,6 +2297,14 @@ class WindowManager:
                 0.0,
                 min(float(payload.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
+            "confirmation_sequence_progress_score": max(
+                0.0,
+                min(float(payload.get("confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+            ),
+            "confirmation_chain_readiness": max(
+                0.0,
+                min(float(payload.get("confirmation_chain_readiness", 0.0) or 0.0), 1.0),
+            ),
             "preferred_descendant_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
@@ -2245,6 +2403,18 @@ class WindowManager:
         target_confirmation_pressure = max(
             0.0,
             float(target_app_context.get("portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
+        target_campaign_confirmation_pressure = max(
+            0.0,
+            float(target_app_context.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+        )
+        target_portfolio_regression_campaign_count = max(
+            0,
+            int(target_app_context.get("portfolio_regression_campaign_count", 0) or 0),
+        )
+        target_portfolio_regression_campaign_streak = max(
+            0,
+            int(target_app_context.get("portfolio_regression_campaign_streak", 0) or 0),
         )
         target_portfolio_pressure = max(0.0, float(target_app_context.get("portfolio_pressure", 0.0) or 0.0))
         target_portfolio_regression_wave_count = max(
@@ -2394,6 +2564,9 @@ class WindowManager:
             replay_session_pressure,
             campaign_replay_pressure,
             min(1.0, target_confirmation_pressure),
+            min(1.0, target_campaign_confirmation_pressure),
+            min(1.0, 0.18 * target_portfolio_regression_campaign_count),
+            min(1.0, 0.24 * target_portfolio_regression_campaign_streak),
         )
         anchor_window = next(
             (
@@ -2670,6 +2843,10 @@ class WindowManager:
                 )
             descendant_adoption_match_score += min(0.12, descendant_rerank_pressure * 0.12)
             descendant_adoption_match_score += min(0.14, min(1.0, target_confirmation_pressure) * 0.14)
+            descendant_adoption_match_score += min(
+                0.18,
+                min(1.0, target_campaign_confirmation_pressure) * 0.18,
+            )
             descendant_adoption_match_score = min(1.0, descendant_adoption_match_score)
         observed_descendant_titles = self._dedupe_strings(
             [
@@ -2811,6 +2988,14 @@ class WindowManager:
             "preferred_confirmation_descendant_sequence_match_score": max(
                 0.0,
                 min(float(child_chain_trace.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "confirmation_sequence_progress_score": max(
+                0.0,
+                min(float(child_chain_trace.get("confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+            ),
+            "confirmation_chain_readiness": max(
+                0.0,
+                min(float(child_chain_trace.get("confirmation_chain_readiness", 0.0) or 0.0), 1.0),
             ),
             "descendant_hint_title_match_count": max(
                 0,
@@ -3764,6 +3949,24 @@ class WindowManager:
             0.0,
             float(target_context.get("portfolio_confirmation_pressure", 0.0) or 0.0),
         )
+        target_campaign_confirmation_pressure = max(
+            0.0,
+            float(target_context.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+        )
+        target_portfolio_regression_campaign_count = max(
+            0,
+            int(target_context.get("portfolio_regression_campaign_count", 0) or 0),
+        )
+        target_portfolio_regression_campaign_streak = max(
+            0,
+            int(target_context.get("portfolio_regression_campaign_streak", 0) or 0),
+        )
+        target_portfolio_latest_campaign_status = str(
+            target_context.get("portfolio_latest_campaign_status", "") or ""
+        ).strip().lower()
+        target_portfolio_latest_campaign_trend_direction = str(
+            target_context.get("portfolio_latest_campaign_trend_direction", "") or ""
+        ).strip().lower()
         auto_follow_descendant_chain = bool(
             target_context.get("benchmark_target_app_matched", False)
         ) and (
@@ -3776,6 +3979,11 @@ class WindowManager:
             or long_horizon_pressure > 0
             or (session_cycle_pressure > 0 and target_descendant_pressure >= 0.55)
             or target_confirmation_pressure >= 0.55
+            or target_campaign_confirmation_pressure >= 0.55
+            or target_portfolio_regression_campaign_count > 0
+            or target_portfolio_regression_campaign_streak > 0
+            or target_portfolio_latest_campaign_status in {"failed", "error", "regression"}
+            or target_portfolio_latest_campaign_trend_direction in {"regressing", "regression"}
             or bool(resolved_confirmation_title_sequence)
         )
         resolved_max_descendant_focus_steps = max(1, min(int(max_descendant_focus_steps or 1), 6))
@@ -3786,8 +3994,11 @@ class WindowManager:
                 or regression_cycle_pressure > 0
                 or long_horizon_pressure > 0
                 or target_confirmation_pressure >= 0.75
+                or target_campaign_confirmation_pressure >= 0.75
+                or target_portfolio_regression_campaign_streak > 0
+                or target_portfolio_latest_campaign_status in {"failed", "error", "regression"}
             ):
-                resolved_max_descendant_focus_steps = 3
+                resolved_max_descendant_focus_steps = 4
             else:
                 resolved_max_descendant_focus_steps = 2
         resolved_follow_descendant_chain = bool(

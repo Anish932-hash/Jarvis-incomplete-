@@ -236,6 +236,8 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
                 "preferred_campaign_descendant_sequence_match_score": 0.78,
                 "preferred_portfolio_descendant_sequence_match_score": 0.82,
                 "preferred_confirmation_descendant_sequence_match_score": 0.86,
+                "confirmation_sequence_progress_score": 0.89,
+                "confirmation_chain_readiness": 0.92,
                 "preferred_descendant_match_score": 0.97,
                 "descendant_focus_strength": 0.91,
                 "adopted_descendant_depth": 1,
@@ -303,6 +305,8 @@ def test_window_manager_focus_related_window_prefers_native_runtime() -> None:
     assert payload["preferred_campaign_descendant_sequence_match_score"] == pytest.approx(0.78)
     assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.82)
     assert payload["preferred_confirmation_descendant_sequence_match_score"] == pytest.approx(0.86)
+    assert payload["confirmation_sequence_progress_score"] == pytest.approx(0.89)
+    assert payload["confirmation_chain_readiness"] == pytest.approx(0.92)
     assert payload["preferred_descendant_match_score"] == pytest.approx(0.97)
     assert payload["adopted_descendant_depth"] == 1
     assert payload["adopted_matches_preferred_descendant"] is True
@@ -438,6 +442,8 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
                 "preferred_campaign_descendant_sequence_match_score": 0.84,
                 "preferred_portfolio_descendant_sequence_match_score": 0.89,
                 "preferred_confirmation_descendant_sequence_match_score": 0.91,
+                "confirmation_sequence_progress_score": 0.93,
+                "confirmation_chain_readiness": 0.95,
                 "preferred_descendant_match_score": 0.95,
                 "descendant_focus_strength": 0.93,
                 "adopted_descendant_depth": 1,
@@ -517,6 +523,8 @@ def test_window_manager_focus_related_window_chain_prefers_native_runtime() -> N
     assert payload["preferred_campaign_descendant_sequence_match_score"] == pytest.approx(0.84)
     assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.89)
     assert payload["preferred_confirmation_descendant_sequence_match_score"] == pytest.approx(0.91)
+    assert payload["confirmation_sequence_progress_score"] == pytest.approx(0.93)
+    assert payload["confirmation_chain_readiness"] == pytest.approx(0.95)
     assert payload["descendant_focus_chain_stop_reason"] == "stable_no_further_descendant"
     assert payload["descendant_focus_chain_quality"] == pytest.approx(0.88)
     assert payload["descendant_focus_chain_signature"] == "5001|2|2|Pair device|Confirm pairing"
@@ -952,6 +960,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                 "expected_confirmation_descendant_sequence_title": "Allow device",
                 "preferred_portfolio_descendant_sequence_match_score": 0.87,
                 "preferred_confirmation_descendant_sequence_match_score": 0.9,
+                "confirmation_sequence_progress_score": 0.91,
+                "confirmation_chain_readiness": 0.94,
                 "descendant_chain_titles": ["Pair device"],
                 "child_chain_signature": "5001|1|1|Pair device",
                 "preferred_descendant": {"hwnd": 5002, "title": "Pair device"},
@@ -1027,9 +1037,18 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
                         "portfolio_descendant_hint_query": "Confirm pairing | Allow device",
                         "portfolio_preferred_window_title": "Allow device",
                         "portfolio_confirmation_pressure": 0.95,
+                        "portfolio_campaign_confirmation_pressure": 1.0,
                         "portfolio_confirmation_title_sequence": ["Confirm pairing", "Allow device"],
                         "portfolio_confirmation_hint_query": "confirm pairing | allow device",
                         "portfolio_confirmation_preferred_window_title": "Allow device",
+                        "portfolio_completed_campaign_count": 4,
+                        "portfolio_stable_campaign_count": 2,
+                        "portfolio_regression_campaign_count": 3,
+                        "portfolio_stable_campaign_streak": 1,
+                        "portfolio_regression_campaign_streak": 2,
+                        "portfolio_latest_campaign_status": "failed",
+                        "portfolio_latest_campaign_stop_reason": "confirm_pairing_attention",
+                        "portfolio_latest_campaign_trend_direction": "regressing",
                         "portfolio_latest_wave_status": "failed",
                         "portfolio_latest_wave_stop_reason": "regression_attention",
                         "session_cycle_count": 3,
@@ -1105,6 +1124,8 @@ def test_window_manager_native_reacquire_applies_benchmark_guidance_to_child_dia
     assert payload["expected_confirmation_descendant_sequence_title"] == "Allow device"
     assert payload["preferred_portfolio_descendant_sequence_match_score"] == pytest.approx(0.87)
     assert payload["preferred_confirmation_descendant_sequence_match_score"] == pytest.approx(0.9)
+    assert payload["confirmation_sequence_progress_score"] == pytest.approx(0.91)
+    assert payload["confirmation_chain_readiness"] == pytest.approx(0.94)
     assert payload["descendant_anchor_recovery_available"] is True
     assert payload["descendant_anchor_recovery_match_score"] >= 0.8
     assert payload["descendant_anchor_recovery_pressure"] >= 0.7

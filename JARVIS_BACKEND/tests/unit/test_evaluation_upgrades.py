@@ -1909,9 +1909,17 @@ def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_si
                     "pending_session_count": 2,
                     "pending_app_target_count": 1,
                     "regression_wave_count": 2,
+                    "completed_campaign_count": 4,
+                    "stable_campaign_count": 2,
+                    "regression_campaign_count": 3,
+                    "stable_campaign_streak": 1,
+                    "regression_campaign_streak": 2,
                     "long_horizon_pending_count": 1,
                     "latest_wave_status": "failed",
                     "latest_wave_stop_reason": "regression_attention",
+                    "latest_campaign_status": "failed",
+                    "latest_campaign_stop_reason": "confirm_pairing_attention",
+                    "latest_campaign_trend_direction": "regressing",
                     "native_targets_snapshot": {
                         "target_apps": [
                             {
@@ -1954,7 +1962,14 @@ def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_si
     assert str(target_row["portfolio_hint_query"]) == "confirm pairing | allow device"
     assert str(target_row["portfolio_preferred_window_title"]) == "Allow device"
     assert float(target_row["portfolio_confirmation_pressure"]) > 0.5
+    assert float(target_row["portfolio_campaign_confirmation_pressure"]) >= float(target_row["portfolio_confirmation_pressure"])
     assert list(target_row["portfolio_confirmation_title_sequence"]) == ["Confirm pairing", "Allow device"]
     assert str(target_row["portfolio_confirmation_hint_query"]) == "confirm pairing | allow device"
     assert str(target_row["portfolio_confirmation_preferred_window_title"]) == "Allow device"
+    assert int(target_row["portfolio_completed_campaign_count"]) == 4
+    assert int(target_row["portfolio_regression_campaign_count"]) == 3
+    assert int(target_row["portfolio_regression_campaign_streak"]) == 2
+    assert str(target_row["portfolio_latest_campaign_status"]) == "failed"
+    assert str(target_row["portfolio_latest_campaign_stop_reason"]) == "confirm_pairing_attention"
+    assert str(target_row["portfolio_latest_campaign_trend_direction"]) == "regressing"
     assert float(target_row["control_biases"]["descendant_focus"]) >= 0.94

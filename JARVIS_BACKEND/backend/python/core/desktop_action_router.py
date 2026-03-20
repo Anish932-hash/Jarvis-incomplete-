@@ -3533,9 +3533,18 @@ class DesktopActionRouter:
                 "benchmark_target_portfolio_descendant_hint_query": "",
                 "benchmark_target_portfolio_preferred_window_title": "",
                 "benchmark_target_portfolio_confirmation_pressure": 0.0,
+                "benchmark_target_portfolio_campaign_confirmation_pressure": 0.0,
                 "benchmark_target_portfolio_confirmation_title_sequence": [],
                 "benchmark_target_portfolio_confirmation_hint_query": "",
                 "benchmark_target_portfolio_confirmation_preferred_window_title": "",
+                "benchmark_target_portfolio_completed_campaign_count": 0,
+                "benchmark_target_portfolio_stable_campaign_count": 0,
+                "benchmark_target_portfolio_regression_campaign_count": 0,
+                "benchmark_target_portfolio_stable_campaign_streak": 0,
+                "benchmark_target_portfolio_regression_campaign_streak": 0,
+                "benchmark_target_portfolio_latest_campaign_status": "",
+                "benchmark_target_portfolio_latest_campaign_stop_reason": "",
+                "benchmark_target_portfolio_latest_campaign_trend_direction": "",
                 "benchmark_target_portfolio_latest_wave_status": "",
                 "benchmark_target_portfolio_latest_wave_stop_reason": "",
                 "benchmark_target_session_cycle_count": 0,
@@ -3856,6 +3865,7 @@ class DesktopActionRouter:
             "benchmark_target_portfolio_descendant_hint_query": str(best_row.get("portfolio_descendant_hint_query", "") or "").strip(),
             "benchmark_target_portfolio_preferred_window_title": str(best_row.get("portfolio_preferred_window_title", "") or "").strip(),
             "benchmark_target_portfolio_confirmation_pressure": round(float(best_row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+            "benchmark_target_portfolio_campaign_confirmation_pressure": round(float(best_row.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0), 6),
             "benchmark_target_portfolio_confirmation_title_sequence": self._dedupe_strings(
                 [
                     str(item).strip()
@@ -3867,6 +3877,14 @@ class DesktopActionRouter:
             "benchmark_target_portfolio_confirmation_preferred_window_title": str(
                 best_row.get("portfolio_confirmation_preferred_window_title", "") or ""
             ).strip(),
+            "benchmark_target_portfolio_completed_campaign_count": max(0, int(best_row.get("portfolio_completed_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_count": max(0, int(best_row.get("portfolio_stable_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_count": max(0, int(best_row.get("portfolio_regression_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_streak": max(0, int(best_row.get("portfolio_stable_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_streak": max(0, int(best_row.get("portfolio_regression_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_latest_campaign_status": str(best_row.get("portfolio_latest_campaign_status", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_stop_reason": str(best_row.get("portfolio_latest_campaign_stop_reason", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_trend_direction": str(best_row.get("portfolio_latest_campaign_trend_direction", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_status": str(best_row.get("portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(best_row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
@@ -9526,6 +9544,12 @@ class DesktopActionRouter:
             "native_preferred_confirmation_descendant_sequence_match_score": float(
                 window_reacquisition.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0
             ),
+            "native_confirmation_sequence_progress_score": float(
+                window_reacquisition.get("confirmation_sequence_progress_score", 0.0) or 0.0
+            ),
+            "native_confirmation_chain_readiness": float(
+                window_reacquisition.get("confirmation_chain_readiness", 0.0) or 0.0
+            ),
             "native_descendant_anchor_recovery_available": bool(
                 window_reacquisition.get("descendant_anchor_recovery_available", False)
             ),
@@ -10529,6 +10553,14 @@ class DesktopActionRouter:
             0.0,
             min(float(state_summary.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
         )
+        native_confirmation_sequence_progress_score = max(
+            0.0,
+            min(float(state_summary.get("native_confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+        )
+        native_confirmation_chain_readiness = max(
+            0.0,
+            min(float(state_summary.get("native_confirmation_chain_readiness", 0.0) or 0.0), 1.0),
+        )
         native_descendant_anchor_recovery_available = bool(
             state_summary.get("native_descendant_anchor_recovery_available", False)
         )
@@ -10630,6 +10662,8 @@ class DesktopActionRouter:
             "native_expected_portfolio_descendant_sequence_title": native_expected_portfolio_descendant_sequence_title,
             "native_expected_confirmation_descendant_sequence_title": native_expected_confirmation_descendant_sequence_title,
             "native_preferred_confirmation_descendant_sequence_match_score": native_preferred_confirmation_descendant_sequence_match_score,
+            "native_confirmation_sequence_progress_score": native_confirmation_sequence_progress_score,
+            "native_confirmation_chain_readiness": native_confirmation_chain_readiness,
             "native_descendant_anchor_recovery_available": native_descendant_anchor_recovery_available,
             "native_descendant_anchor_recovery_match_score": native_descendant_anchor_recovery_match_score,
             "native_descendant_anchor_recovery_pressure": native_descendant_anchor_recovery_pressure,
@@ -10752,6 +10786,10 @@ class DesktopActionRouter:
                 0.0,
                 float(native_target_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
             ),
+            "benchmark_target_portfolio_campaign_confirmation_pressure": max(
+                0.0,
+                float(native_target_context.get("benchmark_target_portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+            ),
             "benchmark_target_portfolio_confirmation_title_sequence": [
                 str(item).strip()
                 for item in native_target_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
@@ -10763,6 +10801,14 @@ class DesktopActionRouter:
             "benchmark_target_portfolio_confirmation_preferred_window_title": str(
                 native_target_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "") or ""
             ).strip(),
+            "benchmark_target_portfolio_completed_campaign_count": max(0, int(native_target_context.get("benchmark_target_portfolio_completed_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_count": max(0, int(native_target_context.get("benchmark_target_portfolio_stable_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_count": max(0, int(native_target_context.get("benchmark_target_portfolio_regression_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_streak": max(0, int(native_target_context.get("benchmark_target_portfolio_stable_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_streak": max(0, int(native_target_context.get("benchmark_target_portfolio_regression_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_latest_campaign_status": str(native_target_context.get("benchmark_target_portfolio_latest_campaign_status", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_stop_reason": str(native_target_context.get("benchmark_target_portfolio_latest_campaign_stop_reason", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_trend_direction": str(native_target_context.get("benchmark_target_portfolio_latest_campaign_trend_direction", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_status": str(native_target_context.get("benchmark_target_portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(native_target_context.get("benchmark_target_portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(native_target_context.get("benchmark_target_session_cycle_count", 0) or 0)),
@@ -10895,6 +10941,14 @@ class DesktopActionRouter:
         native_preferred_confirmation_descendant_sequence_match_score = max(
             0.0,
             min(float(branch_context.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+        )
+        native_confirmation_sequence_progress_score = max(
+            0.0,
+            min(float(branch_context.get("native_confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+        )
+        native_confirmation_chain_readiness = max(
+            0.0,
+            min(float(branch_context.get("native_confirmation_chain_readiness", 0.0) or 0.0), 1.0),
         )
         native_descendant_anchor_recovery_available = bool(
             branch_context.get("native_descendant_anchor_recovery_available", False)
@@ -11039,6 +11093,10 @@ class DesktopActionRouter:
             0.0,
             float(branch_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
         )
+        benchmark_target_portfolio_campaign_confirmation_pressure = max(
+            0.0,
+            float(branch_context.get("benchmark_target_portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+        )
         benchmark_target_portfolio_confirmation_title_sequence = [
             self._normalize_probe_text(item)
             for item in branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
@@ -11049,6 +11107,35 @@ class DesktopActionRouter:
         )
         benchmark_target_portfolio_confirmation_preferred_window_title = self._normalize_probe_text(
             branch_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "")
+        )
+        benchmark_target_portfolio_completed_campaign_count = max(
+            0,
+            int(branch_context.get("benchmark_target_portfolio_completed_campaign_count", 0) or 0),
+        )
+        benchmark_target_portfolio_stable_campaign_count = max(
+            0,
+            int(branch_context.get("benchmark_target_portfolio_stable_campaign_count", 0) or 0),
+        )
+        benchmark_target_portfolio_regression_campaign_count = max(
+            0,
+            int(branch_context.get("benchmark_target_portfolio_regression_campaign_count", 0) or 0),
+        )
+        benchmark_target_portfolio_stable_campaign_streak = max(
+            0,
+            int(branch_context.get("benchmark_target_portfolio_stable_campaign_streak", 0) or 0),
+        )
+        benchmark_target_portfolio_regression_campaign_streak = max(
+            0,
+            int(branch_context.get("benchmark_target_portfolio_regression_campaign_streak", 0) or 0),
+        )
+        benchmark_target_portfolio_latest_campaign_status = self._normalize_probe_text(
+            branch_context.get("benchmark_target_portfolio_latest_campaign_status", "")
+        )
+        benchmark_target_portfolio_latest_campaign_stop_reason = self._normalize_probe_text(
+            branch_context.get("benchmark_target_portfolio_latest_campaign_stop_reason", "")
+        )
+        benchmark_target_portfolio_latest_campaign_trend_direction = self._normalize_probe_text(
+            branch_context.get("benchmark_target_portfolio_latest_campaign_trend_direction", "")
         )
         benchmark_target_campaign_regression_cycle_count = max(
             0,
@@ -11347,6 +11434,16 @@ class DesktopActionRouter:
                     0.12,
                     0.03 + (0.09 * native_preferred_confirmation_descendant_sequence_match_score),
                 )
+            if native_confirmation_sequence_progress_score > 0.0:
+                score += min(
+                    0.12,
+                    0.03 + (0.09 * native_confirmation_sequence_progress_score),
+                )
+            if native_confirmation_chain_readiness > 0.0:
+                score += min(
+                    0.16,
+                    0.04 + (0.1 * native_confirmation_chain_readiness),
+                )
             if native_descendant_anchor_recovery_available:
                 score += min(
                     0.1,
@@ -11392,6 +11489,15 @@ class DesktopActionRouter:
                         + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
                         + (0.03 * min(native_confirmation_descendant_sequence_match_count, 3)),
                     )
+                if benchmark_target_portfolio_campaign_confirmation_pressure > 0.0:
+                    score += min(
+                        0.22,
+                        0.05
+                        + (0.08 * min(1.0, benchmark_target_portfolio_campaign_confirmation_pressure))
+                        + (0.04 * native_confirmation_chain_readiness)
+                        + (0.03 * native_confirmation_sequence_progress_score)
+                        + (0.02 * min(benchmark_target_portfolio_regression_campaign_streak, 3)),
+                    )
                 if native_descendant_anchor_recovery_available:
                     score += min(
                         0.14,
@@ -11405,19 +11511,27 @@ class DesktopActionRouter:
             score += min(0.1, 0.03 + (native_descendant_adoption_match_score * 0.08))
         if (
             preferred_descendant_focus
-            and benchmark_target_portfolio_confirmation_pressure > 0.0
+            and (
+                benchmark_target_portfolio_confirmation_pressure > 0.0
+                or benchmark_target_portfolio_campaign_confirmation_pressure > 0.0
+            )
             and (
                 target_portfolio_confirmation_overlap > 0.0
                 or target_portfolio_confirmation_preferred_overlap > 0.0
                 or native_confirmation_descendant_sequence_match_count > 0
                 or native_preferred_confirmation_descendant_sequence_match_score > 0.0
+                or native_confirmation_sequence_progress_score > 0.0
+                or native_confirmation_chain_readiness > 0.0
             )
         ):
             score += min(
-                0.24,
+                0.32,
                 0.07
                 + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
+                + (0.09 * min(1.0, benchmark_target_portfolio_campaign_confirmation_pressure))
                 + (0.04 * min(1.0, native_preferred_confirmation_descendant_sequence_match_score))
+                + (0.05 * native_confirmation_chain_readiness)
+                + (0.03 * native_confirmation_sequence_progress_score)
                 + (0.02 * min(native_confirmation_descendant_sequence_match_count, 3)),
             )
         navigation_actions = {
@@ -11434,20 +11548,46 @@ class DesktopActionRouter:
             score -= 0.04 * benchmark_dialog_pressure
         if (
             selected_action == "press_dialog_button"
-            and benchmark_target_portfolio_confirmation_pressure > 0.0
+            and (
+                benchmark_target_portfolio_confirmation_pressure > 0.0
+                or benchmark_target_portfolio_campaign_confirmation_pressure > 0.0
+            )
             and (
                 target_portfolio_confirmation_overlap > 0.0
                 or target_portfolio_confirmation_preferred_overlap > 0.0
                 or native_confirmation_descendant_sequence_match_count > 0
                 or native_preferred_confirmation_descendant_sequence_match_score > 0.0
                 or expected_confirmation_descendant_overlap > 0.0
+                or native_confirmation_sequence_progress_score > 0.0
+                or native_confirmation_chain_readiness > 0.0
             )
         ):
             score -= min(
-                0.28,
+                0.34,
                 0.08
                 + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
+                + (0.09 * min(1.0, benchmark_target_portfolio_campaign_confirmation_pressure))
+                + (0.05 * native_confirmation_chain_readiness)
+                + (0.03 * native_confirmation_sequence_progress_score)
                 + (0.03 * min(native_confirmation_descendant_sequence_match_count, 3)),
+            )
+        if (
+            preferred_descendant_focus
+            and benchmark_target_portfolio_regression_campaign_count > 0
+            and (
+                benchmark_target_portfolio_latest_campaign_status in {"failed", "error", "regression"}
+                or benchmark_target_portfolio_latest_campaign_trend_direction in {"regressing", "regression"}
+                or benchmark_target_portfolio_latest_campaign_stop_reason
+            )
+        ):
+            score += min(
+                0.18,
+                0.03
+                + (0.02 * min(benchmark_target_portfolio_regression_campaign_count, 3))
+                + (0.03 * min(benchmark_target_portfolio_regression_campaign_streak, 3))
+                + (0.02 * min(benchmark_target_portfolio_completed_campaign_count, 4))
+                + (0.01 * min(benchmark_target_portfolio_stable_campaign_count, 4))
+                + (0.03 * min(benchmark_target_portfolio_stable_campaign_streak, 3)),
             )
         if preferred_descendant_focus and benchmark_descendant_focus_pressure > 0.0:
             score += 0.05 + (0.16 * benchmark_descendant_focus_pressure)
@@ -11756,6 +11896,14 @@ class DesktopActionRouter:
                 0.0,
                 min(float(branch_context.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
+            "native_confirmation_sequence_progress_score": max(
+                0.0,
+                min(float(branch_context.get("native_confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+            ),
+            "native_confirmation_chain_readiness": max(
+                0.0,
+                min(float(branch_context.get("native_confirmation_chain_readiness", 0.0) or 0.0), 1.0),
+            ),
             "native_descendant_anchor_recovery_available": bool(branch_context.get("native_descendant_anchor_recovery_available", False)),
             "native_descendant_anchor_recovery_match_score": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0)),
             "native_descendant_anchor_recovery_pressure": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0)),
@@ -11861,6 +12009,7 @@ class DesktopActionRouter:
             "benchmark_target_portfolio_descendant_hint_query": str(branch_context.get("benchmark_target_portfolio_descendant_hint_query", "") or "").strip(),
             "benchmark_target_portfolio_preferred_window_title": str(branch_context.get("benchmark_target_portfolio_preferred_window_title", "") or "").strip(),
             "benchmark_target_portfolio_confirmation_pressure": max(0.0, float(branch_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0)),
+            "benchmark_target_portfolio_campaign_confirmation_pressure": max(0.0, float(branch_context.get("benchmark_target_portfolio_campaign_confirmation_pressure", 0.0) or 0.0)),
             "benchmark_target_portfolio_confirmation_title_sequence": [
                 str(item).strip()
                 for item in branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
@@ -11870,6 +12019,14 @@ class DesktopActionRouter:
             "benchmark_target_portfolio_confirmation_preferred_window_title": str(
                 branch_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "") or ""
             ).strip(),
+            "benchmark_target_portfolio_completed_campaign_count": max(0, int(branch_context.get("benchmark_target_portfolio_completed_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_count": max(0, int(branch_context.get("benchmark_target_portfolio_stable_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_count": max(0, int(branch_context.get("benchmark_target_portfolio_regression_campaign_count", 0) or 0)),
+            "benchmark_target_portfolio_stable_campaign_streak": max(0, int(branch_context.get("benchmark_target_portfolio_stable_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_regression_campaign_streak": max(0, int(branch_context.get("benchmark_target_portfolio_regression_campaign_streak", 0) or 0)),
+            "benchmark_target_portfolio_latest_campaign_status": str(branch_context.get("benchmark_target_portfolio_latest_campaign_status", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_stop_reason": str(branch_context.get("benchmark_target_portfolio_latest_campaign_stop_reason", "") or "").strip(),
+            "benchmark_target_portfolio_latest_campaign_trend_direction": str(branch_context.get("benchmark_target_portfolio_latest_campaign_trend_direction", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_status": str(branch_context.get("benchmark_target_portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(branch_context.get("benchmark_target_portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(branch_context.get("benchmark_target_session_cycle_count", 0) or 0)),
@@ -15145,6 +15302,14 @@ class DesktopActionRouter:
             0.0,
             min(float(window_reacquisition.get("descendant_focus_strength", 0.0) or 0.0), 1.0),
         )
+        confirmation_sequence_progress_score = max(
+            0.0,
+            min(float(window_reacquisition.get("confirmation_sequence_progress_score", 0.0) or 0.0), 1.0),
+        )
+        confirmation_chain_readiness = max(
+            0.0,
+            min(float(window_reacquisition.get("confirmation_chain_readiness", 0.0) or 0.0), 1.0),
+        )
         preferred_descendant_match_score = max(
             0.0,
             min(float(window_reacquisition.get("preferred_descendant_match_score", 0.0) or 0.0), 1.0),
@@ -15251,6 +15416,24 @@ class DesktopActionRouter:
             0.0,
             float(native_target_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
         )
+        benchmark_target_portfolio_campaign_confirmation_pressure = max(
+            0.0,
+            float(native_target_context.get("benchmark_target_portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_portfolio_regression_campaign_count = max(
+            0,
+            int(native_target_context.get("benchmark_target_portfolio_regression_campaign_count", 0) or 0),
+        )
+        benchmark_target_portfolio_regression_campaign_streak = max(
+            0,
+            int(native_target_context.get("benchmark_target_portfolio_regression_campaign_streak", 0) or 0),
+        )
+        benchmark_target_portfolio_latest_campaign_status = str(
+            native_target_context.get("benchmark_target_portfolio_latest_campaign_status", "") or ""
+        ).strip().lower()
+        benchmark_target_portfolio_latest_campaign_trend_direction = str(
+            native_target_context.get("benchmark_target_portfolio_latest_campaign_trend_direction", "") or ""
+        ).strip().lower()
         benchmark_target_portfolio_regression_wave_count = max(
             0,
             int(native_target_context.get("benchmark_target_portfolio_regression_wave_count", 0) or 0),
@@ -15266,13 +15449,20 @@ class DesktopActionRouter:
                 benchmark_target_campaign_pressure >= 0.75
                 or benchmark_target_portfolio_pressure >= 0.75
                 or benchmark_target_portfolio_confirmation_pressure >= 0.55
+                or benchmark_target_portfolio_campaign_confirmation_pressure >= 0.55
                 or benchmark_target_replay_pressure >= 0.75
                 or benchmark_target_regression_cycle_count > 0
                 or benchmark_target_campaign_regression_cycle_count > 0
+                or benchmark_target_portfolio_regression_campaign_count > 0
+                or benchmark_target_portfolio_regression_campaign_streak > 0
                 or benchmark_target_portfolio_regression_wave_count > 0
                 or benchmark_target_long_horizon_pending_count > 0
                 or benchmark_target_campaign_long_horizon_pending_count > 0
                 or benchmark_target_portfolio_long_horizon_pending_count > 0
+                or confirmation_chain_readiness >= 0.65
+                or confirmation_sequence_progress_score >= 0.6
+                or benchmark_target_portfolio_latest_campaign_status in {"failed", "error", "regression"}
+                or benchmark_target_portfolio_latest_campaign_trend_direction in {"regressing", "regression"}
                 or (
                     benchmark_target_session_cycle_count > 0
                     and benchmark_target_descendant_focus_pressure >= 0.55
@@ -15289,10 +15479,14 @@ class DesktopActionRouter:
                     3 if (
                         benchmark_target_regression_cycle_count > 0
                         or benchmark_target_campaign_regression_cycle_count > 0
+                        or benchmark_target_portfolio_regression_campaign_count > 0
+                        or benchmark_target_portfolio_regression_campaign_streak > 0
                         or benchmark_target_portfolio_regression_wave_count > 0
                         or benchmark_target_long_horizon_pending_count > 0
                         or benchmark_target_campaign_long_horizon_pending_count > 0
                         or benchmark_target_portfolio_long_horizon_pending_count > 0
+                        or benchmark_target_portfolio_campaign_confirmation_pressure >= 0.75
+                        or confirmation_chain_readiness >= 0.75
                     ) else 2,
                 ),
             )
@@ -15301,6 +15495,10 @@ class DesktopActionRouter:
             min(1.0, benchmark_target_campaign_pressure / 2.0),
             min(1.0, benchmark_target_replay_pressure / 2.0),
             min(1.0, benchmark_target_portfolio_pressure / 2.0),
+            min(1.0, benchmark_target_portfolio_confirmation_pressure),
+            min(1.0, benchmark_target_portfolio_campaign_confirmation_pressure),
+            confirmation_chain_readiness,
+            confirmation_sequence_progress_score,
         )
         preferred_descendant_label = preferred_descendant_title or (
             f"Child surface {preferred_descendant_hwnd}" if preferred_descendant_hwnd > 0 else ""
@@ -15382,6 +15580,10 @@ class DesktopActionRouter:
                 descendant_focus_confidence += min(0.08, 0.03 + (descendant_adoption_match_score * 0.05))
             if descendant_focus_strength > 0.0:
                 descendant_focus_confidence += min(0.08, 0.02 + (descendant_focus_strength * 0.06))
+            if confirmation_sequence_progress_score > 0.0:
+                descendant_focus_confidence += min(0.06, 0.02 + (confirmation_sequence_progress_score * 0.05))
+            if confirmation_chain_readiness > 0.0:
+                descendant_focus_confidence += min(0.08, 0.02 + (confirmation_chain_readiness * 0.06))
             if preferred_descendant_match_score > 0.0:
                 descendant_focus_confidence += min(0.06, preferred_descendant_match_score * 0.05)
             if descendant_hint_title_match_count > 0:
@@ -15394,6 +15596,11 @@ class DesktopActionRouter:
                 descendant_focus_confidence += min(
                     0.08,
                     0.03 + (0.05 * min(1.0, benchmark_target_portfolio_confirmation_pressure)),
+                )
+            if benchmark_target_portfolio_campaign_confirmation_pressure > 0.0:
+                descendant_focus_confidence += min(
+                    0.1,
+                    0.03 + (0.06 * min(1.0, benchmark_target_portfolio_campaign_confirmation_pressure)),
                 )
             descendant_focus_confidence = min(0.96, descendant_focus_confidence)
             descendant_reason = (

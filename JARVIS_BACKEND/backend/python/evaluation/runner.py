@@ -3416,10 +3416,19 @@ class EvaluationRunner:
                     "portfolio_descendant_hint_query": "",
                     "portfolio_preferred_window_title": "",
                     "portfolio_confirmation_pressure": 0.0,
+                    "portfolio_campaign_confirmation_pressure": 0.0,
                     "portfolio_confirmation_title_hints": [],
                     "portfolio_confirmation_title_sequence": [],
                     "portfolio_confirmation_hint_query": "",
                     "portfolio_confirmation_preferred_window_title": "",
+                    "portfolio_completed_campaign_count": 0,
+                    "portfolio_stable_campaign_count": 0,
+                    "portfolio_regression_campaign_count": 0,
+                    "portfolio_stable_campaign_streak": 0,
+                    "portfolio_regression_campaign_streak": 0,
+                    "portfolio_latest_campaign_status": "",
+                    "portfolio_latest_campaign_stop_reason": "",
+                    "portfolio_latest_campaign_trend_direction": "",
                     "portfolio_latest_wave_status": "",
                     "portfolio_latest_wave_stop_reason": "",
                     "session_cycle_count": 0,
@@ -3904,8 +3913,16 @@ class EvaluationRunner:
             portfolio_pending_app_target_count = max(0, int(portfolio.get("pending_app_target_count", 0) or 0))
             portfolio_regression_wave_count = max(0, int(portfolio.get("regression_wave_count", 0) or 0))
             portfolio_long_horizon_pending_count = max(0, int(portfolio.get("long_horizon_pending_count", 0) or 0))
+            portfolio_completed_campaign_count = max(0, int(portfolio.get("completed_campaign_count", 0) or 0))
+            portfolio_stable_campaign_count = max(0, int(portfolio.get("stable_campaign_count", 0) or 0))
+            portfolio_regression_campaign_count = max(0, int(portfolio.get("regression_campaign_count", 0) or 0))
+            portfolio_stable_campaign_streak = max(0, int(portfolio.get("stable_campaign_streak", 0) or 0))
+            portfolio_regression_campaign_streak = max(0, int(portfolio.get("regression_campaign_streak", 0) or 0))
             portfolio_latest_wave_status = str(portfolio.get("latest_wave_status", "") or "").strip().lower()
             portfolio_latest_wave_stop_reason = str(portfolio.get("latest_wave_stop_reason", "") or "").strip().lower()
+            portfolio_latest_campaign_status = str(portfolio.get("latest_campaign_status", "") or "").strip().lower()
+            portfolio_latest_campaign_stop_reason = str(portfolio.get("latest_campaign_stop_reason", "") or "").strip().lower()
+            portfolio_latest_campaign_trend_direction = str(portfolio.get("latest_campaign_trend_direction", "") or "").strip().lower()
             portfolio_priority = max(
                 0.0,
                 min(
@@ -3935,6 +3952,17 @@ class EvaluationRunner:
             entry["portfolio_pending_app_target_count"] = int(entry.get("portfolio_pending_app_target_count", 0) or 0) + portfolio_pending_app_target_count
             entry["portfolio_regression_wave_count"] = int(entry.get("portfolio_regression_wave_count", 0) or 0) + portfolio_regression_wave_count
             entry["portfolio_long_horizon_pending_count"] = int(entry.get("portfolio_long_horizon_pending_count", 0) or 0) + portfolio_long_horizon_pending_count
+            entry["portfolio_completed_campaign_count"] = int(entry.get("portfolio_completed_campaign_count", 0) or 0) + portfolio_completed_campaign_count
+            entry["portfolio_stable_campaign_count"] = int(entry.get("portfolio_stable_campaign_count", 0) or 0) + portfolio_stable_campaign_count
+            entry["portfolio_regression_campaign_count"] = int(entry.get("portfolio_regression_campaign_count", 0) or 0) + portfolio_regression_campaign_count
+            entry["portfolio_stable_campaign_streak"] = max(
+                int(entry.get("portfolio_stable_campaign_streak", 0) or 0),
+                portfolio_stable_campaign_streak,
+            )
+            entry["portfolio_regression_campaign_streak"] = max(
+                int(entry.get("portfolio_regression_campaign_streak", 0) or 0),
+                portfolio_regression_campaign_streak,
+            )
             entry["portfolio_pressure"] = float(entry.get("portfolio_pressure", 0.0) or 0.0) + portfolio_priority
             portfolio_ids = entry["portfolio_ids"] if isinstance(entry.get("portfolio_ids"), set) else set(entry.get("portfolio_ids", []))
             if portfolio_id:
@@ -4051,6 +4079,23 @@ class EvaluationRunner:
                 long_horizon_pending_count=portfolio_long_horizon_pending_count,
                 latest_wave_stop_reason=portfolio_latest_wave_stop_reason,
             )
+            campaign_confirmation_pressure = self._native_target_confirmation_pressure(
+                confirmation_titles=portfolio_confirmation_hints,
+                portfolio_pressure=max(
+                    portfolio_priority,
+                    float(target_row.get("portfolio_pressure", 0.0) or 0.0),
+                ),
+                regression_wave_count=(
+                    portfolio_regression_campaign_count
+                    + portfolio_regression_campaign_streak
+                    + (1 if portfolio_latest_campaign_status in {"failed", "error", "regression"} else 0)
+                    + (1 if portfolio_latest_campaign_trend_direction in {"regressing", "regression"} else 0)
+                ),
+                long_horizon_pending_count=portfolio_long_horizon_pending_count,
+                latest_wave_stop_reason=(
+                    portfolio_latest_campaign_stop_reason or portfolio_latest_wave_stop_reason
+                ),
+            )
             if hint_query and not str(entry.get("portfolio_hint_query", "") or "").strip():
                 entry["portfolio_hint_query"] = hint_query
             if descendant_hint_query and not str(entry.get("portfolio_descendant_hint_query", "") or "").strip():
@@ -4066,6 +4111,27 @@ class EvaluationRunner:
                     float(entry.get("portfolio_confirmation_pressure", 0.0) or 0.0),
                     confirmation_pressure,
                 )
+            if campaign_confirmation_pressure > 0.0:
+                entry["portfolio_campaign_confirmation_pressure"] = max(
+                    float(entry.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0),
+                    campaign_confirmation_pressure,
+                )
+            if portfolio_latest_campaign_status and (
+                not str(entry.get("portfolio_latest_campaign_status", "") or "").strip()
+                or str(entry.get("portfolio_latest_campaign_status", "") or "").strip().lower() in {"idle", "ready"}
+                or portfolio_latest_campaign_status in {"error", "failed", "regression"}
+            ):
+                entry["portfolio_latest_campaign_status"] = portfolio_latest_campaign_status
+            if portfolio_latest_campaign_stop_reason and (
+                not str(entry.get("portfolio_latest_campaign_stop_reason", "") or "").strip()
+                or self._native_target_is_confirmation_like(portfolio_latest_campaign_stop_reason)
+            ):
+                entry["portfolio_latest_campaign_stop_reason"] = portfolio_latest_campaign_stop_reason
+            if portfolio_latest_campaign_trend_direction and (
+                not str(entry.get("portfolio_latest_campaign_trend_direction", "") or "").strip()
+                or portfolio_latest_campaign_trend_direction in {"regressing", "regression"}
+            ):
+                entry["portfolio_latest_campaign_trend_direction"] = portfolio_latest_campaign_trend_direction
             if portfolio_latest_wave_status and (
                 not str(entry.get("portfolio_latest_wave_status", "") or "").strip()
                 or str(entry.get("portfolio_latest_wave_status", "") or "").strip().lower() in {"idle", "ready"}
@@ -4092,6 +4158,8 @@ class EvaluationRunner:
                     tactic_value = min(1.0, tactic_value + 0.04)
                 if confirmation_pressure > 0.0 and key in {"dialog_resolution", "descendant_focus", "native_focus"}:
                     tactic_value = min(1.0, tactic_value + min(0.08, confirmation_pressure * 0.04))
+                if campaign_confirmation_pressure > 0.0 and key in {"dialog_resolution", "descendant_focus", "recovery_reacquire", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + min(0.1, campaign_confirmation_pressure * 0.04))
                 control_biases[key] = max(float(control_biases.get(key, 0.0) or 0.0), tactic_value)
                 tactic_totals[key] += tactic_value
             entry["control_biases"] = control_biases
@@ -4337,6 +4405,7 @@ class EvaluationRunner:
                     "portfolio_descendant_hint_query": str(row.get("portfolio_descendant_hint_query", "") or "").strip(),
                     "portfolio_preferred_window_title": str(row.get("portfolio_preferred_window_title", "") or "").strip(),
                     "portfolio_confirmation_pressure": round(float(row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+                    "portfolio_campaign_confirmation_pressure": round(float(row.get("portfolio_campaign_confirmation_pressure", 0.0) or 0.0), 6),
                     "portfolio_confirmation_title_hints": list(row.get("portfolio_confirmation_title_hints", []))[:8]
                     if isinstance(row.get("portfolio_confirmation_title_hints", []), list)
                     else [],
@@ -4345,6 +4414,14 @@ class EvaluationRunner:
                     else [],
                     "portfolio_confirmation_hint_query": str(row.get("portfolio_confirmation_hint_query", "") or "").strip(),
                     "portfolio_confirmation_preferred_window_title": str(row.get("portfolio_confirmation_preferred_window_title", "") or "").strip(),
+                    "portfolio_completed_campaign_count": int(row.get("portfolio_completed_campaign_count", 0) or 0),
+                    "portfolio_stable_campaign_count": int(row.get("portfolio_stable_campaign_count", 0) or 0),
+                    "portfolio_regression_campaign_count": int(row.get("portfolio_regression_campaign_count", 0) or 0),
+                    "portfolio_stable_campaign_streak": int(row.get("portfolio_stable_campaign_streak", 0) or 0),
+                    "portfolio_regression_campaign_streak": int(row.get("portfolio_regression_campaign_streak", 0) or 0),
+                    "portfolio_latest_campaign_status": str(row.get("portfolio_latest_campaign_status", "") or "").strip(),
+                    "portfolio_latest_campaign_stop_reason": str(row.get("portfolio_latest_campaign_stop_reason", "") or "").strip(),
+                    "portfolio_latest_campaign_trend_direction": str(row.get("portfolio_latest_campaign_trend_direction", "") or "").strip(),
                     "portfolio_latest_wave_status": str(row.get("portfolio_latest_wave_status", "") or "").strip(),
                     "portfolio_latest_wave_stop_reason": str(row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
                     "control_biases": {

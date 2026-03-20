@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod audio_utils;
 pub mod automation_engine;
 pub mod file_access;

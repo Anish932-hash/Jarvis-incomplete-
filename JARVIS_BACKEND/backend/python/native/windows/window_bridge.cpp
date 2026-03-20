@@ -666,6 +666,8 @@ struct DescendantChainMetrics {
     double preferred_campaign_descendant_sequence_match_score = 0.0;
     double preferred_portfolio_descendant_sequence_match_score = 0.0;
     double preferred_confirmation_descendant_sequence_match_score = 0.0;
+    double confirmation_sequence_progress_score = 0.0;
+    double confirmation_chain_readiness = 0.0;
     double descendant_focus_strength = 0.0;
     std::string expected_descendant_sequence_title;
     std::string expected_campaign_descendant_sequence_title;
@@ -992,6 +994,58 @@ DescendantChainMetrics analyze_descendant_chain(
             expected_confirmation_sequence_title
         );
 
+        double confirmation_progress = 0.0;
+        if (!expected_confirmation_sequence_title.empty()) {
+            confirmation_progress += 0.08;
+        }
+        confirmation_progress += std::min(
+            0.46,
+            metrics.preferred_confirmation_descendant_sequence_match_score * 0.46
+        );
+        confirmation_progress += std::min(
+            0.18,
+            0.05 * metrics.confirmation_descendant_sequence_match_count
+        );
+        confirmation_progress += std::min(
+            0.12,
+            0.04 * metrics.confirmation_descendant_hint_title_match_count
+        );
+        confirmation_progress += std::min(
+            0.08,
+            0.03 * metrics.descendant_dialog_chain_depth
+        );
+        if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
+            confirmation_progress += 0.06;
+        }
+        metrics.confirmation_sequence_progress_score =
+            std::clamp(confirmation_progress, 0.0, 1.0);
+
+        double confirmation_readiness = 0.2;
+        confirmation_readiness += std::min(
+            0.36,
+            metrics.confirmation_sequence_progress_score * 0.36
+        );
+        confirmation_readiness += std::min(
+            0.14,
+            metrics.descendant_focus_strength * 0.14
+        );
+        confirmation_readiness += std::min(
+            0.1,
+            0.04 * metrics.direct_child_dialog_like_count
+        );
+        confirmation_readiness += std::min(
+            0.1,
+            0.035 * metrics.descendant_dialog_chain_depth
+        );
+        if (metrics.preferred_descendant.owner_hwnd == candidate.hwnd) {
+            confirmation_readiness += 0.05;
+        }
+        if (!metrics.expected_confirmation_descendant_sequence_title.empty()) {
+            confirmation_readiness += 0.05;
+        }
+        metrics.confirmation_chain_readiness =
+            std::clamp(confirmation_readiness, 0.0, 1.0);
+
         double focus_strength = 0.38;
         focus_strength += std::min(0.16, 0.04 * metrics.descendant_chain_depth);
         focus_strength += std::min(0.14, 0.04 * metrics.descendant_dialog_chain_depth);
@@ -1009,6 +1063,8 @@ DescendantChainMetrics analyze_descendant_chain(
         focus_strength += std::min(0.1, metrics.preferred_campaign_descendant_sequence_match_score * 0.1);
         focus_strength += std::min(0.1, metrics.preferred_portfolio_descendant_sequence_match_score * 0.1);
         focus_strength += std::min(0.12, metrics.preferred_confirmation_descendant_sequence_match_score * 0.12);
+        focus_strength += std::min(0.08, metrics.confirmation_sequence_progress_score * 0.08);
+        focus_strength += std::min(0.08, metrics.confirmation_chain_readiness * 0.08);
         if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
             focus_strength += 0.06;
         }
@@ -1016,6 +1072,12 @@ DescendantChainMetrics analyze_descendant_chain(
             focus_strength += 0.05;
         }
         metrics.descendant_focus_strength = std::clamp(focus_strength, 0.0, 1.0);
+        metrics.confirmation_chain_readiness = std::clamp(
+            metrics.confirmation_chain_readiness
+                + std::min(0.14, metrics.descendant_focus_strength * 0.14),
+            0.0,
+            1.0
+        );
     }
 
     return metrics;
@@ -1052,6 +1114,8 @@ double descendant_chain_follow_quality(const DescendantChainMetrics& metrics) {
     quality += std::min(0.1, metrics.preferred_campaign_descendant_sequence_match_score * 0.1);
     quality += std::min(0.1, metrics.preferred_portfolio_descendant_sequence_match_score * 0.1);
     quality += std::min(0.12, metrics.preferred_confirmation_descendant_sequence_match_score * 0.12);
+    quality += std::min(0.12, metrics.confirmation_sequence_progress_score * 0.12);
+    quality += std::min(0.16, metrics.confirmation_chain_readiness * 0.16);
     if (snapshot_is_dialog_like(metrics.preferred_descendant)) {
         quality += 0.05;
     }
@@ -1074,6 +1138,7 @@ bool descendant_chain_follow_allowed(const DescendantChainMetrics& metrics) {
             || metrics.preferred_campaign_descendant_sequence_match_score >= 0.72
             || metrics.preferred_portfolio_descendant_sequence_match_score >= 0.72
             || metrics.preferred_confirmation_descendant_sequence_match_score >= 0.72
+            || metrics.confirmation_chain_readiness >= 0.72
             || metrics.confirmation_descendant_sequence_match_count > 0
             || metrics.descendant_dialog_chain_depth > 0
             || metrics.direct_child_dialog_like_count > 0
@@ -1895,6 +1960,10 @@ std::string related_window_payload_json(
            << descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_confirmation_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_confirmation_descendant_sequence_match_score << ","
+           << "\"confirmation_sequence_progress_score\":"
+           << descendant_metrics.confirmation_sequence_progress_score << ","
+           << "\"confirmation_chain_readiness\":"
+           << descendant_metrics.confirmation_chain_readiness << ","
            << "\"preferred_descendant_match_score\":" << descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << descendant_metrics.descendant_focus_strength << ","
            << "\"direct_child_window_count\":" << descendant_metrics.direct_children.size() << ","
@@ -2576,6 +2645,10 @@ std::string focus_related_window_json(
            << reported_descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_confirmation_descendant_sequence_match_score\":"
            << reported_descendant_metrics.preferred_confirmation_descendant_sequence_match_score << ","
+           << "\"confirmation_sequence_progress_score\":"
+           << reported_descendant_metrics.confirmation_sequence_progress_score << ","
+           << "\"confirmation_chain_readiness\":"
+           << reported_descendant_metrics.confirmation_chain_readiness << ","
            << "\"preferred_descendant_match_score\":" << reported_descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << reported_descendant_metrics.descendant_focus_strength << ","
            << "\"adopted_descendant_depth\":" << reported_adopted_descendant_depth << ","
@@ -3075,6 +3148,10 @@ std::string trace_related_window_chain_json(
            << descendant_metrics.preferred_portfolio_descendant_sequence_match_score << ","
            << "\"preferred_confirmation_descendant_sequence_match_score\":"
            << descendant_metrics.preferred_confirmation_descendant_sequence_match_score << ","
+           << "\"confirmation_sequence_progress_score\":"
+           << descendant_metrics.confirmation_sequence_progress_score << ","
+           << "\"confirmation_chain_readiness\":"
+           << descendant_metrics.confirmation_chain_readiness << ","
            << "\"preferred_descendant_match_score\":" << descendant_metrics.preferred_descendant_match_score << ","
            << "\"descendant_focus_strength\":" << descendant_metrics.descendant_focus_strength << ","
            << "\"child_chain_signature\":\"" << json_escape(chain_signature) << "\","
