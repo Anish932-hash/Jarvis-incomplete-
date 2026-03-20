@@ -3070,6 +3070,11 @@ class EvaluationRunner:
                     "portfolio_descendant_title_sequence": [],
                     "portfolio_descendant_hint_query": "",
                     "portfolio_preferred_window_title": "",
+                    "portfolio_confirmation_pressure": 0.0,
+                    "portfolio_confirmation_title_hints": [],
+                    "portfolio_confirmation_title_sequence": [],
+                    "portfolio_confirmation_hint_query": "",
+                    "portfolio_confirmation_preferred_window_title": "",
                     "portfolio_latest_wave_status": "",
                     "portfolio_latest_wave_stop_reason": "",
                     "session_cycle_count": 0,
@@ -3630,15 +3635,92 @@ class EvaluationRunner:
                 if hint not in portfolio_sequence_hints:
                     portfolio_sequence_hints.append(hint)
             entry["portfolio_descendant_title_sequence"] = portfolio_sequence_hints[:8]
+            portfolio_confirmation_hints = self._native_target_confirmation_title_hints(
+                primary_titles=[
+                    *(
+                        [
+                            str(item).strip()
+                            for item in target_row.get("portfolio_confirmation_title_hints", [])
+                            if str(item).strip()
+                        ]
+                        if isinstance(target_row.get("portfolio_confirmation_title_hints", []), list)
+                        else []
+                    ),
+                    *portfolio_hints,
+                ],
+                fallback_titles=[
+                    *portfolio_sequence,
+                    str(target_row.get("portfolio_confirmation_preferred_window_title", "") or "").strip(),
+                    str(target_row.get("portfolio_preferred_window_title", "") or "").strip(),
+                ],
+                stop_reason=portfolio_latest_wave_stop_reason,
+            )
+            portfolio_confirmation_sequence = _ordered_descendant_sequence(
+                target_row.get("portfolio_confirmation_title_sequence", []),
+                portfolio_confirmation_hints,
+                target_row.get("portfolio_confirmation_preferred_window_title", ""),
+                target_row.get("portfolio_preferred_window_title", ""),
+            )
+            portfolio_confirmation_sequence_hints = (
+                entry["portfolio_confirmation_title_sequence"]
+                if isinstance(entry.get("portfolio_confirmation_title_sequence"), list)
+                else []
+            )
+            for hint in portfolio_confirmation_sequence:
+                if hint not in portfolio_confirmation_sequence_hints:
+                    portfolio_confirmation_sequence_hints.append(hint)
+            entry["portfolio_confirmation_title_sequence"] = portfolio_confirmation_sequence_hints[:8]
+            existing_portfolio_confirmation_hints = (
+                entry["portfolio_confirmation_title_hints"]
+                if isinstance(entry.get("portfolio_confirmation_title_hints"), list)
+                else []
+            )
+            for hint in portfolio_confirmation_hints:
+                if hint not in existing_portfolio_confirmation_hints:
+                    existing_portfolio_confirmation_hints.append(hint)
+            entry["portfolio_confirmation_title_hints"] = existing_portfolio_confirmation_hints[:8]
             hint_query = str(target_row.get("portfolio_hint_query", "") or "").strip()
             descendant_hint_query = str(target_row.get("portfolio_descendant_hint_query", "") or "").strip()
             preferred_window_title = str(target_row.get("portfolio_preferred_window_title", "") or "").strip()
+            confirmation_hint_query = str(
+                target_row.get("portfolio_confirmation_hint_query", "") or ""
+            ).strip()
+            if not confirmation_hint_query and portfolio_confirmation_hints:
+                confirmation_hint_query = self._native_target_hint_query(
+                    query_hints=portfolio_confirmation_hints,
+                    replay_scenarios=[portfolio_label] if portfolio_label else [],
+                )
+            confirmation_preferred_window_title = str(
+                target_row.get("portfolio_confirmation_preferred_window_title", "") or ""
+            ).strip()
+            if not confirmation_preferred_window_title and portfolio_confirmation_hints:
+                confirmation_preferred_window_title = self._native_target_preferred_window_title(
+                    descendant_title_hints=portfolio_confirmation_hints,
+                    query_hints=portfolio_confirmation_hints,
+                    replay_scenarios=[portfolio_label] if portfolio_label else [],
+                )
+            confirmation_pressure = self._native_target_confirmation_pressure(
+                confirmation_titles=portfolio_confirmation_hints,
+                portfolio_pressure=portfolio_priority,
+                regression_wave_count=portfolio_regression_wave_count,
+                long_horizon_pending_count=portfolio_long_horizon_pending_count,
+                latest_wave_stop_reason=portfolio_latest_wave_stop_reason,
+            )
             if hint_query and not str(entry.get("portfolio_hint_query", "") or "").strip():
                 entry["portfolio_hint_query"] = hint_query
             if descendant_hint_query and not str(entry.get("portfolio_descendant_hint_query", "") or "").strip():
                 entry["portfolio_descendant_hint_query"] = descendant_hint_query
             if preferred_window_title and not str(entry.get("portfolio_preferred_window_title", "") or "").strip():
                 entry["portfolio_preferred_window_title"] = preferred_window_title
+            if confirmation_hint_query and not str(entry.get("portfolio_confirmation_hint_query", "") or "").strip():
+                entry["portfolio_confirmation_hint_query"] = confirmation_hint_query
+            if confirmation_preferred_window_title and not str(entry.get("portfolio_confirmation_preferred_window_title", "") or "").strip():
+                entry["portfolio_confirmation_preferred_window_title"] = confirmation_preferred_window_title
+            if confirmation_pressure > 0.0:
+                entry["portfolio_confirmation_pressure"] = max(
+                    float(entry.get("portfolio_confirmation_pressure", 0.0) or 0.0),
+                    confirmation_pressure,
+                )
             if portfolio_latest_wave_status and (
                 not str(entry.get("portfolio_latest_wave_status", "") or "").strip()
                 or str(entry.get("portfolio_latest_wave_status", "") or "").strip().lower() in {"idle", "ready"}
@@ -3663,6 +3745,8 @@ class EvaluationRunner:
                     tactic_value = min(1.0, tactic_value + 0.08)
                 elif portfolio_pending_program_count > 0 and key in {"navigation_branch", "recovery_reacquire", "native_focus"}:
                     tactic_value = min(1.0, tactic_value + 0.04)
+                if confirmation_pressure > 0.0 and key in {"dialog_resolution", "descendant_focus", "native_focus"}:
+                    tactic_value = min(1.0, tactic_value + min(0.08, confirmation_pressure * 0.04))
                 control_biases[key] = max(float(control_biases.get(key, 0.0) or 0.0), tactic_value)
                 tactic_totals[key] += tactic_value
             entry["control_biases"] = control_biases
@@ -3907,6 +3991,15 @@ class EvaluationRunner:
                     else [],
                     "portfolio_descendant_hint_query": str(row.get("portfolio_descendant_hint_query", "") or "").strip(),
                     "portfolio_preferred_window_title": str(row.get("portfolio_preferred_window_title", "") or "").strip(),
+                    "portfolio_confirmation_pressure": round(float(row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+                    "portfolio_confirmation_title_hints": list(row.get("portfolio_confirmation_title_hints", []))[:8]
+                    if isinstance(row.get("portfolio_confirmation_title_hints", []), list)
+                    else [],
+                    "portfolio_confirmation_title_sequence": list(row.get("portfolio_confirmation_title_sequence", []))[:8]
+                    if isinstance(row.get("portfolio_confirmation_title_sequence", []), list)
+                    else [],
+                    "portfolio_confirmation_hint_query": str(row.get("portfolio_confirmation_hint_query", "") or "").strip(),
+                    "portfolio_confirmation_preferred_window_title": str(row.get("portfolio_confirmation_preferred_window_title", "") or "").strip(),
                     "portfolio_latest_wave_status": str(row.get("portfolio_latest_wave_status", "") or "").strip(),
                     "portfolio_latest_wave_stop_reason": str(row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
                     "control_biases": {
@@ -4594,6 +4687,80 @@ class EvaluationRunner:
                 continue
             return f"{clean[:1].upper()}{clean[1:]}" if clean.islower() else clean
         return ""
+
+    @staticmethod
+    def _native_target_is_confirmation_like(value: str) -> bool:
+        lowered = str(value or "").strip().lower()
+        if not lowered:
+            return False
+        return any(
+            marker in lowered
+            for marker in (
+                "confirm",
+                "confirmation",
+                "allow",
+                "accept",
+                "approve",
+                "continue",
+                "apply",
+                "install",
+                "finish",
+                "next",
+                "yes",
+                "ok",
+                "pair",
+                "permission",
+                "review",
+                "warning",
+            )
+        )
+
+    @classmethod
+    def _native_target_confirmation_title_hints(
+        cls,
+        *,
+        primary_titles: List[str],
+        fallback_titles: List[str],
+        stop_reason: str = "",
+    ) -> List[str]:
+        ordered_titles = cls._unique_strings(
+            [
+                str(item).strip()
+                for item in [*primary_titles, *fallback_titles]
+                if str(item).strip()
+            ]
+        )
+        confirmation_titles = [
+            title
+            for title in ordered_titles
+            if cls._native_target_is_confirmation_like(title)
+        ]
+        if confirmation_titles:
+            return confirmation_titles[:8]
+        if cls._native_target_is_confirmation_like(stop_reason):
+            return ordered_titles[:4]
+        return []
+
+    @classmethod
+    def _native_target_confirmation_pressure(
+        cls,
+        *,
+        confirmation_titles: List[str],
+        portfolio_pressure: float,
+        regression_wave_count: int,
+        long_horizon_pending_count: int,
+        latest_wave_stop_reason: str,
+    ) -> float:
+        if not confirmation_titles and not cls._native_target_is_confirmation_like(latest_wave_stop_reason):
+            return 0.0
+        pressure = max(0.0, float(portfolio_pressure or 0.0))
+        if confirmation_titles:
+            pressure = max(pressure, 0.65)
+        if cls._native_target_is_confirmation_like(latest_wave_stop_reason):
+            pressure += 0.2
+        pressure += min(0.18, max(0, int(regression_wave_count or 0)) * 0.04)
+        pressure += min(0.12, max(0, int(long_horizon_pending_count or 0)) * 0.03)
+        return min(6.0, pressure)
 
     @staticmethod
     def _unique_strings(values: List[str]) -> List[str]:

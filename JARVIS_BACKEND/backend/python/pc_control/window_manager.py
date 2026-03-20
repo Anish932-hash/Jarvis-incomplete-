@@ -326,13 +326,16 @@ class WindowManager:
         descendant_hint_query: str = "",
         campaign_hint_query: str = "",
         portfolio_hint_query: str = "",
+        confirmation_hint_query: str = "",
         preferred_window_title: str = "",
         campaign_preferred_window_title: str = "",
         portfolio_preferred_window_title: str = "",
+        confirmation_preferred_window_title: str = "",
         expected_descendant_sequence_title: str = "",
         expected_campaign_descendant_sequence_title: str = "",
         expected_program_descendant_sequence_title: str = "",
         expected_portfolio_descendant_sequence_title: str = "",
+        expected_confirmation_descendant_sequence_title: str = "",
         program_chain_recovery_pressure: float = 0.0,
         portfolio_chain_recovery_pressure: float = 0.0,
     ) -> Dict[str, Any]:
@@ -342,8 +345,10 @@ class WindowManager:
                 str(expected_program_descendant_sequence_title or "").strip(),
                 str(expected_descendant_sequence_title or "").strip(),
                 str(expected_campaign_descendant_sequence_title or "").strip(),
+                str(expected_confirmation_descendant_sequence_title or "").strip(),
                 str(portfolio_preferred_window_title or "").strip(),
                 str(campaign_preferred_window_title or "").strip(),
+                str(confirmation_preferred_window_title or "").strip(),
                 str(preferred_window_title or "").strip(),
             ]
         )
@@ -373,6 +378,10 @@ class WindowManager:
                 cls._text_match_score(row_title, portfolio_hint_query),
                 cls._text_match_score(portfolio_hint_query, row_title),
             ) if str(portfolio_hint_query or "").strip() else 0.0
+            confirmation_hint_score = max(
+                cls._text_match_score(row_title, confirmation_hint_query),
+                cls._text_match_score(confirmation_hint_query, row_title),
+            ) if str(confirmation_hint_query or "").strip() else 0.0
             window_title_score = max(
                 cls._text_match_score(row_title, window_title),
                 cls._text_match_score(window_title, row_title),
@@ -383,6 +392,7 @@ class WindowManager:
                 descendant_hint_score,
                 campaign_hint_score,
                 portfolio_hint_score,
+                confirmation_hint_score,
                 window_title_score,
             )
             if isinstance(row.get("surface_hints", {}), dict) and bool(row.get("surface_hints", {}).get("dialog_like", False)):
@@ -402,8 +412,12 @@ class WindowManager:
                     best_reason = "expected_descendant_sequence_title"
                 elif matched_expected_title and matched_expected_title == str(expected_campaign_descendant_sequence_title or "").strip():
                     best_reason = "expected_campaign_descendant_sequence_title"
+                elif matched_expected_title and matched_expected_title == str(expected_confirmation_descendant_sequence_title or "").strip():
+                    best_reason = "expected_confirmation_descendant_sequence_title"
                 elif descendant_hint_score >= max(query_score, campaign_hint_score, window_title_score):
                     best_reason = "descendant_hint_query"
+                elif confirmation_hint_score >= max(query_score, campaign_hint_score, portfolio_hint_score, window_title_score):
+                    best_reason = "confirmation_hint_query"
                 elif portfolio_hint_score >= max(query_score, campaign_hint_score, window_title_score):
                     best_reason = "portfolio_hint_query"
                 elif campaign_hint_score >= max(query_score, window_title_score):
@@ -427,6 +441,7 @@ class WindowManager:
             "descendant_anchor_recovery_match_score": round(best_score, 4),
             "descendant_anchor_recovery_pressure": round(pressure, 4),
             "expected_portfolio_descendant_sequence_title": str(expected_portfolio_descendant_sequence_title or "").strip(),
+            "expected_confirmation_descendant_sequence_title": str(expected_confirmation_descendant_sequence_title or "").strip(),
             "expected_program_descendant_sequence_title": str(expected_program_descendant_sequence_title or "").strip(),
             "expected_anchor_recovery_title": str(best_expected_title or "").strip(),
             "descendant_anchor_recovery_title": best_title,
@@ -517,6 +532,11 @@ class WindowManager:
                 "portfolio_descendant_hint_query": "",
                 "portfolio_preferred_window_title": "",
                 "portfolio_hint_query": "",
+                "portfolio_confirmation_pressure": 0.0,
+                "portfolio_confirmation_title_hints": [],
+                "portfolio_confirmation_title_sequence": [],
+                "portfolio_confirmation_hint_query": "",
+                "portfolio_confirmation_preferred_window_title": "",
                 "portfolio_latest_wave_status": "",
                 "portfolio_latest_wave_stop_reason": "",
                 "session_cycle_count": 0,
@@ -565,6 +585,12 @@ class WindowManager:
             )
             row_portfolio_preferred_window_title = cls._normalize_text(
                 row.get("portfolio_preferred_window_title", "")
+            )
+            row_portfolio_confirmation_hint_query = cls._normalize_text(
+                row.get("portfolio_confirmation_hint_query", "")
+            )
+            row_portfolio_confirmation_preferred_window_title = cls._normalize_text(
+                row.get("portfolio_confirmation_preferred_window_title", "")
             )
             if any(term == target_app_name for term in candidate_terms):
                 row_score = 1.0
@@ -625,6 +651,18 @@ class WindowManager:
                         row_score,
                         cls._text_match_score(query, row_portfolio_preferred_window_title),
                         cls._text_match_score(row_portfolio_preferred_window_title, query),
+                    )
+                if row_portfolio_confirmation_hint_query:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_portfolio_confirmation_hint_query),
+                        cls._text_match_score(row_portfolio_confirmation_hint_query, query),
+                    )
+                if row_portfolio_confirmation_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(query, row_portfolio_confirmation_preferred_window_title),
+                        cls._text_match_score(row_portfolio_confirmation_preferred_window_title, query),
                     )
             if row_hint_query:
                 for term in candidate_terms:
@@ -688,6 +726,24 @@ class WindowManager:
                         row_score,
                         cls._text_match_score(term, row_portfolio_preferred_window_title),
                         cls._text_match_score(row_portfolio_preferred_window_title, term),
+                    )
+            if row_portfolio_confirmation_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_portfolio_confirmation_hint_query),
+                        cls._text_match_score(row_portfolio_confirmation_hint_query, term),
+                    )
+            if row_portfolio_confirmation_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        cls._text_match_score(term, row_portfolio_confirmation_preferred_window_title),
+                        cls._text_match_score(row_portfolio_confirmation_preferred_window_title, term),
                     )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
@@ -798,6 +854,19 @@ class WindowManager:
             "portfolio_descendant_hint_query": str(best_row.get("portfolio_descendant_hint_query", "") or "").strip(),
             "portfolio_preferred_window_title": str(best_row.get("portfolio_preferred_window_title", "") or "").strip(),
             "portfolio_hint_query": str(best_row.get("portfolio_hint_query", "") or "").strip(),
+            "portfolio_confirmation_pressure": round(float(best_row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+            "portfolio_confirmation_title_hints": [
+                str(item).strip()
+                for item in best_row.get("portfolio_confirmation_title_hints", [])
+                if str(item).strip()
+            ][:8] if isinstance(best_row.get("portfolio_confirmation_title_hints", []), list) else [],
+            "portfolio_confirmation_title_sequence": [
+                str(item).strip()
+                for item in cls._normalize_title_sequence(best_row.get("portfolio_confirmation_title_sequence", []))
+                if str(item).strip()
+            ][:8],
+            "portfolio_confirmation_hint_query": str(best_row.get("portfolio_confirmation_hint_query", "") or "").strip(),
+            "portfolio_confirmation_preferred_window_title": str(best_row.get("portfolio_confirmation_preferred_window_title", "") or "").strip(),
             "portfolio_latest_wave_status": str(best_row.get("portfolio_latest_wave_status", "") or "").strip(),
             "portfolio_latest_wave_stop_reason": str(best_row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
             "session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
@@ -1732,6 +1801,9 @@ class WindowManager:
         portfolio_hint_query: str = "",
         portfolio_preferred_title: str = "",
         portfolio_descendant_title_sequence: List[str] | None = None,
+        confirmation_hint_query: str = "",
+        confirmation_preferred_title: str = "",
+        confirmation_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1754,6 +1826,9 @@ class WindowManager:
                 portfolio_hint_query=portfolio_hint_query,
                 portfolio_preferred_title=portfolio_preferred_title,
                 portfolio_descendant_title_sequence=portfolio_descendant_title_sequence or [],
+                confirmation_hint_query=confirmation_hint_query,
+                confirmation_preferred_title=confirmation_preferred_title,
+                confirmation_title_sequence=confirmation_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -1821,6 +1896,14 @@ class WindowManager:
                 0,
                 int(payload.get("portfolio_descendant_sequence_match_count", 0) or 0),
             ),
+            "confirmation_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("confirmation_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "confirmation_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("confirmation_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 payload.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -1829,6 +1912,9 @@ class WindowManager:
             ).strip(),
             "expected_portfolio_descendant_sequence_title": str(
                 payload.get("expected_portfolio_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_confirmation_descendant_sequence_title": str(
+                payload.get("expected_confirmation_descendant_sequence_title", "") or ""
             ).strip(),
             "preferred_descendant_sequence_match_score": max(
                 0.0,
@@ -1841,6 +1927,10 @@ class WindowManager:
             "preferred_portfolio_descendant_sequence_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_confirmation_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -1941,6 +2031,9 @@ class WindowManager:
         portfolio_hint_query: str = "",
         portfolio_preferred_title: str = "",
         portfolio_descendant_title_sequence: List[str] | None = None,
+        confirmation_hint_query: str = "",
+        confirmation_preferred_title: str = "",
+        confirmation_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         window_title: str = "",
         hwnd: int | None = None,
@@ -1961,6 +2054,9 @@ class WindowManager:
                 portfolio_hint_query=portfolio_hint_query,
                 portfolio_preferred_title=portfolio_preferred_title,
                 portfolio_descendant_title_sequence=portfolio_descendant_title_sequence or [],
+                confirmation_hint_query=confirmation_hint_query,
+                confirmation_preferred_title=confirmation_preferred_title,
+                confirmation_title_sequence=confirmation_title_sequence or [],
                 preferred_title=preferred_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -2015,6 +2111,14 @@ class WindowManager:
                 0,
                 int(payload.get("portfolio_descendant_sequence_match_count", 0) or 0),
             ),
+            "confirmation_descendant_hint_title_match_count": max(
+                0,
+                int(payload.get("confirmation_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "confirmation_descendant_sequence_match_count": max(
+                0,
+                int(payload.get("confirmation_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 payload.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -2023,6 +2127,9 @@ class WindowManager:
             ).strip(),
             "expected_portfolio_descendant_sequence_title": str(
                 payload.get("expected_portfolio_descendant_sequence_title", "") or ""
+            ).strip(),
+            "expected_confirmation_descendant_sequence_title": str(
+                payload.get("expected_confirmation_descendant_sequence_title", "") or ""
             ).strip(),
             "preferred_descendant_sequence_match_score": max(
                 0.0,
@@ -2035,6 +2142,10 @@ class WindowManager:
             "preferred_portfolio_descendant_sequence_match_score": max(
                 0.0,
                 min(float(payload.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
+            "preferred_confirmation_descendant_sequence_match_score": max(
+                0.0,
+                min(float(payload.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
             "preferred_descendant_match_score": max(
                 0.0,
@@ -2122,6 +2233,19 @@ class WindowManager:
         portfolio_preferred_window_title = str(
             target_app_context.get("portfolio_preferred_window_title", "") or ""
         ).strip()
+        confirmation_hint_query = str(
+            target_app_context.get("portfolio_confirmation_hint_query", "") or ""
+        ).strip()
+        confirmation_title_sequence = self._normalize_title_sequence(
+            target_app_context.get("portfolio_confirmation_title_sequence", [])
+        )
+        confirmation_preferred_window_title = str(
+            target_app_context.get("portfolio_confirmation_preferred_window_title", "") or ""
+        ).strip()
+        target_confirmation_pressure = max(
+            0.0,
+            float(target_app_context.get("portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
         target_portfolio_pressure = max(0.0, float(target_app_context.get("portfolio_pressure", 0.0) or 0.0))
         target_portfolio_regression_wave_count = max(
             0,
@@ -2158,6 +2282,9 @@ class WindowManager:
                 portfolio_hint_query=portfolio_hint_query,
                 portfolio_preferred_title=portfolio_preferred_window_title,
                 portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
+                confirmation_hint_query=confirmation_hint_query,
+                confirmation_preferred_title=confirmation_preferred_window_title,
+                confirmation_title_sequence=confirmation_title_sequence,
                 preferred_title=preferred_window_title,
                 window_title=window_title,
                 hwnd=hwnd,
@@ -2195,6 +2322,9 @@ class WindowManager:
             portfolio_hint_query=portfolio_hint_query,
             portfolio_preferred_title=portfolio_preferred_window_title,
             portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
+            confirmation_hint_query=confirmation_hint_query,
+            confirmation_preferred_title=confirmation_preferred_window_title,
+            confirmation_title_sequence=confirmation_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -2263,6 +2393,7 @@ class WindowManager:
             native_focus_pressure,
             replay_session_pressure,
             campaign_replay_pressure,
+            min(1.0, target_confirmation_pressure),
         )
         anchor_window = next(
             (
@@ -2316,6 +2447,17 @@ class WindowManager:
                         row_descendant_hint_score,
                         self._text_match_score(row_title, descendant_hint_query),
                     )
+                row_confirmation_hint_score = 0.0
+                for hint in confirmation_title_sequence:
+                    row_confirmation_hint_score = max(
+                        row_confirmation_hint_score,
+                        self._text_match_score(row_title, hint),
+                    )
+                if confirmation_hint_query:
+                    row_confirmation_hint_score = max(
+                        row_confirmation_hint_score,
+                        self._text_match_score(row_title, confirmation_hint_query),
+                    )
                 if preferred_descendant_hwnd and row_hwnd and row_hwnd == preferred_descendant_hwnd:
                     relation_score += 0.95 * descendant_rerank_pressure
                     relation_reasons.append("benchmark_preferred_descendant_focus")
@@ -2338,15 +2480,31 @@ class WindowManager:
                         (0.16 + (0.3 * row_campaign_descendant_hint_score)) * max(0.4, campaign_replay_pressure),
                     )
                     relation_reasons.append("benchmark_campaign_descendant_title_hint")
+                if row_confirmation_hint_score > 0.0 and target_confirmation_pressure > 0.0:
+                    relation_score += min(
+                        0.56,
+                        (0.18 + (0.34 * row_confirmation_hint_score)) * max(0.45, min(1.0, target_confirmation_pressure)),
+                    )
+                    relation_reasons.append("benchmark_confirmation_chain_hint")
                 if preferred_window_title and row_title and self._text_match_score(row_title, preferred_window_title) >= 0.95:
                     relation_score += 0.54 * descendant_rerank_pressure
                     relation_reasons.append("benchmark_preferred_window_title")
+                if (
+                    confirmation_preferred_window_title
+                    and row_title
+                    and self._text_match_score(row_title, confirmation_preferred_window_title) >= 0.95
+                ):
+                    relation_score += 0.62 * max(descendant_rerank_pressure, min(1.0, target_confirmation_pressure))
+                    relation_reasons.append("benchmark_confirmation_preferred_window_title")
                 if target_regression_cycle_count > 0 and row_descendant_hint_score > 0.0:
                     relation_score += min(0.22, 0.05 * min(target_regression_cycle_count, 4))
                     relation_reasons.append("benchmark_regression_cycle_rerank")
                 if target_campaign_regression_cycle_count > 0 and row_campaign_descendant_hint_score > 0.0:
                     relation_score += min(0.22, 0.05 * min(target_campaign_regression_cycle_count, 4))
                     relation_reasons.append("benchmark_campaign_regression_rerank")
+                if target_confirmation_pressure > 0.0 and row_confirmation_hint_score > 0.0:
+                    relation_score += min(0.2, 0.04 * min(4, max(1, int(round(target_confirmation_pressure * 3.0)))))
+                    relation_reasons.append("benchmark_confirmation_pressure_rerank")
                 if target_long_horizon_pending_count > 0 and int(row.get("owner_chain_depth", 0) or 0) > anchor_owner_chain_depth:
                     relation_score += min(0.16, 0.04 * min(target_long_horizon_pending_count, 3))
                     relation_reasons.append("benchmark_long_horizon_rerank")
@@ -2456,6 +2614,9 @@ class WindowManager:
             portfolio_hint_query=portfolio_hint_query,
             portfolio_preferred_title=portfolio_preferred_window_title,
             portfolio_descendant_title_sequence=portfolio_descendant_title_sequence,
+            confirmation_hint_query=confirmation_hint_query,
+            confirmation_preferred_title=confirmation_preferred_window_title,
+            confirmation_title_sequence=confirmation_title_sequence,
             preferred_title=preferred_window_title,
             window_title=window_title,
             hwnd=int(candidate.get("hwnd", 0) or 0),
@@ -2497,7 +2658,18 @@ class WindowManager:
                     0.12,
                     self._text_match_score(preferred_descendant_title, campaign_preferred_window_title) * 0.12,
                 )
+            if preferred_descendant_title and confirmation_hint_query:
+                descendant_adoption_match_score += min(
+                    0.18,
+                    self._text_match_score(preferred_descendant_title, confirmation_hint_query) * 0.18,
+                )
+            if preferred_descendant_title and confirmation_preferred_window_title:
+                descendant_adoption_match_score += min(
+                    0.16,
+                    self._text_match_score(preferred_descendant_title, confirmation_preferred_window_title) * 0.16,
+                )
             descendant_adoption_match_score += min(0.12, descendant_rerank_pressure * 0.12)
+            descendant_adoption_match_score += min(0.14, min(1.0, target_confirmation_pressure) * 0.14)
             descendant_adoption_match_score = min(1.0, descendant_adoption_match_score)
         observed_descendant_titles = self._dedupe_strings(
             [
@@ -2535,6 +2707,10 @@ class WindowManager:
             portfolio_descendant_title_sequence,
             observed_descendant_titles,
         )
+        expected_confirmation_descendant_sequence_title = self._first_unmatched_sequence_title(
+            confirmation_title_sequence,
+            observed_descendant_titles,
+        )
         program_chain_recovery_pressure = self._program_chain_recovery_pressure(
             program_pressure=target_program_pressure,
             program_regression_cycle_count=target_program_regression_cycle_count,
@@ -2555,9 +2731,11 @@ class WindowManager:
             descendant_hint_query=program_descendant_hint_query or descendant_hint_query,
             campaign_hint_query=campaign_hint_query,
             portfolio_hint_query=portfolio_hint_query or portfolio_descendant_hint_query,
+            confirmation_hint_query=confirmation_hint_query,
             preferred_window_title=program_preferred_window_title or preferred_window_title,
             campaign_preferred_window_title=campaign_preferred_window_title,
             portfolio_preferred_window_title=portfolio_preferred_window_title,
+            confirmation_preferred_window_title=confirmation_preferred_window_title,
             expected_descendant_sequence_title=str(
                 child_chain_trace.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -2566,8 +2744,12 @@ class WindowManager:
             ).strip(),
             expected_program_descendant_sequence_title=expected_program_descendant_sequence_title,
             expected_portfolio_descendant_sequence_title=expected_portfolio_descendant_sequence_title,
+            expected_confirmation_descendant_sequence_title=expected_confirmation_descendant_sequence_title,
             program_chain_recovery_pressure=program_chain_recovery_pressure,
-            portfolio_chain_recovery_pressure=portfolio_chain_recovery_pressure,
+            portfolio_chain_recovery_pressure=max(
+                portfolio_chain_recovery_pressure,
+                min(1.0, target_confirmation_pressure),
+            ),
         )
         return {
             "status": "success",
@@ -2626,6 +2808,10 @@ class WindowManager:
                 0.0,
                 min(float(child_chain_trace.get("preferred_portfolio_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
             ),
+            "preferred_confirmation_descendant_sequence_match_score": max(
+                0.0,
+                min(float(child_chain_trace.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
             "descendant_hint_title_match_count": max(
                 0,
                 int(child_chain_trace.get("descendant_hint_title_match_count", 0) or 0),
@@ -2637,6 +2823,10 @@ class WindowManager:
             "portfolio_descendant_hint_title_match_count": max(
                 0,
                 int(child_chain_trace.get("portfolio_descendant_hint_title_match_count", 0) or 0),
+            ),
+            "confirmation_descendant_hint_title_match_count": max(
+                0,
+                int(child_chain_trace.get("confirmation_descendant_hint_title_match_count", 0) or 0),
             ),
             "descendant_sequence_match_count": max(
                 0,
@@ -2650,6 +2840,10 @@ class WindowManager:
                 0,
                 int(child_chain_trace.get("portfolio_descendant_sequence_match_count", 0) or 0),
             ),
+            "confirmation_descendant_sequence_match_count": max(
+                0,
+                int(child_chain_trace.get("confirmation_descendant_sequence_match_count", 0) or 0),
+            ),
             "expected_descendant_sequence_title": str(
                 child_chain_trace.get("expected_descendant_sequence_title", "") or ""
             ).strip(),
@@ -2658,6 +2852,11 @@ class WindowManager:
             ).strip(),
             "expected_program_descendant_sequence_title": expected_program_descendant_sequence_title,
             "expected_portfolio_descendant_sequence_title": expected_portfolio_descendant_sequence_title,
+            "expected_confirmation_descendant_sequence_title": str(
+                child_chain_trace.get("expected_confirmation_descendant_sequence_title", "")
+                or expected_confirmation_descendant_sequence_title
+                or ""
+            ).strip(),
             "descendant_anchor_recovery_available": bool(
                 descendant_anchor_recovery_signal.get("descendant_anchor_recovery_available", False)
             ),
@@ -3457,6 +3656,9 @@ class WindowManager:
         portfolio_hint_query: str = "",
         portfolio_preferred_title: str = "",
         portfolio_descendant_title_sequence: List[str] | None = None,
+        confirmation_hint_query: str = "",
+        confirmation_preferred_title: str = "",
+        confirmation_title_sequence: List[str] | None = None,
         preferred_title: str = "",
         hwnd: int | None = None,
         pid: int | None = None,
@@ -3507,6 +3709,16 @@ class WindowManager:
             target_context.get("program_descendant_title_sequence", []),
             target_context.get("campaign_descendant_title_sequence", []),
         )
+        resolved_confirmation_hint_query = str(
+            confirmation_hint_query or target_context.get("portfolio_confirmation_hint_query", "") or ""
+        ).strip()
+        resolved_confirmation_preferred_title = str(
+            confirmation_preferred_title or target_context.get("portfolio_confirmation_preferred_window_title", "") or ""
+        ).strip()
+        resolved_confirmation_title_sequence = self._merge_title_sequences(
+            confirmation_title_sequence,
+            target_context.get("portfolio_confirmation_title_sequence", []),
+        )
         resolved_preferred_title = str(
             preferred_title or target_context.get("preferred_window_title", "") or title_contains or ""
         ).strip()
@@ -3548,6 +3760,10 @@ class WindowManager:
             0.0,
             float(target_context.get("benchmark_target_descendant_focus_pressure", 0.0) or 0.0),
         )
+        target_confirmation_pressure = max(
+            0.0,
+            float(target_context.get("portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
         auto_follow_descendant_chain = bool(
             target_context.get("benchmark_target_app_matched", False)
         ) and (
@@ -3559,11 +3775,18 @@ class WindowManager:
             or regression_cycle_pressure > 0
             or long_horizon_pressure > 0
             or (session_cycle_pressure > 0 and target_descendant_pressure >= 0.55)
+            or target_confirmation_pressure >= 0.55
+            or bool(resolved_confirmation_title_sequence)
         )
         resolved_max_descendant_focus_steps = max(1, min(int(max_descendant_focus_steps or 1), 6))
         if auto_follow_descendant_chain and resolved_max_descendant_focus_steps <= 1:
             horizon_budget = max(0, int(target_context.get("benchmark_target_max_horizon_steps", 0) or 0))
-            if horizon_budget >= 4 or regression_cycle_pressure > 0 or long_horizon_pressure > 0:
+            if (
+                horizon_budget >= 4
+                or regression_cycle_pressure > 0
+                or long_horizon_pressure > 0
+                or target_confirmation_pressure >= 0.75
+            ):
                 resolved_max_descendant_focus_steps = 3
             else:
                 resolved_max_descendant_focus_steps = 2
@@ -3582,6 +3805,9 @@ class WindowManager:
             portfolio_hint_query=resolved_portfolio_hint_query,
             portfolio_preferred_title=resolved_portfolio_preferred_title,
             portfolio_descendant_title_sequence=resolved_portfolio_descendant_title_sequence,
+            confirmation_hint_query=resolved_confirmation_hint_query,
+            confirmation_preferred_title=resolved_confirmation_preferred_title,
+            confirmation_title_sequence=resolved_confirmation_title_sequence,
             preferred_title=resolved_preferred_title,
             window_title=resolved_window_title,
             hwnd=hwnd,

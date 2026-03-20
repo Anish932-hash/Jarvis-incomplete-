@@ -102,11 +102,15 @@ pub struct SurfaceExplorationRouterInput {
     #[serde(default)]
     pub native_portfolio_descendant_hint_title_match_count: u32,
     #[serde(default)]
+    pub native_confirmation_descendant_hint_title_match_count: u32,
+    #[serde(default)]
     pub native_descendant_sequence_match_count: u32,
     #[serde(default)]
     pub native_campaign_descendant_sequence_match_count: u32,
     #[serde(default)]
     pub native_portfolio_descendant_sequence_match_count: u32,
+    #[serde(default)]
+    pub native_confirmation_descendant_sequence_match_count: u32,
     #[serde(default)]
     pub native_descendant_chain_titles: Vec<String>,
     #[serde(default)]
@@ -119,6 +123,10 @@ pub struct SurfaceExplorationRouterInput {
     pub native_expected_campaign_descendant_sequence_title: String,
     #[serde(default)]
     pub native_expected_portfolio_descendant_sequence_title: String,
+    #[serde(default)]
+    pub native_expected_confirmation_descendant_sequence_title: String,
+    #[serde(default)]
+    pub native_preferred_confirmation_descendant_sequence_match_score: f64,
     #[serde(default)]
     pub native_descendant_anchor_recovery_available: bool,
     #[serde(default)]
@@ -245,6 +253,14 @@ pub struct SurfaceExplorationRouterInput {
     pub benchmark_target_portfolio_descendant_hint_query: String,
     #[serde(default)]
     pub benchmark_target_portfolio_preferred_window_title: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_confirmation_pressure: f64,
+    #[serde(default)]
+    pub benchmark_target_portfolio_confirmation_title_sequence: Vec<String>,
+    #[serde(default)]
+    pub benchmark_target_portfolio_confirmation_hint_query: String,
+    #[serde(default)]
+    pub benchmark_target_portfolio_confirmation_preferred_window_title: String,
     #[serde(default)]
     pub benchmark_target_portfolio_regression_wave_count: u32,
     #[serde(default)]
@@ -618,11 +634,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         input.native_campaign_descendant_hint_title_match_count;
     let native_portfolio_descendant_hint_title_match_count =
         input.native_portfolio_descendant_hint_title_match_count;
+    let native_confirmation_descendant_hint_title_match_count =
+        input.native_confirmation_descendant_hint_title_match_count;
     let native_descendant_sequence_match_count = input.native_descendant_sequence_match_count;
     let native_campaign_descendant_sequence_match_count =
         input.native_campaign_descendant_sequence_match_count;
     let native_portfolio_descendant_sequence_match_count =
         input.native_portfolio_descendant_sequence_match_count;
+    let native_confirmation_descendant_sequence_match_count =
+        input.native_confirmation_descendant_sequence_match_count;
     let native_descendant_chain_titles = input
         .native_descendant_chain_titles
         .iter()
@@ -648,6 +668,13 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         normalize_text(&input.native_expected_portfolio_descendant_sequence_title);
     let native_expected_portfolio_descendant_sequence_tokens =
         tokenize(&native_expected_portfolio_descendant_sequence_title);
+    let native_expected_confirmation_descendant_sequence_title =
+        normalize_text(&input.native_expected_confirmation_descendant_sequence_title);
+    let native_expected_confirmation_descendant_sequence_tokens =
+        tokenize(&native_expected_confirmation_descendant_sequence_title);
+    let native_preferred_confirmation_descendant_sequence_match_score = input
+        .native_preferred_confirmation_descendant_sequence_match_score
+        .clamp(0.0, 1.0);
     let native_descendant_anchor_recovery_available =
         input.native_descendant_anchor_recovery_available;
     let native_descendant_anchor_recovery_match_score =
@@ -817,6 +844,22 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         normalize_text(&input.benchmark_target_portfolio_preferred_window_title);
     let benchmark_target_portfolio_preferred_window_tokens =
         tokenize(&benchmark_target_portfolio_preferred_window_title);
+    let benchmark_target_portfolio_confirmation_pressure = input
+        .benchmark_target_portfolio_confirmation_pressure
+        .max(0.0);
+    let benchmark_target_portfolio_confirmation_sequence_tokens = input
+        .benchmark_target_portfolio_confirmation_title_sequence
+        .iter()
+        .flat_map(|value| tokenize(value))
+        .collect::<Vec<_>>();
+    let benchmark_target_portfolio_confirmation_hint_query =
+        normalize_text(&input.benchmark_target_portfolio_confirmation_hint_query);
+    let benchmark_target_portfolio_confirmation_hint_query_tokens =
+        tokenize(&benchmark_target_portfolio_confirmation_hint_query);
+    let benchmark_target_portfolio_confirmation_preferred_window_title =
+        normalize_text(&input.benchmark_target_portfolio_confirmation_preferred_window_title);
+    let benchmark_target_portfolio_confirmation_preferred_window_tokens =
+        tokenize(&benchmark_target_portfolio_confirmation_preferred_window_title);
     let benchmark_target_portfolio_regression_wave_count =
         input.benchmark_target_portfolio_regression_wave_count;
     let benchmark_target_portfolio_long_horizon_pending_count =
@@ -943,6 +986,17 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             );
         let portfolio_preferred_window_overlap =
             token_overlap(&benchmark_target_portfolio_preferred_window_tokens, &label_tokens);
+        let portfolio_confirmation_overlap = token_overlap(
+            &benchmark_target_portfolio_confirmation_sequence_tokens,
+            &label_tokens,
+        ) + token_overlap(
+            &benchmark_target_portfolio_confirmation_hint_query_tokens,
+            &label_tokens,
+        );
+        let portfolio_confirmation_preferred_window_overlap = token_overlap(
+            &benchmark_target_portfolio_confirmation_preferred_window_tokens,
+            &label_tokens,
+        );
         if descendant_title_overlap > 0 {
             rust_score += (descendant_title_overlap as f64 * 0.04).min(0.12);
             reasons.push(format!(
@@ -1013,6 +1067,26 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 portfolio_preferred_window_overlap
             ));
         }
+        if benchmark_target_app_matched
+            && benchmark_target_portfolio_confirmation_pressure > 0.0
+            && portfolio_confirmation_overlap > 0
+        {
+            rust_score += ((portfolio_confirmation_overlap as f64 * 0.045)
+                + (benchmark_target_portfolio_confirmation_pressure.min(1.0) * 0.06))
+                .min(0.2);
+            reasons.push(format!(
+                "benchmark_confirmation_chain_pressure:{}",
+                portfolio_confirmation_overlap
+            ));
+        }
+        if benchmark_target_app_matched && portfolio_confirmation_preferred_window_overlap > 0 {
+            rust_score += (portfolio_confirmation_preferred_window_overlap as f64 * 0.04)
+                .min(0.12);
+            reasons.push(format!(
+                "benchmark_confirmation_preferred_window:{}",
+                portfolio_confirmation_preferred_window_overlap
+            ));
+        }
         let preferred_descendant_overlap =
             token_overlap(&preferred_descendant_tokens, &label_tokens);
         let expected_descendant_sequence_overlap =
@@ -1023,6 +1097,10 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
         );
         let expected_portfolio_descendant_sequence_overlap = token_overlap(
             &native_expected_portfolio_descendant_sequence_tokens,
+            &label_tokens,
+        );
+        let expected_confirmation_descendant_sequence_overlap = token_overlap(
+            &native_expected_confirmation_descendant_sequence_tokens,
             &label_tokens,
         );
         let expected_program_descendant_sequence_overlap = token_overlap(
@@ -1075,6 +1153,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     native_campaign_descendant_hint_title_match_count
                 ));
             }
+            if native_confirmation_descendant_hint_title_match_count > 0 {
+                rust_score +=
+                    (0.02 + (native_confirmation_descendant_hint_title_match_count as f64 * 0.02))
+                        .min(0.08);
+                reasons.push(format!(
+                    "native_confirmation_descendant_hint_title_matches:{}",
+                    native_confirmation_descendant_hint_title_match_count
+                ));
+            }
             if native_descendant_sequence_match_count > 0 {
                 rust_score += (native_descendant_sequence_match_count as f64 * 0.02).min(0.06);
                 reasons.push(format!(
@@ -1106,6 +1193,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     native_portfolio_descendant_sequence_match_count
                 ));
             }
+            if native_confirmation_descendant_sequence_match_count > 0 {
+                rust_score +=
+                    (0.03 + (native_confirmation_descendant_sequence_match_count as f64 * 0.025))
+                        .min(0.1);
+                reasons.push(format!(
+                    "native_confirmation_descendant_sequence_matches:{}",
+                    native_confirmation_descendant_sequence_match_count
+                ));
+            }
             if expected_descendant_sequence_overlap > 0 {
                 rust_score += (expected_descendant_sequence_overlap as f64 * 0.04).min(0.1);
                 reasons.push(format!(
@@ -1130,10 +1226,29 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                     expected_portfolio_descendant_sequence_overlap
                 ));
             }
+            if expected_confirmation_descendant_sequence_overlap > 0 {
+                rust_score +=
+                    (0.03 + (expected_confirmation_descendant_sequence_overlap as f64 * 0.04))
+                        .min(0.1);
+                reasons.push(format!(
+                    "expected_confirmation_descendant_sequence_overlap:{}",
+                    expected_confirmation_descendant_sequence_overlap
+                ));
+            }
             if native_descendant_anchor_recovery_available {
                 rust_score +=
                     (0.03 + (native_descendant_anchor_recovery_match_score * 0.08)).min(0.1);
                 reasons.push("descendant_anchor_recovery_available".to_string());
+            }
+            if native_preferred_confirmation_descendant_sequence_match_score > 0.0 {
+                rust_score +=
+                    (0.03
+                        + (native_preferred_confirmation_descendant_sequence_match_score * 0.09))
+                        .min(0.12);
+                reasons.push(format!(
+                    "native_preferred_confirmation_descendant_sequence:{:.2}",
+                    native_preferred_confirmation_descendant_sequence_match_score
+                ));
             }
             if expected_program_descendant_sequence_overlap > 0 {
                 rust_score +=
@@ -1157,6 +1272,15 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 reasons.push(format!(
                     "benchmark_portfolio_pressure:{:.2}",
                     benchmark_target_portfolio_pressure
+                ));
+            }
+            if benchmark_target_portfolio_confirmation_pressure > 0.0 {
+                rust_score +=
+                    (0.03 + (benchmark_target_portfolio_confirmation_pressure.min(1.0) * 0.07))
+                        .min(0.12);
+                reasons.push(format!(
+                    "benchmark_confirmation_portfolio_pressure:{:.2}",
+                    benchmark_target_portfolio_confirmation_pressure
                 ));
             }
             if benchmark_target_portfolio_regression_wave_count > 0 {
@@ -1515,6 +1639,20 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
                 "benchmark_target_replay_completed:{}",
                 benchmark_target_replay_completed_count
             ));
+        }
+        if selected_action == "press_dialog_button"
+            && benchmark_target_portfolio_confirmation_pressure > 0.0
+            && (portfolio_confirmation_overlap > 0
+                || portfolio_confirmation_preferred_window_overlap > 0
+                || native_confirmation_descendant_sequence_match_count > 0
+                || native_preferred_confirmation_descendant_sequence_match_score > 0.0
+                || expected_confirmation_descendant_sequence_overlap > 0)
+        {
+            rust_score -= (0.08
+                + (benchmark_target_portfolio_confirmation_pressure.min(1.0) * 0.08)
+                + ((native_confirmation_descendant_sequence_match_count.min(3) as f64) * 0.02))
+                .min(0.28);
+            reasons.push("prefer_confirmation_chain_recovery".to_string());
         }
 
         if input.current_dialog_visible || active_dialog_visible || native_child_dialog_visible {
@@ -1913,7 +2051,17 @@ pub fn route_surface_exploration(payload: &Value) -> anyhow::Result<Value> {
             reasons.push("same_process_child_window_bias".to_string());
         }
 
-        let router_hint = if branch_family_continuity
+        let router_hint = if requested_descendant_chain
+            && preferred_descendant_focus
+            && benchmark_target_portfolio_confirmation_pressure > 0.0
+            && (portfolio_confirmation_overlap > 0
+                || portfolio_confirmation_preferred_window_overlap > 0
+                || native_confirmation_descendant_sequence_match_count > 0
+                || native_preferred_confirmation_descendant_sequence_match_score > 0.0
+                || expected_confirmation_descendant_sequence_overlap > 0)
+        {
+            "prefer_confirmation_chain_recovery"
+        } else if branch_family_continuity
             && matches!(
                 latest_transition.as_str(),
                 "child_window" | "child_window_chain" | "dialog_shift"
@@ -2726,6 +2874,86 @@ mod tests {
             value
                 .as_str()
                 .map(|reason| reason.starts_with("benchmark_portfolio_chain_pressure:"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn route_surface_exploration_prefers_confirmation_chain_recovery() {
+        let payload = json!({
+            "query": "Allow device",
+            "current_window_title": "Bluetooth & devices",
+            "current_window_app_name": "settings",
+            "current_reacquired_title": "Confirm pairing",
+            "current_reacquired_app_name": "settings",
+            "native_descendant_chain_depth": 3,
+            "native_descendant_dialog_chain_depth": 2,
+            "native_descendant_adoption_available": true,
+            "native_descendant_adoption_match_score": 0.9,
+            "native_descendant_focus_strength": 0.95,
+            "native_preferred_descendant_match_score": 0.96,
+            "native_confirmation_descendant_hint_title_match_count": 2,
+            "native_confirmation_descendant_sequence_match_count": 2,
+            "native_expected_confirmation_descendant_sequence_title": "Allow device",
+            "native_preferred_confirmation_descendant_sequence_match_score": 0.91,
+            "preferred_descendant_title": "Confirm pairing",
+            "preferred_descendant_hwnd": 5003,
+            "benchmark_target_app_name": "settings",
+            "benchmark_target_app_matched": true,
+            "benchmark_target_descendant_focus_pressure": 0.92,
+            "benchmark_target_portfolio_pressure": 1.2,
+            "benchmark_target_portfolio_confirmation_pressure": 0.95,
+            "benchmark_target_portfolio_confirmation_title_sequence": ["Confirm pairing", "Allow device"],
+            "benchmark_target_portfolio_confirmation_hint_query": "confirm pairing | allow device",
+            "benchmark_target_portfolio_confirmation_preferred_window_title": "Allow device",
+            "selection_rows": [
+                {
+                    "selection_key": "branch_action|5003|focus_related_window_chain|adopt child surface chain: confirm pairing",
+                    "kind": "branch_action",
+                    "candidate_id": "5003",
+                    "label": "Adopt child surface chain: Confirm pairing",
+                    "selected_action": "focus_related_window_chain",
+                    "confidence": 0.84
+                },
+                {
+                    "selection_key": "branch_action||press_dialog_button|confirm",
+                    "kind": "branch_action",
+                    "candidate_id": "",
+                    "label": "Press dialog button: Confirm",
+                    "selected_action": "press_dialog_button",
+                    "confidence": 0.83
+                }
+            ]
+        });
+
+        let result = route_surface_exploration(&payload).expect("router payload should parse");
+        let rows = result
+            .get("ranked_candidates")
+            .and_then(Value::as_array)
+            .expect("ranked candidates should be present");
+        let reasons = rows
+            .first()
+            .and_then(|row| row.get("reasons"))
+            .and_then(Value::as_array)
+            .expect("top-ranked row should expose reasons");
+        assert_eq!(
+            rows.first()
+                .and_then(|row| row.get("selected_action"))
+                .and_then(Value::as_str),
+            Some("focus_related_window_chain")
+        );
+        assert_eq!(
+            result.get("router_hint").and_then(Value::as_str),
+            Some("prefer_confirmation_chain_recovery")
+        );
+        assert!(reasons.iter().any(|value| {
+            value
+                .as_str()
+                .map(|reason| {
+                    reason == "prefer_confirmation_chain_recovery"
+                        || reason.starts_with("benchmark_confirmation_chain_pressure:")
+                        || reason.starts_with("native_confirmation_descendant_sequence_matches:")
+                })
                 .unwrap_or(false)
         }));
     }

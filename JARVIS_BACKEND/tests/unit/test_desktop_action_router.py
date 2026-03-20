@@ -948,6 +948,81 @@ def test_desktop_action_router_branch_scoring_prefers_portfolio_guided_descendan
     assert chain_score > plain_focus_score
 
 
+def test_desktop_action_router_branch_scoring_prefers_confirmation_chain_recovery_focus() -> None:
+    router = _build_router({})
+    branch_context = {
+        "active": True,
+        "current_window_title": "Bluetooth & devices",
+        "current_window_app_name": "settings",
+        "current_reacquired_title": "Confirm pairing",
+        "current_reacquired_app_name": "settings",
+        "current_reacquired_hwnd": 5003,
+        "native_descendant_chain_depth": 3,
+        "native_descendant_dialog_chain_depth": 2,
+        "native_descendant_adoption_available": True,
+        "native_descendant_adoption_match_score": 0.9,
+        "native_descendant_focus_strength": 0.95,
+        "native_preferred_descendant_match_score": 0.96,
+        "native_confirmation_descendant_hint_title_match_count": 2,
+        "native_confirmation_descendant_sequence_match_count": 2,
+        "native_expected_confirmation_descendant_sequence_title": "Allow device",
+        "native_preferred_confirmation_descendant_sequence_match_score": 0.91,
+        "preferred_descendant_title": "Confirm pairing",
+        "preferred_descendant_hwnd": 5003,
+        "native_child_chain_signature": "5001|1|3|Pair device|Confirm pairing|Allow device",
+        "benchmark_target_app_name": "settings",
+        "benchmark_target_app_matched": True,
+        "benchmark_target_app_match_score": 1.0,
+        "benchmark_target_descendant_focus_pressure": 0.92,
+        "benchmark_target_portfolio_pressure": 1.2,
+        "benchmark_target_portfolio_confirmation_pressure": 0.95,
+        "benchmark_target_portfolio_confirmation_title_sequence": ["Confirm pairing", "Allow device"],
+        "benchmark_target_portfolio_confirmation_hint_query": "confirm pairing | allow device",
+        "benchmark_target_portfolio_confirmation_preferred_window_title": "Allow device",
+        "recent_selection_keys": set(),
+    }
+    chain_row = {
+        "kind": "branch_action",
+        "selected_action": "focus_related_window_chain",
+        "candidate_id": "5003",
+        "label": "Adopt child surface chain: Confirm pairing",
+        "action_payload": {
+            "action": "focus_related_window_chain",
+            "window_title": "Allow device",
+            "title": "Confirm pairing",
+            "preferred_title": "Confirm pairing",
+            "confirmation_hint_query": "confirm pairing | allow device",
+            "confirmation_preferred_title": "Allow device",
+            "confirmation_title_sequence": ["Confirm pairing", "Allow device"],
+            "hwnd": 5001,
+            "follow_descendant_chain": True,
+            "max_descendant_focus_steps": 4,
+        },
+    }
+    dialog_row = {
+        "kind": "branch_action",
+        "selected_action": "press_dialog_button",
+        "candidate_id": "dialog-confirm",
+        "label": "Press dialog button: Confirm",
+        "action_payload": {
+            "action": "press_dialog_button",
+            "window_title": "Confirm pairing",
+            "button_label": "Confirm",
+        },
+    }
+
+    chain_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=chain_row,
+        branch_context=branch_context,
+    )
+    dialog_score = router._surface_exploration_branch_selection_score(  # noqa: SLF001
+        row=dialog_row,
+        branch_context=branch_context,
+    )
+
+    assert chain_score > dialog_score
+
+
 def test_desktop_action_router_branch_scoring_uses_native_descendant_focus_strength() -> None:
     router = _build_router({})
     branch_context = {

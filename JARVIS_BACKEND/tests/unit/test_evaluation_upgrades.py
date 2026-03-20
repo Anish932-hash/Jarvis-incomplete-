@@ -1834,6 +1834,10 @@ def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_si
                                 "portfolio_descendant_title_sequence": ["Confirm pairing", "Allow device"],
                                 "portfolio_descendant_hint_query": "Confirm pairing | Allow device",
                                 "portfolio_preferred_window_title": "Allow device",
+                                "portfolio_confirmation_pressure": 0.92,
+                                "portfolio_confirmation_title_sequence": ["Confirm pairing", "Allow device"],
+                                "portfolio_confirmation_hint_query": "confirm pairing | allow device",
+                                "portfolio_confirmation_preferred_window_title": "Allow device",
                             }
                         ]
                     },
@@ -1854,4 +1858,8 @@ def test_evaluation_runner_native_control_targets_aggregates_portfolio_native_si
     assert list(target_row["portfolio_descendant_title_sequence"]) == ["Confirm pairing", "Allow device"]
     assert str(target_row["portfolio_hint_query"]) == "confirm pairing | allow device"
     assert str(target_row["portfolio_preferred_window_title"]) == "Allow device"
+    assert float(target_row["portfolio_confirmation_pressure"]) > 0.5
+    assert list(target_row["portfolio_confirmation_title_sequence"]) == ["Confirm pairing", "Allow device"]
+    assert str(target_row["portfolio_confirmation_hint_query"]) == "confirm pairing | allow device"
+    assert str(target_row["portfolio_confirmation_preferred_window_title"]) == "Allow device"
     assert float(target_row["control_biases"]["descendant_focus"]) >= 0.94

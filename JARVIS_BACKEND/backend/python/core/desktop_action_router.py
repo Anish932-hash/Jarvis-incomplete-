@@ -3532,6 +3532,10 @@ class DesktopActionRouter:
                 "benchmark_target_portfolio_descendant_title_sequence": [],
                 "benchmark_target_portfolio_descendant_hint_query": "",
                 "benchmark_target_portfolio_preferred_window_title": "",
+                "benchmark_target_portfolio_confirmation_pressure": 0.0,
+                "benchmark_target_portfolio_confirmation_title_sequence": [],
+                "benchmark_target_portfolio_confirmation_hint_query": "",
+                "benchmark_target_portfolio_confirmation_preferred_window_title": "",
                 "benchmark_target_portfolio_latest_wave_status": "",
                 "benchmark_target_portfolio_latest_wave_stop_reason": "",
                 "benchmark_target_session_cycle_count": 0,
@@ -3578,6 +3582,12 @@ class DesktopActionRouter:
             )
             row_portfolio_preferred_window_title = self._normalize_probe_text(
                 row.get("portfolio_preferred_window_title", "")
+            )
+            row_portfolio_confirmation_hint_query = self._normalize_probe_text(
+                row.get("portfolio_confirmation_hint_query", "")
+            )
+            row_portfolio_confirmation_preferred_window_title = self._normalize_probe_text(
+                row.get("portfolio_confirmation_preferred_window_title", "")
             )
             if any(term and term == target_app_name for term in candidate_terms):
                 row_score = 1.0
@@ -3641,6 +3651,18 @@ class DesktopActionRouter:
                         self._text_match_score(requested_query, row_portfolio_preferred_window_title),
                         self._text_match_score(row_portfolio_preferred_window_title, requested_query),
                     )
+                if row_portfolio_confirmation_hint_query:
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, row_portfolio_confirmation_hint_query),
+                        self._text_match_score(row_portfolio_confirmation_hint_query, requested_query),
+                    )
+                if row_portfolio_confirmation_preferred_window_title:
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(requested_query, row_portfolio_confirmation_preferred_window_title),
+                        self._text_match_score(row_portfolio_confirmation_preferred_window_title, requested_query),
+                    )
             if row_hint_query:
                 for term in candidate_terms:
                     if not term:
@@ -3703,6 +3725,24 @@ class DesktopActionRouter:
                         row_score,
                         self._text_match_score(term, row_portfolio_preferred_window_title),
                         self._text_match_score(row_portfolio_preferred_window_title, term),
+                    )
+            if row_portfolio_confirmation_hint_query:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(term, row_portfolio_confirmation_hint_query),
+                        self._text_match_score(row_portfolio_confirmation_hint_query, term),
+                    )
+            if row_portfolio_confirmation_preferred_window_title:
+                for term in candidate_terms:
+                    if not term:
+                        continue
+                    row_score = max(
+                        row_score,
+                        self._text_match_score(term, row_portfolio_confirmation_preferred_window_title),
+                        self._text_match_score(row_portfolio_confirmation_preferred_window_title, term),
                     )
             row_priority = (
                 max(0.0, float(row.get("priority", 0.0) or 0.0))
@@ -3815,6 +3855,18 @@ class DesktopActionRouter:
             )[:8] if isinstance(best_row.get("portfolio_descendant_title_sequence", []), list) else [],
             "benchmark_target_portfolio_descendant_hint_query": str(best_row.get("portfolio_descendant_hint_query", "") or "").strip(),
             "benchmark_target_portfolio_preferred_window_title": str(best_row.get("portfolio_preferred_window_title", "") or "").strip(),
+            "benchmark_target_portfolio_confirmation_pressure": round(float(best_row.get("portfolio_confirmation_pressure", 0.0) or 0.0), 6),
+            "benchmark_target_portfolio_confirmation_title_sequence": self._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in best_row.get("portfolio_confirmation_title_sequence", [])
+                    if str(item).strip()
+                ]
+            )[:8] if isinstance(best_row.get("portfolio_confirmation_title_sequence", []), list) else [],
+            "benchmark_target_portfolio_confirmation_hint_query": str(best_row.get("portfolio_confirmation_hint_query", "") or "").strip(),
+            "benchmark_target_portfolio_confirmation_preferred_window_title": str(
+                best_row.get("portfolio_confirmation_preferred_window_title", "") or ""
+            ).strip(),
             "benchmark_target_portfolio_latest_wave_status": str(best_row.get("portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(best_row.get("portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(best_row.get("session_cycle_count", 0) or 0)),
@@ -9441,11 +9493,23 @@ class DesktopActionRouter:
             "native_campaign_descendant_hint_title_match_count": int(
                 window_reacquisition.get("campaign_descendant_hint_title_match_count", 0) or 0
             ),
+            "native_portfolio_descendant_hint_title_match_count": int(
+                window_reacquisition.get("portfolio_descendant_hint_title_match_count", 0) or 0
+            ),
+            "native_confirmation_descendant_hint_title_match_count": int(
+                window_reacquisition.get("confirmation_descendant_hint_title_match_count", 0) or 0
+            ),
             "native_descendant_sequence_match_count": int(
                 window_reacquisition.get("descendant_sequence_match_count", 0) or 0
             ),
             "native_campaign_descendant_sequence_match_count": int(
                 window_reacquisition.get("campaign_descendant_sequence_match_count", 0) or 0
+            ),
+            "native_portfolio_descendant_sequence_match_count": int(
+                window_reacquisition.get("portfolio_descendant_sequence_match_count", 0) or 0
+            ),
+            "native_confirmation_descendant_sequence_match_count": int(
+                window_reacquisition.get("confirmation_descendant_sequence_match_count", 0) or 0
             ),
             "native_expected_descendant_sequence_title": str(
                 window_reacquisition.get("expected_descendant_sequence_title", "") or ""
@@ -9453,6 +9517,15 @@ class DesktopActionRouter:
             "native_expected_campaign_descendant_sequence_title": str(
                 window_reacquisition.get("expected_campaign_descendant_sequence_title", "") or ""
             ).strip(),
+            "native_expected_portfolio_descendant_sequence_title": str(
+                window_reacquisition.get("expected_portfolio_descendant_sequence_title", "") or ""
+            ).strip(),
+            "native_expected_confirmation_descendant_sequence_title": str(
+                window_reacquisition.get("expected_confirmation_descendant_sequence_title", "") or ""
+            ).strip(),
+            "native_preferred_confirmation_descendant_sequence_match_score": float(
+                window_reacquisition.get("preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0
+            ),
             "native_descendant_anchor_recovery_available": bool(
                 window_reacquisition.get("descendant_anchor_recovery_available", False)
             ),
@@ -10421,9 +10494,17 @@ class DesktopActionRouter:
             0,
             int(state_summary.get("native_portfolio_descendant_hint_title_match_count", 0) or 0),
         )
+        native_confirmation_descendant_hint_title_match_count = max(
+            0,
+            int(state_summary.get("native_confirmation_descendant_hint_title_match_count", 0) or 0),
+        )
         native_portfolio_descendant_sequence_match_count = max(
             0,
             int(state_summary.get("native_portfolio_descendant_sequence_match_count", 0) or 0),
+        )
+        native_confirmation_descendant_sequence_match_count = max(
+            0,
+            int(state_summary.get("native_confirmation_descendant_sequence_match_count", 0) or 0),
         )
         native_descendant_chain_titles = [
             str(item).strip()
@@ -10441,6 +10522,13 @@ class DesktopActionRouter:
         native_expected_portfolio_descendant_sequence_title = str(
             state_summary.get("native_expected_portfolio_descendant_sequence_title", "") or ""
         ).strip()
+        native_expected_confirmation_descendant_sequence_title = str(
+            state_summary.get("native_expected_confirmation_descendant_sequence_title", "") or ""
+        ).strip()
+        native_preferred_confirmation_descendant_sequence_match_score = max(
+            0.0,
+            min(float(state_summary.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+        )
         native_descendant_anchor_recovery_available = bool(
             state_summary.get("native_descendant_anchor_recovery_available", False)
         )
@@ -10530,14 +10618,18 @@ class DesktopActionRouter:
             "native_descendant_hint_title_match_count": native_descendant_hint_title_match_count,
             "native_campaign_descendant_hint_title_match_count": native_campaign_descendant_hint_title_match_count,
             "native_portfolio_descendant_hint_title_match_count": native_portfolio_descendant_hint_title_match_count,
+            "native_confirmation_descendant_hint_title_match_count": native_confirmation_descendant_hint_title_match_count,
             "native_descendant_sequence_match_count": native_descendant_sequence_match_count,
             "native_campaign_descendant_sequence_match_count": native_campaign_descendant_sequence_match_count,
             "native_portfolio_descendant_sequence_match_count": native_portfolio_descendant_sequence_match_count,
+            "native_confirmation_descendant_sequence_match_count": native_confirmation_descendant_sequence_match_count,
             "preferred_descendant_title": preferred_descendant_title,
             "preferred_descendant_hwnd": preferred_descendant_hwnd,
             "native_expected_descendant_sequence_title": native_expected_descendant_sequence_title,
             "native_expected_campaign_descendant_sequence_title": native_expected_campaign_descendant_sequence_title,
             "native_expected_portfolio_descendant_sequence_title": native_expected_portfolio_descendant_sequence_title,
+            "native_expected_confirmation_descendant_sequence_title": native_expected_confirmation_descendant_sequence_title,
+            "native_preferred_confirmation_descendant_sequence_match_score": native_preferred_confirmation_descendant_sequence_match_score,
             "native_descendant_anchor_recovery_available": native_descendant_anchor_recovery_available,
             "native_descendant_anchor_recovery_match_score": native_descendant_anchor_recovery_match_score,
             "native_descendant_anchor_recovery_pressure": native_descendant_anchor_recovery_pressure,
@@ -10656,6 +10748,21 @@ class DesktopActionRouter:
             ] if isinstance(native_target_context.get("benchmark_target_portfolio_descendant_title_sequence", []), list) else [],
             "benchmark_target_portfolio_descendant_hint_query": str(native_target_context.get("benchmark_target_portfolio_descendant_hint_query", "") or "").strip(),
             "benchmark_target_portfolio_preferred_window_title": str(native_target_context.get("benchmark_target_portfolio_preferred_window_title", "") or "").strip(),
+            "benchmark_target_portfolio_confirmation_pressure": max(
+                0.0,
+                float(native_target_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
+            ),
+            "benchmark_target_portfolio_confirmation_title_sequence": [
+                str(item).strip()
+                for item in native_target_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(native_target_context.get("benchmark_target_portfolio_confirmation_title_sequence", []), list) else [],
+            "benchmark_target_portfolio_confirmation_hint_query": str(
+                native_target_context.get("benchmark_target_portfolio_confirmation_hint_query", "") or ""
+            ).strip(),
+            "benchmark_target_portfolio_confirmation_preferred_window_title": str(
+                native_target_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "") or ""
+            ).strip(),
             "benchmark_target_portfolio_latest_wave_status": str(native_target_context.get("benchmark_target_portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(native_target_context.get("benchmark_target_portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(native_target_context.get("benchmark_target_session_cycle_count", 0) or 0)),
@@ -10746,6 +10853,10 @@ class DesktopActionRouter:
             0,
             int(branch_context.get("native_portfolio_descendant_hint_title_match_count", 0) or 0),
         )
+        native_confirmation_descendant_hint_title_match_count = max(
+            0,
+            int(branch_context.get("native_confirmation_descendant_hint_title_match_count", 0) or 0),
+        )
         native_descendant_sequence_match_count = max(
             0,
             int(branch_context.get("native_descendant_sequence_match_count", 0) or 0),
@@ -10757,6 +10868,10 @@ class DesktopActionRouter:
         native_portfolio_descendant_sequence_match_count = max(
             0,
             int(branch_context.get("native_portfolio_descendant_sequence_match_count", 0) or 0),
+        )
+        native_confirmation_descendant_sequence_match_count = max(
+            0,
+            int(branch_context.get("native_confirmation_descendant_sequence_match_count", 0) or 0),
         )
         native_descendant_chain_titles = {
             self._normalize_probe_text(item)
@@ -10773,6 +10888,13 @@ class DesktopActionRouter:
         )
         native_expected_portfolio_descendant_sequence_title = self._normalize_probe_text(
             branch_context.get("native_expected_portfolio_descendant_sequence_title", "")
+        )
+        native_expected_confirmation_descendant_sequence_title = self._normalize_probe_text(
+            branch_context.get("native_expected_confirmation_descendant_sequence_title", "")
+        )
+        native_preferred_confirmation_descendant_sequence_match_score = max(
+            0.0,
+            min(float(branch_context.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
         )
         native_descendant_anchor_recovery_available = bool(
             branch_context.get("native_descendant_anchor_recovery_available", False)
@@ -10912,6 +11034,21 @@ class DesktopActionRouter:
         )
         benchmark_target_portfolio_preferred_window_title = self._normalize_probe_text(
             branch_context.get("benchmark_target_portfolio_preferred_window_title", "")
+        )
+        benchmark_target_portfolio_confirmation_pressure = max(
+            0.0,
+            float(branch_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
+        benchmark_target_portfolio_confirmation_title_sequence = [
+            self._normalize_probe_text(item)
+            for item in branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", []), list) else []
+        benchmark_target_portfolio_confirmation_hint_query = self._normalize_probe_text(
+            branch_context.get("benchmark_target_portfolio_confirmation_hint_query", "")
+        )
+        benchmark_target_portfolio_confirmation_preferred_window_title = self._normalize_probe_text(
+            branch_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "")
         )
         benchmark_target_campaign_regression_cycle_count = max(
             0,
@@ -11102,6 +11239,33 @@ class DesktopActionRouter:
             self._text_match_score(label, benchmark_target_portfolio_preferred_window_title),
             self._text_match_score(action_payload.get("window_title", ""), benchmark_target_portfolio_preferred_window_title),
         ) if benchmark_target_portfolio_preferred_window_title else 0.0
+        target_portfolio_confirmation_overlap = 0.0
+        for hint in benchmark_target_portfolio_confirmation_title_sequence:
+            target_portfolio_confirmation_overlap = max(
+                target_portfolio_confirmation_overlap,
+                self._text_match_score(label, hint),
+                self._text_match_score(action_payload.get("window_title", ""), hint),
+            )
+        if benchmark_target_portfolio_confirmation_hint_query:
+            target_portfolio_confirmation_overlap = max(
+                target_portfolio_confirmation_overlap,
+                self._text_match_score(label, benchmark_target_portfolio_confirmation_hint_query),
+                self._text_match_score(action_payload.get("window_title", ""), benchmark_target_portfolio_confirmation_hint_query),
+            )
+        target_portfolio_confirmation_preferred_overlap = max(
+            self._text_match_score(label, benchmark_target_portfolio_confirmation_preferred_window_title),
+            self._text_match_score(action_payload.get("window_title", ""), benchmark_target_portfolio_confirmation_preferred_window_title),
+        ) if benchmark_target_portfolio_confirmation_preferred_window_title else 0.0
+        if benchmark_target_app_matched and benchmark_target_portfolio_confirmation_pressure > 0.0:
+            if target_portfolio_confirmation_overlap > 0.0:
+                score += min(
+                    0.2,
+                    0.05
+                    + (0.08 * target_portfolio_confirmation_overlap)
+                    + (0.06 * min(1.0, benchmark_target_portfolio_confirmation_pressure)),
+                )
+            if target_portfolio_confirmation_preferred_overlap > 0.0:
+                score += min(0.16, 0.04 + (0.08 * target_portfolio_confirmation_preferred_overlap))
         expected_program_descendant_overlap = max(
             self._text_match_score(label, native_expected_program_descendant_sequence_title),
             self._text_match_score(action_payload.get("window_title", ""), native_expected_program_descendant_sequence_title),
@@ -11110,6 +11274,10 @@ class DesktopActionRouter:
             self._text_match_score(label, native_expected_portfolio_descendant_sequence_title),
             self._text_match_score(action_payload.get("window_title", ""), native_expected_portfolio_descendant_sequence_title),
         ) if native_expected_portfolio_descendant_sequence_title else 0.0
+        expected_confirmation_descendant_overlap = max(
+            self._text_match_score(label, native_expected_confirmation_descendant_sequence_title),
+            self._text_match_score(action_payload.get("window_title", ""), native_expected_confirmation_descendant_sequence_title),
+        ) if native_expected_confirmation_descendant_sequence_title else 0.0
         expected_anchor_recovery_overlap = max(
             self._text_match_score(label, native_expected_anchor_recovery_title),
             self._text_match_score(action_payload.get("window_title", ""), native_expected_anchor_recovery_title),
@@ -11146,12 +11314,16 @@ class DesktopActionRouter:
                 score += min(0.05, native_campaign_descendant_hint_title_match_count * 0.02)
             if native_portfolio_descendant_hint_title_match_count > 0:
                 score += min(0.05, native_portfolio_descendant_hint_title_match_count * 0.02)
+            if native_confirmation_descendant_hint_title_match_count > 0:
+                score += min(0.08, 0.02 + (native_confirmation_descendant_hint_title_match_count * 0.02))
             if native_descendant_sequence_match_count > 0:
                 score += min(0.06, native_descendant_sequence_match_count * 0.02)
             if native_campaign_descendant_sequence_match_count > 0:
                 score += min(0.05, native_campaign_descendant_sequence_match_count * 0.02)
             if native_portfolio_descendant_sequence_match_count > 0:
                 score += min(0.05, native_portfolio_descendant_sequence_match_count * 0.02)
+            if native_confirmation_descendant_sequence_match_count > 0:
+                score += min(0.1, 0.03 + (native_confirmation_descendant_sequence_match_count * 0.025))
             if native_expected_descendant_sequence_title:
                 expected_descendant_overlap = max(
                     self._text_match_score(label, native_expected_descendant_sequence_title),
@@ -11168,6 +11340,13 @@ class DesktopActionRouter:
                     score += min(0.07, 0.02 + (0.06 * expected_campaign_overlap))
             if expected_portfolio_descendant_overlap > 0.0:
                 score += min(0.07, 0.02 + (0.06 * expected_portfolio_descendant_overlap))
+            if expected_confirmation_descendant_overlap > 0.0:
+                score += min(0.1, 0.03 + (0.07 * expected_confirmation_descendant_overlap))
+            if native_preferred_confirmation_descendant_sequence_match_score > 0.0:
+                score += min(
+                    0.12,
+                    0.03 + (0.09 * native_preferred_confirmation_descendant_sequence_match_score),
+                )
             if native_descendant_anchor_recovery_available:
                 score += min(
                     0.1,
@@ -11179,6 +11358,10 @@ class DesktopActionRouter:
                 score += min(0.08, 0.03 + (0.05 * target_portfolio_hint_overlap))
             if target_portfolio_preferred_overlap > 0.0:
                 score += min(0.06, 0.02 + (0.04 * target_portfolio_preferred_overlap))
+            if target_portfolio_confirmation_overlap > 0.0:
+                score += min(0.12, 0.04 + (0.07 * target_portfolio_confirmation_overlap))
+            if target_portfolio_confirmation_preferred_overlap > 0.0:
+                score += min(0.1, 0.03 + (0.06 * target_portfolio_confirmation_preferred_overlap))
             if expected_anchor_recovery_overlap > 0.0:
                 score += min(0.09, 0.03 + (0.06 * expected_anchor_recovery_overlap))
             if native_child_chain_signature:
@@ -11198,8 +11381,17 @@ class DesktopActionRouter:
                     score += min(0.06, 0.02 + (0.04 * target_campaign_sequence_overlap))
                 if target_portfolio_hint_overlap > 0.0:
                     score += min(0.06, 0.02 + (0.04 * target_portfolio_hint_overlap))
+                if target_portfolio_confirmation_overlap > 0.0:
+                    score += min(0.1, 0.03 + (0.06 * target_portfolio_confirmation_overlap))
                 if benchmark_target_app_matched and descendant_chain_pressure > 0.0:
                     score += 0.03 + (0.08 * descendant_chain_pressure)
+                if benchmark_target_portfolio_confirmation_pressure > 0.0:
+                    score += min(
+                        0.16,
+                        0.04
+                        + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
+                        + (0.03 * min(native_confirmation_descendant_sequence_match_count, 3)),
+                    )
                 if native_descendant_anchor_recovery_available:
                     score += min(
                         0.14,
@@ -11211,6 +11403,23 @@ class DesktopActionRouter:
                     )
         if native_descendant_adoption_available and focus_like_action:
             score += min(0.1, 0.03 + (native_descendant_adoption_match_score * 0.08))
+        if (
+            preferred_descendant_focus
+            and benchmark_target_portfolio_confirmation_pressure > 0.0
+            and (
+                target_portfolio_confirmation_overlap > 0.0
+                or target_portfolio_confirmation_preferred_overlap > 0.0
+                or native_confirmation_descendant_sequence_match_count > 0
+                or native_preferred_confirmation_descendant_sequence_match_score > 0.0
+            )
+        ):
+            score += min(
+                0.24,
+                0.07
+                + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
+                + (0.04 * min(1.0, native_preferred_confirmation_descendant_sequence_match_score))
+                + (0.02 * min(native_confirmation_descendant_sequence_match_count, 3)),
+            )
         navigation_actions = {
             "select_tree_item",
             "select_list_item",
@@ -11223,6 +11432,23 @@ class DesktopActionRouter:
             score += 0.06 + (0.18 * benchmark_dialog_pressure)
         elif kind == "branch_action" and benchmark_dialog_pressure >= 0.6:
             score -= 0.04 * benchmark_dialog_pressure
+        if (
+            selected_action == "press_dialog_button"
+            and benchmark_target_portfolio_confirmation_pressure > 0.0
+            and (
+                target_portfolio_confirmation_overlap > 0.0
+                or target_portfolio_confirmation_preferred_overlap > 0.0
+                or native_confirmation_descendant_sequence_match_count > 0
+                or native_preferred_confirmation_descendant_sequence_match_score > 0.0
+                or expected_confirmation_descendant_overlap > 0.0
+            )
+        ):
+            score -= min(
+                0.28,
+                0.08
+                + (0.08 * min(1.0, benchmark_target_portfolio_confirmation_pressure))
+                + (0.03 * min(native_confirmation_descendant_sequence_match_count, 3)),
+            )
         if preferred_descendant_focus and benchmark_descendant_focus_pressure > 0.0:
             score += 0.05 + (0.16 * benchmark_descendant_focus_pressure)
         if selected_action in navigation_actions and benchmark_navigation_pressure > 0.0:
@@ -11510,9 +11736,11 @@ class DesktopActionRouter:
             "native_descendant_hint_title_match_count": max(0, int(branch_context.get("native_descendant_hint_title_match_count", 0) or 0)),
             "native_campaign_descendant_hint_title_match_count": max(0, int(branch_context.get("native_campaign_descendant_hint_title_match_count", 0) or 0)),
             "native_portfolio_descendant_hint_title_match_count": max(0, int(branch_context.get("native_portfolio_descendant_hint_title_match_count", 0) or 0)),
+            "native_confirmation_descendant_hint_title_match_count": max(0, int(branch_context.get("native_confirmation_descendant_hint_title_match_count", 0) or 0)),
             "native_descendant_sequence_match_count": max(0, int(branch_context.get("native_descendant_sequence_match_count", 0) or 0)),
             "native_campaign_descendant_sequence_match_count": max(0, int(branch_context.get("native_campaign_descendant_sequence_match_count", 0) or 0)),
             "native_portfolio_descendant_sequence_match_count": max(0, int(branch_context.get("native_portfolio_descendant_sequence_match_count", 0) or 0)),
+            "native_confirmation_descendant_sequence_match_count": max(0, int(branch_context.get("native_confirmation_descendant_sequence_match_count", 0) or 0)),
             "native_descendant_chain_titles": [
                 str(item).strip()
                 for item in branch_context.get("native_descendant_chain_titles", [])
@@ -11523,6 +11751,11 @@ class DesktopActionRouter:
             "native_expected_descendant_sequence_title": str(branch_context.get("native_expected_descendant_sequence_title", "") or "").strip(),
             "native_expected_campaign_descendant_sequence_title": str(branch_context.get("native_expected_campaign_descendant_sequence_title", "") or "").strip(),
             "native_expected_portfolio_descendant_sequence_title": str(branch_context.get("native_expected_portfolio_descendant_sequence_title", "") or "").strip(),
+            "native_expected_confirmation_descendant_sequence_title": str(branch_context.get("native_expected_confirmation_descendant_sequence_title", "") or "").strip(),
+            "native_preferred_confirmation_descendant_sequence_match_score": max(
+                0.0,
+                min(float(branch_context.get("native_preferred_confirmation_descendant_sequence_match_score", 0.0) or 0.0), 1.0),
+            ),
             "native_descendant_anchor_recovery_available": bool(branch_context.get("native_descendant_anchor_recovery_available", False)),
             "native_descendant_anchor_recovery_match_score": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0)),
             "native_descendant_anchor_recovery_pressure": max(0.0, min(float(branch_context.get("native_descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0)),
@@ -11627,6 +11860,16 @@ class DesktopActionRouter:
             ] if isinstance(branch_context.get("benchmark_target_portfolio_descendant_title_sequence", []), list) else [],
             "benchmark_target_portfolio_descendant_hint_query": str(branch_context.get("benchmark_target_portfolio_descendant_hint_query", "") or "").strip(),
             "benchmark_target_portfolio_preferred_window_title": str(branch_context.get("benchmark_target_portfolio_preferred_window_title", "") or "").strip(),
+            "benchmark_target_portfolio_confirmation_pressure": max(0.0, float(branch_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0)),
+            "benchmark_target_portfolio_confirmation_title_sequence": [
+                str(item).strip()
+                for item in branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
+                if str(item).strip()
+            ] if isinstance(branch_context.get("benchmark_target_portfolio_confirmation_title_sequence", []), list) else [],
+            "benchmark_target_portfolio_confirmation_hint_query": str(branch_context.get("benchmark_target_portfolio_confirmation_hint_query", "") or "").strip(),
+            "benchmark_target_portfolio_confirmation_preferred_window_title": str(
+                branch_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "") or ""
+            ).strip(),
             "benchmark_target_portfolio_latest_wave_status": str(branch_context.get("benchmark_target_portfolio_latest_wave_status", "") or "").strip(),
             "benchmark_target_portfolio_latest_wave_stop_reason": str(branch_context.get("benchmark_target_portfolio_latest_wave_stop_reason", "") or "").strip(),
             "benchmark_target_session_cycle_count": max(0, int(branch_context.get("benchmark_target_session_cycle_count", 0) or 0)),
@@ -14950,8 +15193,19 @@ class DesktopActionRouter:
             for item in native_target_context.get("benchmark_target_portfolio_descendant_title_sequence", [])
             if str(item).strip()
         ] if isinstance(native_target_context.get("benchmark_target_portfolio_descendant_title_sequence", []), list) else []
+        benchmark_portfolio_confirmation_title_sequence = [
+            str(item).strip()
+            for item in native_target_context.get("benchmark_target_portfolio_confirmation_title_sequence", [])
+            if str(item).strip()
+        ] if isinstance(native_target_context.get("benchmark_target_portfolio_confirmation_title_sequence", []), list) else []
         benchmark_portfolio_preferred_title = str(
             native_target_context.get("benchmark_target_portfolio_preferred_window_title", "") or ""
+        ).strip()
+        benchmark_portfolio_confirmation_hint_query = str(
+            native_target_context.get("benchmark_target_portfolio_confirmation_hint_query", "") or ""
+        ).strip()
+        benchmark_portfolio_confirmation_preferred_title = str(
+            native_target_context.get("benchmark_target_portfolio_confirmation_preferred_window_title", "") or ""
         ).strip()
         benchmark_preferred_title = str(
             native_target_context.get("benchmark_target_preferred_window_title", "") or ""
@@ -14993,6 +15247,10 @@ class DesktopActionRouter:
             0.0,
             float(native_target_context.get("benchmark_target_portfolio_pressure", 0.0) or 0.0),
         )
+        benchmark_target_portfolio_confirmation_pressure = max(
+            0.0,
+            float(native_target_context.get("benchmark_target_portfolio_confirmation_pressure", 0.0) or 0.0),
+        )
         benchmark_target_portfolio_regression_wave_count = max(
             0,
             int(native_target_context.get("benchmark_target_portfolio_regression_wave_count", 0) or 0),
@@ -15007,6 +15265,7 @@ class DesktopActionRouter:
             and (
                 benchmark_target_campaign_pressure >= 0.75
                 or benchmark_target_portfolio_pressure >= 0.75
+                or benchmark_target_portfolio_confirmation_pressure >= 0.55
                 or benchmark_target_replay_pressure >= 0.75
                 or benchmark_target_regression_cycle_count > 0
                 or benchmark_target_campaign_regression_cycle_count > 0
@@ -15102,6 +15361,12 @@ class DesktopActionRouter:
                 adoption_payload["portfolio_hint_query"] = benchmark_portfolio_descendant_hint_query
             if benchmark_portfolio_descendant_title_sequence:
                 adoption_payload["portfolio_descendant_title_sequence"] = benchmark_portfolio_descendant_title_sequence
+            if benchmark_portfolio_confirmation_hint_query:
+                adoption_payload["confirmation_hint_query"] = benchmark_portfolio_confirmation_hint_query
+            if benchmark_portfolio_confirmation_preferred_title:
+                adoption_payload["confirmation_preferred_title"] = benchmark_portfolio_confirmation_preferred_title
+            if benchmark_portfolio_confirmation_title_sequence:
+                adoption_payload["confirmation_title_sequence"] = benchmark_portfolio_confirmation_title_sequence
             if benchmark_guidance:
                 adoption_payload["benchmark_guidance"] = benchmark_guidance
             if prefer_descendant_chain:
@@ -15125,6 +15390,11 @@ class DesktopActionRouter:
                 descendant_focus_confidence += min(0.03, campaign_descendant_hint_title_match_count * 0.012)
             if prefer_descendant_chain:
                 descendant_focus_confidence += 0.05 + (0.06 * descendant_chain_pressure)
+            if benchmark_target_portfolio_confirmation_pressure > 0.0:
+                descendant_focus_confidence += min(
+                    0.08,
+                    0.03 + (0.05 * min(1.0, benchmark_target_portfolio_confirmation_pressure)),
+                )
             descendant_focus_confidence = min(0.96, descendant_focus_confidence)
             descendant_reason = (
                 "Native window topology found a deeper child surface in the current modal chain."
