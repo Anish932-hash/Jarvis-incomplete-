@@ -8418,6 +8418,7 @@ class DesktopActionRouter:
             snapshot=snapshot,
             exploration_plan=exploration_plan,
             probe_report=probe_report,
+            wave_report=wave_report,
             survey_status="success",
             error_message="",
             source=clean_source,
@@ -8463,6 +8464,16 @@ class DesktopActionRouter:
             if attempted_wave_count or learned_surface_count:
                 message_parts.append(
                     f"Linked-surface learning opened {attempted_wave_count} safe workflow wave{'s' if attempted_wave_count != 1 else ''}, captured {learned_surface_count} additional surface{'s' if learned_surface_count != 1 else ''}, and reused {known_surface_count} known surface memory hit{'s' if known_surface_count != 1 else ''}."
+                )
+            strategy_profile = dict(wave_report.get("strategy_profile", {})) if isinstance(wave_report.get("strategy_profile", {}), dict) else {}
+            adaptive_actions = [
+                str(item).strip()
+                for item in strategy_profile.get("recommended_actions", [])
+                if str(item).strip()
+            ] if isinstance(strategy_profile.get("recommended_actions", []), list) else []
+            if adaptive_actions:
+                message_parts.append(
+                    f"Adaptive wave memory now favors {', '.join(adaptive_actions[:4])} on similar surfaces."
                 )
         if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
             message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
@@ -8827,11 +8838,36 @@ class DesktopActionRouter:
         known_surface_count = 0
         clean_source = str(source or "manual").strip().lower() or "manual"
         wave_source = clean_source if "wave" in clean_source else f"{clean_source}_wave"
+        strategy_profile: Dict[str, Any] = {
+            "known_surface": False,
+            "recommended_actions": [],
+            "top_actions": [],
+        }
         while len(items) < bounded_waves:
             current_fingerprint = str(current_snapshot.get("surface_fingerprint", "") or "").strip()
+            current_app_profile = current_snapshot.get("app_profile", {}) if isinstance(current_snapshot.get("app_profile", {}), dict) else {}
+            current_surface_hint = self._app_memory.surface_hint(
+                app_name=app_name,
+                profile_id=str(current_app_profile.get("profile_id", "") or "").strip(),
+                surface_fingerprint=current_fingerprint,
+            )
+            adaptive_actions = [
+                str(item).strip().lower()
+                for item in current_surface_hint.get("recommended_wave_actions", [])
+                if str(item).strip()
+            ] if isinstance(current_surface_hint.get("recommended_wave_actions", []), list) else []
+            strategy_profile = {
+                "known_surface": bool(current_surface_hint.get("known", False)) if isinstance(current_surface_hint, dict) else False,
+                "recommended_actions": adaptive_actions[:6],
+                "top_actions": [
+                    dict(item)
+                    for item in current_surface_hint.get("wave_strategies", [])
+                    if isinstance(current_surface_hint.get("wave_strategies", []), list) and isinstance(item, dict)
+                ][:6] if isinstance(current_surface_hint, dict) else [],
+            }
             candidates = self._app_memory_wave_candidates(
                 snapshot=current_snapshot,
-                preferred_actions=preferred_actions,
+                preferred_actions=self._dedupe_strings([*preferred_actions, *adaptive_actions]),
                 limit=8,
             )
             if not candidates:
@@ -8842,6 +8878,8 @@ class DesktopActionRouter:
                     "known_surface_count": known_surface_count,
                     "items": items,
                     "skipped": skipped,
+                    "strategy_profile": strategy_profile,
+                    "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
                     "stop_reason": "no_safe_wave_candidates" if not items else "exhausted_linked_surfaces",
                 }
             progressed = False
@@ -8945,6 +8983,34 @@ class DesktopActionRouter:
                     snapshot=next_snapshot,
                     exploration_plan=wave_exploration_plan,
                     probe_report=wave_probe_report,
+                    wave_report={
+                        "attempted_count": 1,
+                        "learned_surface_count": 1,
+                        "known_surface_count": 1 if bool(wave_hint.get("known", False)) else 0,
+                        "items": [
+                            {
+                                "action": action_name,
+                                "title": transition_label,
+                                "hotkeys": [str(item).strip() for item in candidate.get("primary_hotkey", []) if str(item).strip()],
+                                "recommended_followups": [
+                                    str(item).strip()
+                                    for item in candidate.get("recommended_followups", [])
+                                    if str(item).strip()
+                                ],
+                                "surface_fingerprint": next_fingerprint,
+                                "pre_surface_fingerprint": str(wave_result.get("pre_surface_fingerprint", "") or "").strip(),
+                                "post_surface_fingerprint": next_fingerprint,
+                                "known_surface": bool(wave_hint.get("known", False)),
+                            }
+                        ],
+                        "skipped": [],
+                        "stop_reason": "captured_linked_surface",
+                        "recommended_next_actions": [
+                            str(item).strip()
+                            for item in candidate.get("recommended_followups", [])
+                            if str(item).strip()
+                        ],
+                    },
                     survey_status="success",
                     error_message="",
                     source=wave_source,
@@ -8970,6 +9036,7 @@ class DesktopActionRouter:
                             ]
                         ) if isinstance(next_snapshot.get("surface_summary", {}), dict) else 0,
                         "memory_entry": wave_entry,
+                        "adaptive_actions": adaptive_actions[:6],
                     }
                 )
                 current_snapshot = next_snapshot
@@ -8988,6 +9055,8 @@ class DesktopActionRouter:
                     "known_surface_count": known_surface_count,
                     "items": items,
                     "skipped": skipped,
+                    "strategy_profile": strategy_profile,
+                    "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
                     "stop_reason": "wave_candidates_exhausted",
                 }
         return {
@@ -8997,6 +9066,8 @@ class DesktopActionRouter:
             "known_surface_count": known_surface_count,
             "items": items,
             "skipped": skipped,
+            "strategy_profile": strategy_profile,
+            "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
             "stop_reason": "max_surface_waves_reached",
         }
 

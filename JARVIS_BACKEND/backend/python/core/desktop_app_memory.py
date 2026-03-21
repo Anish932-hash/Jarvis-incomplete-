@@ -54,6 +54,7 @@ class DesktopAppMemory:
         snapshot: Dict[str, Any] | None = None,
         exploration_plan: Dict[str, Any] | None = None,
         probe_report: Dict[str, Any] | None = None,
+        wave_report: Dict[str, Any] | None = None,
         survey_status: str = "success",
         error_message: str = "",
         source: str = "manual",
@@ -63,6 +64,7 @@ class DesktopAppMemory:
         snapshot_payload = dict(snapshot) if isinstance(snapshot, dict) else {}
         exploration_payload = dict(exploration_plan) if isinstance(exploration_plan, dict) else {}
         probe_payload = dict(probe_report) if isinstance(probe_report, dict) else {}
+        wave_payload = dict(wave_report) if isinstance(wave_report, dict) else {}
         target_window = (
             snapshot_payload.get("target_window", {})
             if isinstance(snapshot_payload.get("target_window", {}), dict)
@@ -173,6 +175,9 @@ class DesktopAppMemory:
             metrics["probe_success_count"] = self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_blocked_count"] = self._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_error_count"] = self._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["wave_attempt_count"] = self._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["wave_success_count"] = self._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("learned_surface_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["wave_known_surface_hit_count"] = self._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("known_surface_count", 0), minimum=0, maximum=10_000_000, default=0)
             if clean_source == "daemon":
                 metrics["background_survey_count"] = self._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             elif clean_source == "batch":
@@ -206,6 +211,18 @@ class DesktopAppMemory:
                 "ocr_target_count": self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
                 "candidate_count": self._coerce_int(probe_payload.get("candidate_count", 0), minimum=0, maximum=10_000_000, default=0),
                 "status": str(probe_payload.get("status", "") or "").strip(),
+                "updated_at": now,
+            }
+            entry["last_wave_summary"] = {
+                "attempted_count": self._coerce_int(wave_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "learned_surface_count": self._coerce_int(wave_payload.get("learned_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "known_surface_count": self._coerce_int(wave_payload.get("known_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "stop_reason": str(wave_payload.get("stop_reason", "") or "").strip(),
+                "recommended_next_actions": [
+                    str(item).strip()
+                    for item in wave_payload.get("recommended_next_actions", [])
+                    if str(item).strip()
+                ][:8] if isinstance(wave_payload.get("recommended_next_actions", []), list) else [],
                 "updated_at": now,
             }
             harvest_tracker: Dict[str, set[str]] = {
@@ -394,6 +411,25 @@ class DesktopAppMemory:
                     observed_at=now,
                     default_surface_fingerprint=surface_fingerprint,
                 )
+            self._increment_count(entry.setdefault("wave_stop_reason_counts", {}), str(wave_payload.get("stop_reason", "") or "").strip())
+            for wave_item in wave_payload.get("items", []):
+                if not isinstance(wave_item, dict):
+                    continue
+                self._record_wave_strategy(
+                    entry=entry,
+                    row=wave_item,
+                    observed_at=now,
+                    status="success",
+                )
+            for wave_item in wave_payload.get("skipped", []):
+                if not isinstance(wave_item, dict):
+                    continue
+                self._record_wave_strategy(
+                    entry=entry,
+                    row=wave_item,
+                    observed_at=now,
+                    status=str(wave_item.get("status", "") or "skipped").strip() or "skipped",
+                )
 
             self._record_surface_node(
                 entry=entry,
@@ -459,6 +495,8 @@ class DesktopAppMemory:
                     "error_count": self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0),
                     "ocr_target_count": self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
                 },
+                "wave_summary": dict(entry.get("last_wave_summary", {})) if isinstance(entry.get("last_wave_summary", {}), dict) else {},
+                "wave_strategies": self._top_wave_strategies(entry.get("wave_strategies", {}), limit=6),
                 "native_summary": dict(native_summary),
             }
             survey_history = [dict(item) for item in entry.get("survey_history", []) if isinstance(item, dict)]
@@ -653,6 +691,84 @@ class DesktopAppMemory:
                 semantic_role=str(row.get("semantic_role", "") or "").strip(),
             )
 
+    def _record_wave_strategy(
+        self,
+        *,
+        entry: Dict[str, Any],
+        row: Dict[str, Any],
+        observed_at: str,
+        status: str,
+    ) -> None:
+        action_name = self._normalize_text(row.get("action", "") or row.get("element_id", "") or row.get("automation_id", ""))
+        title = str(row.get("title", "") or row.get("label", "") or action_name.replace("_", " ")).strip()
+        if not action_name:
+            return
+        strategies = entry.setdefault("wave_strategies", {})
+        current = strategies.get(action_name, {}) if isinstance(strategies.get(action_name, {}), dict) else {}
+        current = dict(current)
+        current["action"] = action_name
+        current["title"] = title or action_name.replace("_", " ")
+        current["sample_count"] = self._coerce_int(current.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        clean_status = self._normalize_text(status) or "unknown"
+        if clean_status == "success":
+            current["success_count"] = self._coerce_int(current.get("success_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        elif clean_status in {"skipped", "duplicate_surface", "duplicate"}:
+            current["skipped_count"] = self._coerce_int(current.get("skipped_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        else:
+            current["error_count"] = self._coerce_int(current.get("error_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        if bool(row.get("known_surface", False)):
+            current["known_surface_count"] = self._coerce_int(current.get("known_surface_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["last_status"] = clean_status
+        current["last_seen_at"] = observed_at
+        current["last_message"] = str(row.get("message", "") or "").strip()
+        current["last_surface_fingerprint"] = str(
+            row.get("surface_fingerprint", "")
+            or row.get("post_surface_fingerprint", "")
+            or current.get("last_surface_fingerprint", "")
+            or ""
+        ).strip()
+        current["from_surface_fingerprints"] = self._merge_recent_strings(
+            current.get("from_surface_fingerprints", []),
+            [str(row.get("pre_surface_fingerprint", "") or "").strip()],
+            limit=8,
+        )
+        current["surface_fingerprints"] = self._merge_recent_strings(
+            current.get("surface_fingerprints", []),
+            [
+                str(row.get("surface_fingerprint", "") or "").strip(),
+                str(row.get("post_surface_fingerprint", "") or "").strip(),
+            ],
+            limit=10,
+        )
+        current["hotkeys"] = self._merge_recent_strings(
+            current.get("hotkeys", []),
+            [str(item).strip() for item in row.get("hotkeys", []) if str(item).strip()] if isinstance(row.get("hotkeys", []), list) else [],
+            limit=10,
+        )
+        recommended_followups = [
+            str(item).strip().lower()
+            for item in row.get("recommended_followups", [])
+            if str(item).strip()
+        ] if isinstance(row.get("recommended_followups", []), list) else []
+        current["recommended_followups"] = self._merge_recent_strings(
+            current.get("recommended_followups", []),
+            recommended_followups,
+            limit=10,
+        )
+        current["stop_reasons"] = self._merge_recent_strings(
+            current.get("stop_reasons", []),
+            [str(row.get("stop_reason", "") or "").strip()],
+            limit=6,
+        )
+        strategies[action_name] = current
+        self._increment_count(entry.setdefault("wave_action_counts", {}), action_name)
+        if clean_status == "success":
+            self._increment_count(entry.setdefault("wave_success_action_counts", {}), action_name)
+        if bool(row.get("known_surface", False)):
+            self._increment_count(entry.setdefault("wave_known_surface_action_counts", {}), action_name)
+        for followup in recommended_followups:
+            self._increment_count(entry.setdefault("wave_followup_counts", {}), followup)
+
     def _trim_entry_locked(self, entry: Dict[str, Any]) -> None:
         entry["window_title_counts"] = self._trim_count_map(entry.get("window_title_counts", {}), limit=24)
         entry["surface_role_counts"] = self._trim_count_map(entry.get("surface_role_counts", {}), limit=16)
@@ -675,6 +791,7 @@ class DesktopAppMemory:
         entry["probe_effect_counts"] = self._trim_count_map(entry.get("probe_effect_counts", {}), limit=24, skip_empty=True)
         entry["probe_role_counts"] = self._trim_count_map(entry.get("probe_role_counts", {}), limit=24, skip_empty=True)
         entry["tested_control_counts"] = self._trim_count_map(entry.get("tested_control_counts", {}), limit=32, skip_empty=True)
+        entry["wave_stop_reason_counts"] = self._trim_count_map(entry.get("wave_stop_reason_counts", {}), limit=12, skip_empty=True)
         entry["menu_command_counts"] = self._trim_count_map(entry.get("menu_command_counts", {}), limit=32, skip_empty=True)
         entry["toolbar_action_counts"] = self._trim_count_map(entry.get("toolbar_action_counts", {}), limit=32, skip_empty=True)
         entry["ribbon_action_counts"] = self._trim_count_map(entry.get("ribbon_action_counts", {}), limit=32, skip_empty=True)
@@ -727,6 +844,19 @@ class DesktopAppMemory:
                 reverse=True,
             )
             entry["shortcut_actions"] = {key: value for key, value in ordered_shortcuts[:40]}
+        wave_strategies = entry.get("wave_strategies", {}) if isinstance(entry.get("wave_strategies", {}), dict) else {}
+        if len(wave_strategies) > 32:
+            ordered_wave_strategies = sorted(
+                wave_strategies.items(),
+                key=lambda item: (
+                    self._coerce_int(item[1].get("success_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    self._coerce_int(item[1].get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    str(item[1].get("last_seen_at", "")),
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            entry["wave_strategies"] = {key: value for key, value in ordered_wave_strategies[:32]}
         controls = entry.get("controls", {}) if isinstance(entry.get("controls", {}), dict) else {}
         if len(controls) > self.max_controls_per_entry:
             ordered_controls = sorted(
@@ -771,9 +901,16 @@ class DesktopAppMemory:
             if isinstance(row.get("last_probe_summary", {}), dict)
             else {}
         )
+        item["wave_summary"] = (
+            dict(row.get("last_wave_summary", {}))
+            if isinstance(row.get("last_wave_summary", {}), dict)
+            else {}
+        )
         item["surface_nodes"] = self._top_surface_nodes(row.get("surface_nodes", {}), limit=8)
         item["surface_transitions"] = self._top_surface_transitions(row.get("surface_transitions", {}), limit=8)
         item["learned_commands"] = self._top_commands(row.get("learned_commands", {}), limit=10)
+        item["wave_strategies"] = self._top_wave_strategies(row.get("wave_strategies", {}), limit=8)
+        item["wave_strategy_summary"] = self._wave_strategy_summary(row)
         item["menu_commands"] = self._top_count_rows(row.get("menu_command_counts", {}), limit=8, label_field="label")
         item["toolbar_actions"] = self._top_count_rows(row.get("toolbar_action_counts", {}), limit=8, label_field="label")
         item["ribbon_actions"] = self._top_count_rows(row.get("ribbon_action_counts", {}), limit=8, label_field="label")
@@ -827,9 +964,13 @@ class DesktopAppMemory:
         probe_attempt_total = 0
         probe_success_total = 0
         wave_survey_total = 0
+        wave_attempt_total = 0
+        wave_success_total = 0
+        wave_known_surface_total = 0
         surface_node_total = 0
         surface_transition_total = 0
         learned_command_total = 0
+        wave_strategy_total = 0
         discovered_control_total = 0
         command_candidate_total = 0
         menu_command_total = 0
@@ -863,9 +1004,13 @@ class DesktopAppMemory:
             probe_attempt_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_success_total += self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
             wave_survey_total += self._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0)
+            wave_attempt_total += self._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
+            wave_success_total += self._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+            wave_known_surface_total += self._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0)
             surface_node_total += len(row.get("surface_nodes", {})) if isinstance(row.get("surface_nodes", {}), dict) else 0
             surface_transition_total += len(row.get("surface_transitions", {})) if isinstance(row.get("surface_transitions", {}), dict) else 0
             learned_command_total += len(row.get("learned_commands", {})) if isinstance(row.get("learned_commands", {}), dict) else 0
+            wave_strategy_total += len(row.get("wave_strategies", {})) if isinstance(row.get("wave_strategies", {}), dict) else 0
             discovered_control_total += len(row.get("controls", {})) if isinstance(row.get("controls", {}), dict) else 0
             command_candidate_total += len(self._trim_count_map(row.get("command_candidate_counts", {}), limit=32))
             menu_command_total += len(row.get("menu_command_counts", {})) if isinstance(row.get("menu_command_counts", {}), dict) else 0
@@ -907,9 +1052,13 @@ class DesktopAppMemory:
             "probe_attempt_total": probe_attempt_total,
             "probe_success_total": probe_success_total,
             "wave_survey_total": wave_survey_total,
+            "wave_attempt_total": wave_attempt_total,
+            "wave_success_total": wave_success_total,
+            "wave_known_surface_total": wave_known_surface_total,
             "surface_node_total": surface_node_total,
             "surface_transition_total": surface_transition_total,
             "learned_command_total": learned_command_total,
+            "wave_strategy_total": wave_strategy_total,
             "discovered_control_total": discovered_control_total,
             "command_candidate_total": command_candidate_total,
             "menu_command_total": menu_command_total,
@@ -1122,6 +1271,9 @@ class DesktopAppMemory:
             "batch_survey_count": DesktopAppMemory._coerce_int(metrics.get("batch_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "background_survey_count": DesktopAppMemory._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "wave_survey_count": DesktopAppMemory._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "wave_attempt_count": DesktopAppMemory._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "wave_success_count": DesktopAppMemory._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "wave_known_surface_hit_count": DesktopAppMemory._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0),
             "menu_command_count": DesktopAppMemory._coerce_int(metrics.get("menu_command_count", 0), minimum=0, maximum=10_000_000, default=0),
             "toolbar_action_count": DesktopAppMemory._coerce_int(metrics.get("toolbar_action_count", 0), minimum=0, maximum=10_000_000, default=0),
             "ribbon_action_count": DesktopAppMemory._coerce_int(metrics.get("ribbon_action_count", 0), minimum=0, maximum=10_000_000, default=0),
@@ -1591,6 +1743,36 @@ class DesktopAppMemory:
         )
         return rows[: max(1, int(limit or 1))]
 
+    @staticmethod
+    def _top_wave_strategies(raw: Any, *, limit: int) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in raw.values() if isinstance(raw, dict) and isinstance(row, dict)] if isinstance(raw, dict) else []
+        rows.sort(
+            key=lambda row: (
+                DesktopAppMemory._coerce_int(row.get("success_count", 0), minimum=0, maximum=10_000_000, default=0),
+                DesktopAppMemory._coerce_int(row.get("known_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
+                DesktopAppMemory._coerce_int(row.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                str(row.get("last_seen_at", "")),
+                str(row.get("action", "")),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit or 1))]
+
+    @classmethod
+    def _wave_strategy_summary(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        strategies = cls._top_wave_strategies(row.get("wave_strategies", {}), limit=8)
+        recommended_actions = [
+            str(item.get("action", "") or "").strip()
+            for item in strategies
+            if cls._coerce_int(item.get("success_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
+        ][:6]
+        return {
+            "total_actions": len(row.get("wave_strategies", {})) if isinstance(row.get("wave_strategies", {}), dict) else 0,
+            "recommended_actions": recommended_actions,
+            "top_actions": strategies[:4],
+            "stop_reasons": cls._top_count_rows(row.get("wave_stop_reason_counts", {}), limit=6),
+        }
+
     @classmethod
     def _capability_profile_snapshot(cls, row: Dict[str, Any]) -> Dict[str, Any]:
         counts = cls._normalize_count_map(row.get("capability_profile_counts", {}))
@@ -1613,31 +1795,44 @@ class DesktopAppMemory:
         with self._lock:
             rows = [dict(row) for row in self._entries.values()]
         rows.sort(key=lambda row: str(row.get("updated_at", "")), reverse=True)
+        matched_row: Dict[str, Any] | None = None
+        matched_node: Dict[str, Any] = {}
         for row in rows:
             if clean_app_name and clean_app_name not in self._normalize_text(row.get("app_name", "")) and clean_app_name not in self._normalize_text(row.get("window_title", "")):
                 continue
             if clean_profile_id and clean_profile_id != self._normalize_text(row.get("profile_id", "")):
                 continue
+            matched_row = row
             nodes = row.get("surface_nodes", {}) if isinstance(row.get("surface_nodes", {}), dict) else {}
-            node = dict(nodes.get(clean_surface_fingerprint, {})) if clean_surface_fingerprint and isinstance(nodes.get(clean_surface_fingerprint, {}), dict) else {}
+            matched_node = (
+                dict(nodes.get(clean_surface_fingerprint, {}))
+                if clean_surface_fingerprint and isinstance(nodes.get(clean_surface_fingerprint, {}), dict)
+                else {}
+            )
+            break
+        if matched_row is not None:
+            wave_strategy_summary = self._wave_strategy_summary(matched_row)
             return {
                 "status": "success",
-                "known": bool(node),
+                "known": bool(matched_node),
                 "surface_fingerprint": clean_surface_fingerprint,
-                "surface_node": node,
-                "capability_profile": self._capability_profile_snapshot(row),
-                "learned_commands": self._top_commands(row.get("learned_commands", {}), limit=8),
-                "menu_commands": self._top_count_rows(row.get("menu_command_counts", {}), limit=6, label_field="label"),
-                "toolbar_actions": self._top_count_rows(row.get("toolbar_action_counts", {}), limit=6, label_field="label"),
-                "ribbon_actions": self._top_count_rows(row.get("ribbon_action_counts", {}), limit=6, label_field="label"),
-                "navigation_commands": self._top_count_rows(row.get("navigation_command_counts", {}), limit=6, label_field="label"),
-                "harvested_hotkeys": self._top_count_rows(row.get("harvested_hotkey_counts", {}), limit=8, label_field="hotkey"),
+                "surface_node": matched_node,
+                "capability_profile": self._capability_profile_snapshot(matched_row),
+                "learned_commands": self._top_commands(matched_row.get("learned_commands", {}), limit=8),
+                "wave_strategies": self._top_wave_strategies(matched_row.get("wave_strategies", {}), limit=6),
+                "wave_strategy_summary": wave_strategy_summary,
+                "recommended_wave_actions": wave_strategy_summary.get("recommended_actions", []),
+                "menu_commands": self._top_count_rows(matched_row.get("menu_command_counts", {}), limit=6, label_field="label"),
+                "toolbar_actions": self._top_count_rows(matched_row.get("toolbar_action_counts", {}), limit=6, label_field="label"),
+                "ribbon_actions": self._top_count_rows(matched_row.get("ribbon_action_counts", {}), limit=6, label_field="label"),
+                "navigation_commands": self._top_count_rows(matched_row.get("navigation_command_counts", {}), limit=6, label_field="label"),
+                "harvested_hotkeys": self._top_count_rows(matched_row.get("harvested_hotkey_counts", {}), limit=8, label_field="hotkey"),
                 "harvest_summary": (
-                    dict(row.get("last_harvest_summary", {}))
-                    if isinstance(row.get("last_harvest_summary", {}), dict)
+                    dict(matched_row.get("last_harvest_summary", {}))
+                    if isinstance(matched_row.get("last_harvest_summary", {}), dict)
                     else {}
                 ),
-                "shortcut_actions": self._snapshot_item(row).get("shortcut_actions", []),
+                "shortcut_actions": self._snapshot_item(matched_row).get("shortcut_actions", []),
             }
         return {
             "status": "success",
@@ -1646,6 +1841,9 @@ class DesktopAppMemory:
             "surface_node": {},
             "capability_profile": {"status": "success", "features": {}, "top_features": []},
             "learned_commands": [],
+            "wave_strategies": [],
+            "wave_strategy_summary": {"total_actions": 0, "recommended_actions": [], "top_actions": [], "stop_reasons": []},
+            "recommended_wave_actions": [],
             "menu_commands": [],
             "toolbar_actions": [],
             "ribbon_actions": [],

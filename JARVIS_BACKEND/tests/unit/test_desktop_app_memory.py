@@ -748,14 +748,19 @@ def test_desktop_action_router_surveys_linked_surface_waves_into_app_memory() ->
     wave_report = dict(payload.get("wave_report", {}))
     assert int(wave_report.get("learned_surface_count", 0) or 0) == 3
     assert len([row for row in wave_report.get("items", []) if isinstance(row, dict)]) == 3
+    strategy_profile = dict(wave_report.get("strategy_profile", {}))
+    assert strategy_profile
+    assert isinstance(strategy_profile.get("top_actions", []), list)
 
     memory_entry = dict(payload.get("memory_entry", {}))
     metrics = dict(memory_entry.get("metrics", {}))
     assert int(metrics.get("wave_survey_count", 0) or 0) >= 3
+    assert int(metrics.get("wave_attempt_count", 0) or 0) >= 3
 
     app_memory = dict(payload.get("app_memory", {}))
     summary = dict(app_memory.get("summary", {}))
     assert int(summary.get("wave_survey_total", 0) or 0) >= 3
+    assert int(summary.get("wave_attempt_total", 0) or 0) >= 3
 
     rows = [dict(row) for row in app_memory.get("items", []) if isinstance(row, dict)]
     assert rows
@@ -764,6 +769,8 @@ def test_desktop_action_router_surveys_linked_surface_waves_into_app_memory() ->
     assert "command palette" in labels
     assert "quick open" in labels
     assert "workspace search" in labels
+    assert rows[0]["wave_strategies"]
+    assert "recommended_actions" in dict(rows[0].get("wave_strategy_summary", {}))
 
 
 def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Path) -> None:
@@ -863,3 +870,71 @@ def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Pat
     assert hint["known"] is True
     assert dict(hint["surface_node"])["fingerprint"] == "settings|bluetooth|panel"
     assert any(str(item.get("label", "")) == "Search settings" for item in hint["learned_commands"])
+
+
+def test_desktop_app_memory_records_adaptive_wave_strategies(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+
+    entry = memory.record_survey(
+        app_name="vscode",
+        query="search workspace",
+        app_profile={"profile_id": "vscode", "name": "Visual Studio Code", "category": "editor"},
+        snapshot={
+            "surface_fingerprint": "vscode|main|surface",
+            "surface_summary": {
+                "recommended_actions": ["command"],
+                "control_counts": {"pane": 1},
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "keyboard_first"},
+            "elements": {"items": []},
+        },
+        wave_report={
+            "attempted_count": 3,
+            "learned_surface_count": 2,
+            "known_surface_count": 1,
+            "stop_reason": "max_surface_waves_reached",
+            "recommended_next_actions": ["quick_open", "workspace_search"],
+            "items": [
+                {
+                    "action": "command",
+                    "title": "Command Palette",
+                    "hotkeys": ["ctrl+shift+p"],
+                    "recommended_followups": ["quick_open"],
+                    "surface_fingerprint": "vscode|command|surface",
+                    "known_surface": False,
+                },
+                {
+                    "action": "quick_open",
+                    "title": "Quick Open",
+                    "hotkeys": ["ctrl+p"],
+                    "recommended_followups": ["workspace_search"],
+                    "surface_fingerprint": "vscode|quick_open|surface",
+                    "known_surface": True,
+                },
+            ],
+            "skipped": [
+                {
+                    "action": "workspace_search",
+                    "title": "Workspace Search",
+                    "status": "skipped",
+                    "message": "already known",
+                }
+            ],
+        },
+        source="manual",
+    )
+
+    assert entry["wave_summary"]["attempted_count"] == 3
+    assert entry["wave_strategies"]
+    assert entry["wave_strategy_summary"]["recommended_actions"][0] in {"command", "quick_open"}
+    assert any(str(item.get("action", "")) == "command" for item in entry["wave_strategies"])
+
+    hint = memory.surface_hint(
+        app_name="vscode",
+        profile_id="vscode",
+        surface_fingerprint="vscode|main|surface",
+    )
+
+    assert hint["known"] is True
+    assert hint["wave_strategies"]
+    assert hint["recommended_wave_actions"]

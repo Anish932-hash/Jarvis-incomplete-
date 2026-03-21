@@ -38,6 +38,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
@@ -59,6 +61,8 @@ class DesktopAppMemorySupervisor:
             ensure_app_launch=ensure_app_launch,
             probe_controls=probe_controls,
             max_probe_controls=max_probe_controls,
+            follow_surface_waves=follow_surface_waves,
+            max_surface_waves=max_surface_waves,
             allow_risky_probes=allow_risky_probes,
             skip_known_apps=skip_known_apps,
             prefer_unknown_apps=prefer_unknown_apps,
@@ -130,6 +134,9 @@ class DesktopAppMemorySupervisor:
             partial_total = 0
             error_total = 0
             skipped_total = 0
+            wave_attempt_total = 0
+            learned_surface_total = 0
+            known_surface_total = 0
             for item in items:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 self._increment_count(source_counts, str(item.get("source", "") or "unknown"))
@@ -138,6 +145,9 @@ class DesktopAppMemorySupervisor:
                 partial_total += self._coerce_int(item.get("partial_count", 0), minimum=0, maximum=1_000_000, default=0)
                 error_total += self._coerce_int(item.get("error_count", 0), minimum=0, maximum=1_000_000, default=0)
                 skipped_total += self._coerce_int(item.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+                wave_attempt_total += self._coerce_int(item.get("wave_attempt_count", 0), minimum=0, maximum=1_000_000, default=0)
+                learned_surface_total += self._coerce_int(item.get("learned_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+                known_surface_total += self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
             return {
                 "status": "success",
                 "count": len(limited),
@@ -157,6 +167,9 @@ class DesktopAppMemorySupervisor:
                     "partial_total": partial_total,
                     "error_total": error_total,
                     "skipped_total": skipped_total,
+                    "wave_attempt_total": wave_attempt_total,
+                    "learned_surface_total": learned_surface_total,
+                    "known_surface_total": known_surface_total,
                 },
             }
 
@@ -225,12 +238,18 @@ class DesktopAppMemorySupervisor:
             completed_total = 0
             failed_total = 0
             skipped_total = 0
+            wave_attempt_total = 0
+            learned_surface_total = 0
+            known_surface_total = 0
             for item in rows:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 pending_total += self._coerce_int(item.get("pending_app_count", 0), minimum=0, maximum=1_000_000, default=0)
                 completed_total += self._coerce_int(item.get("completed_app_count", 0), minimum=0, maximum=1_000_000, default=0)
                 failed_total += self._coerce_int(item.get("failed_app_count", 0), minimum=0, maximum=1_000_000, default=0)
                 skipped_total += self._coerce_int(item.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+                wave_attempt_total += self._coerce_int(item.get("wave_attempt_count", 0), minimum=0, maximum=1_000_000, default=0)
+                learned_surface_total += self._coerce_int(item.get("learned_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+                known_surface_total += self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
             return {
                 "status": "success",
                 "count": len(limited),
@@ -247,6 +266,9 @@ class DesktopAppMemorySupervisor:
                     "completed_app_total": completed_total,
                     "failed_app_total": failed_total,
                     "skipped_app_total": skipped_total,
+                    "wave_attempt_total": wave_attempt_total,
+                    "learned_surface_total": learned_surface_total,
+                    "known_surface_total": known_surface_total,
                 },
             }
 
@@ -262,6 +284,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
@@ -292,6 +316,8 @@ class DesktopAppMemorySupervisor:
                 "ensure_app_launch": bool(ensure_app_launch),
                 "probe_controls": bool(probe_controls),
                 "max_probe_controls": self._coerce_int(max_probe_controls, minimum=1, maximum=12, default=4),
+                "follow_surface_waves": bool(follow_surface_waves),
+                "max_surface_waves": self._coerce_int(max_surface_waves, minimum=1, maximum=8, default=3),
                 "allow_risky_probes": bool(allow_risky_probes),
                 "skip_known_apps": bool(skip_known_apps),
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
@@ -355,6 +381,8 @@ class DesktopAppMemorySupervisor:
                 ensure_app_launch=bool(campaign.get("ensure_app_launch", True)),
                 probe_controls=bool(campaign.get("probe_controls", True)),
                 max_probe_controls=self._coerce_int(campaign.get("max_probe_controls", 4), minimum=1, maximum=12, default=4),
+                follow_surface_waves=bool(campaign.get("follow_surface_waves", True)),
+                max_surface_waves=self._coerce_int(campaign.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
                 allow_risky_probes=bool(campaign.get("allow_risky_probes", False)),
                 skip_known_apps=bool(campaign.get("skip_known_apps", True)),
                 prefer_unknown_apps=bool(campaign.get("prefer_unknown_apps", True)),
@@ -404,6 +432,9 @@ class DesktopAppMemorySupervisor:
                 "partial_count": self._coerce_int(result.get("partial_count", 0), minimum=0, maximum=1_000_000, default=0),
                 "error_count": self._coerce_int(result.get("error_count", 0), minimum=0, maximum=1_000_000, default=0),
                 "skipped_app_count": self._coerce_int(result.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "wave_attempt_count": self._coerce_int(dict(result.get("wave_summary", {})).get("wave_attempt_total", 0), minimum=0, maximum=1_000_000, default=0),
+                "learned_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("learned_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
+                "known_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("known_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
             }
             campaign["completed_apps"] = self._dedupe_strings(completed_apps)
             campaign["partial_apps"] = partial_apps[-32:]
@@ -449,6 +480,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: Optional[bool] = None,
         probe_controls: Optional[bool] = None,
         max_probe_controls: Optional[int] = None,
+        follow_surface_waves: Optional[bool] = None,
+        max_surface_waves: Optional[int] = None,
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
@@ -475,6 +508,10 @@ class DesktopAppMemorySupervisor:
                 self._config["probe_controls"] = bool(probe_controls)
             if max_probe_controls is not None:
                 self._config["max_probe_controls"] = self._coerce_int(max_probe_controls, minimum=1, maximum=12, default=4)
+            if follow_surface_waves is not None:
+                self._config["follow_surface_waves"] = bool(follow_surface_waves)
+            if max_surface_waves is not None:
+                self._config["max_surface_waves"] = self._coerce_int(max_surface_waves, minimum=1, maximum=8, default=3)
             if allow_risky_probes is not None:
                 self._config["allow_risky_probes"] = bool(allow_risky_probes)
             if skip_known_apps is not None:
@@ -500,6 +537,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: Optional[bool] = None,
         probe_controls: Optional[bool] = None,
         max_probe_controls: Optional[int] = None,
+        follow_surface_waves: Optional[bool] = None,
+        max_surface_waves: Optional[int] = None,
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
@@ -517,6 +556,8 @@ class DesktopAppMemorySupervisor:
                 ensure_app_launch=ensure_app_launch,
                 probe_controls=probe_controls,
                 max_probe_controls=max_probe_controls,
+                follow_surface_waves=follow_surface_waves,
+                max_surface_waves=max_surface_waves,
                 allow_risky_probes=allow_risky_probes,
                 skip_known_apps=skip_known_apps,
                 prefer_unknown_apps=prefer_unknown_apps,
@@ -553,6 +594,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: Optional[bool] = None,
         probe_controls: Optional[bool] = None,
         max_probe_controls: Optional[int] = None,
+        follow_surface_waves: Optional[bool] = None,
+        max_surface_waves: Optional[int] = None,
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
@@ -598,6 +641,17 @@ class DesktopAppMemorySupervisor:
             maximum=12,
             default=4,
         )
+        follow_surface_waves_value = bool(
+            self._config.get("follow_surface_waves", True)
+            if follow_surface_waves is None
+            else follow_surface_waves
+        )
+        max_surface_waves_value = self._coerce_int(
+            max_surface_waves if max_surface_waves is not None else self._config.get("max_surface_waves", 3),
+            minimum=1,
+            maximum=8,
+            default=3,
+        )
         allow_risky_probes_value = bool(
             self._config.get("allow_risky_probes", False)
             if allow_risky_probes is None
@@ -632,6 +686,8 @@ class DesktopAppMemorySupervisor:
                 ensure_app_launch=ensure_launch_value,
                 probe_controls=probe_controls_value,
                 max_probe_controls=max_probe_controls_value,
+                follow_surface_waves=follow_surface_waves_value,
+                max_surface_waves=max_surface_waves_value,
                 allow_risky_probes=allow_risky_probes_value,
                 skip_known_apps=skip_known_apps_value,
                 prefer_unknown_apps=prefer_unknown_apps_value,
@@ -661,10 +717,15 @@ class DesktopAppMemorySupervisor:
             "ensure_app_launch": ensure_launch_value,
             "probe_controls": probe_controls_value,
             "max_probe_controls": max_probe_controls_value,
+            "follow_surface_waves": follow_surface_waves_value,
+            "max_surface_waves": max_surface_waves_value,
             "allow_risky_probes": allow_risky_probes_value,
             "skip_known_apps": skip_known_apps_value,
             "prefer_unknown_apps": prefer_unknown_apps_value,
             "skipped_app_count": self._coerce_int(result.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "wave_attempt_count": self._coerce_int(dict(result.get("wave_summary", {})).get("wave_attempt_total", 0), minimum=0, maximum=1_000_000, default=0),
+            "learned_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("learned_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
+            "known_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("known_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
             "failed_apps": [
                 dict(item)
                 for item in result.get("failed_apps", [])
@@ -702,6 +763,9 @@ class DesktopAppMemorySupervisor:
             "partial_count": history_record["partial_count"],
             "error_count": history_record["error_count"],
             "skipped_app_count": history_record["skipped_app_count"],
+            "wave_attempt_count": history_record["wave_attempt_count"],
+            "learned_surface_count": history_record["learned_surface_count"],
+            "known_surface_count": history_record["known_surface_count"],
         }
         self._runtime["next_due_at_ts"] = finished_at + self._coerce_float(self._config.get("interval_s", 300.0), minimum=10.0, maximum=3600.0, default=300.0)
         self._runtime["next_due_at"] = _iso_from_ts(self._runtime["next_due_at_ts"])
@@ -732,6 +796,8 @@ class DesktopAppMemorySupervisor:
             "ensure_app_launch": bool(self._config.get("ensure_app_launch", True)),
             "probe_controls": bool(self._config.get("probe_controls", True)),
             "max_probe_controls": self._coerce_int(self._config.get("max_probe_controls", 4), minimum=1, maximum=12, default=4),
+            "follow_surface_waves": bool(self._config.get("follow_surface_waves", True)),
+            "max_surface_waves": self._coerce_int(self._config.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
             "allow_risky_probes": bool(self._config.get("allow_risky_probes", False)),
             "skip_known_apps": bool(self._config.get("skip_known_apps", True)),
             "prefer_unknown_apps": bool(self._config.get("prefer_unknown_apps", True)),
@@ -786,6 +852,8 @@ class DesktopAppMemorySupervisor:
             "ensure_app_launch": bool(config.get("ensure_app_launch", self._config["ensure_app_launch"])),
             "probe_controls": bool(config.get("probe_controls", self._config["probe_controls"])),
             "max_probe_controls": self._coerce_int(config.get("max_probe_controls", self._config["max_probe_controls"]), minimum=1, maximum=12, default=4),
+            "follow_surface_waves": bool(config.get("follow_surface_waves", self._config["follow_surface_waves"])),
+            "max_surface_waves": self._coerce_int(config.get("max_surface_waves", self._config["max_surface_waves"]), minimum=1, maximum=8, default=3),
             "allow_risky_probes": bool(config.get("allow_risky_probes", self._config["allow_risky_probes"])),
             "skip_known_apps": bool(config.get("skip_known_apps", self._config["skip_known_apps"])),
             "prefer_unknown_apps": bool(config.get("prefer_unknown_apps", self._config["prefer_unknown_apps"])),
@@ -815,6 +883,8 @@ class DesktopAppMemorySupervisor:
             for key, value in campaigns.items()
             if str(key).strip() and isinstance(value, dict)
         }
+        for item in self._campaigns.values():
+            self._apply_campaign_counts_locked(item)
 
     @staticmethod
     def _default_config(
@@ -829,6 +899,8 @@ class DesktopAppMemorySupervisor:
         ensure_app_launch: bool,
         probe_controls: bool,
         max_probe_controls: int,
+        follow_surface_waves: bool,
+        max_surface_waves: int,
         allow_risky_probes: bool,
         skip_known_apps: bool,
         prefer_unknown_apps: bool,
@@ -844,6 +916,8 @@ class DesktopAppMemorySupervisor:
             "ensure_app_launch": bool(ensure_app_launch),
             "probe_controls": bool(probe_controls),
             "max_probe_controls": int(max_probe_controls),
+            "follow_surface_waves": bool(follow_surface_waves),
+            "max_surface_waves": int(max_surface_waves),
             "allow_risky_probes": bool(allow_risky_probes),
             "skip_known_apps": bool(skip_known_apps),
             "prefer_unknown_apps": bool(prefer_unknown_apps),
@@ -901,12 +975,25 @@ class DesktopAppMemorySupervisor:
         partial_apps = [dict(item) for item in campaign.get("partial_apps", []) if isinstance(item, dict)]
         failed_apps = [dict(item) for item in campaign.get("failed_apps", []) if isinstance(item, dict)]
         skipped_apps = [dict(item) for item in campaign.get("skipped_apps", []) if isinstance(item, dict)]
+        history_items = [dict(item) for item in campaign.get("history", []) if isinstance(item, dict)]
         campaign["target_app_count"] = len(target_apps)
         campaign["pending_app_count"] = len(pending_apps)
         campaign["completed_app_count"] = len(completed_apps)
         campaign["partial_app_count"] = len(partial_apps)
         campaign["failed_app_count"] = len(failed_apps)
         campaign["skipped_app_count"] = len(skipped_apps)
+        campaign["wave_attempt_count"] = sum(
+            self._coerce_int(item.get("wave_attempt_count", 0), minimum=0, maximum=1_000_000, default=0)
+            for item in history_items
+        )
+        campaign["learned_surface_count"] = sum(
+            self._coerce_int(item.get("learned_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+            for item in history_items
+        )
+        campaign["known_surface_count"] = sum(
+            self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+            for item in history_items
+        )
 
     @staticmethod
     def _increment_count(mapping: Dict[str, int], key: str) -> None:

@@ -2261,6 +2261,45 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopAppMemorySurveyState?.wave_report),
     [desktopAppMemorySurveyState]
   );
+  const desktopAppMemoryWaveStrategyProfile = useMemo(
+    () => asObjectRecord(desktopAppMemoryWaveReport.strategy_profile),
+    [desktopAppMemoryWaveReport]
+  );
+  const desktopAppMemoryWaveRecommendedActions = useMemo(
+    () =>
+      Array.isArray(desktopAppMemoryWaveStrategyProfile.recommended_actions)
+        ? desktopAppMemoryWaveStrategyProfile.recommended_actions
+            .map((item) => String(item ?? '').trim())
+            .filter((item) => Boolean(item))
+        : [],
+    [desktopAppMemoryWaveStrategyProfile]
+  );
+  const desktopAppMemoryWaveTopActions = useMemo(
+    () =>
+      Array.isArray(desktopAppMemoryWaveStrategyProfile.top_actions)
+        ? desktopAppMemoryWaveStrategyProfile.top_actions.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopAppMemoryWaveStrategyProfile]
+  );
+  const desktopLatestAppMemoryWaveSummary = useMemo(
+    () => asObjectRecord(desktopLatestAppMemory.wave_summary),
+    [desktopLatestAppMemory]
+  );
+  const desktopLatestAppMemoryWaveStrategySummary = useMemo(
+    () => asObjectRecord(desktopLatestAppMemory.wave_strategy_summary),
+    [desktopLatestAppMemory]
+  );
+  const desktopLatestAppMemoryWaveStrategies = useMemo(
+    () =>
+      Array.isArray(desktopLatestAppMemory.wave_strategies)
+        ? desktopLatestAppMemory.wave_strategies.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopLatestAppMemory]
+  );
   const desktopAppMemoryDaemon = useMemo(() => asObjectRecord(desktopAppMemoryDaemonState), [desktopAppMemoryDaemonState]);
   const desktopAppMemoryDaemonHistory = useMemo(
     () => asObjectRecord(desktopAppMemoryDaemon.history),
@@ -13650,6 +13689,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         include_exploration: true,
         probe_controls: true,
         max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 3,
         allow_risky_probes: false,
         include_ocr_targets: true,
       });
@@ -13706,6 +13747,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         include_exploration: true,
         probe_controls: true,
         max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 3,
         allow_risky_probes: false,
         include_ocr_targets: true,
         skip_known_apps: true,
@@ -13784,6 +13827,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         ensure_app_launch: desktopCoworkerEnsureLaunch,
         probe_controls: true,
         max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 3,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -13821,6 +13866,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         ensure_app_launch: desktopCoworkerEnsureLaunch,
         probe_controls: true,
         max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 3,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -13871,6 +13918,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         ensure_app_launch: desktopCoworkerEnsureLaunch,
         probe_controls: true,
         max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 3,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -19746,13 +19795,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}blocked:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).blocked_count ?? 0)}
                                                 {' • '}ocr:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).ocr_target_count ?? 0)}
                                               </p>
-                                            <p className="mt-1">
-                                              surfaces:{Array.isArray(desktopLatestAppMemory.surface_nodes) ? desktopLatestAppMemory.surface_nodes.length : 0}
-                                              {' • '}transitions:{Array.isArray(desktopLatestAppMemory.surface_transitions) ? desktopLatestAppMemory.surface_transitions.length : 0}
-                                              {' • '}waves:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_survey_count ?? 0)}
-                                              {' • '}learned commands:{Array.isArray(desktopLatestAppMemory.learned_commands) ? desktopLatestAppMemory.learned_commands.length : 0}
-                                              {' • '}fingerprints:{Array.isArray(desktopLatestAppMemory.surface_fingerprints) ? desktopLatestAppMemory.surface_fingerprints.length : 0}
-                                            </p>
+                                              <p className="mt-1">
+                                                surfaces:{Array.isArray(desktopLatestAppMemory.surface_nodes) ? desktopLatestAppMemory.surface_nodes.length : 0}
+                                                {' • '}transitions:{Array.isArray(desktopLatestAppMemory.surface_transitions) ? desktopLatestAppMemory.surface_transitions.length : 0}
+                                                {' • '}waves:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_survey_count ?? 0)}
+                                                {' • '}learned commands:{Array.isArray(desktopLatestAppMemory.learned_commands) ? desktopLatestAppMemory.learned_commands.length : 0}
+                                                {' • '}fingerprints:{Array.isArray(desktopLatestAppMemory.surface_fingerprints) ? desktopLatestAppMemory.surface_fingerprints.length : 0}
+                                              </p>
+                                              <p className="mt-1">
+                                                wave attempts:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_attempt_count ?? desktopLatestAppMemoryWaveSummary.attempted_count ?? 0)}
+                                                {' • '}linked surfaces:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_success_count ?? desktopLatestAppMemoryWaveSummary.learned_surface_count ?? 0)}
+                                                {' • '}known hits:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_known_surface_hit_count ?? desktopLatestAppMemoryWaveSummary.known_surface_count ?? 0)}
+                                                {' • '}strategies:{Number(desktopLatestAppMemoryWaveStrategySummary.total_actions ?? 0)}
+                                              </p>
                                               <p className="mt-1">
                                                 menu:{Number(desktopLatestAppMemoryHarvestSummary.menu_command_count ?? 0)}
                                                 {' • '}toolbar:{Number(desktopLatestAppMemoryHarvestSummary.toolbar_action_count ?? 0)}
@@ -19826,10 +19881,32 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     .join(' • ')}
                                                 </p>
                                               ) : null}
+                                              {Array.isArray(desktopLatestAppMemoryWaveStrategySummary.recommended_actions) &&
+                                              desktopLatestAppMemoryWaveStrategySummary.recommended_actions.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  wave memory:{' '}
+                                                  {desktopLatestAppMemoryWaveStrategySummary.recommended_actions
+                                                    .slice(0, 4)
+                                                    .map((item) => String(item))
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {desktopLatestAppMemoryWaveStrategies.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  top wave tactics:{' '}
+                                                  {desktopLatestAppMemoryWaveStrategies
+                                                    .slice(0, 3)
+                                                    .map((item) => `${String(item.action ?? 'action')} (${Number(item.success_count ?? 0)}/${Number(item.sample_count ?? 0)})`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
                                               {Object.keys(desktopAppMemorySurfaceHint).length > 0 ? (
                                                 <p className="mt-1 text-[10px] text-muted-foreground">
                                                   live hint:{String(Boolean(desktopAppMemorySurfaceHint.known))}
                                                   {' • '}surface:{String(desktopAppMemorySurfaceHint.surface_fingerprint ?? 'n/a')}
+                                                  {' • '}reuse:{Array.isArray(desktopAppMemorySurfaceHint.recommended_wave_actions)
+                                                    ? desktopAppMemorySurfaceHint.recommended_wave_actions.slice(0, 3).map((item) => String(item)).join('/')
+                                                    : 'n/a'}
                                                 </p>
                                               ) : null}
                                               {Object.keys(desktopAppMemoryWaveReport).length > 0 ? (
@@ -19837,6 +19914,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   survey waves:{Number(desktopAppMemoryWaveReport.attempted_count ?? 0)}
                                                   {' • '}linked surfaces:{Number(desktopAppMemoryWaveReport.learned_surface_count ?? 0)}
                                                   {' • '}known hits:{Number(desktopAppMemoryWaveReport.known_surface_count ?? 0)}
+                                                </p>
+                                              ) : null}
+                                              {desktopAppMemoryWaveRecommendedActions.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  adaptive survey plan:{' '}
+                                                  {desktopAppMemoryWaveRecommendedActions.slice(0, 4).join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {desktopAppMemoryWaveTopActions.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  survey tactics:{' '}
+                                                  {desktopAppMemoryWaveTopActions
+                                                    .slice(0, 3)
+                                                    .map((item) => `${String(item.action ?? 'action')} (${Number(item.success_count ?? 0)}/${Number(item.sample_count ?? 0)})`)
+                                                    .join(' • ')}
                                                 </p>
                                               ) : null}
                                             </div>
@@ -19862,6 +19954,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             <p className="mt-1">
                                               probing:{String(Boolean(desktopAppMemoryDaemonState.probe_controls))}
                                               {' • '}max probes:{Number(desktopAppMemoryDaemonState.max_probe_controls ?? 0)}
+                                              {' • '}waves:{String(Boolean(desktopAppMemoryDaemonState.follow_surface_waves))}
+                                              {' • '}max waves:{Number(desktopAppMemoryDaemonState.max_surface_waves ?? 0)}
                                               {' • '}risky:{String(Boolean(desktopAppMemoryDaemonState.allow_risky_probes))}
                                             </p>
                                             <p className="mt-1">
@@ -19874,6 +19968,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}success:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).success_count ?? 0)}
                                               {' • '}partial:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).partial_count ?? 0)}
                                               {' • '}error:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).error_count ?? 0)}
+                                              {' • '}wave attempts:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).wave_attempt_count ?? 0)}
+                                              {' • '}linked surfaces:{Number(asObjectRecord(desktopAppMemoryDaemon.last_summary).learned_surface_count ?? 0)}
                                             </p>
                                             {Object.keys(desktopAppMemoryDaemonLatestRun).length > 0 ? (
                                               <p className="mt-1">
@@ -19898,6 +19994,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               latest:{String(desktopLatestAppMemoryCampaign.label ?? desktopLatestAppMemoryCampaign.campaign_id ?? 'n/a')}
                                               {' • '}status:{String(desktopLatestAppMemoryCampaign.status ?? 'idle')}
                                               {' • '}max apps:{Number(desktopLatestAppMemoryCampaign.max_apps ?? 0)}
+                                              {' • '}max waves:{Number(desktopLatestAppMemoryCampaign.max_surface_waves ?? 0)}
                                             </p>
                                             <p className="mt-1 text-[10px] text-muted-foreground">
                                               targets:
@@ -19918,6 +20015,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 Boolean(desktopLatestAppMemoryCampaign.prefer_unknown_apps)
                                               )}
                                               {' • '}probes:{String(Boolean(desktopLatestAppMemoryCampaign.probe_controls))}
+                                              {' • '}waves:{String(Boolean(desktopLatestAppMemoryCampaign.follow_surface_waves))}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              wave attempts:{Number(desktopLatestAppMemoryCampaign.wave_attempt_count ?? 0)}
+                                              {' • '}linked surfaces:{Number(desktopLatestAppMemoryCampaign.learned_surface_count ?? 0)}
+                                              {' • '}known hits:{Number(desktopLatestAppMemoryCampaign.known_surface_count ?? 0)}
                                             </p>
                                             {desktopAppMemoryCampaignRows.length > 0 ? (
                                               <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
@@ -19954,6 +20057,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {' • '}pending:{Number(campaign.pending_app_count ?? 0)}
                                                         {' • '}completed:{Number(campaign.completed_app_count ?? 0)}
                                                         {' • '}skipped:{Number(campaign.skipped_app_count ?? 0)}
+                                                        {' • '}waves:{Number(campaign.wave_attempt_count ?? 0)}
                                                       </p>
                                                       <p className="mt-1 text-[10px] text-muted-foreground">
                                                         targets:
@@ -19993,6 +20097,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   : [];
                                                 const harvestSummary = asObjectRecord(item.harvest_summary);
                                                 const capabilityProfile = asObjectRecord(item.capability_profile);
+                                                const waveSummary = asObjectRecord(item.wave_summary);
+                                                const waveStrategySummary = asObjectRecord(item.wave_strategy_summary);
+                                                const waveStrategies = Array.isArray(item.wave_strategies)
+                                                  ? item.wave_strategies.filter((strategy): strategy is Record<string, unknown> => isObjectRecord(strategy))
+                                                  : [];
                                                 return (
                                                   <div
                                                     key={`${String(item.key ?? item.app_name ?? 'desktop-app-memory')}-${index}`}
@@ -20020,6 +20129,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       {' • '}waves:{Number(asObjectRecord(item.metrics).wave_survey_count ?? 0)}
                                                       {' • '}learned:{learnedCommands.length}
                                                       {' • '}features:{Object.keys(asObjectRecord(capabilityProfile.features)).length}
+                                                    </p>
+                                                    <p className="mt-1">
+                                                      wave attempts:{Number(asObjectRecord(item.metrics).wave_attempt_count ?? waveSummary.attempted_count ?? 0)}
+                                                      {' • '}linked surfaces:{Number(asObjectRecord(item.metrics).wave_success_count ?? waveSummary.learned_surface_count ?? 0)}
+                                                      {' • '}known hits:{Number(asObjectRecord(item.metrics).wave_known_surface_hit_count ?? waveSummary.known_surface_count ?? 0)}
+                                                      {' • '}strategies:{Number(waveStrategySummary.total_actions ?? 0)}
                                                     </p>
                                                     <p className="mt-1">
                                                       menu:{Number(harvestSummary.menu_command_count ?? 0)}
@@ -20075,6 +20190,25 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {surfaceTransitions
                                                           .slice(0, 2)
                                                           .map((transition) => `${String(transition.label ?? 'control')}→${String(transition.to_surface_fingerprint ?? 'surface')}`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {Array.isArray(waveStrategySummary.recommended_actions) &&
+                                                    waveStrategySummary.recommended_actions.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        wave memory:{' '}
+                                                        {waveStrategySummary.recommended_actions
+                                                          .slice(0, 4)
+                                                          .map((action) => String(action))
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {waveStrategies.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        wave tactics:{' '}
+                                                        {waveStrategies
+                                                          .slice(0, 3)
+                                                          .map((strategy) => `${String(strategy.action ?? 'action')} (${Number(strategy.success_count ?? 0)}/${Number(strategy.sample_count ?? 0)})`)
                                                           .join(' • ')}
                                                       </p>
                                                     ) : null}

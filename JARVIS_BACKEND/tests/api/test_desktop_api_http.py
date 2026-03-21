@@ -604,6 +604,8 @@ class FakeDesktopService:
             "ensure_app_launch": True,
             "probe_controls": True,
             "max_probe_controls": 4,
+            "follow_surface_waves": True,
+            "max_surface_waves": 3,
             "allow_risky_probes": False,
             "skip_known_apps": True,
             "prefer_unknown_apps": True,
@@ -13419,6 +13421,7 @@ class FakeDesktopService:
                 "entry_count": len(rows),
                 "survey_count_total": sum(int(dict(row.get("metrics", {})).get("survey_count", 0) or 0) for row in rows),
                 "discovered_control_total": sum(int(row.get("discovered_control_count", 0) or 0) for row in rows),
+                "wave_survey_total": sum(int(dict(row.get("metrics", {})).get("wave_survey_count", 0) or 0) for row in rows),
             },
         }
 
@@ -13436,6 +13439,8 @@ class FakeDesktopService:
         include_exploration: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
     ) -> Dict[str, Any]:
@@ -13457,6 +13462,7 @@ class FakeDesktopService:
                 "probe_blocked_count": 0 if probe_controls else 0,
                 "probe_error_count": 0,
                 "ocr_target_count": 5 if probe_controls else 0,
+                "wave_survey_count": int(max_surface_waves) if follow_surface_waves else 0,
             },
             "top_controls": [{"label": "Save", "control_type": "button", "sample_count": 1}],
             "command_candidates": [{"value": query or "save", "count": 1}],
@@ -13530,6 +13536,12 @@ class FakeDesktopService:
                 "error_count": 0,
                 "ocr_target_count": 5 if probe_controls else 0,
             },
+            "wave_report": {
+                "attempted_count": int(max_surface_waves) if follow_surface_waves else 0,
+                "learned_surface_count": int(max_surface_waves) if follow_surface_waves else 0,
+                "known_surface_count": 1 if follow_surface_waves else 0,
+                "stop_reason": "completed" if follow_surface_waves else "disabled",
+            },
             "surface_hint": {
                 "status": "success",
                 "known": True,
@@ -13564,6 +13576,8 @@ class FakeDesktopService:
         include_exploration: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
         skip_known_apps: bool = True,
@@ -13583,6 +13597,9 @@ class FakeDesktopService:
             )
         items: list[Dict[str, Any]] = []
         skipped_apps: list[Dict[str, Any]] = []
+        wave_attempt_total = 0
+        learned_surface_total = 0
+        known_surface_total = 0
         for app_name in candidates[: max(1, int(max_apps))]:
             if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
                 skipped_apps.append(
@@ -13598,14 +13615,21 @@ class FakeDesktopService:
                 query=query or "save",
                 probe_controls=probe_controls,
                 max_probe_controls=max_probe_controls,
+                follow_surface_waves=follow_surface_waves,
+                max_surface_waves=max_surface_waves,
                 allow_risky_probes=allow_risky_probes,
             )
+            wave_report = dict(payload.get("wave_report", {}))
+            wave_attempt_total += int(wave_report.get("attempted_count", 0) or 0)
+            learned_surface_total += int(wave_report.get("learned_surface_count", 0) or 0)
+            known_surface_total += int(wave_report.get("known_surface_count", 0) or 0)
             items.append(
                 {
                     "app_name": app_name,
                     "status": payload.get("status", "success"),
                     "message": payload.get("message", ""),
                     "memory_entry": payload.get("memory_entry", {}),
+                    "wave_report": wave_report,
                 }
             )
         return {
@@ -13627,6 +13651,11 @@ class FakeDesktopService:
                 "skip_known_apps": bool(skip_known_apps),
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
                 "explicit_app_count": len(app_names or []),
+            },
+            "wave_summary": {
+                "wave_attempt_total": wave_attempt_total,
+                "learned_surface_total": learned_surface_total,
+                "known_surface_total": known_surface_total,
             },
             "app_memory": self.desktop_app_memory_status(app_name=query or "", profile_id="", category=""),
         }
@@ -13732,6 +13761,8 @@ class FakeDesktopService:
         ensure_app_launch: bool | None = None,
         probe_controls: bool | None = None,
         max_probe_controls: int | None = None,
+        follow_surface_waves: bool | None = None,
+        max_surface_waves: int | None = None,
         allow_risky_probes: bool | None = None,
         skip_known_apps: bool | None = None,
         prefer_unknown_apps: bool | None = None,
@@ -13758,6 +13789,10 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["probe_controls"] = bool(probe_controls)
         if max_probe_controls is not None:
             self.desktop_app_memory_daemon_state["max_probe_controls"] = int(max_probe_controls)
+        if follow_surface_waves is not None:
+            self.desktop_app_memory_daemon_state["follow_surface_waves"] = bool(follow_surface_waves)
+        if max_surface_waves is not None:
+            self.desktop_app_memory_daemon_state["max_surface_waves"] = int(max_surface_waves)
         if allow_risky_probes is not None:
             self.desktop_app_memory_daemon_state["allow_risky_probes"] = bool(allow_risky_probes)
         if skip_known_apps is not None:
@@ -13779,6 +13814,8 @@ class FakeDesktopService:
         ensure_app_launch: bool | None = None,
         probe_controls: bool | None = None,
         max_probe_controls: int | None = None,
+        follow_surface_waves: bool | None = None,
+        max_surface_waves: int | None = None,
         allow_risky_probes: bool | None = None,
         skip_known_apps: bool | None = None,
         prefer_unknown_apps: bool | None = None,
@@ -13805,6 +13842,16 @@ class FakeDesktopService:
                 max_probe_controls
                 if max_probe_controls is not None
                 else self.desktop_app_memory_daemon_state.get("max_probe_controls", 4) or 4
+            ),
+            follow_surface_waves=bool(
+                self.desktop_app_memory_daemon_state.get("follow_surface_waves", True)
+                if follow_surface_waves is None
+                else follow_surface_waves
+            ),
+            max_surface_waves=int(
+                max_surface_waves
+                if max_surface_waves is not None
+                else self.desktop_app_memory_daemon_state.get("max_surface_waves", 3) or 3
             ),
             allow_risky_probes=bool(
                 self.desktop_app_memory_daemon_state.get("allow_risky_probes", False)
@@ -13833,6 +13880,9 @@ class FakeDesktopService:
             "partial_count": payload.get("partial_count", 0),
             "error_count": payload.get("error_count", 0),
             "skipped_app_count": payload.get("skipped_app_count", 0),
+            "wave_attempt_count": int(dict(payload.get("wave_summary", {})).get("wave_attempt_total", 0) or 0),
+            "learned_surface_count": int(dict(payload.get("wave_summary", {})).get("learned_surface_total", 0) or 0),
+            "known_surface_count": int(dict(payload.get("wave_summary", {})).get("known_surface_total", 0) or 0),
         }
         self.desktop_app_memory_daemon_runs.append(run)
         self.desktop_app_memory_daemon_state["last_result_status"] = payload.get("status", "success")
@@ -13845,6 +13895,9 @@ class FakeDesktopService:
             "partial_count": payload.get("partial_count", 0),
             "error_count": payload.get("error_count", 0),
             "skipped_app_count": payload.get("skipped_app_count", 0),
+            "wave_attempt_count": int(dict(payload.get("wave_summary", {})).get("wave_attempt_total", 0) or 0),
+            "learned_surface_count": int(dict(payload.get("wave_summary", {})).get("learned_surface_total", 0) or 0),
+            "known_surface_count": int(dict(payload.get("wave_summary", {})).get("known_surface_total", 0) or 0),
         }
         payload["supervisor"] = self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
         return payload
@@ -13888,6 +13941,8 @@ class FakeDesktopService:
         ensure_app_launch: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
@@ -13910,8 +13965,13 @@ class FakeDesktopService:
             "failed_app_count": 0,
             "skipped_app_count": 0,
             "max_apps": int(max_apps),
+            "follow_surface_waves": bool(follow_surface_waves),
+            "max_surface_waves": int(max_surface_waves),
             "latest_cycle_status": "",
             "latest_cycle_message": "",
+            "wave_attempt_count": 0,
+            "learned_surface_count": 0,
+            "known_surface_count": 0,
             "run_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "source": source,
@@ -13938,6 +13998,8 @@ class FakeDesktopService:
             app_names=[str(item).strip() for item in match.get("pending_apps", []) if str(item).strip()][: max(1, int(max_apps or match.get("max_apps", 2) or 2))],
             query=str(match.get("query", "") or "").strip(),
             max_apps=max_apps or int(match.get("max_apps", 2) or 2),
+            follow_surface_waves=bool(match.get("follow_surface_waves", True)),
+            max_surface_waves=int(match.get("max_surface_waves", 3) or 3),
             source=source,
         )
         handled = {
@@ -13956,6 +14018,9 @@ class FakeDesktopService:
         match["completed_app_count"] = len(match.get("completed_apps", []))
         match["pending_app_count"] = len(match.get("pending_apps", []))
         match["skipped_app_count"] = len(match.get("skipped_apps", []))
+        match["wave_attempt_count"] = int(match.get("wave_attempt_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("wave_attempt_total", 0) or 0)
+        match["learned_surface_count"] = int(match.get("learned_surface_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("learned_surface_total", 0) or 0)
+        match["known_surface_count"] = int(match.get("known_surface_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("known_surface_total", 0) or 0)
         match["latest_cycle_status"] = str(batch.get("status", "") or "success")
         match["latest_cycle_message"] = str(batch.get("message", "") or "")
         match["run_count"] = int(match.get("run_count", 0) or 0) + 1
@@ -22013,7 +22078,14 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     status, survey = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/survey",
-        payload={"app_name": "calculator", "query": "save", "probe_controls": True, "max_probe_controls": 3},
+        payload={
+            "app_name": "calculator",
+            "query": "save",
+            "probe_controls": True,
+            "max_probe_controls": 3,
+            "follow_surface_waves": True,
+            "max_surface_waves": 2,
+        },
     )
     assert status == 200
     assert survey["status"] == "success"
@@ -22022,6 +22094,7 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert bool(dict(survey.get("surface_hint", {})).get("known", False)) is True
     assert isinstance(survey["memory_entry"].get("surface_nodes", []), list)
     assert isinstance(survey["memory_entry"].get("learned_commands", []), list)
+    assert int(dict(survey.get("wave_report", {})).get("learned_surface_count", 0) or 0) == 2
     assert survey["app_memory"]["status"] == "success"
 
     status, cleared = request_json(
@@ -22040,27 +22113,54 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     status, batch = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/survey/batch",
-        payload={"query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
+        payload={
+            "query": "note",
+            "max_apps": 2,
+            "probe_controls": True,
+            "max_probe_controls": 2,
+            "follow_surface_waves": True,
+            "max_surface_waves": 2,
+            "skip_known_apps": False,
+        },
     )
     assert status == 200
     assert batch["status"] == "success"
     assert batch["surveyed_app_count"] >= 1
     assert batch["success_count"] >= 1
+    assert int(dict(batch.get("wave_summary", {})).get("wave_attempt_total", 0) or 0) >= 2
 
     status, configured = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/daemon",
-        payload={"enabled": True, "query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
+        payload={
+            "enabled": True,
+            "query": "note",
+            "max_apps": 2,
+            "probe_controls": True,
+            "max_probe_controls": 2,
+            "follow_surface_waves": True,
+            "max_surface_waves": 2,
+        },
     )
     assert status == 200
     assert configured["status"] == "success"
     assert configured["enabled"] is True
     assert configured["probe_controls"] is True
+    assert configured["follow_surface_waves"] is True
+    assert configured["max_surface_waves"] == 2
 
     status, triggered = request_json(
         "POST",
         f"{base_url}/runtime/desktop-app-memory/daemon/trigger",
-        payload={"query": "note", "max_apps": 2, "probe_controls": True, "max_probe_controls": 2},
+        payload={
+            "query": "note",
+            "max_apps": 2,
+            "probe_controls": True,
+            "max_probe_controls": 2,
+            "follow_surface_waves": True,
+            "max_surface_waves": 2,
+            "skip_known_apps": False,
+        },
     )
     assert status == 200
     assert triggered["status"] == "success"
@@ -22107,12 +22207,16 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
             "max_apps": 2,
             "skip_known_apps": True,
             "prefer_unknown_apps": True,
+            "follow_surface_waves": True,
+            "max_surface_waves": 2,
         },
     )
     assert status == 200
     assert created["status"] == "success"
     campaign_id = str(created.get("campaign", {}).get("campaign_id", ""))
     assert campaign_id
+    assert created["campaign"]["follow_surface_waves"] is True
+    assert created["campaign"]["max_surface_waves"] == 2
 
     status, listed = request_json(
         "GET",
@@ -22131,6 +22235,7 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert executed["status"] == "success"
     assert str(executed.get("campaign", {}).get("campaign_id", "")) == campaign_id
     assert int(executed.get("campaign", {}).get("completed_app_count", 0) or 0) >= 0
+    assert int(executed.get("campaign", {}).get("wave_attempt_count", 0) or 0) >= 0
 
 
 def test_desktop_evaluation_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:
