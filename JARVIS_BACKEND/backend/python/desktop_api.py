@@ -8242,6 +8242,7 @@ class DesktopBackendService:
         *,
         query: str = "",
         category: str = "",
+        app_names: Optional[List[str]] = None,
         max_apps: int = 4,
         per_app_limit: int = 24,
         ensure_app_launch: bool = True,
@@ -8253,6 +8254,8 @@ class DesktopBackendService:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
@@ -8262,6 +8265,7 @@ class DesktopBackendService:
             payload = router.survey_app_memory_batch(
                 query=query,
                 category=category,
+                app_names=app_names,
                 max_apps=max_apps,
                 per_app_limit=per_app_limit,
                 ensure_app_launch=ensure_app_launch,
@@ -8273,11 +8277,108 @@ class DesktopBackendService:
                 max_probe_controls=max_probe_controls,
                 allow_risky_probes=allow_risky_probes,
                 include_ocr_targets=include_ocr_targets,
+                skip_known_apps=skip_known_apps,
+                prefer_unknown_apps=prefer_unknown_apps,
                 source=source,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def desktop_app_memory_campaigns(
+        self,
+        *,
+        limit: int = 12,
+        campaign_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.campaigns(limit=limit, campaign_id=campaign_id, status=status)
+        payload["app_memory"] = _to_jsonable(
+            self.desktop_app_memory_status(limit=max(8, min(int(limit or 12) * 6, 96)))
+        )
+        return _to_jsonable(payload)
+
+    def create_desktop_app_memory_campaign(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_names: Optional[List[str]] = None,
+        label: str = "",
+        max_apps: int = 4,
+        per_app_limit: int = 24,
+        ensure_app_launch: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        router = getattr(self, "desktop_action_router", None)
+        if supervisor is None or router is None:
+            return {"status": "unavailable", "message": "desktop app memory campaign dependencies unavailable"}
+        target_apps = [
+            str(item).strip()
+            for item in (app_names or [])
+            if str(item).strip()
+        ]
+        if not target_apps:
+            catalog = router.app_profile_catalog(
+                query=query,
+                category=category,
+                limit=max(max_apps * 4, 48),
+            )
+            target_apps = [
+                str(item.get("name", "") or item.get("profile_id", "") or "").strip()
+                for item in catalog.get("items", [])
+                if isinstance(catalog.get("items", []), list) and isinstance(item, dict)
+                and str(item.get("name", "") or item.get("profile_id", "") or "").strip()
+            ]
+        target_apps = target_apps[: max(1, min(int(max_apps or 4), 32))]
+        payload = supervisor.create_campaign(
+            app_names=target_apps,
+            label=label,
+            query=query,
+            category=category,
+            max_apps=max_apps,
+            per_app_limit=per_app_limit,
+            ensure_app_launch=ensure_app_launch,
+            probe_controls=probe_controls,
+            max_probe_controls=max_probe_controls,
+            allow_risky_probes=allow_risky_probes,
+            skip_known_apps=skip_known_apps,
+            prefer_unknown_apps=prefer_unknown_apps,
+            source=source,
+        )
+        payload["app_memory"] = _to_jsonable(
+            self.desktop_app_memory_status(limit=max(8, min(int(max_apps or 4) * 8, 96)))
+        )
+        return _to_jsonable(payload)
+
+    def run_desktop_app_memory_campaign(
+        self,
+        *,
+        campaign_id: str,
+        max_apps: Optional[int] = None,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        supervisor = getattr(self, "desktop_app_memory_supervisor", None)
+        if supervisor is None:
+            return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
+        payload = supervisor.run_campaign(
+            campaign_id=campaign_id,
+            max_apps=max_apps,
+            source=source,
+        )
+        payload["app_memory"] = _to_jsonable(
+            self.desktop_app_memory_status(limit=max(8, min(int(max_apps or 4) * 8, 96)))
+        )
+        return _to_jsonable(payload)
 
     def desktop_app_memory_supervisor_status(
         self,
@@ -8336,6 +8437,8 @@ class DesktopBackendService:
         probe_controls: Optional[bool] = None,
         max_probe_controls: Optional[int] = None,
         allow_risky_probes: Optional[bool] = None,
+        skip_known_apps: Optional[bool] = None,
+        prefer_unknown_apps: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8354,6 +8457,8 @@ class DesktopBackendService:
             probe_controls=probe_controls,
             max_probe_controls=max_probe_controls,
             allow_risky_probes=allow_risky_probes,
+            skip_known_apps=skip_known_apps,
+            prefer_unknown_apps=prefer_unknown_apps,
             source=source,
         )
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
@@ -8361,6 +8466,7 @@ class DesktopBackendService:
     def trigger_desktop_app_memory_supervisor(
         self,
         *,
+        app_names: Optional[List[str]] = None,
         max_apps: Optional[int] = None,
         per_app_limit: Optional[int] = None,
         history_limit: Optional[int] = None,
@@ -8370,6 +8476,8 @@ class DesktopBackendService:
         probe_controls: Optional[bool] = None,
         max_probe_controls: Optional[int] = None,
         allow_risky_probes: Optional[bool] = None,
+        skip_known_apps: Optional[bool] = None,
+        prefer_unknown_apps: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8377,6 +8485,7 @@ class DesktopBackendService:
         if supervisor is None:
             return {"status": "unavailable", "message": "desktop app memory supervisor unavailable"}
         payload = supervisor.trigger_now(
+            app_names=app_names,
             max_apps=max_apps,
             per_app_limit=per_app_limit,
             history_limit=history_limit,
@@ -8386,6 +8495,8 @@ class DesktopBackendService:
             probe_controls=probe_controls,
             max_probe_controls=max_probe_controls,
             allow_risky_probes=allow_risky_probes,
+            skip_known_apps=skip_known_apps,
+            prefer_unknown_apps=prefer_unknown_apps,
             source=source,
         )
         payload["supervisor"] = _to_jsonable(
@@ -43312,6 +43423,15 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-app-memory/campaigns":
+                limit = self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128)
+                payload = self.server.service.desktop_app_memory_campaigns(
+                    limit=limit,
+                    campaign_id=str(query.get("campaign_id", [""])[0] or "").strip(),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/desktop/workflows":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000)
                 payload = self.server.service.desktop_workflows(
@@ -45655,6 +45775,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.survey_desktop_app_memory_batch(
                     query=str(body.get("query", body.get("app_name", body.get("app", ""))) or "").strip(),
                     category=str(body.get("category", "") or "").strip(),
+                    app_names=(
+                        [str(item).strip() for item in body.get("app_names", []) if str(item).strip()]
+                        if isinstance(body.get("app_names", []), list)
+                        else None
+                    ),
                     max_apps=self._parse_int(body.get("max_apps", 4), 4, minimum=1, maximum=32),
                     per_app_limit=self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80),
                     ensure_app_launch=self._parse_bool(body.get("ensure_app_launch", True), default=True),
@@ -45666,6 +45791,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     max_probe_controls=self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12),
                     allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
                     include_ocr_targets=self._parse_bool(body.get("include_ocr_targets", True), default=True),
+                    skip_known_apps=self._parse_bool(body.get("skip_known_apps", True), default=True),
+                    prefer_unknown_apps=self._parse_bool(body.get("prefer_unknown_apps", True), default=True),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
@@ -45691,6 +45818,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     probe_controls=(self._parse_bool(body.get("probe_controls"), default=True) if "probe_controls" in body else None),
                     max_probe_controls=(self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12) if "max_probe_controls" in body else None),
                     allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
+                    skip_known_apps=(self._parse_bool(body.get("skip_known_apps"), default=True) if "skip_known_apps" in body else None),
+                    prefer_unknown_apps=(self._parse_bool(body.get("prefer_unknown_apps"), default=True) if "prefer_unknown_apps" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45698,6 +45827,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 return
             if path == "/runtime/desktop-app-memory/daemon/trigger":
                 payload = self.server.service.trigger_desktop_app_memory_supervisor(
+                    app_names=(
+                        [str(item).strip() for item in body.get("app_names", []) if str(item).strip()]
+                        if isinstance(body.get("app_names", []), list)
+                        else None
+                    ),
                     max_apps=(self._parse_int(body.get("max_apps", 2), 2, minimum=1, maximum=32) if "max_apps" in body else None),
                     per_app_limit=(self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80) if "per_app_limit" in body else None),
                     history_limit=(self._parse_int(body.get("history_limit", 8), 8, minimum=1, maximum=64) if "history_limit" in body else None),
@@ -45707,8 +45841,44 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     probe_controls=(self._parse_bool(body.get("probe_controls"), default=True) if "probe_controls" in body else None),
                     max_probe_controls=(self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12) if "max_probe_controls" in body else None),
                     allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
+                    skip_known_apps=(self._parse_bool(body.get("skip_known_apps"), default=True) if "skip_known_apps" in body else None),
+                    prefer_unknown_apps=(self._parse_bool(body.get("prefer_unknown_apps"), default=True) if "prefer_unknown_apps" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/campaigns":
+                payload = self.server.service.create_desktop_app_memory_campaign(
+                    query=str(body.get("query", body.get("app_name", body.get("app", ""))) or "").strip(),
+                    category=str(body.get("category", "") or "").strip(),
+                    app_names=(
+                        [str(item).strip() for item in body.get("app_names", []) if str(item).strip()]
+                        if isinstance(body.get("app_names", []), list)
+                        else None
+                    ),
+                    label=str(body.get("label", "") or "").strip(),
+                    max_apps=self._parse_int(body.get("max_apps", 4), 4, minimum=1, maximum=32),
+                    per_app_limit=self._parse_int(body.get("per_app_limit", 24), 24, minimum=4, maximum=80),
+                    ensure_app_launch=self._parse_bool(body.get("ensure_app_launch", True), default=True),
+                    probe_controls=self._parse_bool(body.get("probe_controls", True), default=True),
+                    max_probe_controls=self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12),
+                    allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
+                    skip_known_apps=self._parse_bool(body.get("skip_known_apps", True), default=True),
+                    prefer_unknown_apps=self._parse_bool(body.get("prefer_unknown_apps", True), default=True),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/campaigns/run-cycle":
+                payload = self.server.service.run_desktop_app_memory_campaign(
+                    campaign_id=str(body.get("campaign_id", "") or "").strip(),
+                    max_apps=(
+                        self._parse_int(body.get("max_apps", 4), 4, minimum=1, maximum=32)
+                        if "max_apps" in body
+                        else None
+                    ),
+                    source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return

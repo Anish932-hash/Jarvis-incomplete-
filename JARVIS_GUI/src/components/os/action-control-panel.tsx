@@ -2242,6 +2242,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         : [],
     [desktopAppMemoryState]
   );
+  const desktopAppMemorySurfaceHint = useMemo(
+    () => asObjectRecord(desktopAppMemorySurveyState?.surface_hint),
+    [desktopAppMemorySurveyState]
+  );
   const desktopAppMemoryDaemon = useMemo(() => asObjectRecord(desktopAppMemoryDaemonState), [desktopAppMemoryDaemonState]);
   const desktopAppMemoryDaemonHistory = useMemo(
     () => asObjectRecord(desktopAppMemoryDaemon.history),
@@ -19430,6 +19434,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}blocked:{Number(desktopAppMemorySummary.probe_blocked_total ?? 0)}
                                               {' • '}ocr targets:{Number(desktopAppMemorySummary.ocr_target_total ?? 0)}
                                             </p>
+                                            <p className="mt-1">
+                                              surfaces:{Number(desktopAppMemorySummary.surface_node_total ?? 0)}
+                                              {' • '}transitions:{Number(desktopAppMemorySummary.surface_transition_total ?? 0)}
+                                              {' • '}learned commands:{Number(desktopAppMemorySummary.learned_command_total ?? 0)}
+                                              {' • '}healthy:{Number(desktopAppMemorySummary.healthy_app_count ?? 0)}
+                                            </p>
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
                                               {Object.entries(asObjectRecord(desktopAppMemorySummary.category_counts))
                                                 .slice(0, 4)
@@ -19483,6 +19493,22 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}blocked:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).blocked_count ?? 0)}
                                                 {' • '}ocr:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).ocr_target_count ?? 0)}
                                               </p>
+                                              <p className="mt-1">
+                                                surfaces:{Array.isArray(desktopLatestAppMemory.surface_nodes) ? desktopLatestAppMemory.surface_nodes.length : 0}
+                                                {' • '}transitions:{Array.isArray(desktopLatestAppMemory.surface_transitions) ? desktopLatestAppMemory.surface_transitions.length : 0}
+                                                {' • '}learned commands:{Array.isArray(desktopLatestAppMemory.learned_commands) ? desktopLatestAppMemory.learned_commands.length : 0}
+                                                {' • '}fingerprints:{Array.isArray(desktopLatestAppMemory.surface_fingerprints) ? desktopLatestAppMemory.surface_fingerprints.length : 0}
+                                              </p>
+                                              {Array.isArray(desktopLatestAppMemory.surface_fingerprints) &&
+                                              desktopLatestAppMemory.surface_fingerprints.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  fingerprints:{' '}
+                                                  {desktopLatestAppMemory.surface_fingerprints
+                                                    .slice(0, 3)
+                                                    .map((item) => `${String(asObjectRecord(item).value ?? 'surface')}(${String(asObjectRecord(item).count ?? 0)})`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
                                               {Array.isArray(desktopLatestAppMemory.recommended_actions) &&
                                               desktopLatestAppMemory.recommended_actions.length > 0 ? (
                                                 <p className="mt-2">
@@ -19501,6 +19527,28 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     .slice(0, 4)
                                                     .map((item) => `${String(asObjectRecord(item).value ?? 'unknown')}:${String(asObjectRecord(item).count ?? 0)}`)
                                                     .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {Array.isArray(desktopLatestAppMemory.learned_commands) &&
+                                              desktopLatestAppMemory.learned_commands.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  learned:{' '}
+                                                  {desktopLatestAppMemory.learned_commands
+                                                    .slice(0, 4)
+                                                    .map((item) => {
+                                                      const learned = asObjectRecord(item);
+                                                      const hotkeys = Array.isArray(learned.hotkeys)
+                                                        ? learned.hotkeys.slice(0, 2).join('/')
+                                                        : '';
+                                                      return `${String(learned.label ?? 'command')}${hotkeys ? `=${hotkeys}` : ''}`;
+                                                    })
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {Object.keys(desktopAppMemorySurfaceHint).length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  live hint:{String(Boolean(desktopAppMemorySurfaceHint.known))}
+                                                  {' • '}surface:{String(desktopAppMemorySurfaceHint.surface_fingerprint ?? 'n/a')}
                                                 </p>
                                               ) : null}
                                             </div>
@@ -19563,6 +19611,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 const shortcuts = Array.isArray(item.shortcut_actions)
                                                   ? item.shortcut_actions.filter((shortcut): shortcut is Record<string, unknown> => isObjectRecord(shortcut))
                                                   : [];
+                                                const learnedCommands = Array.isArray(item.learned_commands)
+                                                  ? item.learned_commands.filter((command): command is Record<string, unknown> => isObjectRecord(command))
+                                                  : [];
+                                                const surfaceNodes = Array.isArray(item.surface_nodes)
+                                                  ? item.surface_nodes.filter((surface): surface is Record<string, unknown> => isObjectRecord(surface))
+                                                  : [];
+                                                const surfaceTransitions = Array.isArray(item.surface_transitions)
+                                                  ? item.surface_transitions.filter((transition): transition is Record<string, unknown> => isObjectRecord(transition))
+                                                  : [];
+                                                const capabilityProfile = asObjectRecord(item.capability_profile);
                                                 return (
                                                   <div
                                                     key={`${String(item.key ?? item.app_name ?? 'desktop-app-memory')}-${index}`}
@@ -19584,6 +19642,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       {' • '}effects:{Array.isArray(item.probe_effects) ? item.probe_effects.length : 0}
                                                       {' • '}verified:{Number(asObjectRecord(item.probe_summary).successful_count ?? 0)}
                                                     </p>
+                                                    <p className="mt-1">
+                                                      surfaces:{surfaceNodes.length}
+                                                      {' • '}transitions:{surfaceTransitions.length}
+                                                      {' • '}learned:{learnedCommands.length}
+                                                      {' • '}features:{Object.keys(asObjectRecord(capabilityProfile.features)).length}
+                                                    </p>
                                                     {topControls.length > 0 ? (
                                                       <p className="mt-1">
                                                         top:{' '}
@@ -19599,6 +19663,38 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {shortcuts
                                                           .slice(0, 3)
                                                           .map((shortcut) => `${String(shortcut.action ?? 'action')}=${Array.isArray(shortcut.hotkeys) ? shortcut.hotkeys.join('/') : 'n/a'}`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {learnedCommands.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        commands:{' '}
+                                                        {learnedCommands
+                                                          .slice(0, 3)
+                                                          .map((command) => {
+                                                            const hotkeys = Array.isArray(command.hotkeys)
+                                                              ? command.hotkeys.slice(0, 2).join('/')
+                                                              : '';
+                                                            return `${String(command.label ?? 'command')}${hotkeys ? `=${hotkeys}` : ''}`;
+                                                          })
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {surfaceNodes.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        surfaces:{' '}
+                                                        {surfaceNodes
+                                                          .slice(0, 2)
+                                                          .map((surface) => `${String(surface.surface_role ?? 'surface')}(${String(surface.fingerprint ?? 'n/a')})`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {surfaceTransitions.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        transitions:{' '}
+                                                        {surfaceTransitions
+                                                          .slice(0, 2)
+                                                          .map((transition) => `${String(transition.label ?? 'control')}→${String(transition.to_surface_fingerprint ?? 'surface')}`)
                                                           .join(' • ')}
                                                       </p>
                                                     ) : null}

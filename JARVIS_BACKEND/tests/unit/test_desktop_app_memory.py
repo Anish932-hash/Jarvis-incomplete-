@@ -147,6 +147,17 @@ def test_desktop_action_router_surveys_app_memory_and_returns_snapshot() -> None
     assert payload["app_memory"]["count"] == 1
     assert "Learned" in str(payload["message"])
 
+    repeated = router.survey_app_memory(
+        app_name="notepad",
+        query="save",
+        ensure_app_launch=True,
+        include_observation=False,
+    )
+
+    assert repeated["status"] == "success"
+    assert bool(dict(repeated.get("surface_hint", {})).get("known", False)) is True
+    assert "Known surface memory was reused" in str(repeated["message"])
+
 
 def test_desktop_action_router_surveys_app_memory_batch() -> None:
     def _open_app(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -196,6 +207,83 @@ def test_desktop_action_router_surveys_app_memory_batch() -> None:
     assert payload["surveyed_app_count"] >= 1
     assert payload["success_count"] >= 1
     assert payload["app_memory"]["status"] == "success"
+
+
+def test_desktop_action_router_batch_skips_known_healthy_apps() -> None:
+    app_memory = _isolated_app_memory()
+    app_memory.record_survey(
+        app_name="notepad",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|main|surface",
+            "surface_summary": {
+                "control_counts": {"button": 3},
+                "top_labels": [{"label": "Save", "count": 1}],
+                "recommended_actions": ["search"],
+                "surface_flags": {"search_visible": True},
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "keyboard_first"},
+            "elements": {"items": [{"name": "Save", "control_type": "button"}]},
+            "workflow_surfaces": [{"action": "search", "primary_hotkey": ["ctrl+f"]}],
+        },
+        source="manual",
+    )
+    app_memory.record_survey(
+        app_name="notepad",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|main|surface",
+            "surface_summary": {
+                "control_counts": {"button": 3},
+                "top_labels": [{"label": "Save", "count": 1}],
+                "recommended_actions": ["search"],
+                "surface_flags": {"search_visible": True},
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "keyboard_first"},
+            "elements": {"items": [{"name": "Save", "control_type": "button"}]},
+            "workflow_surfaces": [{"action": "search", "primary_hotkey": ["ctrl+f"]}],
+        },
+        source="manual",
+    )
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 501, "title": "Calculator", "exe": r"C:\Windows\System32\calc.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 501, "title": "Calculator"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "open_app": lambda payload: {"status": "success", "requested_app": str(payload.get("app_name", "")), "launch_method": "system_path"},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [{"element_id": "one", "name": "One", "control_type": "button", "automation_id": "One"}],
+            },
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=app_memory,
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory_batch(
+        app_names=["notepad", "calculator"],
+        query="note",
+        max_apps=2,
+        skip_known_apps=True,
+        prefer_unknown_apps=True,
+        ensure_app_launch=True,
+        source="batch",
+    )
+
+    assert payload["status"] in {"success", "partial"}
+    assert payload["surveyed_app_count"] == 1
+    assert payload["skipped_app_count"] == 1
+    assert payload["items"][0]["app_name"] == "calculator"
+    assert payload["skipped_apps"][0]["app_name"] == "notepad"
 
 
 def test_desktop_app_memory_reset_filters_by_app_name(tmp_path: Path) -> None:
@@ -303,6 +391,8 @@ def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) ->
                     "effect_kind": "navigation",
                     "semantic_role": "navigator",
                     "effect_summary": "Invoking View changed the visible app surface.",
+                    "pre_surface_fingerprint": "explorer|main",
+                    "post_surface_fingerprint": "explorer|view-menu",
                     "vision_labels": ["View"],
                 }
             ],
@@ -321,6 +411,7 @@ def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) ->
     assert snapshot["summary"]["probe_attempt_total"] == 1
     assert snapshot["summary"]["probe_success_total"] == 1
     assert snapshot["summary"]["ocr_target_total"] == 4
+    assert snapshot["items"][0]["surface_transitions"][0]["label"] == "View"
 
 
 def test_desktop_action_router_surveys_app_memory_with_safe_probe_learning() -> None:
@@ -422,3 +513,104 @@ def test_desktop_action_router_surveys_app_memory_with_safe_probe_learning() -> 
     assert payload["memory_entry"]["metrics"]["probe_success_count"] == 1
     assert payload["memory_entry"]["tested_controls"][0]["label"] == "view"
     assert payload["memory_entry"]["probe_effects"][0]["value"] in {"navigation", "surface_change"}
+    assert payload["memory_entry"]["surface_transitions"]
+    assert payload["memory_entry"]["surface_nodes"]
+
+
+def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+
+    entry = memory.record_survey(
+        app_name="settings",
+        query="bluetooth",
+        app_profile={"profile_id": "settings", "name": "Settings", "category": "system"},
+        snapshot={
+            "surface_fingerprint": "settings|bluetooth|panel",
+            "target_window": {
+                "title": "Bluetooth & devices",
+                "class_name": "ApplicationFrameWindow",
+                "window_signature": "settings-main",
+            },
+            "active_window": {"title": "Bluetooth & devices"},
+            "surface_summary": {
+                "summary": "Settings navigation surface with search and toggle controls.",
+                "control_counts": {"button": 2, "togglebutton": 1, "treeitem": 1},
+                "top_labels": [{"label": "Bluetooth", "count": 1}, {"label": "Add device", "count": 1}],
+                "recommended_actions": ["search", "focus_main_content"],
+                "surface_flags": {
+                    "search_visible": True,
+                    "navigation_tree_visible": True,
+                    "form_surface_visible": True,
+                },
+            },
+            "surface_intelligence": {"surface_role": "settings", "interaction_mode": "keyboard_first"},
+            "observation": {
+                "targets": [
+                    {"text": "Bluetooth"},
+                    {"text": "Add device"},
+                    {"text": "Search settings"},
+                ]
+            },
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "search_box",
+                        "name": "Search settings",
+                        "control_type": "edit",
+                        "automation_id": "SearchBox",
+                        "accelerator_key": "Ctrl+F",
+                    },
+                    {
+                        "element_id": "bluetooth_toggle",
+                        "name": "Bluetooth",
+                        "control_type": "togglebutton",
+                        "automation_id": "BluetoothToggle",
+                        "access_key": "B",
+                    },
+                    {
+                        "element_id": "add_device",
+                        "name": "Add device",
+                        "control_type": "button",
+                        "automation_id": "AddDeviceButton",
+                    },
+                ]
+            },
+            "workflow_surfaces": [{"action": "search", "title": "Search", "primary_hotkey": ["Ctrl+F"]}],
+        },
+        probe_report={
+            "status": "success",
+            "attempted_count": 1,
+            "successful_count": 1,
+            "items": [
+                {
+                    "label": "Add device",
+                    "control_type": "button",
+                    "probe_status": "success",
+                    "effect_kind": "window_transition",
+                    "semantic_role": "navigator",
+                    "pre_surface_fingerprint": "settings|bluetooth|panel",
+                    "post_surface_fingerprint": "settings|bluetooth|add-device-dialog",
+                }
+            ],
+        },
+    )
+
+    assert entry["surface_nodes"]
+    assert entry["surface_nodes"][0]["fingerprint"] == "settings|bluetooth|panel"
+    assert entry["surface_transitions"][0]["label"] == "Add device"
+    assert entry["surface_transitions"][0]["to_surface_fingerprint"] == "settings|bluetooth|add-device-dialog"
+    assert any(str(item.get("label", "")) == "Search settings" for item in entry["learned_commands"])
+    assert any(str(item.get("label", "")) == "search" for item in entry["learned_commands"])
+    assert bool(dict(entry["capability_profile"]["features"]).get("search_surface", False)) is True
+    assert bool(dict(entry["capability_profile"]["features"]).get("keyboard_shortcuts", False)) is True
+
+    hint = memory.surface_hint(
+        app_name="settings",
+        profile_id="settings",
+        surface_fingerprint="settings|bluetooth|panel",
+    )
+
+    assert hint["status"] == "success"
+    assert hint["known"] is True
+    assert dict(hint["surface_node"])["fingerprint"] == "settings|bluetooth|panel"
+    assert any(str(item.get("label", "")) == "Search settings" for item in hint["learned_commands"])

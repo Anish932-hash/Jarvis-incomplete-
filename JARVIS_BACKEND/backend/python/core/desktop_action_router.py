@@ -8319,6 +8319,11 @@ class DesktopActionRouter:
                 "app_memory": app_memory,
             }
         exploration_plan: Dict[str, Any] = {}
+        surface_hint = self._app_memory.surface_hint(
+            app_name=clean_app_name,
+            profile_id=str(app_profile.get("profile_id", "") or "").strip(),
+            surface_fingerprint=str(snapshot.get("surface_fingerprint", "") or "").strip(),
+        )
         if include_exploration:
             exploration_plan = self._surface_exploration_from_snapshot(
                 snapshot=dict(snapshot),
@@ -8377,6 +8382,8 @@ class DesktopActionRouter:
                 message_parts.append(
                     f"Vision-guided probing tested {attempted_count} control{'s' if attempted_count != 1 else ''}, learned {successful_count} verified effect{'s' if successful_count != 1 else ''}, and skipped {blocked_count} risky target{'s' if blocked_count != 1 else ''} from {ocr_target_count} OCR target{'s' if ocr_target_count != 1 else ''}."
                 )
+        if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
+            message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
         if isinstance(exploration_plan, dict) and exploration_plan:
             branch_action_count = int(exploration_plan.get("branch_action_count", 0) or 0)
             hypothesis_count = int(exploration_plan.get("hypothesis_count", 0) or 0)
@@ -8391,6 +8398,7 @@ class DesktopActionRouter:
             "surface_snapshot": snapshot,
             "exploration_plan": exploration_plan,
             "probe_report": probe_report,
+            "surface_hint": surface_hint,
             "memory_entry": memory_entry,
             "app_memory": app_memory,
         }
@@ -8400,6 +8408,7 @@ class DesktopActionRouter:
         *,
         query: str = "",
         category: str = "",
+        app_names: Optional[List[str]] = None,
         max_apps: int = 4,
         per_app_limit: int = 24,
         ensure_app_launch: bool = True,
@@ -8411,6 +8420,8 @@ class DesktopActionRouter:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
         source: str = "batch",
     ) -> Dict[str, Any]:
         bounded_max_apps = max(1, min(int(max_apps or 4), 32))
@@ -8418,17 +8429,24 @@ class DesktopActionRouter:
         clean_query = str(query or "").strip()
         clean_category = str(category or "").strip()
         clean_source = str(source or "batch").strip().lower() or "batch"
-        catalog = self._app_profile_registry.catalog(
+        selection = self._select_app_memory_survey_profiles(
             query=clean_query,
             category=clean_category,
-            limit=max(bounded_max_apps, 32),
+            app_names=app_names,
+            max_apps=bounded_max_apps,
+            skip_known_apps=skip_known_apps,
+            prefer_unknown_apps=prefer_unknown_apps,
         )
-        profiles = [
+        selected_profiles = [
             dict(item)
-            for item in catalog.get("items", [])
+            for item in selection.get("selected_profiles", [])
             if isinstance(item, dict)
         ]
-        selected_profiles = profiles[:bounded_max_apps]
+        skipped_apps = [
+            dict(item)
+            for item in selection.get("skipped_apps", [])
+            if isinstance(item, dict)
+        ]
         items: List[Dict[str, Any]] = []
         success_count = 0
         partial_count = 0
@@ -8466,6 +8484,12 @@ class DesktopActionRouter:
                 "app_name": target_app_name,
                 "profile_id": str(profile.get("profile_id", "") or "").strip(),
                 "profile_name": str(profile.get("name", "") or "").strip(),
+                "category": str(profile.get("category", "") or "").strip(),
+                "selection": (
+                    dict(profile.get("_selection", {}))
+                    if isinstance(profile.get("_selection", {}), dict)
+                    else {}
+                ),
                 "status": result_status,
                 "message": str(survey_payload.get("message", "") or "").strip(),
                 "memory_entry": memory_entry,
@@ -8493,21 +8517,178 @@ class DesktopActionRouter:
             "status": overall_status,
             "message": (
                 f"JARVIS surveyed {len(items)} app profile(s): "
-                f"{success_count} succeeded, {partial_count} partial, {error_count} failed."
+                f"{success_count} succeeded, {partial_count} partial, {error_count} failed, and {len(skipped_apps)} were skipped from prior healthy memory."
             ),
             "query": clean_query,
             "category": clean_category,
             "surveyed_app_count": len(items),
+            "skipped_app_count": len(skipped_apps),
             "success_count": success_count,
             "partial_count": partial_count,
             "error_count": error_count,
             "items": items,
+            "skipped_apps": skipped_apps[:12],
             "failed_apps": failed_apps[:8],
-            "catalog": {
-                "count": len(selected_profiles),
-                "total": int(catalog.get("total", len(profiles)) or len(profiles)),
-            },
+            "catalog": dict(selection.get("catalog", {})) if isinstance(selection.get("catalog", {}), dict) else {},
+            "selection_summary": dict(selection.get("selection_summary", {})) if isinstance(selection.get("selection_summary", {}), dict) else {},
             "app_memory": app_memory,
+        }
+
+    def _select_app_memory_survey_profiles(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_names: Optional[List[str]] = None,
+        max_apps: int = 4,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
+        minimum_survey_count_for_skip: int = 2,
+    ) -> Dict[str, Any]:
+        bounded_max_apps = max(1, min(int(max_apps or 4), 32))
+        clean_query = str(query or "").strip()
+        clean_category = str(category or "").strip()
+        explicit_apps = self._dedupe_strings(
+            [str(item).strip() for item in (app_names or []) if str(item).strip()]
+        )
+        catalog_payload: Dict[str, Any]
+        raw_profiles: List[Dict[str, Any]] = []
+        if explicit_apps:
+            raw_profiles = []
+            for app_name in explicit_apps:
+                matched_profile = self._app_profile_registry.match(app_name=app_name, window_title="")
+                if isinstance(matched_profile, dict) and str(matched_profile.get("status", "") or "").strip().lower() == "success":
+                    profile = dict(matched_profile)
+                    profile["_requested_app_name"] = app_name
+                else:
+                    profile = {
+                        "profile_id": self._normalize_probe_text(app_name) or app_name,
+                        "name": app_name,
+                        "category": clean_category,
+                        "_requested_app_name": app_name,
+                    }
+                raw_profiles.append(profile)
+            catalog_payload = {
+                "status": "success",
+                "count": len(raw_profiles),
+                "total": len(raw_profiles),
+                "source": "explicit",
+            }
+        else:
+            catalog = self._app_profile_registry.catalog(
+                query=clean_query,
+                category=clean_category,
+                limit=max(bounded_max_apps * 4, 48),
+            )
+            raw_profiles = [
+                dict(item)
+                for item in catalog.get("items", [])
+                if isinstance(item, dict)
+            ]
+            catalog_payload = {
+                "status": str(catalog.get("status", "") or "success"),
+                "count": len(raw_profiles),
+                "total": int(catalog.get("total", len(raw_profiles)) or len(raw_profiles)),
+                "source": "catalog",
+            }
+
+        memory_snapshot = self._app_memory.snapshot(limit=5000, category=clean_category)
+        memory_rows = [
+            dict(item)
+            for item in memory_snapshot.get("items", [])
+            if isinstance(memory_snapshot.get("items", []), list) and isinstance(item, dict)
+        ]
+        memory_by_profile: Dict[str, Dict[str, Any]] = {}
+        memory_by_app: Dict[str, Dict[str, Any]] = {}
+        for row in memory_rows:
+            profile_key = self._normalize_probe_text(row.get("profile_id", ""))
+            app_key = self._normalize_probe_text(row.get("app_name", ""))
+            if profile_key and profile_key not in memory_by_profile:
+                memory_by_profile[profile_key] = row
+            if app_key and app_key not in memory_by_app:
+                memory_by_app[app_key] = row
+
+        selected_candidates: List[Dict[str, Any]] = []
+        skipped_apps: List[Dict[str, Any]] = []
+        for raw_profile in raw_profiles:
+            profile = dict(raw_profile)
+            requested_app_name = str(profile.get("_requested_app_name", "") or "").strip()
+            target_app_name = str(requested_app_name or profile.get("name", "") or profile.get("profile_id", "") or "").strip()
+            profile_id = str(profile.get("profile_id", "") or target_app_name).strip()
+            existing_memory = (
+                dict(memory_by_profile.get(self._normalize_probe_text(profile_id), {}))
+                or dict(memory_by_app.get(self._normalize_probe_text(target_app_name), {}))
+                or dict(memory_by_app.get(self._normalize_probe_text(requested_app_name), {}))
+            )
+            metrics = dict(existing_memory.get("metrics", {})) if isinstance(existing_memory.get("metrics", {}), dict) else {}
+            survey_count = int(metrics.get("survey_count", 0) or 0)
+            discovered_control_count = int(existing_memory.get("discovered_control_count", 0) or 0)
+            learning_status = str(
+                dict(existing_memory.get("learning_health", {})).get("status", "")
+                if isinstance(existing_memory.get("learning_health", {}), dict)
+                else ""
+            ).strip()
+            known_surface_count = len(existing_memory.get("surface_nodes", [])) if isinstance(existing_memory.get("surface_nodes", []), list) else 0
+            learned_command_count = len(existing_memory.get("learned_commands", [])) if isinstance(existing_memory.get("learned_commands", []), list) else 0
+            skip_reason = ""
+            if (
+                skip_known_apps
+                and existing_memory
+                and learning_status == "healthy"
+                and survey_count >= max(1, int(minimum_survey_count_for_skip or 2))
+                and (
+                    discovered_control_count >= 3
+                    or known_surface_count >= 1
+                    or learned_command_count >= 2
+                )
+            ):
+                skip_reason = "healthy_memory_reuse"
+            selection_state = {
+                "known": bool(existing_memory),
+                "learning_status": learning_status or ("new" if not existing_memory else "unknown"),
+                "survey_count": survey_count,
+                "discovered_control_count": discovered_control_count,
+                "known_surface_count": known_surface_count,
+                "learned_command_count": learned_command_count,
+            }
+            if skip_reason:
+                skipped_apps.append(
+                    {
+                        "app_name": target_app_name,
+                        "profile_id": profile_id,
+                        "reason": skip_reason,
+                        "selection": selection_state,
+                    }
+                )
+                continue
+            profile["_selection"] = selection_state
+            selected_candidates.append(profile)
+
+        if prefer_unknown_apps:
+            selected_candidates.sort(
+                key=lambda item: (
+                    0 if not bool(dict(item.get("_selection", {})).get("known", False)) else 1,
+                    0 if str(dict(item.get("_selection", {})).get("learning_status", "")) in {"attention", "degraded"} else 1,
+                    int(dict(item.get("_selection", {})).get("survey_count", 0) or 0),
+                    int(dict(item.get("_selection", {})).get("discovered_control_count", 0) or 0),
+                    str(item.get("name", "") or item.get("profile_id", "") or "").lower(),
+                )
+            )
+
+        selected_profiles = selected_candidates[:bounded_max_apps]
+        return {
+            "status": "success",
+            "selected_profiles": selected_profiles,
+            "skipped_apps": skipped_apps,
+            "catalog": catalog_payload,
+            "selection_summary": {
+                "candidate_count": len(raw_profiles),
+                "selected_count": len(selected_profiles),
+                "skipped_count": len(skipped_apps),
+                "skip_known_apps": bool(skip_known_apps),
+                "prefer_unknown_apps": bool(prefer_unknown_apps),
+                "explicit_app_count": len(explicit_apps),
+            },
         }
 
     def _probe_app_memory_controls(
@@ -8580,6 +8761,8 @@ class DesktopActionRouter:
                         "effect_kind": "blocked_for_review",
                         "semantic_role": "review_required",
                         "effect_summary": "Control was discovered and memorized, but probing was withheld pending operator review.",
+                        "pre_surface_fingerprint": str(previous_observation.get("surface_fingerprint", "") or "").strip(),
+                        "post_surface_fingerprint": str(previous_observation.get("surface_fingerprint", "") or "").strip(),
                     }
                 )
                 continue
@@ -8663,6 +8846,8 @@ class DesktopActionRouter:
                     "post_hash": str(post_observation.get("screen_hash", "") or "").strip(),
                     "pre_window_title": str(previous_observation.get("active_window_title", "") or "").strip(),
                     "post_window_title": str(post_observation.get("active_window_title", "") or "").strip(),
+                    "pre_surface_fingerprint": str(previous_observation.get("surface_fingerprint", "") or "").strip(),
+                    "post_surface_fingerprint": str(post_observation.get("surface_fingerprint", "") or "").strip(),
                     "post_visible_text": str(post_observation.get("text", "") or "").strip()[:400],
                 }
             )
@@ -8728,6 +8913,14 @@ class DesktopActionRouter:
             "targets": normalized_targets[:40],
             "window_title": str(window_title or "").strip(),
             "active_window_title": str(active_window_payload.get("title", "") or window_title or "").strip(),
+            "surface_fingerprint": self._app_memory_probe_surface_fingerprint(
+                observation={
+                    "active_window_title": str(active_window_payload.get("title", "") or window_title or "").strip(),
+                    "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
+                    "targets": normalized_targets[:40],
+                },
+                window_title=window_title,
+            ),
         }
 
     def _app_memory_probe_candidates(
@@ -8947,6 +9140,81 @@ class DesktopActionRouter:
         if changed:
             return ("surface_change", f"Invoking '{label}' changed the visible surface.")
         return ("no_observed_change", f"Invoking '{label}' did not produce a reliable visible change in this bounded probe.")
+
+    def _surface_snapshot_fingerprint(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        target_window: Dict[str, Any],
+        active_window: Dict[str, Any],
+        surface_summary: Dict[str, Any],
+        surface_intelligence: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> str:
+        profile_id = self._normalize_probe_text(
+            app_profile.get("profile_id", "") or app_profile.get("name", "") or app_profile.get("category", "")
+        )
+        app_name = self._normalize_probe_text(
+            target_window.get("app_name", "") or active_window.get("app_name", "") or app_profile.get("name", "")
+        )
+        role = self._normalize_probe_text(surface_intelligence.get("surface_role", ""))
+        mode = self._normalize_probe_text(surface_intelligence.get("interaction_mode", ""))
+        window_class = self._normalize_probe_text(
+            target_window.get("class_name", "") or active_window.get("class_name", "")
+        )
+        window_signature = self._normalize_probe_text(
+            target_window.get("window_signature", "") or active_window.get("window_signature", "")
+        )
+        top_labels = [
+            self._normalize_probe_text(dict(row).get("label", ""))
+            for row in surface_summary.get("top_labels", [])
+            if isinstance(row, dict)
+        ][:3]
+        control_types = [
+            self._normalize_probe_text(str(key))
+            for key, _value in sorted(
+                (
+                    (str(key).strip(), int(value))
+                    for key, value in dict(surface_summary.get("control_counts", {})).items()
+                    if str(key).strip()
+                ),
+                key=lambda item: (item[1], item[0]),
+                reverse=True,
+            )[:4]
+        ]
+        ocr_terms = [
+            self._normalize_probe_text(dict(row).get("text", ""))
+            for row in observation.get("targets", [])
+            if isinstance(row, dict)
+        ][:3]
+        parts = [
+            profile_id,
+            app_name,
+            role,
+            mode,
+            window_class,
+            window_signature,
+            *[part for part in top_labels if part],
+            *[part for part in control_types if part],
+            *[part for part in ocr_terms if part],
+        ]
+        return "|".join(part for part in parts if part)[:320] or "generic|surface"
+
+    def _app_memory_probe_surface_fingerprint(
+        self,
+        *,
+        observation: Dict[str, Any],
+        window_title: str = "",
+    ) -> str:
+        title = self._normalize_probe_text(observation.get("active_window_title", "") or window_title or "")
+        screen_hash = self._normalize_probe_text(observation.get("screen_hash", ""))
+        target_terms = [
+            self._normalize_probe_text(dict(row).get("text", ""))
+            for row in observation.get("targets", [])
+            if isinstance(row, dict)
+        ][:3]
+        parts = [title, *[part for part in target_terms if part], screen_hash]
+        return "|".join(part for part in parts if part)[:240] or "probe|surface"
 
     def _app_memory_probe_semantic_role(
         self,
@@ -9409,6 +9677,14 @@ class DesktopActionRouter:
             query=str(query or "").strip(),
         )
         surface_topology = self._rust_window_topology_snapshot(query=str(query or "").strip())
+        surface_fingerprint = self._surface_snapshot_fingerprint(
+            app_profile=app_profile,
+            target_window=primary_candidate,
+            active_window=active_window,
+            surface_summary=surface_summary,
+            surface_intelligence=surface_intelligence,
+            observation=observation,
+        )
         recommended_actions = self._dedupe_strings(
             [
                 *self._surface_intelligence_recommendations(
@@ -9465,6 +9741,7 @@ class DesktopActionRouter:
             "native_window_topology": native_window_topology,
             "window_reacquisition": window_reacquisition,
             "surface_topology": surface_topology,
+            "surface_fingerprint": surface_fingerprint,
             "workflow_surfaces": workflow_surfaces,
             "surface_summary": surface_summary,
             "surface_intelligence": surface_intelligence,

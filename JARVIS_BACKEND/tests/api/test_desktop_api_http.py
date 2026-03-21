@@ -605,6 +605,8 @@ class FakeDesktopService:
             "probe_controls": True,
             "max_probe_controls": 4,
             "allow_risky_probes": False,
+            "skip_known_apps": True,
+            "prefer_unknown_apps": True,
             "last_tick_at": "",
             "last_success_at": "",
             "last_error_at": "",
@@ -623,6 +625,7 @@ class FakeDesktopService:
             "updated_at": "",
         }
         self.desktop_app_memory_daemon_runs: list[Dict[str, Any]] = []
+        self.desktop_app_memory_campaign_items: list[Dict[str, Any]] = []
         self.desktop_mission_items: list[Dict[str, Any]] = [
             {
                 "mission_id": "dm_pause_wizard_1",
@@ -13457,6 +13460,43 @@ class FakeDesktopService:
             },
             "top_controls": [{"label": "Save", "control_type": "button", "sample_count": 1}],
             "command_candidates": [{"value": query or "save", "count": 1}],
+            "surface_fingerprints": [{"value": f"{app_name or 'desktop'}|main|surface", "count": 1}],
+            "surface_nodes": [
+                {
+                    "fingerprint": f"{app_name or 'desktop'}|main|surface",
+                    "surface_role": "workspace",
+                    "interaction_mode": "hybrid",
+                    "sample_count": 1,
+                }
+            ],
+            "surface_transitions": (
+                [
+                    {
+                        "label": query or "save",
+                        "from_surface_fingerprint": f"{app_name or 'desktop'}|main|surface",
+                        "to_surface_fingerprint": f"{app_name or 'desktop'}|dialog|surface",
+                        "sample_count": 1,
+                    }
+                ]
+                if probe_controls
+                else []
+            ),
+            "learned_commands": [
+                {
+                    "label": query or "save",
+                    "sample_count": 1,
+                    "sources": ["query_candidate", "workflow"],
+                    "hotkeys": ["Ctrl+S"],
+                }
+            ],
+            "capability_profile": {
+                "status": "success",
+                "features": {"search_surface": True, "keyboard_shortcuts": True},
+                "top_features": [
+                    {"value": "search_surface", "count": 1},
+                    {"value": "keyboard_shortcuts", "count": 1},
+                ],
+            },
             "tested_controls": (
                 [{"label": "Open", "count": int(max_probe_controls)}]
                 if probe_controls
@@ -13490,6 +13530,21 @@ class FakeDesktopService:
                 "error_count": 0,
                 "ocr_target_count": 5 if probe_controls else 0,
             },
+            "surface_hint": {
+                "status": "success",
+                "known": True,
+                "surface_fingerprint": f"{app_name or 'desktop'}|main|surface",
+                "surface_node": {
+                    "fingerprint": f"{app_name or 'desktop'}|main|surface",
+                    "sample_count": 1,
+                },
+                "learned_commands": [{"label": query or "save", "sample_count": 1}],
+                "capability_profile": {
+                    "status": "success",
+                    "features": {"search_surface": True},
+                    "top_features": [{"value": "search_surface", "count": 1}],
+                },
+            },
             "memory_entry": entry,
             "app_memory": self.desktop_app_memory_status(app_name=app_name or "", profile_id="", category=""),
         }
@@ -13499,6 +13554,7 @@ class FakeDesktopService:
         *,
         query: str = "",
         category: str = "",
+        app_names: list[str] | None = None,
         max_apps: int = 4,
         per_app_limit: int = 24,
         ensure_app_launch: bool = True,
@@ -13510,12 +13566,33 @@ class FakeDesktopService:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         del category, per_app_limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
-        candidates = [query] if query else ["notepad", "calculator", "paint"]
+        candidates = [str(item).strip() for item in (app_names or []) if str(item).strip()] if app_names else ([query] if query else ["notepad", "calculator", "paint"])
+        candidates = candidates[: max(1, int(max_apps))]
+        if prefer_unknown_apps:
+            candidates = sorted(
+                candidates,
+                key=lambda item: (
+                    1 if any(str(row.get("app_name", "")).lower() == str(item).lower() for row in self.desktop_app_memory_items) else 0,
+                    str(item).lower(),
+                ),
+            )
         items: list[Dict[str, Any]] = []
+        skipped_apps: list[Dict[str, Any]] = []
         for app_name in candidates[: max(1, int(max_apps))]:
+            if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
+                skipped_apps.append(
+                    {
+                        "app_name": app_name,
+                        "reason": "healthy_memory_reuse",
+                        "selection": {"known": True, "learning_status": "healthy", "survey_count": 2},
+                    }
+                )
+                continue
             payload = self.survey_desktop_app_memory(
                 app_name=app_name,
                 query=query or "save",
@@ -13533,14 +13610,24 @@ class FakeDesktopService:
             )
         return {
             "status": "success",
-            "message": f"JARVIS surveyed {len(items)} app profile(s): {len(items)} succeeded, 0 partial, 0 failed.",
+            "message": f"JARVIS surveyed {len(items)} app profile(s): {len(items)} succeeded, 0 partial, 0 failed, and {len(skipped_apps)} were skipped from prior healthy memory.",
             "surveyed_app_count": len(items),
+            "skipped_app_count": len(skipped_apps),
             "success_count": len(items),
             "partial_count": 0,
             "error_count": 0,
             "items": items,
+            "skipped_apps": skipped_apps,
             "failed_apps": [],
-            "catalog": {"count": len(items), "total": len(items)},
+            "catalog": {"count": len(candidates), "total": len(candidates), "source": "explicit" if app_names else "catalog"},
+            "selection_summary": {
+                "candidate_count": len(candidates),
+                "selected_count": len(items),
+                "skipped_count": len(skipped_apps),
+                "skip_known_apps": bool(skip_known_apps),
+                "prefer_unknown_apps": bool(prefer_unknown_apps),
+                "explicit_app_count": len(app_names or []),
+            },
             "app_memory": self.desktop_app_memory_status(app_name=query or "", profile_id="", category=""),
         }
 
@@ -13646,6 +13733,8 @@ class FakeDesktopService:
         probe_controls: bool | None = None,
         max_probe_controls: int | None = None,
         allow_risky_probes: bool | None = None,
+        skip_known_apps: bool | None = None,
+        prefer_unknown_apps: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13671,12 +13760,17 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["max_probe_controls"] = int(max_probe_controls)
         if allow_risky_probes is not None:
             self.desktop_app_memory_daemon_state["allow_risky_probes"] = bool(allow_risky_probes)
+        if skip_known_apps is not None:
+            self.desktop_app_memory_daemon_state["skip_known_apps"] = bool(skip_known_apps)
+        if prefer_unknown_apps is not None:
+            self.desktop_app_memory_daemon_state["prefer_unknown_apps"] = bool(prefer_unknown_apps)
         self.desktop_app_memory_daemon_state["last_config_source"] = source
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
 
     def trigger_desktop_app_memory_supervisor(
         self,
         *,
+        app_names: list[str] | None = None,
         max_apps: int | None = None,
         per_app_limit: int | None = None,
         history_limit: int | None = None,
@@ -13686,10 +13780,13 @@ class FakeDesktopService:
         probe_controls: bool | None = None,
         max_probe_controls: int | None = None,
         allow_risky_probes: bool | None = None,
+        skip_known_apps: bool | None = None,
+        prefer_unknown_apps: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
         payload = self.survey_desktop_app_memory_batch(
+            app_names=app_names,
             query=query or str(self.desktop_app_memory_daemon_state.get("query", "") or ""),
             category=category or str(self.desktop_app_memory_daemon_state.get("category", "") or ""),
             max_apps=max_apps or int(self.desktop_app_memory_daemon_state.get("max_apps", 2) or 2),
@@ -13714,6 +13811,16 @@ class FakeDesktopService:
                 if allow_risky_probes is None
                 else allow_risky_probes
             ),
+            skip_known_apps=bool(
+                self.desktop_app_memory_daemon_state.get("skip_known_apps", True)
+                if skip_known_apps is None
+                else skip_known_apps
+            ),
+            prefer_unknown_apps=bool(
+                self.desktop_app_memory_daemon_state.get("prefer_unknown_apps", True)
+                if prefer_unknown_apps is None
+                else prefer_unknown_apps
+            ),
             source=source,
         )
         run = {
@@ -13736,9 +13843,130 @@ class FakeDesktopService:
             "success_count": payload.get("success_count", 0),
             "partial_count": payload.get("partial_count", 0),
             "error_count": payload.get("error_count", 0),
+            "skipped_app_count": payload.get("skipped_app_count", 0),
         }
         payload["supervisor"] = self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
         return payload
+
+    def desktop_app_memory_campaigns(
+        self,
+        *,
+        limit: int = 12,
+        campaign_id: str = "",
+        status: str = "",
+    ) -> Dict[str, Any]:
+        rows = [dict(item) for item in self.desktop_app_memory_campaign_items]
+        if campaign_id:
+            rows = [row for row in rows if str(row.get("campaign_id", "")) == campaign_id]
+        if status:
+            rows = [row for row in rows if str(row.get("status", "")).lower() == status.lower()]
+        selected = rows[: max(1, int(limit))]
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(rows),
+            "items": selected,
+            "latest_campaign": selected[0] if selected else {},
+            "summary": {
+                "pending_app_total": sum(int(row.get("pending_app_count", 0) or 0) for row in rows),
+                "completed_app_total": sum(int(row.get("completed_app_count", 0) or 0) for row in rows),
+            },
+            "filters": {"campaign_id": campaign_id, "status": status},
+            "app_memory": self.desktop_app_memory_status(limit=64),
+        }
+
+    def create_desktop_app_memory_campaign(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        app_names: list[str] | None = None,
+        label: str = "",
+        max_apps: int = 4,
+        per_app_limit: int = 24,
+        ensure_app_launch: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        allow_risky_probes: bool = False,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        del category, per_app_limit, ensure_app_launch, probe_controls, max_probe_controls, allow_risky_probes, skip_known_apps, prefer_unknown_apps
+        target_apps = [str(item).strip() for item in (app_names or []) if str(item).strip()] or ([query] if query else ["notepad", "calculator"])
+        campaign = {
+            "campaign_id": f"cam_{len(self.desktop_app_memory_campaign_items) + 1}",
+            "label": label or "learned app survey campaign",
+            "status": "pending",
+            "query": query,
+            "target_apps": target_apps[: max(1, int(max_apps))],
+            "pending_apps": target_apps[: max(1, int(max_apps))],
+            "completed_apps": [],
+            "failed_apps": [],
+            "skipped_apps": [],
+            "pending_app_count": len(target_apps[: max(1, int(max_apps))]),
+            "completed_app_count": 0,
+            "failed_app_count": 0,
+            "skipped_app_count": 0,
+            "max_apps": int(max_apps),
+            "latest_cycle_status": "",
+            "latest_cycle_message": "",
+            "run_count": 0,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+        }
+        self.desktop_app_memory_campaign_items.insert(0, campaign)
+        return {
+            "status": "success",
+            "campaign": campaign,
+            "campaigns": self.desktop_app_memory_campaigns(limit=8),
+            "app_memory": self.desktop_app_memory_status(limit=64),
+        }
+
+    def run_desktop_app_memory_campaign(
+        self,
+        *,
+        campaign_id: str,
+        max_apps: int | None = None,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        match = next((item for item in self.desktop_app_memory_campaign_items if str(item.get("campaign_id", "")) == campaign_id), None)
+        if not isinstance(match, dict):
+            return {"status": "error", "message": "desktop app memory campaign not found"}
+        batch = self.survey_desktop_app_memory_batch(
+            app_names=[str(item).strip() for item in match.get("pending_apps", []) if str(item).strip()][: max(1, int(max_apps or match.get("max_apps", 2) or 2))],
+            query=str(match.get("query", "") or "").strip(),
+            max_apps=max_apps or int(match.get("max_apps", 2) or 2),
+            source=source,
+        )
+        handled = {
+            str(item.get("app_name", "")).strip().lower()
+            for item in batch.get("items", [])
+            if isinstance(batch.get("items", []), list) and isinstance(item, dict)
+        }
+        handled.update(
+            str(item.get("app_name", "")).strip().lower()
+            for item in batch.get("skipped_apps", [])
+            if isinstance(batch.get("skipped_apps", []), list) and isinstance(item, dict)
+        )
+        match["completed_apps"] = [*match.get("completed_apps", []), *[str(item.get("app_name", "")).strip() for item in batch.get("items", []) if isinstance(batch.get("items", []), list) and isinstance(item, dict)]]
+        match["skipped_apps"] = [*match.get("skipped_apps", []), *[dict(item) for item in batch.get("skipped_apps", []) if isinstance(batch.get("skipped_apps", []), list) and isinstance(item, dict)]]
+        match["pending_apps"] = [item for item in match.get("pending_apps", []) if str(item).strip().lower() not in handled]
+        match["completed_app_count"] = len(match.get("completed_apps", []))
+        match["pending_app_count"] = len(match.get("pending_apps", []))
+        match["skipped_app_count"] = len(match.get("skipped_apps", []))
+        match["latest_cycle_status"] = str(batch.get("status", "") or "success")
+        match["latest_cycle_message"] = str(batch.get("message", "") or "")
+        match["run_count"] = int(match.get("run_count", 0) or 0) + 1
+        match["status"] = "completed" if not match.get("pending_apps", []) else "active"
+        match["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {
+            "status": str(batch.get("status", "") or "success"),
+            "campaign": match,
+            "result": batch,
+            "campaigns": self.desktop_app_memory_campaigns(limit=8),
+            "app_memory": self.desktop_app_memory_status(limit=64),
+        }
 
     def desktop_evaluation_catalog(
         self,
@@ -21790,6 +22018,9 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert survey["status"] == "success"
     assert survey["memory_entry"]["app_name"] == "calculator"
     assert int(dict(survey["memory_entry"].get("probe_summary", {})).get("attempted_count", 0) or 0) >= 1
+    assert bool(dict(survey.get("surface_hint", {})).get("known", False)) is True
+    assert isinstance(survey["memory_entry"].get("surface_nodes", []), list)
+    assert isinstance(survey["memory_entry"].get("learned_commands", []), list)
     assert survey["app_memory"]["status"] == "success"
 
     status, cleared = request_json(
@@ -21833,7 +22064,8 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert status == 200
     assert triggered["status"] == "success"
     assert triggered["supervisor"]["status"] == "success"
-    assert triggered["supervisor"]["latest_run"]["surveyed_app_count"] >= 1
+    latest_run = triggered["supervisor"]["latest_run"]
+    assert int(latest_run.get("surveyed_app_count", 0) or 0) + int(latest_run.get("skipped_app_count", 0) or 0) >= 1
 
     status, daemon = request_json(
         "GET",
@@ -21860,6 +22092,44 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert status == 200
     assert cleared["status"] == "success"
     assert cleared["removed_count"] >= 1
+
+
+def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, _ = api_server
+
+    status, created = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-app-memory/campaigns",
+        payload={
+            "label": "Installed App Learner",
+            "app_names": ["notepad", "calculator"],
+            "max_apps": 2,
+            "skip_known_apps": True,
+            "prefer_unknown_apps": True,
+        },
+    )
+    assert status == 200
+    assert created["status"] == "success"
+    campaign_id = str(created.get("campaign", {}).get("campaign_id", ""))
+    assert campaign_id
+
+    status, listed = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-app-memory/campaigns?limit=4",
+    )
+    assert status == 200
+    assert listed["status"] == "success"
+    assert listed["count"] >= 1
+
+    status, executed = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-app-memory/campaigns/run-cycle",
+        payload={"campaign_id": campaign_id, "max_apps": 2},
+    )
+    assert status == 200
+    assert executed["status"] == "success"
+    assert str(executed.get("campaign", {}).get("campaign_id", "")) == campaign_id
+    assert int(executed.get("campaign", {}).get("completed_app_count", 0) or 0) >= 0
 
 
 def test_desktop_evaluation_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:

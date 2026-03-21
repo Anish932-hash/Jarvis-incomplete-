@@ -72,6 +72,11 @@ class DesktopAppMemory:
             if isinstance(snapshot_payload.get("surface_summary", {}), dict)
             else {}
         )
+        observation_payload = (
+            snapshot_payload.get("observation", {})
+            if isinstance(snapshot_payload.get("observation", {}), dict)
+            else {}
+        )
         intelligence = (
             snapshot_payload.get("surface_intelligence", {})
             if isinstance(snapshot_payload.get("surface_intelligence", {}), dict)
@@ -116,6 +121,15 @@ class DesktopAppMemory:
         clean_survey_status = self._normalize_text(survey_status) or "success"
         clean_error_message = str(error_message or snapshot_payload.get("message", "") or "").strip()
         clean_source = self._normalize_text(source) or "manual"
+        surface_fingerprint = str(snapshot_payload.get("surface_fingerprint", "") or "").strip() or self._surface_fingerprint(
+            app_name=app_label,
+            profile_id=self._profile_id(profile),
+            target_window=target_window,
+            active_window=active_window,
+            summary=summary,
+            intelligence=intelligence,
+            observation=observation_payload,
+        )
         with self._lock:
             entry = dict(self._entries.get(key, {}))
             entry["key"] = key
@@ -127,6 +141,7 @@ class DesktopAppMemory:
                 str(target_window.get("title", "") or active_window.get("title", "") or window_title or "").strip()
             )
             entry["updated_at"] = now
+            entry["last_surface_fingerprint"] = surface_fingerprint
 
             metrics = entry.get("metrics", {}) if isinstance(entry.get("metrics", {}), dict) else {}
             metrics["survey_count"] = self._coerce_int(metrics.get("survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
@@ -165,6 +180,7 @@ class DesktopAppMemory:
             self._increment_count(entry.setdefault("interaction_mode_counts", {}), str(intelligence.get("interaction_mode", "") or "").strip())
             self._increment_count(entry.setdefault("survey_status_counts", {}), clean_survey_status)
             self._increment_count(entry.setdefault("survey_source_counts", {}), clean_source)
+            self._increment_count(entry.setdefault("surface_fingerprint_counts", {}), surface_fingerprint)
             self._increment_count(
                 entry.setdefault("surface_signature_counts", {}),
                 str(native_window_topology.get("signature", "") or target_window.get("window_signature", "") or active_window.get("window_signature", "") or "").strip(),
@@ -199,11 +215,33 @@ class DesktopAppMemory:
 
             for row in element_rows:
                 self._record_control(entry=entry, row=row, observed_at=now, query=clean_query)
+                self._record_command_harvest(
+                    entry=entry,
+                    label=str(row.get("name", "") or row.get("automation_id", "") or "").strip(),
+                    control_type=str(row.get("control_type", "") or "").strip(),
+                    source="element",
+                    hotkeys=[
+                        str(row.get("accelerator_key", "") or "").strip(),
+                        str(row.get("access_key", "") or "").strip(),
+                    ],
+                    aliases=self._control_aliases(row),
+                )
 
             for row in summary.get("query_candidates", []):
                 if not isinstance(row, dict):
                     continue
                 self._increment_count(entry.setdefault("command_candidate_counts", {}), self._candidate_label(row))
+                self._record_command_harvest(
+                    entry=entry,
+                    label=self._candidate_label(row),
+                    control_type=str(row.get("control_type", "") or "").strip(),
+                    source="query_candidate",
+                    aliases=[
+                        str(row.get("name", "") or "").strip(),
+                        str(row.get("automation_id", "") or "").strip(),
+                        str(row.get("label", "") or "").strip(),
+                    ],
+                )
 
             for action_name in snapshot_payload.get("recommended_actions", []):
                 self._increment_count(entry.setdefault("recommended_action_counts", {}), action_name)
@@ -237,6 +275,14 @@ class DesktopAppMemory:
                             known.append(hotkey)
                     shortcut_state["hotkeys"] = known[:12]
                     shortcut_actions[action_name] = shortcut_state
+                    self._record_command_harvest(
+                        entry=entry,
+                        label=action_name.replace("_", " "),
+                        control_type="workflow_action",
+                        source="workflow",
+                        hotkeys=hotkeys,
+                        aliases=[action_name, str(workflow.get("title", "") or "").strip()],
+                    )
 
             for branch in exploration_payload.get("branch_actions", []):
                 if not isinstance(branch, dict):
@@ -249,7 +295,29 @@ class DesktopAppMemory:
             for probe_item in probe_payload.get("items", []):
                 if not isinstance(probe_item, dict):
                     continue
-                self._record_probe_result(entry=entry, row=probe_item, observed_at=now)
+                self._record_probe_result(
+                    entry=entry,
+                    row=probe_item,
+                    observed_at=now,
+                    default_surface_fingerprint=surface_fingerprint,
+                )
+
+            self._record_surface_node(
+                entry=entry,
+                observed_at=now,
+                surface_fingerprint=surface_fingerprint,
+                snapshot_payload=snapshot_payload,
+                app_profile=profile,
+                probe_payload=probe_payload,
+            )
+            self._record_capability_profile(
+                entry=entry,
+                summary=summary,
+                intelligence=intelligence,
+                workflow_surfaces=snapshot_payload.get("workflow_surfaces", []),
+                probe_payload=probe_payload,
+                observation=observation_payload,
+            )
 
             native_summary = entry.get("native_summary", {}) if isinstance(entry.get("native_summary", {}), dict) else {}
             native_summary["last_signature"] = str(native_window_topology.get("signature", "") or "").strip()
@@ -274,9 +342,14 @@ class DesktopAppMemory:
                 "element_count": len(element_rows),
                 "surface_role": str(intelligence.get("surface_role", "") or "").strip(),
                 "interaction_mode": str(intelligence.get("interaction_mode", "") or "").strip(),
+                "surface_fingerprint": surface_fingerprint,
                 "recommended_actions": [str(item).strip() for item in snapshot_payload.get("recommended_actions", []) if str(item).strip()][:8],
                 "command_candidates": self._top_count_rows(entry.get("command_candidate_counts", {}), limit=6),
                 "top_controls": self._top_controls(entry.get("controls", {}), limit=6),
+                "surface_nodes": self._top_surface_nodes(entry.get("surface_nodes", {}), limit=4),
+                "surface_transitions": self._top_surface_transitions(entry.get("surface_transitions", {}), limit=4),
+                "learned_commands": self._top_commands(entry.get("learned_commands", {}), limit=8),
+                "capability_profile": self._capability_profile_snapshot(entry),
                 "branch_actions": self._top_count_rows(entry.get("branch_action_counts", {}), limit=4),
                 "exploration_targets": self._top_count_rows(entry.get("exploration_target_counts", {}), limit=4),
                 "probe_summary": {
@@ -421,7 +494,14 @@ class DesktopAppMemory:
         current["query_examples"] = seen_queries[-6:]
         controls[identity] = current
 
-    def _record_probe_result(self, *, entry: Dict[str, Any], row: Dict[str, Any], observed_at: str) -> None:
+    def _record_probe_result(
+        self,
+        *,
+        entry: Dict[str, Any],
+        row: Dict[str, Any],
+        observed_at: str,
+        default_surface_fingerprint: str = "",
+    ) -> None:
         identity = self._control_identity(row) or self._normalize_text(row.get("label", "") or row.get("query", "") or row.get("expected_text", ""))
         if not identity:
             return
@@ -447,6 +527,9 @@ class DesktopAppMemory:
         current["learned_role"] = str(row.get("semantic_role", "") or current.get("learned_role", "") or "").strip()
         current["last_probe_summary"] = str(row.get("effect_summary", "") or row.get("message", "") or "").strip()
         current["expected_text"] = str(row.get("expected_text", "") or current.get("expected_text", "") or "").strip()
+        current["last_post_surface_fingerprint"] = str(
+            row.get("post_surface_fingerprint", "") or current.get("last_post_surface_fingerprint", "") or ""
+        ).strip()
         current["vision_labels"] = self._merge_recent_strings(
             current.get("vision_labels", []),
             [str(item).strip() for item in row.get("vision_labels", []) if str(item).strip()] if isinstance(row.get("vision_labels", []), list) else [],
@@ -457,6 +540,18 @@ class DesktopAppMemory:
         self._increment_count(entry.setdefault("probe_effect_counts", {}), str(row.get("effect_kind", "") or "").strip())
         self._increment_count(entry.setdefault("probe_role_counts", {}), str(row.get("semantic_role", "") or "").strip())
         self._increment_count(entry.setdefault("tested_control_counts", {}), current.get("label", identity))
+        from_surface = str(row.get("pre_surface_fingerprint", "") or default_surface_fingerprint or "").strip()
+        to_surface = str(row.get("post_surface_fingerprint", "") or from_surface or "").strip()
+        if from_surface and to_surface:
+            self._record_surface_transition(
+                entry=entry,
+                observed_at=observed_at,
+                from_surface_fingerprint=from_surface,
+                to_surface_fingerprint=to_surface,
+                label=current.get("label", identity),
+                effect_kind=str(row.get("effect_kind", "") or "").strip(),
+                semantic_role=str(row.get("semantic_role", "") or "").strip(),
+            )
 
     def _trim_entry_locked(self, entry: Dict[str, Any]) -> None:
         entry["window_title_counts"] = self._trim_count_map(entry.get("window_title_counts", {}), limit=24)
@@ -466,6 +561,7 @@ class DesktopAppMemory:
         entry["survey_source_counts"] = self._trim_count_map(entry.get("survey_source_counts", {}), limit=8)
         entry["failure_reason_counts"] = self._trim_count_map(entry.get("failure_reason_counts", {}), limit=16, skip_empty=True)
         entry["surface_signature_counts"] = self._trim_count_map(entry.get("surface_signature_counts", {}), limit=16)
+        entry["surface_fingerprint_counts"] = self._trim_count_map(entry.get("surface_fingerprint_counts", {}), limit=16, skip_empty=True)
         entry["control_type_counts"] = self._trim_count_map(entry.get("control_type_counts", {}), limit=24)
         entry["top_label_counts"] = self._trim_count_map(entry.get("top_label_counts", {}), limit=80, skip_empty=True)
         entry["command_candidate_counts"] = self._trim_count_map(entry.get("command_candidate_counts", {}), limit=32)
@@ -479,6 +575,41 @@ class DesktopAppMemory:
         entry["probe_effect_counts"] = self._trim_count_map(entry.get("probe_effect_counts", {}), limit=24, skip_empty=True)
         entry["probe_role_counts"] = self._trim_count_map(entry.get("probe_role_counts", {}), limit=24, skip_empty=True)
         entry["tested_control_counts"] = self._trim_count_map(entry.get("tested_control_counts", {}), limit=32, skip_empty=True)
+        learned_commands = entry.get("learned_commands", {}) if isinstance(entry.get("learned_commands", {}), dict) else {}
+        if len(learned_commands) > 64:
+            ordered_commands = sorted(
+                learned_commands.items(),
+                key=lambda item: (
+                    self._coerce_int(item[1].get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            entry["learned_commands"] = {key: value for key, value in ordered_commands[:64]}
+        surface_nodes = entry.get("surface_nodes", {}) if isinstance(entry.get("surface_nodes", {}), dict) else {}
+        if len(surface_nodes) > 32:
+            ordered_nodes = sorted(
+                surface_nodes.items(),
+                key=lambda item: (
+                    self._coerce_int(item[1].get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    str(item[1].get("last_seen_at", "")),
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            entry["surface_nodes"] = {key: value for key, value in ordered_nodes[:32]}
+        surface_transitions = entry.get("surface_transitions", {}) if isinstance(entry.get("surface_transitions", {}), dict) else {}
+        if len(surface_transitions) > 64:
+            ordered_transitions = sorted(
+                surface_transitions.items(),
+                key=lambda item: (
+                    self._coerce_int(item[1].get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    str(item[1].get("last_seen_at", "")),
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            entry["surface_transitions"] = {key: value for key, value in ordered_transitions[:64]}
         shortcut_actions = entry.get("shortcut_actions", {}) if isinstance(entry.get("shortcut_actions", {}), dict) else {}
         if len(shortcut_actions) > 40:
             ordered_shortcuts = sorted(
@@ -525,6 +656,7 @@ class DesktopAppMemory:
         item["survey_sources"] = self._top_count_rows(row.get("survey_source_counts", {}), limit=6)
         item["failure_reasons"] = self._top_count_rows(row.get("failure_reason_counts", {}), limit=6)
         item["window_titles"] = self._top_count_rows(row.get("window_title_counts", {}), limit=6)
+        item["surface_fingerprints"] = self._top_count_rows(row.get("surface_fingerprint_counts", {}), limit=6)
         item["surface_signatures"] = self._top_count_rows(row.get("surface_signature_counts", {}), limit=4)
         item["metrics"] = self._normalize_metrics(row.get("metrics", {}))
         item["native_summary"] = dict(row.get("native_summary", {})) if isinstance(row.get("native_summary", {}), dict) else {}
@@ -533,6 +665,10 @@ class DesktopAppMemory:
             if isinstance(row.get("last_probe_summary", {}), dict)
             else {}
         )
+        item["surface_nodes"] = self._top_surface_nodes(row.get("surface_nodes", {}), limit=8)
+        item["surface_transitions"] = self._top_surface_transitions(row.get("surface_transitions", {}), limit=8)
+        item["learned_commands"] = self._top_commands(row.get("learned_commands", {}), limit=10)
+        item["capability_profile"] = self._capability_profile_snapshot(row)
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
         item["survey_history"] = history_rows[-self.max_history_per_entry :]
@@ -566,6 +702,9 @@ class DesktopAppMemory:
         ocr_target_total = 0
         probe_attempt_total = 0
         probe_success_total = 0
+        surface_node_total = 0
+        surface_transition_total = 0
+        learned_command_total = 0
         discovered_control_total = 0
         command_candidate_total = 0
         healthy_app_count = 0
@@ -592,6 +731,9 @@ class DesktopAppMemory:
             ocr_target_total += self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_attempt_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_success_total += self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+            surface_node_total += len(row.get("surface_nodes", {})) if isinstance(row.get("surface_nodes", {}), dict) else 0
+            surface_transition_total += len(row.get("surface_transitions", {})) if isinstance(row.get("surface_transitions", {}), dict) else 0
+            learned_command_total += len(row.get("learned_commands", {})) if isinstance(row.get("learned_commands", {}), dict) else 0
             discovered_control_total += len(row.get("controls", {})) if isinstance(row.get("controls", {}), dict) else 0
             command_candidate_total += len(self._trim_count_map(row.get("command_candidate_counts", {}), limit=32))
             learning_health = self._learning_health_snapshot(row)
@@ -626,6 +768,9 @@ class DesktopAppMemory:
             "ocr_target_total": ocr_target_total,
             "probe_attempt_total": probe_attempt_total,
             "probe_success_total": probe_success_total,
+            "surface_node_total": surface_node_total,
+            "surface_transition_total": surface_transition_total,
+            "learned_command_total": learned_command_total,
             "discovered_control_total": discovered_control_total,
             "command_candidate_total": command_candidate_total,
             "healthy_app_count": healthy_app_count,
@@ -899,4 +1044,305 @@ class DesktopAppMemory:
             "last_status": last_status,
             "last_source": str(row.get("last_survey_source", "") or "").strip(),
             "last_error_message": str(row.get("last_error_message", "") or "").strip(),
+        }
+
+    @classmethod
+    def _surface_fingerprint(
+        cls,
+        *,
+        app_name: str,
+        profile_id: str,
+        target_window: Dict[str, Any],
+        active_window: Dict[str, Any],
+        summary: Dict[str, Any],
+        intelligence: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> str:
+        control_counts = cls._normalize_count_map(summary.get("control_counts", {}))
+        dominant_controls = [
+            key
+            for key, _ in sorted(control_counts.items(), key=lambda item: (item[1], item[0]), reverse=True)[:4]
+        ]
+        top_labels = [
+            cls._normalize_text(dict(row).get("label", ""))
+            for row in summary.get("top_labels", [])
+            if isinstance(row, dict)
+        ][:3]
+        ocr_terms = [
+            cls._normalize_text(dict(row).get("text", ""))
+            for row in observation.get("targets", [])
+            if isinstance(row, dict)
+        ][:3]
+        parts = [
+            cls._normalize_text(profile_id),
+            cls._normalize_text(app_name),
+            cls._normalize_text(intelligence.get("surface_role", "")),
+            cls._normalize_text(intelligence.get("interaction_mode", "")),
+            cls._normalize_text(target_window.get("class_name", "") or active_window.get("class_name", "")),
+            cls._normalize_text(target_window.get("window_signature", "") or active_window.get("window_signature", "")),
+            *[part for part in top_labels if part],
+            *[part for part in dominant_controls if part],
+            *[part for part in ocr_terms if part],
+        ]
+        return "|".join(part for part in parts if part)[:320] or "generic|surface"
+
+    def _record_surface_node(
+        self,
+        *,
+        entry: Dict[str, Any],
+        observed_at: str,
+        surface_fingerprint: str,
+        snapshot_payload: Dict[str, Any],
+        app_profile: Dict[str, Any],
+        probe_payload: Dict[str, Any],
+    ) -> None:
+        if not surface_fingerprint:
+            return
+        summary = snapshot_payload.get("surface_summary", {}) if isinstance(snapshot_payload.get("surface_summary", {}), dict) else {}
+        intelligence = snapshot_payload.get("surface_intelligence", {}) if isinstance(snapshot_payload.get("surface_intelligence", {}), dict) else {}
+        observation = snapshot_payload.get("observation", {}) if isinstance(snapshot_payload.get("observation", {}), dict) else {}
+        node_map = entry.setdefault("surface_nodes", {})
+        current = node_map.get(surface_fingerprint, {}) if isinstance(node_map.get(surface_fingerprint, {}), dict) else {}
+        current = dict(current)
+        current["fingerprint"] = surface_fingerprint
+        current["sample_count"] = self._coerce_int(current.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["last_seen_at"] = observed_at
+        current["surface_role"] = str(intelligence.get("surface_role", "") or current.get("surface_role", "") or "").strip()
+        current["interaction_mode"] = str(intelligence.get("interaction_mode", "") or current.get("interaction_mode", "") or "").strip()
+        current["summary"] = str(summary.get("summary", "") or current.get("summary", "") or "").strip()
+        current["profile_id"] = self._profile_id(app_profile)
+        current["window_titles"] = self._merge_recent_strings(
+            current.get("window_titles", []),
+            [
+                str(snapshot_payload.get("target_window", {}).get("title", "") if isinstance(snapshot_payload.get("target_window", {}), dict) else "").strip(),
+                str(snapshot_payload.get("active_window", {}).get("title", "") if isinstance(snapshot_payload.get("active_window", {}), dict) else "").strip(),
+            ],
+            limit=8,
+        )
+        current["top_labels"] = self._merge_recent_strings(
+            current.get("top_labels", []),
+            [
+                str(dict(row).get("label", "") or "").strip()
+                for row in summary.get("top_labels", [])
+                if isinstance(row, dict)
+            ],
+            limit=10,
+        )
+        current["ocr_keywords"] = self._merge_recent_strings(
+            current.get("ocr_keywords", []),
+            [
+                str(dict(row).get("text", "") or "").strip()
+                for row in observation.get("targets", [])
+                if isinstance(row, dict)
+            ],
+            limit=10,
+        )
+        current["recommended_actions"] = self._merge_recent_strings(
+            current.get("recommended_actions", []),
+            [str(item).strip() for item in summary.get("recommended_actions", []) if str(item).strip()],
+            limit=10,
+        )
+        current["query_examples"] = self._merge_recent_strings(
+            current.get("query_examples", []),
+            [str(item.get("query", "") or "").strip() for item in entry.get("survey_history", []) if isinstance(item, dict)],
+            limit=6,
+        )
+        current["control_counts"] = summary.get("control_counts", {}) if isinstance(summary.get("control_counts", {}), dict) else {}
+        current["probe_success_count"] = self._coerce_int(current.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
+        current["probe_attempt_count"] = self._coerce_int(current.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
+        node_map[surface_fingerprint] = current
+
+    def _record_surface_transition(
+        self,
+        *,
+        entry: Dict[str, Any],
+        observed_at: str,
+        from_surface_fingerprint: str,
+        to_surface_fingerprint: str,
+        label: str,
+        effect_kind: str,
+        semantic_role: str,
+    ) -> None:
+        clean_from = str(from_surface_fingerprint or "").strip()
+        clean_to = str(to_surface_fingerprint or "").strip()
+        clean_label = str(label or "").strip()
+        if not clean_from or not clean_to or not clean_label:
+            return
+        transition_key = "|".join(
+            part for part in [clean_from, self._normalize_text(clean_label), clean_to] if part
+        )
+        transitions = entry.setdefault("surface_transitions", {})
+        current = transitions.get(transition_key, {}) if isinstance(transitions.get(transition_key, {}), dict) else {}
+        current = dict(current)
+        current["transition_key"] = transition_key
+        current["from_surface_fingerprint"] = clean_from
+        current["to_surface_fingerprint"] = clean_to
+        current["label"] = clean_label
+        current["effect_kind"] = str(effect_kind or "").strip()
+        current["semantic_role"] = str(semantic_role or "").strip()
+        current["sample_count"] = self._coerce_int(current.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["last_seen_at"] = observed_at
+        transitions[transition_key] = current
+
+    def _record_command_harvest(
+        self,
+        *,
+        entry: Dict[str, Any],
+        label: str,
+        control_type: str,
+        source: str,
+        hotkeys: List[str] | None = None,
+        aliases: List[str] | None = None,
+    ) -> None:
+        clean_label = str(label or "").strip()
+        if not clean_label:
+            return
+        key = self._normalize_text(clean_label)
+        if not key:
+            return
+        command_map = entry.setdefault("learned_commands", {})
+        current = command_map.get(key, {}) if isinstance(command_map.get(key, {}), dict) else {}
+        current = dict(current)
+        current["label"] = clean_label
+        current["sample_count"] = self._coerce_int(current.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["control_types"] = self._merge_recent_strings(
+            current.get("control_types", []),
+            [str(control_type or "").strip()],
+            limit=6,
+        )
+        current["sources"] = self._merge_recent_strings(
+            current.get("sources", []),
+            [str(source or "").strip()],
+            limit=8,
+        )
+        current["aliases"] = self._merge_recent_strings(
+            current.get("aliases", []),
+            [str(item).strip() for item in (aliases or []) if str(item).strip()],
+            limit=12,
+        )
+        current["hotkeys"] = self._merge_recent_strings(
+            current.get("hotkeys", []),
+            [str(item).strip() for item in (hotkeys or []) if str(item).strip()],
+            limit=12,
+        )
+        command_map[key] = current
+
+    def _record_capability_profile(
+        self,
+        *,
+        entry: Dict[str, Any],
+        summary: Dict[str, Any],
+        intelligence: Dict[str, Any],
+        workflow_surfaces: Any,
+        probe_payload: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> None:
+        flags = summary.get("surface_flags", {}) if isinstance(summary.get("surface_flags", {}), dict) else {}
+        workflow_rows = [dict(row) for row in workflow_surfaces if isinstance(row, dict)] if isinstance(workflow_surfaces, list) else []
+        capabilities = entry.setdefault("capability_profile_counts", {})
+        feature_values = {
+            "search_surface": bool(flags.get("search_visible", False) or any(str(row.get("action", "")).strip() == "search" for row in workflow_rows)),
+            "command_surface": any(str(row.get("action", "")).strip() == "command" for row in workflow_rows),
+            "navigation_tree": bool(flags.get("navigation_tree_visible", False)),
+            "list_surface": bool(flags.get("list_surface_visible", False)),
+            "data_table": bool(flags.get("data_table_visible", False)),
+            "form_surface": bool(flags.get("form_surface_visible", False)),
+            "dialog_surface": bool(flags.get("dialog_visible", False)),
+            "wizard_surface": bool(flags.get("wizard_surface_visible", False)),
+            "keyboard_shortcuts": any(
+                isinstance(row.get("primary_hotkey", []), list) and bool(row.get("primary_hotkey", []))
+                for row in workflow_rows
+            ),
+            "vision_grounded": bool(observation.get("targets")),
+            "safe_probe_ready": self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0) > 0,
+            "navigator_role": self._normalize_text(intelligence.get("surface_role", "")) in {"navigator", "file_manager", "browser"},
+        }
+        for feature, enabled in feature_values.items():
+            if enabled:
+                self._increment_count(capabilities, feature)
+
+    @staticmethod
+    def _top_surface_nodes(raw: Any, *, limit: int) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in raw.values() if isinstance(raw, dict) and isinstance(row, dict)] if isinstance(raw, dict) else []
+        rows.sort(
+            key=lambda row: (
+                DesktopAppMemory._coerce_int(row.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                str(row.get("last_seen_at", "")),
+                str(row.get("fingerprint", "")),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit or 1))]
+
+    @staticmethod
+    def _top_surface_transitions(raw: Any, *, limit: int) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in raw.values() if isinstance(raw, dict) and isinstance(row, dict)] if isinstance(raw, dict) else []
+        rows.sort(
+            key=lambda row: (
+                DesktopAppMemory._coerce_int(row.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                str(row.get("last_seen_at", "")),
+                str(row.get("transition_key", "")),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit or 1))]
+
+    @staticmethod
+    def _top_commands(raw: Any, *, limit: int) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in raw.values() if isinstance(raw, dict) and isinstance(row, dict)] if isinstance(raw, dict) else []
+        rows.sort(
+            key=lambda row: (
+                DesktopAppMemory._coerce_int(row.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                str(row.get("label", "")),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit or 1))]
+
+    @classmethod
+    def _capability_profile_snapshot(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        counts = cls._normalize_count_map(row.get("capability_profile_counts", {}))
+        return {
+            "status": "success",
+            "features": counts,
+            "top_features": [{ "value": key, "count": value } for key, value in list(cls._trim_count_map(counts, limit=10).items())],
+        }
+
+    def surface_hint(
+        self,
+        *,
+        app_name: str = "",
+        profile_id: str = "",
+        surface_fingerprint: str = "",
+    ) -> Dict[str, Any]:
+        clean_app_name = self._normalize_text(app_name)
+        clean_profile_id = self._normalize_text(profile_id)
+        clean_surface_fingerprint = str(surface_fingerprint or "").strip()
+        with self._lock:
+            rows = [dict(row) for row in self._entries.values()]
+        rows.sort(key=lambda row: str(row.get("updated_at", "")), reverse=True)
+        for row in rows:
+            if clean_app_name and clean_app_name not in self._normalize_text(row.get("app_name", "")) and clean_app_name not in self._normalize_text(row.get("window_title", "")):
+                continue
+            if clean_profile_id and clean_profile_id != self._normalize_text(row.get("profile_id", "")):
+                continue
+            nodes = row.get("surface_nodes", {}) if isinstance(row.get("surface_nodes", {}), dict) else {}
+            node = dict(nodes.get(clean_surface_fingerprint, {})) if clean_surface_fingerprint and isinstance(nodes.get(clean_surface_fingerprint, {}), dict) else {}
+            return {
+                "status": "success",
+                "known": bool(node),
+                "surface_fingerprint": clean_surface_fingerprint,
+                "surface_node": node,
+                "capability_profile": self._capability_profile_snapshot(row),
+                "learned_commands": self._top_commands(row.get("learned_commands", {}), limit=8),
+                "shortcut_actions": self._snapshot_item(row).get("shortcut_actions", []),
+            }
+        return {
+            "status": "success",
+            "known": False,
+            "surface_fingerprint": clean_surface_fingerprint,
+            "surface_node": {},
+            "capability_profile": {"status": "success", "features": {}, "top_features": []},
+            "learned_commands": [],
+            "shortcut_actions": [],
         }
