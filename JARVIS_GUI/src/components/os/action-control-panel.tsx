@@ -61,6 +61,8 @@ import {
   type CoworkerStackStatusResponse,
   type DesktopAppMemoryResponse,
   type DesktopAppMemoryBatchResponse,
+  type DesktopAppMemoryCampaignRunResponse,
+  type DesktopAppMemoryCampaignsResponse,
   type DesktopAppMemoryDaemonStatusResponse,
   type DesktopAppMemorySurveyResponse,
   type DesktopAppProfileCatalogResponse,
@@ -1182,12 +1184,17 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopAppMemorySurveyState, setDesktopAppMemorySurveyState] = useState<DesktopAppMemorySurveyResponse | null>(null);
   const [desktopAppMemoryBatchState, setDesktopAppMemoryBatchState] = useState<DesktopAppMemoryBatchResponse | null>(null);
   const [desktopAppMemoryDaemonState, setDesktopAppMemoryDaemonState] = useState<DesktopAppMemoryDaemonStatusResponse | null>(null);
+  const [desktopAppMemoryCampaignState, setDesktopAppMemoryCampaignState] =
+    useState<DesktopAppMemoryCampaignsResponse | null>(null);
   const [desktopAppMemoryBusy, setDesktopAppMemoryBusy] = useState(false);
   const [desktopAppMemorySurveyBusy, setDesktopAppMemorySurveyBusy] = useState(false);
   const [desktopAppMemoryBatchBusy, setDesktopAppMemoryBatchBusy] = useState(false);
   const [desktopAppMemoryResetBusy, setDesktopAppMemoryResetBusy] = useState(false);
   const [desktopAppMemoryDaemonBusy, setDesktopAppMemoryDaemonBusy] = useState(false);
   const [desktopAppMemoryDaemonTriggerBusy, setDesktopAppMemoryDaemonTriggerBusy] = useState(false);
+  const [desktopAppMemoryCampaignBusy, setDesktopAppMemoryCampaignBusy] = useState(false);
+  const [desktopAppMemoryCampaignCreateBusy, setDesktopAppMemoryCampaignCreateBusy] = useState(false);
+  const [desktopAppMemoryCampaignCycleBusy, setDesktopAppMemoryCampaignCycleBusy] = useState(false);
   const [desktopEvaluationCatalogState, setDesktopEvaluationCatalogState] =
     useState<DesktopEvaluationCatalogResponse | null>(null);
   const [desktopEvaluationRunState, setDesktopEvaluationRunState] =
@@ -2235,6 +2242,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return {};
   }, [desktopAppMemory, desktopAppMemoryState]);
+  const desktopLatestAppMemoryHarvestSummary = useMemo(
+    () => asObjectRecord(desktopLatestAppMemory.harvest_summary),
+    [desktopLatestAppMemory]
+  );
   const desktopAppMemoryRows = useMemo(
     () =>
       Array.isArray(desktopAppMemoryState?.items)
@@ -2246,6 +2257,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopAppMemorySurveyState?.surface_hint),
     [desktopAppMemorySurveyState]
   );
+  const desktopAppMemoryWaveReport = useMemo(
+    () => asObjectRecord(desktopAppMemorySurveyState?.wave_report),
+    [desktopAppMemorySurveyState]
+  );
   const desktopAppMemoryDaemon = useMemo(() => asObjectRecord(desktopAppMemoryDaemonState), [desktopAppMemoryDaemonState]);
   const desktopAppMemoryDaemonHistory = useMemo(
     () => asObjectRecord(desktopAppMemoryDaemon.history),
@@ -2255,6 +2270,31 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopAppMemoryDaemon.latest_run),
     [desktopAppMemoryDaemon]
   );
+  const desktopAppMemoryCampaigns = useMemo(
+    () => asObjectRecord(desktopAppMemoryCampaignState),
+    [desktopAppMemoryCampaignState]
+  );
+  const desktopAppMemoryCampaignSummary = useMemo(
+    () => asObjectRecord(desktopAppMemoryCampaigns.summary),
+    [desktopAppMemoryCampaigns]
+  );
+  const desktopAppMemoryCampaignRows = useMemo(
+    () =>
+      Array.isArray(desktopAppMemoryCampaignState?.items)
+        ? desktopAppMemoryCampaignState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopAppMemoryCampaignState]
+  );
+  const desktopLatestAppMemoryCampaign = useMemo(() => {
+    const latest = asObjectRecord(desktopAppMemoryCampaigns.latest_campaign);
+    if (Object.keys(latest).length > 0) {
+      return latest;
+    }
+    if (desktopAppMemoryCampaignRows.length > 0) {
+      return desktopAppMemoryCampaignRows[0] ?? {};
+    }
+    return {};
+  }, [desktopAppMemoryCampaignRows, desktopAppMemoryCampaigns]);
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
   const desktopRecoveryDaemonPolicyProfile =
@@ -13548,6 +13588,53 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }
   }, [toast]);
 
+  const syncDesktopAppMemoryCampaignArtifacts = useCallback(
+    (payload: DesktopAppMemoryCampaignRunResponse | Record<string, unknown> | null | undefined) => {
+      if (!payload || !isObjectRecord(payload)) {
+        return;
+      }
+      if (isObjectRecord(payload.campaigns)) {
+        setDesktopAppMemoryCampaignState(payload.campaigns as DesktopAppMemoryCampaignsResponse);
+      }
+      if (isObjectRecord(payload.app_memory)) {
+        setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
+      }
+      if (isObjectRecord(payload.result)) {
+        setDesktopAppMemoryBatchState(payload.result as DesktopAppMemoryBatchResponse);
+      }
+    },
+    []
+  );
+
+  const refreshDesktopAppMemoryCampaigns = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    setDesktopAppMemoryCampaignBusy(true);
+    try {
+      const payload = await backendClient.desktopAppMemoryCampaigns({ limit: 10 });
+      setDesktopAppMemoryCampaignState(payload);
+      if (isObjectRecord(payload.app_memory)) {
+        setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
+      }
+      if (!quiet) {
+        toast({
+          title: 'Learning Campaigns Ready',
+          description: `${Number(payload.count ?? 0)} installed-app learning campaign(s) are available.`,
+        });
+      }
+      return payload;
+    } catch (error) {
+      if (!quiet) {
+        toast({
+          variant: 'destructive',
+          title: 'Learning Campaign Refresh Failed',
+          description: getErrorMessage(error),
+        });
+      }
+      return null;
+    } finally {
+      setDesktopAppMemoryCampaignBusy(false);
+    }
+  }, [toast]);
+
   const surveyDesktopAppMemory = useCallback(async () => {
     setDesktopAppMemorySurveyBusy(true);
     try {
@@ -13611,6 +13698,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         category: undefined,
         max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
         per_app_limit: 24,
+        app_names: desktopCoworkerAppName.trim() ? [desktopCoworkerAppName.trim()] : undefined,
         ensure_app_launch: desktopCoworkerEnsureLaunch,
         include_observation: true,
         include_elements: true,
@@ -13620,6 +13708,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_probe_controls: 4,
         allow_risky_probes: false,
         include_ocr_targets: true,
+        skip_known_apps: true,
+        prefer_unknown_apps: true,
         source: 'manual',
       });
       setDesktopAppMemoryBatchState(payload);
@@ -13627,6 +13717,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
       }
       void refreshDesktopAppMemoryDaemon({ quiet: true });
+      void refreshDesktopAppMemoryCampaigns({ quiet: true });
       toast({
         title: 'App Memory Batch Complete',
         description: String(
@@ -13645,7 +13736,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopAppMemoryBatchBusy(false);
     }
-  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, refreshDesktopAppMemoryDaemon, toast]);
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    refreshDesktopAppMemoryCampaigns,
+    refreshDesktopAppMemoryDaemon,
+    toast,
+  ]);
 
   const resetDesktopAppMemory = useCallback(async () => {
     setDesktopAppMemoryResetBusy(true);
@@ -13688,6 +13785,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         allow_risky_probes: false,
+        skip_known_apps: true,
+        prefer_unknown_apps: true,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13716,12 +13815,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     try {
       const payload = await backendClient.triggerDesktopAppMemoryDaemon({
         query: desktopCoworkerAppName.trim() || undefined,
+        app_names: desktopCoworkerAppName.trim() ? [desktopCoworkerAppName.trim()] : undefined,
         max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
         per_app_limit: 24,
         ensure_app_launch: desktopCoworkerEnsureLaunch,
         probe_controls: true,
         max_probe_controls: 4,
         allow_risky_probes: false,
+        skip_known_apps: true,
+        prefer_unknown_apps: true,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13734,6 +13836,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       if (isObjectRecord(payload.app_memory)) {
         setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
       }
+      void refreshDesktopAppMemoryCampaigns({ quiet: true });
       toast({
         title: 'App Memory Daemon Triggered',
         description: String(payload.message ?? 'JARVIS ran a bounded background app-learning pass.'),
@@ -13749,7 +13852,110 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopAppMemoryDaemonTriggerBusy(false);
     }
-  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, refreshDesktopAppMemoryDaemon, toast]);
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    refreshDesktopAppMemoryCampaigns,
+    refreshDesktopAppMemoryDaemon,
+    toast,
+  ]);
+
+  const createDesktopAppMemoryCampaign = useCallback(async () => {
+    setDesktopAppMemoryCampaignCreateBusy(true);
+    try {
+      const payload = await backendClient.createDesktopAppMemoryCampaign({
+        query: desktopCoworkerAppName.trim() || undefined,
+        app_names: desktopCoworkerAppName.trim() ? [desktopCoworkerAppName.trim()] : undefined,
+        max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
+        per_app_limit: 24,
+        ensure_app_launch: desktopCoworkerEnsureLaunch,
+        probe_controls: true,
+        max_probe_controls: 4,
+        allow_risky_probes: false,
+        skip_known_apps: true,
+        prefer_unknown_apps: true,
+        source: 'manual',
+      });
+      syncDesktopAppMemoryCampaignArtifacts(payload);
+      if (!isObjectRecord(payload.campaigns)) {
+        void refreshDesktopAppMemoryCampaigns({ quiet: true });
+      }
+      toast({
+        title: 'Learning Campaign Saved',
+        description: String(
+          payload.message ??
+            `JARVIS saved an installed-app learning campaign${
+              desktopCoworkerAppName.trim() ? ` for ${desktopCoworkerAppName.trim()}` : ''
+            }.`
+        ),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Learning Campaign Save Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppMemoryCampaignCreateBusy(false);
+    }
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    refreshDesktopAppMemoryCampaigns,
+    syncDesktopAppMemoryCampaignArtifacts,
+    toast,
+  ]);
+
+  const runDesktopAppMemoryCampaign = useCallback(
+    async (campaignId?: string) => {
+      const effectiveCampaignId = String(
+        campaignId ?? desktopLatestAppMemoryCampaign.campaign_id ?? ''
+      ).trim();
+      if (!effectiveCampaignId) {
+        toast({
+          variant: 'destructive',
+          title: 'No Learning Campaign',
+          description: 'Save or refresh app-memory learning campaigns first so there is a campaign to run.',
+        });
+        return null;
+      }
+      setDesktopAppMemoryCampaignCycleBusy(true);
+      try {
+        const payload = await backendClient.runDesktopAppMemoryCampaign({
+          campaign_id: effectiveCampaignId,
+          max_apps: desktopCoworkerAppName.trim() ? 3 : 4,
+          source: 'manual',
+        });
+        syncDesktopAppMemoryCampaignArtifacts(payload);
+        if (!isObjectRecord(payload.campaigns)) {
+          void refreshDesktopAppMemoryCampaigns({ quiet: true });
+        }
+        toast({
+          title: 'Learning Campaign Cycle Complete',
+          description: String(payload.message ?? 'JARVIS ran a bounded installed-app learning campaign cycle.'),
+        });
+        return payload;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Learning Campaign Cycle Failed',
+          description: getErrorMessage(error),
+        });
+        return null;
+      } finally {
+        setDesktopAppMemoryCampaignCycleBusy(false);
+      }
+    },
+    [
+      desktopCoworkerAppName,
+      desktopLatestAppMemoryCampaign.campaign_id,
+      refreshDesktopAppMemoryCampaigns,
+      syncDesktopAppMemoryCampaignArtifacts,
+      toast,
+    ]
+  );
 
   const buildDesktopEvaluationQueryInput = useCallback(() => {
     const appName = desktopEvaluationAppFilter.trim();
@@ -19322,6 +19528,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             daemon:{String(desktopAppMemoryDaemonState.last_result_status ?? (desktopAppMemoryDaemonState.enabled ? 'armed' : 'idle'))}
                                           </Badge>
                                         ) : null}
+                                        {desktopAppMemoryCampaignState ? (
+                                          <Badge variant="outline">
+                                            campaigns:{Number(desktopAppMemoryCampaignState.count ?? 0)}
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                     </div>
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -19405,6 +19616,47 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         type="button"
                                         variant="outline"
                                         className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopAppMemoryCampaigns()}
+                                        disabled={desktopAppMemoryCampaignBusy}
+                                      >
+                                        {desktopAppMemoryCampaignBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="h-4 w-4" />
+                                        )}
+                                        Refresh Campaigns
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void createDesktopAppMemoryCampaign()}
+                                        disabled={desktopAppMemoryCampaignCreateBusy}
+                                      >
+                                        {desktopAppMemoryCampaignCreateBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Layers3 className="h-4 w-4" />
+                                        )}
+                                        Save Campaign
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void runDesktopAppMemoryCampaign()}
+                                        disabled={desktopAppMemoryCampaignCycleBusy}
+                                      >
+                                        {desktopAppMemoryCampaignCycleBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Radar className="h-4 w-4" />
+                                        )}
+                                        Run Campaign
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
                                         onClick={() => void resetDesktopAppMemory()}
                                         disabled={desktopAppMemoryResetBusy}
                                       >
@@ -19437,6 +19689,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             <p className="mt-1">
                                               surfaces:{Number(desktopAppMemorySummary.surface_node_total ?? 0)}
                                               {' • '}transitions:{Number(desktopAppMemorySummary.surface_transition_total ?? 0)}
+                                              {' • '}waves:{Number(desktopAppMemorySummary.wave_survey_total ?? 0)}
                                               {' • '}learned commands:{Number(desktopAppMemorySummary.learned_command_total ?? 0)}
                                               {' • '}healthy:{Number(desktopAppMemorySummary.healthy_app_count ?? 0)}
                                             </p>
@@ -19493,11 +19746,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}blocked:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).blocked_count ?? 0)}
                                                 {' • '}ocr:{Number(asObjectRecord(desktopLatestAppMemory.probe_summary).ocr_target_count ?? 0)}
                                               </p>
+                                            <p className="mt-1">
+                                              surfaces:{Array.isArray(desktopLatestAppMemory.surface_nodes) ? desktopLatestAppMemory.surface_nodes.length : 0}
+                                              {' • '}transitions:{Array.isArray(desktopLatestAppMemory.surface_transitions) ? desktopLatestAppMemory.surface_transitions.length : 0}
+                                              {' • '}waves:{Number(asObjectRecord(desktopLatestAppMemory.metrics).wave_survey_count ?? 0)}
+                                              {' • '}learned commands:{Array.isArray(desktopLatestAppMemory.learned_commands) ? desktopLatestAppMemory.learned_commands.length : 0}
+                                              {' • '}fingerprints:{Array.isArray(desktopLatestAppMemory.surface_fingerprints) ? desktopLatestAppMemory.surface_fingerprints.length : 0}
+                                            </p>
                                               <p className="mt-1">
-                                                surfaces:{Array.isArray(desktopLatestAppMemory.surface_nodes) ? desktopLatestAppMemory.surface_nodes.length : 0}
-                                                {' • '}transitions:{Array.isArray(desktopLatestAppMemory.surface_transitions) ? desktopLatestAppMemory.surface_transitions.length : 0}
-                                                {' • '}learned commands:{Array.isArray(desktopLatestAppMemory.learned_commands) ? desktopLatestAppMemory.learned_commands.length : 0}
-                                                {' • '}fingerprints:{Array.isArray(desktopLatestAppMemory.surface_fingerprints) ? desktopLatestAppMemory.surface_fingerprints.length : 0}
+                                                menu:{Number(desktopLatestAppMemoryHarvestSummary.menu_command_count ?? 0)}
+                                                {' • '}toolbar:{Number(desktopLatestAppMemoryHarvestSummary.toolbar_action_count ?? 0)}
+                                                {' • '}ribbon:{Number(desktopLatestAppMemoryHarvestSummary.ribbon_action_count ?? 0)}
+                                                {' • '}ocr commands:{Number(desktopLatestAppMemoryHarvestSummary.ocr_command_phrase_count ?? 0)}
+                                                {' • '}hotkeys:{Number(desktopLatestAppMemoryHarvestSummary.harvested_hotkey_count ?? 0)}
                                               </p>
                                               {Array.isArray(desktopLatestAppMemory.surface_fingerprints) &&
                                               desktopLatestAppMemory.surface_fingerprints.length > 0 ? (
@@ -19545,10 +19806,37 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     .join(' • ')}
                                                 </p>
                                               ) : null}
+                                              {Array.isArray(desktopLatestAppMemory.menu_commands) &&
+                                              desktopLatestAppMemory.menu_commands.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  menu:{' '}
+                                                  {desktopLatestAppMemory.menu_commands
+                                                    .slice(0, 4)
+                                                    .map((item) => `${String(asObjectRecord(item).label ?? 'command')}:${String(asObjectRecord(item).count ?? 0)}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {Array.isArray(desktopLatestAppMemory.harvested_hotkeys) &&
+                                              desktopLatestAppMemory.harvested_hotkeys.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  hotkeys:{' '}
+                                                  {desktopLatestAppMemory.harvested_hotkeys
+                                                    .slice(0, 4)
+                                                    .map((item) => `${String(asObjectRecord(item).hotkey ?? 'shortcut')}:${String(asObjectRecord(item).count ?? 0)}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
                                               {Object.keys(desktopAppMemorySurfaceHint).length > 0 ? (
                                                 <p className="mt-1 text-[10px] text-muted-foreground">
                                                   live hint:{String(Boolean(desktopAppMemorySurfaceHint.known))}
                                                   {' • '}surface:{String(desktopAppMemorySurfaceHint.surface_fingerprint ?? 'n/a')}
+                                                </p>
+                                              ) : null}
+                                              {Object.keys(desktopAppMemoryWaveReport).length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  survey waves:{Number(desktopAppMemoryWaveReport.attempted_count ?? 0)}
+                                                  {' • '}linked surfaces:{Number(desktopAppMemoryWaveReport.learned_surface_count ?? 0)}
+                                                  {' • '}known hits:{Number(desktopAppMemoryWaveReport.known_surface_count ?? 0)}
                                                 </p>
                                               ) : null}
                                             </div>
@@ -19597,6 +19885,89 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             ) : null}
                                           </div>
                                         ) : null}
+                                        {desktopAppMemoryCampaignState ? (
+                                          <div className="mt-3 rounded border border-primary/10 bg-background/30 p-2">
+                                            <p className="font-semibold text-primary/80">Installed-App Campaigns</p>
+                                            <p className="mt-1">
+                                              campaigns:{Number(desktopAppMemoryCampaignState.count ?? 0)}
+                                              {' • '}pending:{Number(desktopAppMemoryCampaignSummary.pending_app_total ?? 0)}
+                                              {' • '}completed:{Number(desktopAppMemoryCampaignSummary.completed_app_total ?? 0)}
+                                              {' • '}skipped:{Number(desktopAppMemoryCampaignSummary.skipped_app_total ?? 0)}
+                                            </p>
+                                            <p className="mt-1">
+                                              latest:{String(desktopLatestAppMemoryCampaign.label ?? desktopLatestAppMemoryCampaign.campaign_id ?? 'n/a')}
+                                              {' • '}status:{String(desktopLatestAppMemoryCampaign.status ?? 'idle')}
+                                              {' • '}max apps:{Number(desktopLatestAppMemoryCampaign.max_apps ?? 0)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              targets:
+                                              {Array.isArray(desktopLatestAppMemoryCampaign.target_apps) &&
+                                              desktopLatestAppMemoryCampaign.target_apps.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaign.target_apps
+                                                    .slice(0, 4)
+                                                    .map((item) => String(item))
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              selection:
+                                              {' '}skip known:{String(
+                                                Boolean(desktopLatestAppMemoryCampaign.skip_known_apps)
+                                              )}
+                                              {' • '}prefer unknown:{String(
+                                                Boolean(desktopLatestAppMemoryCampaign.prefer_unknown_apps)
+                                              )}
+                                              {' • '}probes:{String(Boolean(desktopLatestAppMemoryCampaign.probe_controls))}
+                                            </p>
+                                            {desktopAppMemoryCampaignRows.length > 0 ? (
+                                              <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
+                                                <p className="font-semibold uppercase tracking-wider text-primary/75">
+                                                  Recent Campaigns
+                                                </p>
+                                                <div className="mt-1 space-y-1">
+                                                  {desktopAppMemoryCampaignRows.slice(0, 3).map((campaign, index) => (
+                                                    <div
+                                                      key={`desktop-app-memory-campaign-${String(campaign.campaign_id ?? index)}`}
+                                                      className="rounded border border-primary/10 bg-background/20 p-2"
+                                                    >
+                                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                                        <p className="text-[11px] text-primary/90">
+                                                          {String(campaign.label ?? campaign.campaign_id ?? `campaign-${index + 1}`)}
+                                                        </p>
+                                                        <Button
+                                                          type="button"
+                                                          variant="outline"
+                                                          className="h-7 border-primary/25 bg-transparent px-2 text-[10px]"
+                                                          onClick={() =>
+                                                            void runDesktopAppMemoryCampaign(String(campaign.campaign_id ?? ''))
+                                                          }
+                                                          disabled={
+                                                            desktopAppMemoryCampaignCycleBusy ||
+                                                            !String(campaign.campaign_id ?? '').trim()
+                                                          }
+                                                        >
+                                                          {desktopAppMemoryCampaignCycleBusy ? 'Running' : 'Run Cycle'}
+                                                        </Button>
+                                                      </div>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        status:{String(campaign.status ?? 'idle')}
+                                                        {' • '}pending:{Number(campaign.pending_app_count ?? 0)}
+                                                        {' • '}completed:{Number(campaign.completed_app_count ?? 0)}
+                                                        {' • '}skipped:{Number(campaign.skipped_app_count ?? 0)}
+                                                      </p>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        targets:
+                                                        {Array.isArray(campaign.target_apps) && campaign.target_apps.length > 0
+                                                          ? ` ${campaign.target_apps.slice(0, 3).map((item) => String(item)).join(' • ')}`
+                                                          : ' n/a'}
+                                                      </p>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        ) : null}
                                       </div>
                                       <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
                                         <p className="font-semibold uppercase tracking-wider text-primary/80">Learned Controls</p>
@@ -19620,6 +19991,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 const surfaceTransitions = Array.isArray(item.surface_transitions)
                                                   ? item.surface_transitions.filter((transition): transition is Record<string, unknown> => isObjectRecord(transition))
                                                   : [];
+                                                const harvestSummary = asObjectRecord(item.harvest_summary);
                                                 const capabilityProfile = asObjectRecord(item.capability_profile);
                                                 return (
                                                   <div
@@ -19645,8 +20017,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                     <p className="mt-1">
                                                       surfaces:{surfaceNodes.length}
                                                       {' • '}transitions:{surfaceTransitions.length}
+                                                      {' • '}waves:{Number(asObjectRecord(item.metrics).wave_survey_count ?? 0)}
                                                       {' • '}learned:{learnedCommands.length}
                                                       {' • '}features:{Object.keys(asObjectRecord(capabilityProfile.features)).length}
+                                                    </p>
+                                                    <p className="mt-1">
+                                                      menu:{Number(harvestSummary.menu_command_count ?? 0)}
+                                                      {' • '}toolbar:{Number(harvestSummary.toolbar_action_count ?? 0)}
+                                                      {' • '}ribbon:{Number(harvestSummary.ribbon_action_count ?? 0)}
+                                                      {' • '}ocr:{Number(harvestSummary.ocr_command_phrase_count ?? 0)}
+                                                      {' • '}hotkeys:{Number(harvestSummary.harvested_hotkey_count ?? 0)}
                                                     </p>
                                                     {topControls.length > 0 ? (
                                                       <p className="mt-1">

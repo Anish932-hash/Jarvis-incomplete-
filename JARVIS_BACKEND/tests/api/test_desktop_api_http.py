@@ -13832,6 +13832,7 @@ class FakeDesktopService:
             "success_count": payload.get("success_count", 0),
             "partial_count": payload.get("partial_count", 0),
             "error_count": payload.get("error_count", 0),
+            "skipped_app_count": payload.get("skipped_app_count", 0),
         }
         self.desktop_app_memory_daemon_runs.append(run)
         self.desktop_app_memory_daemon_state["last_result_status"] = payload.get("status", "success")

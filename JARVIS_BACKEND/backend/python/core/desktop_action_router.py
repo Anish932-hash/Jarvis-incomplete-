@@ -2710,6 +2710,54 @@ WORKFLOW_DEFINITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 WORKFLOW_ACTIONS = frozenset(WORKFLOW_DEFINITIONS)
+APP_MEMORY_SAFE_WAVE_ACTIONS = frozenset(
+    {
+        "search",
+        "focus_search_box",
+        "command",
+        "quick_open",
+        "workspace_search",
+        "go_to_symbol",
+        "open_tab_search",
+        "search_tabs",
+        "focus_sidebar",
+        "focus_navigation_tree",
+        "focus_list_surface",
+        "focus_data_table",
+        "focus_toolbar",
+        "focus_main_content",
+        "focus_form_surface",
+        "focus_address_bar",
+        "focus_file_list",
+        "focus_input_field",
+        "open_mail_view",
+        "open_calendar_view",
+        "toggle_terminal",
+    }
+)
+APP_MEMORY_WAVE_PRIORITY: Dict[str, int] = {
+    "command": 0,
+    "quick_open": 1,
+    "workspace_search": 2,
+    "go_to_symbol": 3,
+    "search": 4,
+    "focus_search_box": 5,
+    "open_tab_search": 6,
+    "search_tabs": 7,
+    "focus_address_bar": 8,
+    "focus_sidebar": 9,
+    "focus_navigation_tree": 10,
+    "focus_list_surface": 11,
+    "focus_data_table": 12,
+    "focus_toolbar": 13,
+    "focus_form_surface": 14,
+    "focus_main_content": 15,
+    "focus_file_list": 16,
+    "focus_input_field": 17,
+    "open_mail_view": 18,
+    "open_calendar_view": 19,
+    "toggle_terminal": 20,
+}
 
 
 class DesktopActionRouter:
@@ -8264,6 +8312,8 @@ class DesktopActionRouter:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_app_name = str(app_name or "").strip()
@@ -8343,6 +8393,22 @@ class DesktopActionRouter:
                 allow_risky_probes=allow_risky_probes,
                 include_ocr_targets=include_ocr_targets,
             )
+        wave_report: Dict[str, Any] = {}
+        if follow_surface_waves:
+            wave_report = self._survey_app_memory_waves(
+                snapshot=dict(snapshot),
+                app_name=clean_app_name,
+                window_title=clean_window_title,
+                query=clean_query,
+                limit=max(12, min(int(limit or 32), 64)),
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+                include_exploration=include_exploration,
+                include_ocr_targets=include_ocr_targets,
+                source=clean_source,
+                max_surface_waves=max_surface_waves,
+            )
         memory_entry = self._app_memory.record_survey(
             app_name=clean_app_name,
             window_title=clean_window_title,
@@ -8363,6 +8429,7 @@ class DesktopActionRouter:
         )
         discovered_control_count = int(memory_entry.get("discovered_control_count", 0) or 0)
         command_candidate_count = len(memory_entry.get("command_candidates", []) if isinstance(memory_entry.get("command_candidates", []), list) else [])
+        harvest_summary = memory_entry.get("harvest_summary", {}) if isinstance(memory_entry.get("harvest_summary", {}), dict) else {}
         survey_count = int(dict(memory_entry.get("metrics", {})).get("survey_count", 0) or 0) if isinstance(memory_entry.get("metrics", {}), dict) else 0
         message_parts: List[str] = []
         if launch_result:
@@ -8373,6 +8440,13 @@ class DesktopActionRouter:
         message_parts.append(
             f"Learned {discovered_control_count} controls and {command_candidate_count} command candidates across {survey_count} survey run{'s' if survey_count != 1 else ''}."
         )
+        harvested_menu_like = int(harvest_summary.get("menu_command_count", 0) or 0) + int(harvest_summary.get("toolbar_action_count", 0) or 0) + int(harvest_summary.get("ribbon_action_count", 0) or 0)
+        harvested_hotkeys = int(harvest_summary.get("harvested_hotkey_count", 0) or 0)
+        harvested_ocr_phrases = int(harvest_summary.get("ocr_command_phrase_count", 0) or 0)
+        if harvested_menu_like or harvested_hotkeys or harvested_ocr_phrases:
+            message_parts.append(
+                f"Semantic harvesting captured {harvested_menu_like} menu/toolbar/ribbon command hint{'s' if harvested_menu_like != 1 else ''}, {harvested_hotkeys} accelerator hint{'s' if harvested_hotkeys != 1 else ''}, and {harvested_ocr_phrases} OCR command phrase{'s' if harvested_ocr_phrases != 1 else ''}."
+            )
         if isinstance(probe_report, dict) and probe_report:
             attempted_count = int(probe_report.get("attempted_count", 0) or 0)
             successful_count = int(probe_report.get("successful_count", 0) or 0)
@@ -8381,6 +8455,14 @@ class DesktopActionRouter:
             if attempted_count or blocked_count or ocr_target_count:
                 message_parts.append(
                     f"Vision-guided probing tested {attempted_count} control{'s' if attempted_count != 1 else ''}, learned {successful_count} verified effect{'s' if successful_count != 1 else ''}, and skipped {blocked_count} risky target{'s' if blocked_count != 1 else ''} from {ocr_target_count} OCR target{'s' if ocr_target_count != 1 else ''}."
+                )
+        if isinstance(wave_report, dict) and wave_report:
+            attempted_wave_count = int(wave_report.get("attempted_count", 0) or 0)
+            learned_surface_count = int(wave_report.get("learned_surface_count", 0) or 0)
+            known_surface_count = int(wave_report.get("known_surface_count", 0) or 0)
+            if attempted_wave_count or learned_surface_count:
+                message_parts.append(
+                    f"Linked-surface learning opened {attempted_wave_count} safe workflow wave{'s' if attempted_wave_count != 1 else ''}, captured {learned_surface_count} additional surface{'s' if learned_surface_count != 1 else ''}, and reused {known_surface_count} known surface memory hit{'s' if known_surface_count != 1 else ''}."
                 )
         if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
             message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
@@ -8398,6 +8480,7 @@ class DesktopActionRouter:
             "surface_snapshot": snapshot,
             "exploration_plan": exploration_plan,
             "probe_report": probe_report,
+            "wave_report": wave_report,
             "surface_hint": surface_hint,
             "memory_entry": memory_entry,
             "app_memory": app_memory,
@@ -8420,6 +8503,8 @@ class DesktopActionRouter:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
         source: str = "batch",
@@ -8451,9 +8536,12 @@ class DesktopActionRouter:
         success_count = 0
         partial_count = 0
         error_count = 0
+        wave_attempt_total = 0
+        learned_surface_total = 0
         failed_apps: List[Dict[str, Any]] = []
         for profile in selected_profiles:
-            target_app_name = str(profile.get("name", "") or profile.get("profile_id", "") or "").strip()
+            requested_app_name = str(profile.get("_requested_app_name", "") or "").strip()
+            target_app_name = str(requested_app_name or profile.get("name", "") or profile.get("profile_id", "") or "").strip()
             if not target_app_name:
                 continue
             try:
@@ -8471,6 +8559,8 @@ class DesktopActionRouter:
                     max_probe_controls=max_probe_controls,
                     allow_risky_probes=allow_risky_probes,
                     include_ocr_targets=include_ocr_targets,
+                    follow_surface_waves=follow_surface_waves,
+                    max_surface_waves=max_surface_waves,
                     source=clean_source,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -8480,6 +8570,13 @@ class DesktopActionRouter:
                 }
             result_status = str(survey_payload.get("status", "") or "error").strip().lower() or "error"
             memory_entry = survey_payload.get("memory_entry", {}) if isinstance(survey_payload.get("memory_entry", {}), dict) else {}
+            wave_report = (
+                dict(survey_payload.get("wave_report", {}))
+                if isinstance(survey_payload.get("wave_report", {}), dict)
+                else {}
+            )
+            wave_attempt_total += int(wave_report.get("attempted_count", 0) or 0)
+            learned_surface_total += int(wave_report.get("learned_surface_count", 0) or 0)
             item = {
                 "app_name": target_app_name,
                 "profile_id": str(profile.get("profile_id", "") or "").strip(),
@@ -8493,6 +8590,7 @@ class DesktopActionRouter:
                 "status": result_status,
                 "message": str(survey_payload.get("message", "") or "").strip(),
                 "memory_entry": memory_entry,
+                "wave_report": wave_report,
             }
             items.append(item)
             if result_status == "success":
@@ -8513,12 +8611,19 @@ class DesktopActionRouter:
             overall_status = "error"
         elif error_count or partial_count:
             overall_status = "partial"
+        message = (
+            f"JARVIS surveyed {len(items)} app profile(s): "
+            f"{success_count} succeeded, {partial_count} partial, {error_count} failed, and {len(skipped_apps)} were skipped from prior healthy memory."
+        )
+        if wave_attempt_total or learned_surface_total:
+            message = (
+                f"{message} Multi-surface learning attempted {wave_attempt_total} linked workflow wave"
+                f"{'s' if wave_attempt_total != 1 else ''} and captured {learned_surface_total} additional surface"
+                f"{'s' if learned_surface_total != 1 else ''}."
+            )
         return {
             "status": overall_status,
-            "message": (
-                f"JARVIS surveyed {len(items)} app profile(s): "
-                f"{success_count} succeeded, {partial_count} partial, {error_count} failed, and {len(skipped_apps)} were skipped from prior healthy memory."
-            ),
+            "message": message,
             "query": clean_query,
             "category": clean_category,
             "surveyed_app_count": len(items),
@@ -8531,7 +8636,368 @@ class DesktopActionRouter:
             "failed_apps": failed_apps[:8],
             "catalog": dict(selection.get("catalog", {})) if isinstance(selection.get("catalog", {}), dict) else {},
             "selection_summary": dict(selection.get("selection_summary", {})) if isinstance(selection.get("selection_summary", {}), dict) else {},
+            "wave_summary": {
+                "attempted_count": wave_attempt_total,
+                "learned_surface_count": learned_surface_total,
+                "follow_surface_waves": bool(follow_surface_waves),
+                "max_surface_waves": max(0, min(int(max_surface_waves or 0), 8)),
+            },
             "app_memory": app_memory,
+        }
+
+    def _app_memory_wave_candidates(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        preferred_actions: Optional[List[str]] = None,
+        limit: int = 6,
+    ) -> List[Dict[str, Any]]:
+        workflow_rows = [
+            dict(row)
+            for row in snapshot.get("workflow_surfaces", [])
+            if isinstance(row, dict)
+        ] if isinstance(snapshot.get("workflow_surfaces", []), list) else []
+        if not workflow_rows:
+            return []
+        clean_preferred = [
+            str(item).strip().lower()
+            for item in (preferred_actions or [])
+            if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+        ]
+        preferred_order = {action_name: index for index, action_name in enumerate(clean_preferred)}
+        seen_actions: set[str] = set()
+        candidates: List[Dict[str, Any]] = []
+        for row in workflow_rows:
+            action_name = str(row.get("action", "") or "").strip().lower()
+            if not action_name or action_name in seen_actions or action_name not in APP_MEMORY_SAFE_WAVE_ACTIONS:
+                continue
+            primary_hotkey = [
+                str(item).strip()
+                for item in row.get("primary_hotkey", [])
+                if str(item).strip()
+            ] if isinstance(row.get("primary_hotkey", []), list) else []
+            if not primary_hotkey:
+                continue
+            seen_actions.add(action_name)
+            candidates.append(
+                {
+                    "action": action_name,
+                    "title": str(row.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
+                    "primary_hotkey": primary_hotkey,
+                    "matched": bool(row.get("matched", False)),
+                    "match_count": max(0, int(row.get("match_count", 0) or 0)),
+                    "recommended_followups": [
+                        str(item).strip().lower()
+                        for item in row.get("recommended_followups", [])
+                        if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+                    ] if isinstance(row.get("recommended_followups", []), list) else [],
+                    "sort_key": (
+                        0 if action_name in preferred_order else 1,
+                        preferred_order.get(action_name, APP_MEMORY_WAVE_PRIORITY.get(action_name, 100)),
+                        1 if bool(row.get("matched", False)) else 0,
+                        -max(0, int(row.get("match_count", 0) or 0)),
+                        action_name,
+                    ),
+                }
+            )
+        candidates.sort(key=lambda row: row.get("sort_key", (9, 999, 9, 0, "")))
+        return [dict(row) for row in candidates[: max(1, min(int(limit or 6), 12))]]
+
+    def _execute_app_memory_wave_candidate(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        limit: int,
+        include_observation: bool,
+        include_elements: bool,
+        include_workflow_probes: bool,
+        include_ocr_targets: bool,
+    ) -> Dict[str, Any]:
+        action_name = str(candidate.get("action", "") or "").strip().lower()
+        hotkeys = [
+            str(item).strip()
+            for item in candidate.get("primary_hotkey", [])
+            if str(item).strip()
+        ] if isinstance(candidate.get("primary_hotkey", []), list) else []
+        if not action_name or not hotkeys:
+            return {"status": "skipped", "message": "missing safe wave hotkey", "candidate": dict(candidate)}
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        focus_title = str(
+            target_window.get("title", "")
+            or active_window.get("title", "")
+            or window_title
+            or app_name
+            or ""
+        ).strip()
+        hotkey_payload: Dict[str, Any] = {"keys": hotkeys}
+        if focus_title:
+            hotkey_payload["window_title"] = focus_title
+        hotkey_result = self._call("keyboard_hotkey", hotkey_payload)
+        if str(hotkey_result.get("status", "") or "").strip().lower() != "success":
+            return {
+                "status": "error",
+                "message": str(hotkey_result.get("message", "") or "linked surface hotkey failed").strip(),
+                "candidate": dict(candidate),
+                "hotkey_result": hotkey_result,
+            }
+        if self.settle_delay_s > 0:
+            time.sleep(min(self.settle_delay_s, 0.6))
+        preferred_followups = [
+            str(item).strip().lower()
+            for item in candidate.get("recommended_followups", [])
+            if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+        ] if isinstance(candidate.get("recommended_followups", []), list) else []
+        next_snapshot = self.surface_snapshot(
+            app_name=app_name,
+            window_title=focus_title,
+            query=query,
+            limit=max(12, min(int(limit or 24), 48)),
+            include_observation=include_observation,
+            include_ocr_targets=include_ocr_targets,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+            preferred_actions=preferred_followups,
+        )
+        if str(next_snapshot.get("status", "") or "").strip().lower() != "success":
+            return {
+                "status": "error",
+                "message": str(next_snapshot.get("message", "") or "linked surface survey failed").strip(),
+                "candidate": dict(candidate),
+                "hotkey_result": hotkey_result,
+                "surface_snapshot": next_snapshot,
+            }
+        previous_surface_fingerprint = str(snapshot.get("surface_fingerprint", "") or "").strip()
+        next_surface_fingerprint = str(next_snapshot.get("surface_fingerprint", "") or "").strip()
+        if not next_surface_fingerprint or next_surface_fingerprint == previous_surface_fingerprint:
+            return {
+                "status": "skipped",
+                "message": "wave did not reveal a distinct linked surface",
+                "candidate": dict(candidate),
+                "hotkey_result": hotkey_result,
+                "surface_snapshot": next_snapshot,
+            }
+        return {
+            "status": "success",
+            "candidate": dict(candidate),
+            "hotkey_result": hotkey_result,
+            "surface_snapshot": next_snapshot,
+            "pre_surface_fingerprint": previous_surface_fingerprint,
+            "post_surface_fingerprint": next_surface_fingerprint,
+        }
+
+    def _survey_app_memory_waves(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        limit: int,
+        include_observation: bool,
+        include_elements: bool,
+        include_workflow_probes: bool,
+        include_exploration: bool,
+        include_ocr_targets: bool,
+        source: str,
+        max_surface_waves: int,
+    ) -> Dict[str, Any]:
+        bounded_waves = max(0, min(int(max_surface_waves or 0), 8))
+        if bounded_waves <= 0:
+            return {
+                "status": "skipped",
+                "attempted_count": 0,
+                "learned_surface_count": 0,
+                "known_surface_count": 0,
+                "items": [],
+                "skipped": [],
+                "stop_reason": "disabled",
+            }
+        current_snapshot = dict(snapshot)
+        initial_surface_fingerprint = str(snapshot.get("surface_fingerprint", "") or "").strip()
+        seen_fingerprints = {initial_surface_fingerprint} if initial_surface_fingerprint else set()
+        attempted_keys: set[str] = set()
+        preferred_actions: List[str] = []
+        items: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        known_surface_count = 0
+        clean_source = str(source or "manual").strip().lower() or "manual"
+        wave_source = clean_source if "wave" in clean_source else f"{clean_source}_wave"
+        while len(items) < bounded_waves:
+            current_fingerprint = str(current_snapshot.get("surface_fingerprint", "") or "").strip()
+            candidates = self._app_memory_wave_candidates(
+                snapshot=current_snapshot,
+                preferred_actions=preferred_actions,
+                limit=8,
+            )
+            if not candidates:
+                return {
+                    "status": "success" if items else "skipped",
+                    "attempted_count": len(attempted_keys),
+                    "learned_surface_count": len(items),
+                    "known_surface_count": known_surface_count,
+                    "items": items,
+                    "skipped": skipped,
+                    "stop_reason": "no_safe_wave_candidates" if not items else "exhausted_linked_surfaces",
+                }
+            progressed = False
+            for candidate in candidates:
+                action_name = str(candidate.get("action", "") or "").strip().lower()
+                if not action_name:
+                    continue
+                attempt_key = f"{current_fingerprint}|{action_name}"
+                if attempt_key in attempted_keys:
+                    continue
+                attempted_keys.add(attempt_key)
+                wave_result = self._execute_app_memory_wave_candidate(
+                    candidate=candidate,
+                    snapshot=current_snapshot,
+                    app_name=app_name,
+                    window_title=window_title,
+                    query=query,
+                    limit=limit,
+                    include_observation=include_observation,
+                    include_elements=include_elements,
+                    include_workflow_probes=include_workflow_probes,
+                    include_ocr_targets=include_ocr_targets,
+                )
+                if str(wave_result.get("status", "") or "").strip().lower() != "success":
+                    skipped.append(
+                        {
+                            "action": action_name,
+                            "title": str(candidate.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
+                            "message": str(wave_result.get("message", "") or "").strip(),
+                            "status": str(wave_result.get("status", "") or "skipped").strip() or "skipped",
+                        }
+                    )
+                    continue
+                next_snapshot = dict(wave_result.get("surface_snapshot", {})) if isinstance(wave_result.get("surface_snapshot", {}), dict) else {}
+                next_fingerprint = str(wave_result.get("post_surface_fingerprint", "") or "").strip()
+                if not next_fingerprint or next_fingerprint in seen_fingerprints:
+                    skipped.append(
+                        {
+                            "action": action_name,
+                            "title": str(candidate.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
+                            "message": "linked surface already captured in this survey chain",
+                            "status": "duplicate_surface",
+                        }
+                    )
+                    continue
+                seen_fingerprints.add(next_fingerprint)
+                wave_app_profile = next_snapshot.get("app_profile", {}) if isinstance(next_snapshot.get("app_profile", {}), dict) else {}
+                wave_hint = self._app_memory.surface_hint(
+                    app_name=app_name,
+                    profile_id=str(wave_app_profile.get("profile_id", "") or "").strip(),
+                    surface_fingerprint=next_fingerprint,
+                )
+                if isinstance(wave_hint, dict) and bool(wave_hint.get("known")):
+                    known_surface_count += 1
+                wave_exploration_plan: Dict[str, Any] = {}
+                if include_exploration:
+                    wave_exploration_plan = self._surface_exploration_from_snapshot(
+                        snapshot=dict(next_snapshot),
+                        app_name=app_name,
+                        window_title=window_title,
+                        query=query,
+                        limit=6,
+                    )
+                transition_label = str(candidate.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip()
+                wave_probe_report = {
+                    "status": "success",
+                    "attempted_count": 0,
+                    "successful_count": 0,
+                    "blocked_count": 0,
+                    "error_count": 0,
+                    "ocr_target_count": 0,
+                    "candidate_count": 0,
+                    "items": [
+                        {
+                            "label": transition_label,
+                            "control_type": "workflow_surface",
+                            "element_id": action_name,
+                            "automation_id": action_name,
+                            "probe_status": "success",
+                            "method": "keyboard_hotkey",
+                            "effect_kind": "surface_wave",
+                            "semantic_role": "navigator",
+                            "effect_summary": f"Opened linked surface via {transition_label}.",
+                            "pre_surface_fingerprint": str(wave_result.get("pre_surface_fingerprint", "") or "").strip(),
+                            "post_surface_fingerprint": next_fingerprint,
+                            "vision_labels": [transition_label],
+                            "expected_text": transition_label,
+                        }
+                    ],
+                }
+                wave_entry = self._app_memory.record_survey(
+                    app_name=app_name,
+                    window_title=(
+                        str(next_snapshot.get("target_window", {}).get("title", "") or next_snapshot.get("active_window", {}).get("title", "") or window_title or "").strip()
+                        if isinstance(next_snapshot.get("target_window", {}), dict) or isinstance(next_snapshot.get("active_window", {}), dict)
+                        else str(window_title or "").strip()
+                    ),
+                    query=query,
+                    app_profile=wave_app_profile,
+                    launch_result={},
+                    snapshot=next_snapshot,
+                    exploration_plan=wave_exploration_plan,
+                    probe_report=wave_probe_report,
+                    survey_status="success",
+                    error_message="",
+                    source=wave_source,
+                )
+                items.append(
+                    {
+                        "action": action_name,
+                        "title": transition_label,
+                        "hotkeys": [str(item).strip() for item in candidate.get("primary_hotkey", []) if str(item).strip()],
+                        "recommended_followups": [
+                            str(item).strip()
+                            for item in candidate.get("recommended_followups", [])
+                            if str(item).strip()
+                        ],
+                        "surface_fingerprint": next_fingerprint,
+                        "window_title": str(next_snapshot.get("target_window", {}).get("title", "") or next_snapshot.get("active_window", {}).get("title", "") or "").strip(),
+                        "known_surface": bool(wave_hint.get("known", False)) if isinstance(wave_hint, dict) else False,
+                        "query_candidate_count": len(
+                            [
+                                row
+                                for row in next_snapshot.get("surface_summary", {}).get("query_candidates", [])
+                                if isinstance(row, dict)
+                            ]
+                        ) if isinstance(next_snapshot.get("surface_summary", {}), dict) else 0,
+                        "memory_entry": wave_entry,
+                    }
+                )
+                current_snapshot = next_snapshot
+                preferred_actions = [
+                    str(item).strip().lower()
+                    for item in candidate.get("recommended_followups", [])
+                    if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+                ] if isinstance(candidate.get("recommended_followups", []), list) else []
+                progressed = True
+                break
+            if not progressed:
+                return {
+                    "status": "success" if items else "skipped",
+                    "attempted_count": len(attempted_keys),
+                    "learned_surface_count": len(items),
+                    "known_surface_count": known_surface_count,
+                    "items": items,
+                    "skipped": skipped,
+                    "stop_reason": "wave_candidates_exhausted",
+                }
+        return {
+            "status": "success",
+            "attempted_count": len(attempted_keys),
+            "learned_surface_count": len(items),
+            "known_surface_count": known_surface_count,
+            "items": items,
+            "skipped": skipped,
+            "stop_reason": "max_surface_waves_reached",
         }
 
     def _select_app_memory_survey_profiles(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,11 @@ from typing import Any, Dict, List
 class DesktopAppMemory:
     _DEFAULT_INSTANCE: "DesktopAppMemory | None" = None
     _DEFAULT_LOCK = RLock()
+    _HOTKEY_PATTERN = re.compile(
+        r"(?i)\b(?:ctrl|control|alt|shift|cmd|command|win|windows)"
+        r"(?:\s*\+\s*(?:ctrl|control|alt|shift|cmd|command|win|windows))*"
+        r"\s*\+\s*(?:[a-z0-9]|f(?:1[0-2]|[1-9])|tab|enter|esc|space|delete|backspace|up|down|left|right)\b"
+    )
 
     def __init__(
         self,
@@ -171,6 +177,8 @@ class DesktopAppMemory:
                 metrics["background_survey_count"] = self._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             elif clean_source == "batch":
                 metrics["batch_survey_count"] = self._coerce_int(metrics.get("batch_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+            elif "wave" in clean_source:
+                metrics["wave_survey_count"] = self._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             else:
                 metrics["manual_survey_count"] = self._coerce_int(metrics.get("manual_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             entry["metrics"] = metrics
@@ -200,6 +208,14 @@ class DesktopAppMemory:
                 "status": str(probe_payload.get("status", "") or "").strip(),
                 "updated_at": now,
             }
+            harvest_tracker: Dict[str, set[str]] = {
+                "menu_command": set(),
+                "toolbar_action": set(),
+                "ribbon_action": set(),
+                "navigation_command": set(),
+                "ocr_command_phrase": set(),
+                "harvested_hotkey": set(),
+            }
 
             for label_row in summary.get("top_labels", []):
                 if not isinstance(label_row, dict):
@@ -215,32 +231,54 @@ class DesktopAppMemory:
 
             for row in element_rows:
                 self._record_control(entry=entry, row=row, observed_at=now, query=clean_query)
+                row_label, row_hotkeys = self._command_phrase(
+                    str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+                )
+                semantic_roles, container_roles = self._command_semantics_from_row(row)
                 self._record_command_harvest(
                     entry=entry,
-                    label=str(row.get("name", "") or row.get("automation_id", "") or "").strip(),
+                    label=row_label or str(row.get("name", "") or row.get("automation_id", "") or "").strip(),
                     control_type=str(row.get("control_type", "") or "").strip(),
                     source="element",
                     hotkeys=[
-                        str(row.get("accelerator_key", "") or "").strip(),
-                        str(row.get("access_key", "") or "").strip(),
+                        *row_hotkeys,
+                        self._normalize_hotkey(row.get("accelerator_key", "")),
+                        self._normalize_hotkey(row.get("access_key", ""), treat_as_access_key=True),
                     ],
                     aliases=self._control_aliases(row),
+                    semantic_roles=semantic_roles,
+                    container_roles=container_roles,
+                )
+                self._record_harvest_classification(
+                    entry=entry,
+                    label=row_label or str(row.get("name", "") or row.get("automation_id", "") or "").strip(),
+                    semantic_roles=semantic_roles,
+                    hotkeys=[
+                        *row_hotkeys,
+                        self._normalize_hotkey(row.get("accelerator_key", "")),
+                        self._normalize_hotkey(row.get("access_key", ""), treat_as_access_key=True),
+                    ],
+                    tracker=harvest_tracker,
                 )
 
             for row in summary.get("query_candidates", []):
                 if not isinstance(row, dict):
                     continue
                 self._increment_count(entry.setdefault("command_candidate_counts", {}), self._candidate_label(row))
+                candidate_label, candidate_hotkeys = self._command_phrase(self._candidate_label(row))
                 self._record_command_harvest(
                     entry=entry,
-                    label=self._candidate_label(row),
+                    label=candidate_label or self._candidate_label(row),
                     control_type=str(row.get("control_type", "") or "").strip(),
                     source="query_candidate",
+                    hotkeys=candidate_hotkeys,
                     aliases=[
                         str(row.get("name", "") or "").strip(),
                         str(row.get("automation_id", "") or "").strip(),
                         str(row.get("label", "") or "").strip(),
                     ],
+                    semantic_roles=["query_candidate"],
+                    container_roles=["surface"],
                 )
 
             for action_name in snapshot_payload.get("recommended_actions", []):
@@ -282,7 +320,62 @@ class DesktopAppMemory:
                         source="workflow",
                         hotkeys=hotkeys,
                         aliases=[action_name, str(workflow.get("title", "") or "").strip()],
+                        semantic_roles=["workflow_action"],
+                        container_roles=["workflow"],
                     )
+                    self._record_harvest_classification(
+                        entry=entry,
+                        label=action_name.replace("_", " "),
+                        semantic_roles=["workflow_action"],
+                        hotkeys=hotkeys,
+                        tracker=harvest_tracker,
+                    )
+
+            for target in observation_payload.get("targets", []):
+                if not isinstance(target, dict):
+                    continue
+                target_label, target_hotkeys = self._command_phrase(str(target.get("text", "") or "").strip())
+                if not target_hotkeys and not self._looks_like_command_phrase(target_label):
+                    continue
+                self._record_command_harvest(
+                    entry=entry,
+                    label=target_label,
+                    control_type="ocr_text",
+                    source="ocr",
+                    hotkeys=target_hotkeys,
+                    aliases=[
+                        str(target.get("text", "") or "").strip(),
+                        str(target.get("label", "") or "").strip(),
+                        str(target.get("match_text", "") or "").strip(),
+                    ],
+                    semantic_roles=["ocr_command_phrase"],
+                    container_roles=["vision"],
+                )
+                self._record_harvest_classification(
+                    entry=entry,
+                    label=target_label,
+                    semantic_roles=["ocr_command_phrase"],
+                    hotkeys=target_hotkeys,
+                    tracker=harvest_tracker,
+                )
+
+            harvest_summary = {
+                "menu_command_count": len(harvest_tracker["menu_command"]),
+                "toolbar_action_count": len(harvest_tracker["toolbar_action"]),
+                "ribbon_action_count": len(harvest_tracker["ribbon_action"]),
+                "navigation_command_count": len(harvest_tracker["navigation_command"]),
+                "ocr_command_phrase_count": len(harvest_tracker["ocr_command_phrase"]),
+                "harvested_hotkey_count": len(harvest_tracker["harvested_hotkey"]),
+                "updated_at": now,
+            }
+            metrics["menu_command_count"] = self._coerce_int(metrics.get("menu_command_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["menu_command_count"]
+            metrics["toolbar_action_count"] = self._coerce_int(metrics.get("toolbar_action_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["toolbar_action_count"]
+            metrics["ribbon_action_count"] = self._coerce_int(metrics.get("ribbon_action_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["ribbon_action_count"]
+            metrics["navigation_command_count"] = self._coerce_int(metrics.get("navigation_command_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["navigation_command_count"]
+            metrics["ocr_command_phrase_count"] = self._coerce_int(metrics.get("ocr_command_phrase_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["ocr_command_phrase_count"]
+            metrics["harvested_hotkey_count"] = self._coerce_int(metrics.get("harvested_hotkey_count", 0), minimum=0, maximum=10_000_000, default=0) + harvest_summary["harvested_hotkey_count"]
+            entry["metrics"] = metrics
+            entry["last_harvest_summary"] = harvest_summary
 
             for branch in exploration_payload.get("branch_actions", []):
                 if not isinstance(branch, dict):
@@ -349,6 +442,13 @@ class DesktopAppMemory:
                 "surface_nodes": self._top_surface_nodes(entry.get("surface_nodes", {}), limit=4),
                 "surface_transitions": self._top_surface_transitions(entry.get("surface_transitions", {}), limit=4),
                 "learned_commands": self._top_commands(entry.get("learned_commands", {}), limit=8),
+                "harvest_summary": dict(harvest_summary),
+                "menu_commands": self._top_count_rows(entry.get("menu_command_counts", {}), limit=6, label_field="label"),
+                "toolbar_actions": self._top_count_rows(entry.get("toolbar_action_counts", {}), limit=6, label_field="label"),
+                "ribbon_actions": self._top_count_rows(entry.get("ribbon_action_counts", {}), limit=6, label_field="label"),
+                "navigation_commands": self._top_count_rows(entry.get("navigation_command_counts", {}), limit=6, label_field="label"),
+                "ocr_command_phrases": self._top_count_rows(entry.get("ocr_command_phrase_counts", {}), limit=6, label_field="label"),
+                "harvested_hotkeys": self._top_count_rows(entry.get("harvested_hotkey_counts", {}), limit=8, label_field="hotkey"),
                 "capability_profile": self._capability_profile_snapshot(entry),
                 "branch_actions": self._top_count_rows(entry.get("branch_action_counts", {}), limit=4),
                 "exploration_targets": self._top_count_rows(entry.get("exploration_target_counts", {}), limit=4),
@@ -575,6 +675,12 @@ class DesktopAppMemory:
         entry["probe_effect_counts"] = self._trim_count_map(entry.get("probe_effect_counts", {}), limit=24, skip_empty=True)
         entry["probe_role_counts"] = self._trim_count_map(entry.get("probe_role_counts", {}), limit=24, skip_empty=True)
         entry["tested_control_counts"] = self._trim_count_map(entry.get("tested_control_counts", {}), limit=32, skip_empty=True)
+        entry["menu_command_counts"] = self._trim_count_map(entry.get("menu_command_counts", {}), limit=32, skip_empty=True)
+        entry["toolbar_action_counts"] = self._trim_count_map(entry.get("toolbar_action_counts", {}), limit=32, skip_empty=True)
+        entry["ribbon_action_counts"] = self._trim_count_map(entry.get("ribbon_action_counts", {}), limit=32, skip_empty=True)
+        entry["navigation_command_counts"] = self._trim_count_map(entry.get("navigation_command_counts", {}), limit=32, skip_empty=True)
+        entry["ocr_command_phrase_counts"] = self._trim_count_map(entry.get("ocr_command_phrase_counts", {}), limit=32, skip_empty=True)
+        entry["harvested_hotkey_counts"] = self._trim_count_map(entry.get("harvested_hotkey_counts", {}), limit=32, skip_empty=True)
         learned_commands = entry.get("learned_commands", {}) if isinstance(entry.get("learned_commands", {}), dict) else {}
         if len(learned_commands) > 64:
             ordered_commands = sorted(
@@ -668,6 +774,24 @@ class DesktopAppMemory:
         item["surface_nodes"] = self._top_surface_nodes(row.get("surface_nodes", {}), limit=8)
         item["surface_transitions"] = self._top_surface_transitions(row.get("surface_transitions", {}), limit=8)
         item["learned_commands"] = self._top_commands(row.get("learned_commands", {}), limit=10)
+        item["menu_commands"] = self._top_count_rows(row.get("menu_command_counts", {}), limit=8, label_field="label")
+        item["toolbar_actions"] = self._top_count_rows(row.get("toolbar_action_counts", {}), limit=8, label_field="label")
+        item["ribbon_actions"] = self._top_count_rows(row.get("ribbon_action_counts", {}), limit=8, label_field="label")
+        item["navigation_commands"] = self._top_count_rows(row.get("navigation_command_counts", {}), limit=8, label_field="label")
+        item["ocr_command_phrases"] = self._top_count_rows(row.get("ocr_command_phrase_counts", {}), limit=8, label_field="label")
+        item["harvested_hotkeys"] = self._top_count_rows(row.get("harvested_hotkey_counts", {}), limit=10, label_field="hotkey")
+        item["harvest_summary"] = (
+            dict(row.get("last_harvest_summary", {}))
+            if isinstance(row.get("last_harvest_summary", {}), dict)
+            else {
+                "menu_command_count": len(row.get("menu_command_counts", {})) if isinstance(row.get("menu_command_counts", {}), dict) else 0,
+                "toolbar_action_count": len(row.get("toolbar_action_counts", {})) if isinstance(row.get("toolbar_action_counts", {}), dict) else 0,
+                "ribbon_action_count": len(row.get("ribbon_action_counts", {})) if isinstance(row.get("ribbon_action_counts", {}), dict) else 0,
+                "navigation_command_count": len(row.get("navigation_command_counts", {})) if isinstance(row.get("navigation_command_counts", {}), dict) else 0,
+                "ocr_command_phrase_count": len(row.get("ocr_command_phrase_counts", {})) if isinstance(row.get("ocr_command_phrase_counts", {}), dict) else 0,
+                "harvested_hotkey_count": len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0,
+            }
+        )
         item["capability_profile"] = self._capability_profile_snapshot(row)
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
@@ -702,11 +826,18 @@ class DesktopAppMemory:
         ocr_target_total = 0
         probe_attempt_total = 0
         probe_success_total = 0
+        wave_survey_total = 0
         surface_node_total = 0
         surface_transition_total = 0
         learned_command_total = 0
         discovered_control_total = 0
         command_candidate_total = 0
+        menu_command_total = 0
+        toolbar_action_total = 0
+        ribbon_action_total = 0
+        navigation_command_total = 0
+        ocr_command_phrase_total = 0
+        harvested_hotkey_total = 0
         healthy_app_count = 0
         degraded_app_count = 0
         apps: List[Dict[str, Any]] = []
@@ -731,11 +862,18 @@ class DesktopAppMemory:
             ocr_target_total += self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_attempt_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_success_total += self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+            wave_survey_total += self._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0)
             surface_node_total += len(row.get("surface_nodes", {})) if isinstance(row.get("surface_nodes", {}), dict) else 0
             surface_transition_total += len(row.get("surface_transitions", {})) if isinstance(row.get("surface_transitions", {}), dict) else 0
             learned_command_total += len(row.get("learned_commands", {})) if isinstance(row.get("learned_commands", {}), dict) else 0
             discovered_control_total += len(row.get("controls", {})) if isinstance(row.get("controls", {}), dict) else 0
             command_candidate_total += len(self._trim_count_map(row.get("command_candidate_counts", {}), limit=32))
+            menu_command_total += len(row.get("menu_command_counts", {})) if isinstance(row.get("menu_command_counts", {}), dict) else 0
+            toolbar_action_total += len(row.get("toolbar_action_counts", {})) if isinstance(row.get("toolbar_action_counts", {}), dict) else 0
+            ribbon_action_total += len(row.get("ribbon_action_counts", {})) if isinstance(row.get("ribbon_action_counts", {}), dict) else 0
+            navigation_command_total += len(row.get("navigation_command_counts", {})) if isinstance(row.get("navigation_command_counts", {}), dict) else 0
+            ocr_command_phrase_total += len(row.get("ocr_command_phrase_counts", {})) if isinstance(row.get("ocr_command_phrase_counts", {}), dict) else 0
+            harvested_hotkey_total += len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0
             learning_health = self._learning_health_snapshot(row)
             if str(learning_health.get("status", "") or "") == "healthy":
                 healthy_app_count += 1
@@ -768,11 +906,18 @@ class DesktopAppMemory:
             "ocr_target_total": ocr_target_total,
             "probe_attempt_total": probe_attempt_total,
             "probe_success_total": probe_success_total,
+            "wave_survey_total": wave_survey_total,
             "surface_node_total": surface_node_total,
             "surface_transition_total": surface_transition_total,
             "learned_command_total": learned_command_total,
             "discovered_control_total": discovered_control_total,
             "command_candidate_total": command_candidate_total,
+            "menu_command_total": menu_command_total,
+            "toolbar_action_total": toolbar_action_total,
+            "ribbon_action_total": ribbon_action_total,
+            "navigation_command_total": navigation_command_total,
+            "ocr_command_phrase_total": ocr_command_phrase_total,
+            "harvested_hotkey_total": harvested_hotkey_total,
             "healthy_app_count": healthy_app_count,
             "degraded_app_count": degraded_app_count,
             "category_counts": self._trim_count_map(category_counts, limit=16),
@@ -976,6 +1121,13 @@ class DesktopAppMemory:
             "manual_survey_count": DesktopAppMemory._coerce_int(metrics.get("manual_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "batch_survey_count": DesktopAppMemory._coerce_int(metrics.get("batch_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
             "background_survey_count": DesktopAppMemory._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "wave_survey_count": DesktopAppMemory._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "menu_command_count": DesktopAppMemory._coerce_int(metrics.get("menu_command_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "toolbar_action_count": DesktopAppMemory._coerce_int(metrics.get("toolbar_action_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "ribbon_action_count": DesktopAppMemory._coerce_int(metrics.get("ribbon_action_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "navigation_command_count": DesktopAppMemory._coerce_int(metrics.get("navigation_command_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "ocr_command_phrase_count": DesktopAppMemory._coerce_int(metrics.get("ocr_command_phrase_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "harvested_hotkey_count": DesktopAppMemory._coerce_int(metrics.get("harvested_hotkey_count", 0), minimum=0, maximum=10_000_000, default=0),
         }
 
     @classmethod
@@ -1007,6 +1159,124 @@ class DesktopAppMemory:
                 continue
             values.append(clean)
         return values[-max(1, int(limit or 1)) :]
+
+    @classmethod
+    def _normalize_hotkey(cls, value: Any, *, treat_as_access_key: bool = False) -> str:
+        clean = str(value or "").strip()
+        if not clean:
+            return ""
+        normalized = clean.lower().replace("control", "ctrl").replace("command", "cmd").replace("windows", "win")
+        normalized = normalized.replace("escape", "esc").replace("spacebar", "space")
+        normalized = re.sub(r"\s+", "", normalized)
+        if treat_as_access_key and "+" not in normalized and len(normalized) == 1 and normalized.isalnum():
+            return f"alt+{normalized}"
+        return normalized
+
+    @classmethod
+    def _extract_hotkeys_from_text(cls, text: Any) -> List[str]:
+        raw = str(text or "").strip()
+        if not raw:
+            return []
+        hotkeys: List[str] = []
+        for match in cls._HOTKEY_PATTERN.finditer(raw):
+            normalized = cls._normalize_hotkey(match.group(0))
+            if normalized and normalized not in hotkeys:
+                hotkeys.append(normalized)
+        return hotkeys[:8]
+
+    @classmethod
+    def _command_phrase(cls, text: Any) -> tuple[str, List[str]]:
+        raw = str(text or "").replace("\u2026", "...").strip()
+        if not raw:
+            return ("", [])
+        hotkeys = cls._extract_hotkeys_from_text(raw)
+        label = cls._HOTKEY_PATTERN.sub("", raw)
+        if "\t" in label:
+            label = label.split("\t", 1)[0]
+        label = label.replace("&", " ")
+        label = re.sub(r"\s+", " ", label)
+        label = label.strip(" -:>\t")
+        while label.endswith("..."):
+            label = label[:-3].rstrip()
+        return (label, hotkeys)
+
+    @classmethod
+    def _looks_like_command_phrase(cls, text: Any) -> bool:
+        clean = str(text or "").strip()
+        if not clean:
+            return False
+        if len(clean) > 48:
+            return False
+        words = [part for part in re.split(r"\s+", clean) if part]
+        if not words or len(words) > 6:
+            return False
+        return any(any(char.isalpha() for char in word) for word in words)
+
+    @classmethod
+    def _command_semantics_from_row(cls, row: Dict[str, Any]) -> tuple[List[str], List[str]]:
+        control_type = cls._normalize_text(row.get("control_type", ""))
+        class_name = cls._normalize_text(row.get("class_name", ""))
+        automation_id = cls._normalize_text(row.get("automation_id", ""))
+        root_window_title = cls._normalize_text(row.get("root_window_title", "") or row.get("window_title", ""))
+        haystack = " ".join(part for part in [class_name, automation_id, root_window_title] if part)
+        semantic_roles: List[str] = []
+        container_roles: List[str] = []
+        if control_type == "menuitem":
+            semantic_roles.append("menu_command")
+            container_roles.append("menu")
+        elif control_type in {"button", "splitbutton", "togglebutton"}:
+            if "ribbon" in haystack:
+                semantic_roles.append("ribbon_action")
+                container_roles.append("ribbon")
+            elif any(marker in haystack for marker in ("toolbar", "commandbar", "command bar", "quick access", "quickaccess")):
+                semantic_roles.append("toolbar_action")
+                container_roles.append("toolbar")
+            else:
+                semantic_roles.append("surface_action")
+        elif control_type in {"treeitem", "listitem"}:
+            semantic_roles.append("navigation_command")
+            container_roles.append("navigation")
+        elif control_type == "tabitem":
+            semantic_roles.append("tab_action")
+            container_roles.append("tabs")
+            if "ribbon" in haystack:
+                container_roles.append("ribbon")
+        elif control_type == "hyperlink":
+            semantic_roles.append("link_action")
+        return (semantic_roles, cls._merge_recent_strings([], container_roles, limit=4))
+
+    def _record_harvest_classification(
+        self,
+        *,
+        entry: Dict[str, Any],
+        label: str,
+        semantic_roles: List[str],
+        hotkeys: List[str],
+        tracker: Dict[str, set[str]],
+    ) -> None:
+        clean_label = str(label or "").strip()
+        normalized_label = self._normalize_text(clean_label)
+        role_to_field = {
+            "menu_command": "menu_command_counts",
+            "toolbar_action": "toolbar_action_counts",
+            "ribbon_action": "ribbon_action_counts",
+            "navigation_command": "navigation_command_counts",
+            "ocr_command_phrase": "ocr_command_phrase_counts",
+        }
+        for role in semantic_roles:
+            field_name = role_to_field.get(self._normalize_text(role))
+            if not field_name or not clean_label:
+                continue
+            self._increment_count(entry.setdefault(field_name, {}), clean_label)
+            role_tracker = tracker.get(self._normalize_text(role))
+            if isinstance(role_tracker, set) and normalized_label:
+                role_tracker.add(normalized_label)
+        for hotkey in hotkeys:
+            normalized_hotkey = self._normalize_hotkey(hotkey)
+            if not normalized_hotkey:
+                continue
+            self._increment_count(entry.setdefault("harvested_hotkey_counts", {}), normalized_hotkey)
+            tracker.setdefault("harvested_hotkey", set()).add(normalized_hotkey)
 
     @classmethod
     def _learning_health_snapshot(cls, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1142,12 +1412,22 @@ class DesktopAppMemory:
             [str(item).strip() for item in summary.get("recommended_actions", []) if str(item).strip()],
             limit=10,
         )
+        current["harvested_hotkeys"] = self._merge_recent_strings(
+            current.get("harvested_hotkeys", []),
+            [
+                str(row.get("hotkey", "") or "").strip()
+                for row in self._top_count_rows(entry.get("harvested_hotkey_counts", {}), limit=6, label_field="hotkey")
+                if isinstance(row, dict)
+            ],
+            limit=10,
+        )
         current["query_examples"] = self._merge_recent_strings(
             current.get("query_examples", []),
             [str(item.get("query", "") or "").strip() for item in entry.get("survey_history", []) if isinstance(item, dict)],
             limit=6,
         )
         current["control_counts"] = summary.get("control_counts", {}) if isinstance(summary.get("control_counts", {}), dict) else {}
+        current["harvest_summary"] = dict(entry.get("last_harvest_summary", {})) if isinstance(entry.get("last_harvest_summary", {}), dict) else {}
         current["probe_success_count"] = self._coerce_int(current.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
         current["probe_attempt_count"] = self._coerce_int(current.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
         node_map[surface_fingerprint] = current
@@ -1193,6 +1473,8 @@ class DesktopAppMemory:
         source: str,
         hotkeys: List[str] | None = None,
         aliases: List[str] | None = None,
+        semantic_roles: List[str] | None = None,
+        container_roles: List[str] | None = None,
     ) -> None:
         clean_label = str(label or "").strip()
         if not clean_label:
@@ -1224,6 +1506,16 @@ class DesktopAppMemory:
             current.get("hotkeys", []),
             [str(item).strip() for item in (hotkeys or []) if str(item).strip()],
             limit=12,
+        )
+        current["semantic_roles"] = self._merge_recent_strings(
+            current.get("semantic_roles", []),
+            [str(item).strip() for item in (semantic_roles or []) if str(item).strip()],
+            limit=8,
+        )
+        current["container_roles"] = self._merge_recent_strings(
+            current.get("container_roles", []),
+            [str(item).strip() for item in (container_roles or []) if str(item).strip()],
+            limit=8,
         )
         command_map[key] = current
 
@@ -1335,6 +1627,16 @@ class DesktopAppMemory:
                 "surface_node": node,
                 "capability_profile": self._capability_profile_snapshot(row),
                 "learned_commands": self._top_commands(row.get("learned_commands", {}), limit=8),
+                "menu_commands": self._top_count_rows(row.get("menu_command_counts", {}), limit=6, label_field="label"),
+                "toolbar_actions": self._top_count_rows(row.get("toolbar_action_counts", {}), limit=6, label_field="label"),
+                "ribbon_actions": self._top_count_rows(row.get("ribbon_action_counts", {}), limit=6, label_field="label"),
+                "navigation_commands": self._top_count_rows(row.get("navigation_command_counts", {}), limit=6, label_field="label"),
+                "harvested_hotkeys": self._top_count_rows(row.get("harvested_hotkey_counts", {}), limit=8, label_field="hotkey"),
+                "harvest_summary": (
+                    dict(row.get("last_harvest_summary", {}))
+                    if isinstance(row.get("last_harvest_summary", {}), dict)
+                    else {}
+                ),
                 "shortcut_actions": self._snapshot_item(row).get("shortcut_actions", []),
             }
         return {
@@ -1344,5 +1646,11 @@ class DesktopAppMemory:
             "surface_node": {},
             "capability_profile": {"status": "success", "features": {}, "top_features": []},
             "learned_commands": [],
+            "menu_commands": [],
+            "toolbar_actions": [],
+            "ribbon_actions": [],
+            "navigation_commands": [],
+            "harvested_hotkeys": [],
+            "harvest_summary": {},
             "shortcut_actions": [],
         }

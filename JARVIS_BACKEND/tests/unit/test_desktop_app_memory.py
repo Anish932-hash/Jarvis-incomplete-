@@ -113,17 +113,20 @@ def test_desktop_action_router_surveys_app_memory_and_returns_snapshot() -> None
                 "items": [
                     {
                         "element_id": "file_menu",
-                        "name": "File",
+                        "name": "File\tAlt+F",
                         "control_type": "menuitem",
                         "automation_id": "FileMenu",
                         "root_window_title": "Untitled - Notepad",
+                        "access_key": "F",
                     },
                     {
                         "element_id": "save_button",
-                        "name": "Save",
+                        "name": "Save\tCtrl+S",
                         "control_type": "button",
                         "automation_id": "SaveButton",
+                        "class_name": "ToolbarButton",
                         "root_window_title": "Untitled - Notepad",
+                        "accelerator_key": "Ctrl+S",
                     },
                 ],
             },
@@ -146,6 +149,7 @@ def test_desktop_action_router_surveys_app_memory_and_returns_snapshot() -> None
     assert payload["memory_entry"]["discovered_control_count"] >= 2
     assert payload["app_memory"]["count"] == 1
     assert "Learned" in str(payload["message"])
+    assert "Semantic harvesting captured" in str(payload["message"])
 
     repeated = router.survey_app_memory(
         app_name="notepad",
@@ -350,6 +354,92 @@ def test_desktop_app_memory_tracks_learning_health_and_aliases(tmp_path: Path) -
     assert snapshot["summary"]["survey_source_counts"]["daemon"] == 1
 
 
+def test_desktop_app_memory_harvests_menu_toolbar_ocr_and_hotkeys(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+    entry = memory.record_survey(
+        app_name="word",
+        query="save",
+        app_profile={"profile_id": "word", "name": "Word", "category": "office"},
+        snapshot={
+            "target_window": {"title": "Document1 - Word", "window_signature": "word-main"},
+            "active_window": {"title": "Document1 - Word"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "file_menu",
+                        "name": "File\tAlt+F",
+                        "control_type": "menuitem",
+                        "automation_id": "FileMenu",
+                        "root_window_title": "Document1 - Word",
+                        "access_key": "F",
+                    },
+                    {
+                        "element_id": "save_as",
+                        "name": "Save As\tCtrl+Shift+S",
+                        "control_type": "button",
+                        "automation_id": "RibbonSaveAs",
+                        "class_name": "RibbonButton",
+                        "root_window_title": "Document1 - Word",
+                        "accelerator_key": "Ctrl+Shift+S",
+                    },
+                    {
+                        "element_id": "home_tab",
+                        "name": "Home",
+                        "control_type": "tabitem",
+                        "automation_id": "RibbonTabHome",
+                        "class_name": "RibbonTab",
+                    },
+                ]
+            },
+            "observation": {
+                "targets": [
+                    {"text": "Find Ctrl+F"},
+                    {"text": "Replace Ctrl+H"},
+                ]
+            },
+            "surface_summary": {
+                "control_counts": {"menuitem": 1, "button": 1, "tabitem": 1},
+                "top_labels": [{"label": "Save As", "count": 1}, {"label": "File", "count": 1}],
+                "query_candidates": [{"name": "Save As", "control_type": "button"}],
+                "recommended_actions": ["command", "search"],
+                "control_inventory": [
+                    {"name": "File\tAlt+F", "control_type": "menuitem", "automation_id": "FileMenu"},
+                    {"name": "Save As\tCtrl+Shift+S", "control_type": "button", "automation_id": "RibbonSaveAs"},
+                ],
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "keyboard_first"},
+            "workflow_surfaces": [{"action": "search", "primary_hotkey": ["ctrl+f"]}],
+        },
+        survey_status="success",
+        source="manual",
+    )
+
+    harvest_summary = dict(entry.get("harvest_summary", {}))
+    assert int(harvest_summary.get("menu_command_count", 0) or 0) >= 1
+    assert int(harvest_summary.get("ribbon_action_count", 0) or 0) >= 1
+    assert int(harvest_summary.get("ocr_command_phrase_count", 0) or 0) >= 2
+    assert int(harvest_summary.get("harvested_hotkey_count", 0) or 0) >= 3
+    assert any(str(item.get("label", "")) == "save as" for item in entry.get("ribbon_actions", []))
+    assert any(str(item.get("hotkey", "")) == "ctrl+shift+s" for item in entry.get("harvested_hotkeys", []))
+    assert any(
+        str(command.get("label", "")).lower() == "save as"
+        and "ribbon_action" in [str(role) for role in command.get("semantic_roles", [])]
+        for command in entry.get("learned_commands", [])
+        if isinstance(command, dict)
+    )
+
+    snapshot = memory.snapshot(app_name="word")
+    assert snapshot["summary"]["menu_command_total"] >= 1
+    assert snapshot["summary"]["ribbon_action_total"] >= 1
+    assert snapshot["summary"]["ocr_command_phrase_total"] >= 1
+    assert snapshot["summary"]["harvested_hotkey_total"] >= 1
+
+    hint = memory.surface_hint(app_name="word", profile_id="word", surface_fingerprint=str(entry.get("last_surface_fingerprint", "") or ""))
+    assert hint["known"] is True
+    assert any(str(item.get("label", "")) == "file" for item in hint.get("menu_commands", []))
+    assert any(str(item.get("hotkey", "")) == "ctrl+shift+s" for item in hint.get("harvested_hotkeys", []))
+
+
 def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) -> None:
     memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
     entry = memory.record_survey(
@@ -512,9 +602,168 @@ def test_desktop_action_router_surveys_app_memory_with_safe_probe_learning() -> 
     assert payload["probe_report"]["ocr_target_count"] >= 2
     assert payload["memory_entry"]["metrics"]["probe_success_count"] == 1
     assert payload["memory_entry"]["tested_controls"][0]["label"] == "view"
-    assert payload["memory_entry"]["probe_effects"][0]["value"] in {"navigation", "surface_change"}
+    assert payload["memory_entry"]["probe_effects"][0]["value"] in {"navigation", "surface_change", "surface_wave"}
     assert payload["memory_entry"]["surface_transitions"]
     assert payload["memory_entry"]["surface_nodes"]
+
+
+def test_desktop_action_router_surveys_linked_surface_waves_into_app_memory() -> None:
+    state = {"surface": "main"}
+
+    class _WaveRegistry:
+        def match(self, *, app_name: str = "", window_title: str = "", exe_name: str = "") -> Dict[str, Any]:
+            del window_title, exe_name
+            clean_app_name = str(app_name or "").strip().lower()
+            if clean_app_name not in {"vscode", "visual studio code", "code"}:
+                return {}
+            return {
+                "status": "success",
+                "profile_id": "vscode",
+                "name": "Visual Studio Code",
+                "category": "code_editor",
+                "workflow_defaults": {
+                    "command_hotkeys": [["ctrl+shift+p"]],
+                    "quick_open_hotkeys": [["ctrl+p"]],
+                    "workspace_search_hotkeys": [["ctrl+shift+f"]],
+                    "search_hotkeys": [["ctrl+f"]],
+                },
+                "workflow_capabilities": {
+                    "command": {"supported": True},
+                    "quick_open": {"supported": True},
+                    "workspace_search": {"supported": True},
+                    "search": {"supported": True},
+                },
+            }
+
+        def catalog(self, *, query: str = "", category: str = "", limit: int = 24) -> Dict[str, Any]:
+            del query, category, limit
+            return {"status": "success", "count": 0, "total": 0, "items": []}
+
+    def _accessibility_rows() -> list[Dict[str, Any]]:
+        if state["surface"] == "command":
+            return [
+                {
+                    "element_id": "command_input",
+                    "name": "Command Palette",
+                    "control_type": "edit",
+                    "automation_id": "CommandPaletteInput",
+                    "root_window_title": "Visual Studio Code",
+                }
+            ]
+        if state["surface"] == "quick_open":
+            return [
+                {
+                    "element_id": "quick_open",
+                    "name": "Go to File",
+                    "control_type": "edit",
+                    "automation_id": "QuickOpenInput",
+                    "root_window_title": "Visual Studio Code",
+                }
+            ]
+        if state["surface"] == "workspace_search":
+            return [
+                {
+                    "element_id": "workspace_search",
+                    "name": "Search Files",
+                    "control_type": "edit",
+                    "automation_id": "WorkspaceSearchInput",
+                    "root_window_title": "Visual Studio Code",
+                }
+            ]
+        return [
+            {
+                "element_id": "explorer_view",
+                "name": "Explorer",
+                "control_type": "treeitem",
+                "automation_id": "ExplorerView",
+                "root_window_title": "Visual Studio Code",
+            }
+        ]
+
+    def _computer_observe(payload: Dict[str, Any]) -> Dict[str, Any]:
+        include_targets = bool(payload.get("include_targets", False))
+        text_map = {
+            "main": "Explorer editor tab",
+            "command": "Command Palette >",
+            "quick_open": "Go to File",
+            "workspace_search": "Search files",
+        }
+        return {
+            "status": "success",
+            "screen_hash": f"hash-{state['surface']}",
+            "text": text_map[state["surface"]],
+            "screenshot_path": f"{state['surface']}.png",
+            "targets": (
+                [{"text": "Command Palette"}, {"text": "Go to File"}, {"text": "Search files"}]
+                if include_targets
+                else []
+            ),
+        }
+
+    def _keyboard_hotkey(payload: Dict[str, Any]) -> Dict[str, Any]:
+        keys = [str(item).strip().lower() for item in payload.get("keys", []) if str(item).strip()]
+        if keys == ["ctrl+shift+p"] and state["surface"] == "main":
+            state["surface"] = "command"
+        elif keys == ["ctrl+p"] and state["surface"] == "command":
+            state["surface"] = "quick_open"
+        elif keys == ["ctrl+shift+f"] and state["surface"] == "quick_open":
+            state["surface"] = "workspace_search"
+        return {"status": "success", "keys": keys, "surface": state["surface"]}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 901, "title": "Visual Studio Code", "exe": r"C:\Users\thecy\AppData\Local\Programs\Microsoft VS Code\Code.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 901, "title": "Visual Studio Code"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "open_app": lambda _payload: {"status": "success", "requested_app": "vscode", "launch_method": "system_path"},
+            "keyboard_hotkey": _keyboard_hotkey,
+            "computer_observe": _computer_observe,
+            "accessibility_list_elements": lambda _payload: {"status": "success", "items": _accessibility_rows()},
+        },
+        app_profile_registry=_WaveRegistry(),
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory(
+        app_name="vscode",
+        query="search workspace",
+        ensure_app_launch=True,
+        include_observation=True,
+        include_ocr_targets=True,
+        follow_surface_waves=True,
+        max_surface_waves=3,
+    )
+
+    assert payload["status"] == "success"
+    assert "Linked-surface learning opened" in str(payload["message"])
+    wave_report = dict(payload.get("wave_report", {}))
+    assert int(wave_report.get("learned_surface_count", 0) or 0) == 3
+    assert len([row for row in wave_report.get("items", []) if isinstance(row, dict)]) == 3
+
+    memory_entry = dict(payload.get("memory_entry", {}))
+    metrics = dict(memory_entry.get("metrics", {}))
+    assert int(metrics.get("wave_survey_count", 0) or 0) >= 3
+
+    app_memory = dict(payload.get("app_memory", {}))
+    summary = dict(app_memory.get("summary", {}))
+    assert int(summary.get("wave_survey_total", 0) or 0) >= 3
+
+    rows = [dict(row) for row in app_memory.get("items", []) if isinstance(row, dict)]
+    assert rows
+    transitions = [dict(row) for row in rows[0].get("surface_transitions", []) if isinstance(row, dict)]
+    labels = {str(row.get("label", "") or "").strip().lower() for row in transitions}
+    assert "command palette" in labels
+    assert "quick open" in labels
+    assert "workspace search" in labels
 
 
 def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Path) -> None:
