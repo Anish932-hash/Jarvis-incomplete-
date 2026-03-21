@@ -85,6 +85,21 @@ class DesktopAppMemory:
             if isinstance(snapshot_payload.get("observation", {}), dict)
             else {}
         )
+        vision_fusion = (
+            snapshot_payload.get("vision_fusion", {})
+            if isinstance(snapshot_payload.get("vision_fusion", {}), dict)
+            else {}
+        )
+        native_learning_signals = (
+            snapshot_payload.get("native_learning_signals", {})
+            if isinstance(snapshot_payload.get("native_learning_signals", {}), dict)
+            else {}
+        )
+        safe_traversal_plan = (
+            snapshot_payload.get("safe_traversal_plan", {})
+            if isinstance(snapshot_payload.get("safe_traversal_plan", {}), dict)
+            else {}
+        )
         intelligence = (
             snapshot_payload.get("surface_intelligence", {})
             if isinstance(snapshot_payload.get("surface_intelligence", {}), dict)
@@ -138,6 +153,15 @@ class DesktopAppMemory:
             intelligence=intelligence,
             observation=observation_payload,
         )
+        version_profile = self._version_profile_snapshot(
+            app_label=app_label,
+            app_profile=profile,
+            target_window=target_window,
+            active_window=active_window,
+            launch_result=launch_payload,
+            surface_fingerprint=surface_fingerprint,
+            native_window_topology=native_window_topology,
+        )
         with self._lock:
             entry = dict(self._entries.get(key, {}))
             entry["key"] = key
@@ -173,11 +197,17 @@ class DesktopAppMemory:
             metrics["ocr_target_count"] = self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_attempt_count"] = self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_success_count"] = self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_verified_count"] = self._coerce_int(metrics.get("probe_verified_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("verified_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["probe_uncertain_count"] = self._coerce_int(metrics.get("probe_uncertain_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("uncertain_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_blocked_count"] = self._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["probe_error_count"] = self._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("error_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["wave_attempt_count"] = self._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["wave_success_count"] = self._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("learned_surface_count", 0), minimum=0, maximum=10_000_000, default=0)
             metrics["wave_known_surface_hit_count"] = self._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(wave_payload.get("known_surface_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["vision_surface_count"] = self._coerce_int(metrics.get("vision_surface_count", 0), minimum=0, maximum=10_000_000, default=0) + (1 if vision_fusion else 0)
+            metrics["safe_traversal_candidate_count"] = self._coerce_int(metrics.get("safe_traversal_candidate_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(safe_traversal_plan.get("candidate_count", 0), minimum=0, maximum=10_000_000, default=0)
+            metrics["custom_surface_count"] = self._coerce_int(metrics.get("custom_surface_count", 0), minimum=0, maximum=10_000_000, default=0) + (1 if bool(native_learning_signals.get("custom_surface_suspected", False)) else 0)
+            metrics["reparenting_risk_count"] = self._coerce_int(metrics.get("reparenting_risk_count", 0), minimum=0, maximum=10_000_000, default=0) + (1 if float(native_learning_signals.get("reparenting_risk", 0.0) or 0.0) >= 0.45 else 0)
             if clean_source == "daemon":
                 metrics["background_survey_count"] = self._coerce_int(metrics.get("background_survey_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
             elif clean_source == "batch":
@@ -225,6 +255,37 @@ class DesktopAppMemory:
                 ][:8] if isinstance(wave_payload.get("recommended_next_actions", []), list) else [],
                 "updated_at": now,
             }
+            entry["last_vision_summary"] = {
+                "model_mode": str(vision_fusion.get("model_mode", "") or "").strip(),
+                "confidence": round(max(0.0, min(float(vision_fusion.get("confidence", 0.0) or 0.0), 1.0)), 4),
+                "top_labels": [str(item).strip() for item in vision_fusion.get("top_labels", []) if str(item).strip()][:8] if isinstance(vision_fusion.get("top_labels", []), list) else [],
+                "ocr_terms": [str(item).strip() for item in vision_fusion.get("ocr_terms", []) if str(item).strip()][:10] if isinstance(vision_fusion.get("ocr_terms", []), list) else [],
+                "command_terms": [str(item).strip() for item in vision_fusion.get("command_terms", []) if str(item).strip()][:10] if isinstance(vision_fusion.get("command_terms", []), list) else [],
+                "native_attention": bool(vision_fusion.get("native_attention", False)),
+                "updated_at": now,
+            }
+            entry["last_native_learning_signals"] = {
+                "custom_surface_suspected": bool(native_learning_signals.get("custom_surface_suspected", False)),
+                "reparenting_risk": round(max(0.0, min(float(native_learning_signals.get("reparenting_risk", 0.0) or 0.0), 1.0)), 4),
+                "descendant_chain_depth": self._coerce_int(native_learning_signals.get("descendant_chain_depth", 0), minimum=0, maximum=1000, default=0),
+                "dialog_chain_depth": self._coerce_int(native_learning_signals.get("dialog_chain_depth", 0), minimum=0, maximum=1000, default=0),
+                "owner_chain_depth": self._coerce_int(native_learning_signals.get("owner_chain_depth", 0), minimum=0, maximum=1000, default=0),
+                "anomaly_flags": [str(item).strip() for item in native_learning_signals.get("anomaly_flags", []) if str(item).strip()][:8] if isinstance(native_learning_signals.get("anomaly_flags", []), list) else [],
+                "updated_at": now,
+            }
+            entry["last_safe_traversal_summary"] = {
+                "candidate_count": self._coerce_int(safe_traversal_plan.get("candidate_count", 0), minimum=0, maximum=10_000_000, default=0),
+                "container_counts": dict(safe_traversal_plan.get("container_counts", {})) if isinstance(safe_traversal_plan.get("container_counts", {}), dict) else {},
+                "recommended_paths": [str(item).strip() for item in safe_traversal_plan.get("recommended_paths", []) if str(item).strip()][:8] if isinstance(safe_traversal_plan.get("recommended_paths", []), list) else [],
+                "recursive_depth_limit": self._coerce_int(safe_traversal_plan.get("recursive_depth_limit", 0), minimum=0, maximum=16, default=0),
+                "updated_at": now,
+            }
+            entry["last_verification_summary"] = self._probe_verification_snapshot(probe_payload=probe_payload, observed_at=now)
+            entry["version_profile"] = version_profile
+            entry["staleness"] = self._staleness_snapshot(
+                updated_at=now,
+                version_signature=str(version_profile.get("signature", "") or "").strip(),
+            )
             harvest_tracker: Dict[str, set[str]] = {
                 "menu_command": set(),
                 "toolbar_action": set(),
@@ -456,6 +517,8 @@ class DesktopAppMemory:
             native_summary["max_related_window_count"] = max(self._coerce_int(native_summary.get("max_related_window_count", 0), minimum=0, maximum=10_000, default=0), self._coerce_int(native_window_topology.get("related_window_count", 0), minimum=0, maximum=10_000, default=0))
             native_summary["max_dialog_like_window_count"] = max(self._coerce_int(native_summary.get("max_dialog_like_window_count", 0), minimum=0, maximum=10_000, default=0), self._coerce_int(native_window_topology.get("dialog_like_window_count", 0), minimum=0, maximum=10_000, default=0))
             native_summary["last_reacquired_title"] = str(dict(window_reacquisition.get("candidate", {})).get("title", "") if isinstance(window_reacquisition.get("candidate", {}), dict) else "").strip()
+            native_summary["custom_surface_count"] = self._coerce_int(native_summary.get("custom_surface_count", 0), minimum=0, maximum=10_000_000, default=0) + (1 if bool(native_learning_signals.get("custom_surface_suspected", False)) else 0)
+            native_summary["reparenting_risk"] = round(max(float(native_summary.get("reparenting_risk", 0.0) or 0.0), float(native_learning_signals.get("reparenting_risk", 0.0) or 0.0)), 4)
             native_summary["updated_at"] = now
             entry["native_summary"] = native_summary
 
@@ -498,6 +561,12 @@ class DesktopAppMemory:
                 "wave_summary": dict(entry.get("last_wave_summary", {})) if isinstance(entry.get("last_wave_summary", {}), dict) else {},
                 "wave_strategies": self._top_wave_strategies(entry.get("wave_strategies", {}), limit=6),
                 "native_summary": dict(native_summary),
+                "vision_summary": dict(entry.get("last_vision_summary", {})) if isinstance(entry.get("last_vision_summary", {}), dict) else {},
+                "verification_summary": dict(entry.get("last_verification_summary", {})) if isinstance(entry.get("last_verification_summary", {}), dict) else {},
+                "safe_traversal_summary": dict(entry.get("last_safe_traversal_summary", {})) if isinstance(entry.get("last_safe_traversal_summary", {}), dict) else {},
+                "version_profile": dict(version_profile),
+                "staleness": dict(entry.get("staleness", {})) if isinstance(entry.get("staleness", {}), dict) else {},
+                "failure_memory": self._failure_memory_summary(entry),
             }
             survey_history = [dict(item) for item in entry.get("survey_history", []) if isinstance(item, dict)]
             survey_history.append(survey_record)
@@ -664,6 +733,24 @@ class DesktopAppMemory:
         current["last_probe_effect"] = str(row.get("effect_kind", "") or "").strip()
         current["learned_role"] = str(row.get("semantic_role", "") or current.get("learned_role", "") or "").strip()
         current["last_probe_summary"] = str(row.get("effect_summary", "") or row.get("message", "") or "").strip()
+        current["last_verification_confidence"] = round(
+            max(0.0, min(float(row.get("verification_confidence", 0.0) or 0.0), 1.0)),
+            4,
+        )
+        if bool(row.get("verified_effect", False)):
+            current["verified_effect_count"] = self._coerce_int(
+                current.get("verified_effect_count", 0),
+                minimum=0,
+                maximum=10_000_000,
+                default=0,
+            ) + 1
+        elif probe_status:
+            current["uncertain_effect_count"] = self._coerce_int(
+                current.get("uncertain_effect_count", 0),
+                minimum=0,
+                maximum=10_000_000,
+                default=0,
+            ) + 1
         current["expected_text"] = str(row.get("expected_text", "") or current.get("expected_text", "") or "").strip()
         current["last_post_surface_fingerprint"] = str(
             row.get("post_surface_fingerprint", "") or current.get("last_post_surface_fingerprint", "") or ""
@@ -690,6 +777,75 @@ class DesktopAppMemory:
                 effect_kind=str(row.get("effect_kind", "") or "").strip(),
                 semantic_role=str(row.get("semantic_role", "") or "").strip(),
             )
+        if probe_status != "success" or not bool(row.get("verified_effect", False)):
+            self._record_failure_memory(
+                entry=entry,
+                row=row,
+                observed_at=observed_at,
+                channel="probe",
+            )
+
+    def _record_failure_memory(
+        self,
+        *,
+        entry: Dict[str, Any],
+        row: Dict[str, Any],
+        observed_at: str,
+        channel: str,
+    ) -> None:
+        action_name = self._normalize_text(
+            row.get("action", "")
+            or row.get("element_id", "")
+            or row.get("automation_id", "")
+            or row.get("label", "")
+            or row.get("query", "")
+            or row.get("title", "")
+        )
+        if not action_name:
+            return
+        failures = entry.setdefault("failure_memory", {})
+        current = failures.get(action_name, {}) if isinstance(failures.get(action_name, {}), dict) else {}
+        current = dict(current)
+        status = self._normalize_text(
+            row.get("probe_status", "")
+            or row.get("status", "")
+            or row.get("last_status", "")
+            or "unknown"
+        ) or "unknown"
+        current["action"] = action_name
+        current["title"] = str(
+            row.get("title", "")
+            or row.get("label", "")
+            or row.get("query", "")
+            or action_name.replace("_", " ")
+        ).strip()
+        current["channel"] = str(channel or "").strip()
+        current["sample_count"] = self._coerce_int(current.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        if status in {"blocked", "skipped", "duplicate_surface", "duplicate"}:
+            current["blocked_count"] = self._coerce_int(current.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        elif status == "success" and not bool(row.get("verified_effect", False)):
+            current["uncertain_count"] = self._coerce_int(current.get("uncertain_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        else:
+            current["error_count"] = self._coerce_int(current.get("error_count", 0), minimum=0, maximum=10_000_000, default=0) + 1
+        current["last_status"] = status
+        current["last_seen_at"] = observed_at
+        current["last_message"] = str(row.get("message", "") or row.get("effect_summary", "") or "").strip()
+        current["container_role"] = str(row.get("container_role", "") or "").strip()
+        current["source"] = str(row.get("source", "") or "").strip()
+        current["verification_confidence"] = round(
+            max(0.0, min(float(row.get("verification_confidence", 0.0) or 0.0), 1.0)),
+            4,
+        )
+        current["surface_fingerprints"] = self._merge_recent_strings(
+            current.get("surface_fingerprints", []),
+            [
+                str(row.get("pre_surface_fingerprint", "") or "").strip(),
+                str(row.get("post_surface_fingerprint", "") or "").strip(),
+                str(row.get("surface_fingerprint", "") or "").strip(),
+            ],
+            limit=10,
+        )
+        failures[action_name] = current
 
     def _record_wave_strategy(
         self,
@@ -857,6 +1013,20 @@ class DesktopAppMemory:
                 reverse=True,
             )
             entry["wave_strategies"] = {key: value for key, value in ordered_wave_strategies[:32]}
+        failure_memory = entry.get("failure_memory", {}) if isinstance(entry.get("failure_memory", {}), dict) else {}
+        if len(failure_memory) > 48:
+            ordered_failures = sorted(
+                failure_memory.items(),
+                key=lambda item: (
+                    self._coerce_int(item[1].get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    self._coerce_int(item[1].get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    self._coerce_int(item[1].get("error_count", 0), minimum=0, maximum=10_000_000, default=0),
+                    str(item[1].get("last_seen_at", "")),
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            entry["failure_memory"] = {key: value for key, value in ordered_failures[:48]}
         controls = entry.get("controls", {}) if isinstance(entry.get("controls", {}), dict) else {}
         if len(controls) > self.max_controls_per_entry:
             ordered_controls = sorted(
@@ -929,6 +1099,39 @@ class DesktopAppMemory:
                 "harvested_hotkey_count": len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0,
             }
         )
+        item["vision_summary"] = (
+            dict(row.get("last_vision_summary", {}))
+            if isinstance(row.get("last_vision_summary", {}), dict)
+            else {}
+        )
+        item["native_learning_signals"] = (
+            dict(row.get("last_native_learning_signals", {}))
+            if isinstance(row.get("last_native_learning_signals", {}), dict)
+            else {}
+        )
+        item["safe_traversal_summary"] = (
+            dict(row.get("last_safe_traversal_summary", {}))
+            if isinstance(row.get("last_safe_traversal_summary", {}), dict)
+            else {}
+        )
+        item["verification_summary"] = (
+            dict(row.get("last_verification_summary", {}))
+            if isinstance(row.get("last_verification_summary", {}), dict)
+            else {}
+        )
+        item["version_profile"] = (
+            dict(row.get("version_profile", {}))
+            if isinstance(row.get("version_profile", {}), dict)
+            else {}
+        )
+        item["staleness"] = (
+            dict(row.get("staleness", {}))
+            if isinstance(row.get("staleness", {}), dict)
+            else {}
+        )
+        item["failure_memory"] = self._top_failure_memory(row.get("failure_memory", {}), limit=8)
+        item["failure_memory_summary"] = self._failure_memory_summary(row)
+        item["discouraged_wave_actions"] = list(dict(item.get("failure_memory_summary", {})).get("discouraged_actions", []))
         item["capability_profile"] = self._capability_profile_snapshot(row)
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
@@ -979,6 +1182,13 @@ class DesktopAppMemory:
         navigation_command_total = 0
         ocr_command_phrase_total = 0
         harvested_hotkey_total = 0
+        verification_event_total = 0
+        verified_effect_total = 0
+        uncertain_effect_total = 0
+        safe_traversal_candidate_total = 0
+        custom_surface_total = 0
+        reparenting_risk_total = 0
+        stale_entry_total = 0
         healthy_app_count = 0
         degraded_app_count = 0
         apps: List[Dict[str, Any]] = []
@@ -1003,10 +1213,16 @@ class DesktopAppMemory:
             ocr_target_total += self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_attempt_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_success_total += self._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+            verification_event_total += self._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
+            verified_effect_total += self._coerce_int(metrics.get("probe_verified_count", 0), minimum=0, maximum=10_000_000, default=0)
+            uncertain_effect_total += self._coerce_int(metrics.get("probe_uncertain_count", 0), minimum=0, maximum=10_000_000, default=0)
             wave_survey_total += self._coerce_int(metrics.get("wave_survey_count", 0), minimum=0, maximum=10_000_000, default=0)
             wave_attempt_total += self._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
             wave_success_total += self._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0)
             wave_known_surface_total += self._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0)
+            safe_traversal_candidate_total += self._coerce_int(metrics.get("safe_traversal_candidate_count", 0), minimum=0, maximum=10_000_000, default=0)
+            custom_surface_total += self._coerce_int(metrics.get("custom_surface_count", 0), minimum=0, maximum=10_000_000, default=0)
+            reparenting_risk_total += self._coerce_int(metrics.get("reparenting_risk_count", 0), minimum=0, maximum=10_000_000, default=0)
             surface_node_total += len(row.get("surface_nodes", {})) if isinstance(row.get("surface_nodes", {}), dict) else 0
             surface_transition_total += len(row.get("surface_transitions", {})) if isinstance(row.get("surface_transitions", {}), dict) else 0
             learned_command_total += len(row.get("learned_commands", {})) if isinstance(row.get("learned_commands", {}), dict) else 0
@@ -1019,6 +1235,8 @@ class DesktopAppMemory:
             navigation_command_total += len(row.get("navigation_command_counts", {})) if isinstance(row.get("navigation_command_counts", {}), dict) else 0
             ocr_command_phrase_total += len(row.get("ocr_command_phrase_counts", {})) if isinstance(row.get("ocr_command_phrase_counts", {}), dict) else 0
             harvested_hotkey_total += len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0
+            if bool(dict(row.get("staleness", {})).get("stale", False)) if isinstance(row.get("staleness", {}), dict) else False:
+                stale_entry_total += 1
             learning_health = self._learning_health_snapshot(row)
             if str(learning_health.get("status", "") or "") == "healthy":
                 healthy_app_count += 1
@@ -1051,10 +1269,17 @@ class DesktopAppMemory:
             "ocr_target_total": ocr_target_total,
             "probe_attempt_total": probe_attempt_total,
             "probe_success_total": probe_success_total,
+            "verification_event_total": verification_event_total,
+            "verified_effect_total": verified_effect_total,
+            "uncertain_effect_total": uncertain_effect_total,
             "wave_survey_total": wave_survey_total,
             "wave_attempt_total": wave_attempt_total,
             "wave_success_total": wave_success_total,
             "wave_known_surface_total": wave_known_surface_total,
+            "safe_traversal_candidate_total": safe_traversal_candidate_total,
+            "custom_surface_total": custom_surface_total,
+            "reparenting_risk_total": reparenting_risk_total,
+            "stale_entry_total": stale_entry_total,
             "surface_node_total": surface_node_total,
             "surface_transition_total": surface_transition_total,
             "learned_command_total": learned_command_total,
@@ -1265,6 +1490,8 @@ class DesktopAppMemory:
             "ocr_target_count": DesktopAppMemory._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0),
             "probe_attempt_count": DesktopAppMemory._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0),
             "probe_success_count": DesktopAppMemory._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_verified_count": DesktopAppMemory._coerce_int(metrics.get("probe_verified_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "probe_uncertain_count": DesktopAppMemory._coerce_int(metrics.get("probe_uncertain_count", 0), minimum=0, maximum=10_000_000, default=0),
             "probe_blocked_count": DesktopAppMemory._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
             "probe_error_count": DesktopAppMemory._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0),
             "manual_survey_count": DesktopAppMemory._coerce_int(metrics.get("manual_survey_count", 0), minimum=0, maximum=10_000_000, default=0),
@@ -1274,6 +1501,10 @@ class DesktopAppMemory:
             "wave_attempt_count": DesktopAppMemory._coerce_int(metrics.get("wave_attempt_count", 0), minimum=0, maximum=10_000_000, default=0),
             "wave_success_count": DesktopAppMemory._coerce_int(metrics.get("wave_success_count", 0), minimum=0, maximum=10_000_000, default=0),
             "wave_known_surface_hit_count": DesktopAppMemory._coerce_int(metrics.get("wave_known_surface_hit_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "vision_surface_count": DesktopAppMemory._coerce_int(metrics.get("vision_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "safe_traversal_candidate_count": DesktopAppMemory._coerce_int(metrics.get("safe_traversal_candidate_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "custom_surface_count": DesktopAppMemory._coerce_int(metrics.get("custom_surface_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "reparenting_risk_count": DesktopAppMemory._coerce_int(metrics.get("reparenting_risk_count", 0), minimum=0, maximum=10_000_000, default=0),
             "menu_command_count": DesktopAppMemory._coerce_int(metrics.get("menu_command_count", 0), minimum=0, maximum=10_000_000, default=0),
             "toolbar_action_count": DesktopAppMemory._coerce_int(metrics.get("toolbar_action_count", 0), minimum=0, maximum=10_000_000, default=0),
             "ribbon_action_count": DesktopAppMemory._coerce_int(metrics.get("ribbon_action_count", 0), minimum=0, maximum=10_000_000, default=0),
@@ -1438,17 +1669,20 @@ class DesktopAppMemory:
         failure_count = cls._coerce_int(metrics.get("survey_failure_count", 0), minimum=0, maximum=10_000_000, default=0)
         probe_attempt_count = cls._coerce_int(metrics.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0)
         probe_success_count = cls._coerce_int(metrics.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_verified_count = cls._coerce_int(metrics.get("probe_verified_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_uncertain_count = cls._coerce_int(metrics.get("probe_uncertain_count", 0), minimum=0, maximum=10_000_000, default=0)
         probe_blocked_count = cls._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
         probe_error_count = cls._coerce_int(metrics.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0)
         last_status = cls._normalize_text(row.get("last_survey_status", "")) or "unknown"
         success_rate = round(float(success_count) / float(survey_count), 4) if survey_count > 0 else 0.0
         probe_success_rate = round(float(probe_success_count) / float(probe_attempt_count), 4) if probe_attempt_count > 0 else 0.0
+        verification_rate = round(float(probe_verified_count) / float(probe_attempt_count), 4) if probe_attempt_count > 0 else 0.0
         status = "learning"
         if survey_count <= 0:
             status = "idle"
-        elif failure_count <= 0 and last_status in {"success", "partial"} and success_rate >= 0.6:
+        elif failure_count <= 0 and last_status in {"success", "partial"} and success_rate >= 0.6 and (probe_attempt_count <= 0 or verification_rate >= 0.4):
             status = "healthy"
-        elif failure_count > success_count or last_status == "error":
+        elif failure_count > success_count or last_status == "error" or (probe_attempt_count >= 2 and probe_uncertain_count > probe_verified_count):
             status = "degraded"
         elif failure_count > 0:
             status = "attention"
@@ -1460,9 +1694,12 @@ class DesktopAppMemory:
             "success_rate": success_rate,
             "probe_attempt_count": probe_attempt_count,
             "probe_success_count": probe_success_count,
+            "probe_verified_count": probe_verified_count,
+            "probe_uncertain_count": probe_uncertain_count,
             "probe_blocked_count": probe_blocked_count,
             "probe_error_count": probe_error_count,
             "probe_success_rate": probe_success_rate,
+            "verification_rate": verification_rate,
             "last_status": last_status,
             "last_source": str(row.get("last_survey_source", "") or "").strip(),
             "last_error_message": str(row.get("last_error_message", "") or "").strip(),
@@ -1523,6 +1760,9 @@ class DesktopAppMemory:
         summary = snapshot_payload.get("surface_summary", {}) if isinstance(snapshot_payload.get("surface_summary", {}), dict) else {}
         intelligence = snapshot_payload.get("surface_intelligence", {}) if isinstance(snapshot_payload.get("surface_intelligence", {}), dict) else {}
         observation = snapshot_payload.get("observation", {}) if isinstance(snapshot_payload.get("observation", {}), dict) else {}
+        vision_fusion = snapshot_payload.get("vision_fusion", {}) if isinstance(snapshot_payload.get("vision_fusion", {}), dict) else {}
+        native_learning_signals = snapshot_payload.get("native_learning_signals", {}) if isinstance(snapshot_payload.get("native_learning_signals", {}), dict) else {}
+        safe_traversal_plan = snapshot_payload.get("safe_traversal_plan", {}) if isinstance(snapshot_payload.get("safe_traversal_plan", {}), dict) else {}
         node_map = entry.setdefault("surface_nodes", {})
         current = node_map.get(surface_fingerprint, {}) if isinstance(node_map.get(surface_fingerprint, {}), dict) else {}
         current = dict(current)
@@ -1582,6 +1822,23 @@ class DesktopAppMemory:
         current["harvest_summary"] = dict(entry.get("last_harvest_summary", {})) if isinstance(entry.get("last_harvest_summary", {}), dict) else {}
         current["probe_success_count"] = self._coerce_int(current.get("probe_success_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("successful_count", 0), minimum=0, maximum=10_000_000, default=0)
         current["probe_attempt_count"] = self._coerce_int(current.get("probe_attempt_count", 0), minimum=0, maximum=10_000_000, default=0) + self._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0)
+        current["vision_summary"] = {
+            "model_mode": str(vision_fusion.get("model_mode", "") or "").strip(),
+            "confidence": round(max(0.0, min(float(vision_fusion.get("confidence", 0.0) or 0.0), 1.0)), 4),
+            "top_labels": [str(item).strip() for item in vision_fusion.get("top_labels", []) if str(item).strip()][:8] if isinstance(vision_fusion.get("top_labels", []), list) else [],
+            "ocr_terms": [str(item).strip() for item in vision_fusion.get("ocr_terms", []) if str(item).strip()][:10] if isinstance(vision_fusion.get("ocr_terms", []), list) else [],
+        }
+        current["native_learning_signals"] = {
+            "custom_surface_suspected": bool(native_learning_signals.get("custom_surface_suspected", False)),
+            "reparenting_risk": round(max(0.0, min(float(native_learning_signals.get("reparenting_risk", 0.0) or 0.0), 1.0)), 4),
+            "anomaly_flags": [str(item).strip() for item in native_learning_signals.get("anomaly_flags", []) if str(item).strip()][:8] if isinstance(native_learning_signals.get("anomaly_flags", []), list) else [],
+        }
+        current["safe_traversal_summary"] = {
+            "candidate_count": self._coerce_int(safe_traversal_plan.get("candidate_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "recommended_paths": [str(item).strip() for item in safe_traversal_plan.get("recommended_paths", []) if str(item).strip()][:8] if isinstance(safe_traversal_plan.get("recommended_paths", []), list) else [],
+        }
+        current["version_signature"] = str(dict(entry.get("version_profile", {})).get("signature", "") if isinstance(entry.get("version_profile", {}), dict) else "").strip()
+        current["staleness"] = dict(entry.get("staleness", {})) if isinstance(entry.get("staleness", {}), dict) else {}
         node_map[surface_fingerprint] = current
 
     def _record_surface_transition(
@@ -1782,6 +2039,139 @@ class DesktopAppMemory:
             "top_features": [{ "value": key, "count": value } for key, value in list(cls._trim_count_map(counts, limit=10).items())],
         }
 
+    @classmethod
+    def _top_failure_memory(cls, raw: Any, *, limit: int) -> List[Dict[str, Any]]:
+        rows = [dict(row) for row in raw.values() if isinstance(raw, dict) and isinstance(row, dict)] if isinstance(raw, dict) else []
+        rows.sort(
+            key=lambda row: (
+                cls._coerce_int(row.get("sample_count", 0), minimum=0, maximum=10_000_000, default=0),
+                cls._coerce_int(row.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0),
+                cls._coerce_int(row.get("error_count", 0), minimum=0, maximum=10_000_000, default=0),
+                str(row.get("last_seen_at", "")),
+                str(row.get("action", "")),
+            ),
+            reverse=True,
+        )
+        return rows[: max(1, int(limit or 1))]
+
+    @classmethod
+    def _failure_memory_summary(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        failures = row.get("failure_memory", {}) if isinstance(row.get("failure_memory", {}), dict) else {}
+        top_failures = cls._top_failure_memory(failures, limit=8)
+        discouraged_actions = [
+            str(item.get("action", "") or "").strip()
+            for item in top_failures
+            if (
+                cls._coerce_int(item.get("blocked_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
+                or cls._coerce_int(item.get("error_count", 0), minimum=0, maximum=10_000_000, default=0) >= 2
+                or cls._coerce_int(item.get("uncertain_count", 0), minimum=0, maximum=10_000_000, default=0) >= 2
+                or (
+                    cls._coerce_int(item.get("error_count", 0), minimum=0, maximum=10_000_000, default=0) >= 1
+                    and cls._normalize_text(item.get("container_role", "")) in {"dialog", "tree", "sidebar", "table"}
+                    and max(0.0, min(float(item.get("verification_confidence", 0.0) or 0.0), 1.0)) <= 0.35
+                )
+            )
+        ][:8]
+        return {
+            "entry_count": len(failures),
+            "top_failures": top_failures[:4],
+            "discouraged_actions": discouraged_actions,
+        }
+
+    @classmethod
+    def _probe_verification_snapshot(cls, *, probe_payload: Dict[str, Any], observed_at: str) -> Dict[str, Any]:
+        items = [
+            dict(item)
+            for item in probe_payload.get("items", [])
+            if isinstance(probe_payload.get("items", []), list) and isinstance(item, dict)
+        ]
+        verified_count = cls._coerce_int(probe_payload.get("verified_count", 0), minimum=0, maximum=10_000_000, default=0)
+        uncertain_count = cls._coerce_int(probe_payload.get("uncertain_count", 0), minimum=0, maximum=10_000_000, default=0)
+        max_confidence = 0.0
+        confidence_sum = 0.0
+        custom_surface_count = 0
+        reparenting_risk_max = 0.0
+        for item in items:
+            confidence = max(0.0, min(float(item.get("verification_confidence", 0.0) or 0.0), 1.0))
+            max_confidence = max(max_confidence, confidence)
+            confidence_sum += confidence
+            native_signals = item.get("native_learning_signals", {}) if isinstance(item.get("native_learning_signals", {}), dict) else {}
+            if bool(native_signals.get("custom_surface_suspected", False)):
+                custom_surface_count += 1
+            reparenting_risk_max = max(reparenting_risk_max, float(native_signals.get("reparenting_risk", 0.0) or 0.0))
+        average_confidence = round(confidence_sum / len(items), 4) if items else 0.0
+        return {
+            "attempted_count": cls._coerce_int(probe_payload.get("attempted_count", 0), minimum=0, maximum=10_000_000, default=0),
+            "verified_count": verified_count,
+            "uncertain_count": uncertain_count,
+            "verification_rate": round(float(verified_count) / float(len(items)), 4) if items else 0.0,
+            "average_confidence": average_confidence,
+            "max_confidence": round(max_confidence, 4),
+            "custom_surface_count": custom_surface_count,
+            "reparenting_risk_max": round(max(0.0, min(reparenting_risk_max, 1.0)), 4),
+            "updated_at": observed_at,
+        }
+
+    @classmethod
+    def _version_profile_snapshot(
+        cls,
+        *,
+        app_label: str,
+        app_profile: Dict[str, Any],
+        target_window: Dict[str, Any],
+        active_window: Dict[str, Any],
+        launch_result: Dict[str, Any],
+        surface_fingerprint: str,
+        native_window_topology: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        signature_parts = [
+            cls._normalize_text(app_profile.get("profile_id", "")),
+            cls._normalize_text(app_profile.get("name", "")),
+            cls._normalize_text(app_label),
+            cls._normalize_text(target_window.get("app_name", "") or active_window.get("app_name", "")),
+            cls._normalize_text(target_window.get("class_name", "") or active_window.get("class_name", "")),
+            cls._normalize_text(target_window.get("window_signature", "") or active_window.get("window_signature", "")),
+            cls._normalize_text(native_window_topology.get("signature", "")),
+        ]
+        signature = "|".join(part for part in signature_parts if part)[:320] or "generic|app"
+        return {
+            "profile_id": cls._normalize_text(app_profile.get("profile_id", "")),
+            "profile_name": str(app_profile.get("name", "") or "").strip(),
+            "category": cls._normalize_text(app_profile.get("category", "")),
+            "app_name": str(app_label or "").strip(),
+            "launch_method": str(launch_result.get("launch_method", "") or launch_result.get("resolution", "") or "").strip(),
+            "window_class": str(target_window.get("class_name", "") or active_window.get("class_name", "") or "").strip(),
+            "window_signature": str(target_window.get("window_signature", "") or active_window.get("window_signature", "") or "").strip(),
+            "native_signature": str(native_window_topology.get("signature", "") or "").strip(),
+            "surface_fingerprint": str(surface_fingerprint or "").strip(),
+            "signature": signature,
+        }
+
+    @classmethod
+    def _staleness_snapshot(
+        cls,
+        *,
+        updated_at: str,
+        version_signature: str,
+        stale_after_hours: float = 72.0,
+    ) -> Dict[str, Any]:
+        age_hours = 0.0
+        if str(updated_at or "").strip():
+            try:
+                parsed = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                age_hours = max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() / 3600.0)
+            except Exception:
+                age_hours = 0.0
+        threshold = max(1.0, float(stale_after_hours or 72.0))
+        return {
+            "age_hours": round(age_hours, 4),
+            "stale_after_hours": round(threshold, 4),
+            "stale": age_hours >= threshold,
+            "version_signature": str(version_signature or "").strip(),
+        }
+
     def surface_hint(
         self,
         *,
@@ -1812,6 +2202,7 @@ class DesktopAppMemory:
             break
         if matched_row is not None:
             wave_strategy_summary = self._wave_strategy_summary(matched_row)
+            failure_memory_summary = self._failure_memory_summary(matched_row)
             return {
                 "status": "success",
                 "known": bool(matched_node),
@@ -1832,6 +2223,38 @@ class DesktopAppMemory:
                     if isinstance(matched_row.get("last_harvest_summary", {}), dict)
                     else {}
                 ),
+                "vision_summary": (
+                    dict(matched_row.get("last_vision_summary", {}))
+                    if isinstance(matched_row.get("last_vision_summary", {}), dict)
+                    else {}
+                ),
+                "native_learning_signals": (
+                    dict(matched_row.get("last_native_learning_signals", {}))
+                    if isinstance(matched_row.get("last_native_learning_signals", {}), dict)
+                    else {}
+                ),
+                "safe_traversal_summary": (
+                    dict(matched_row.get("last_safe_traversal_summary", {}))
+                    if isinstance(matched_row.get("last_safe_traversal_summary", {}), dict)
+                    else {}
+                ),
+                "verification_state": (
+                    dict(matched_row.get("last_verification_summary", {}))
+                    if isinstance(matched_row.get("last_verification_summary", {}), dict)
+                    else {}
+                ),
+                "version_profile": (
+                    dict(matched_row.get("version_profile", {}))
+                    if isinstance(matched_row.get("version_profile", {}), dict)
+                    else {}
+                ),
+                "staleness": (
+                    dict(matched_row.get("staleness", {}))
+                    if isinstance(matched_row.get("staleness", {}), dict)
+                    else {}
+                ),
+                "failure_memory_summary": failure_memory_summary,
+                "discouraged_wave_actions": list(failure_memory_summary.get("discouraged_actions", [])),
                 "shortcut_actions": self._snapshot_item(matched_row).get("shortcut_actions", []),
             }
         return {
@@ -1850,5 +2273,13 @@ class DesktopAppMemory:
             "navigation_commands": [],
             "harvested_hotkeys": [],
             "harvest_summary": {},
+            "vision_summary": {},
+            "native_learning_signals": {},
+            "safe_traversal_summary": {},
+            "verification_state": {},
+            "version_profile": {},
+            "staleness": {},
+            "failure_memory_summary": {"entry_count": 0, "top_failures": [], "discouraged_actions": []},
+            "discouraged_wave_actions": [],
             "shortcut_actions": [],
         }

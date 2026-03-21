@@ -8661,6 +8661,7 @@ class DesktopActionRouter:
         *,
         snapshot: Dict[str, Any],
         preferred_actions: Optional[List[str]] = None,
+        discouraged_actions: Optional[List[str]] = None,
         limit: int = 6,
     ) -> List[Dict[str, Any]]:
         workflow_rows = [
@@ -8668,19 +8669,39 @@ class DesktopActionRouter:
             for row in snapshot.get("workflow_surfaces", [])
             if isinstance(row, dict)
         ] if isinstance(snapshot.get("workflow_surfaces", []), list) else []
-        if not workflow_rows:
+        traversal_plan = (
+            snapshot.get("safe_traversal_plan", {})
+            if isinstance(snapshot.get("safe_traversal_plan", {}), dict)
+            else {}
+        )
+        traversal_rows = [
+            dict(row)
+            for row in traversal_plan.get("candidates", [])
+            if isinstance(traversal_plan.get("candidates", []), list) and isinstance(row, dict)
+        ]
+        if not workflow_rows and not traversal_rows:
             return []
         clean_preferred = [
             str(item).strip().lower()
             for item in (preferred_actions or [])
-            if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+            if str(item).strip()
         ]
         preferred_order = {action_name: index for index, action_name in enumerate(clean_preferred)}
+        clean_discouraged = {
+            str(item).strip().lower()
+            for item in (discouraged_actions or [])
+            if str(item).strip()
+        }
         seen_actions: set[str] = set()
         candidates: List[Dict[str, Any]] = []
         for row in workflow_rows:
             action_name = str(row.get("action", "") or "").strip().lower()
-            if not action_name or action_name in seen_actions or action_name not in APP_MEMORY_SAFE_WAVE_ACTIONS:
+            if (
+                not action_name
+                or action_name in seen_actions
+                or action_name not in APP_MEMORY_SAFE_WAVE_ACTIONS
+                or action_name in clean_discouraged
+            ):
                 continue
             primary_hotkey = [
                 str(item).strip()
@@ -8694,6 +8715,7 @@ class DesktopActionRouter:
                 {
                     "action": action_name,
                     "title": str(row.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
+                    "mode": "workflow_hotkey",
                     "primary_hotkey": primary_hotkey,
                     "matched": bool(row.get("matched", False)),
                     "match_count": max(0, int(row.get("match_count", 0) or 0)),
@@ -8707,6 +8729,55 @@ class DesktopActionRouter:
                         preferred_order.get(action_name, APP_MEMORY_WAVE_PRIORITY.get(action_name, 100)),
                         1 if bool(row.get("matched", False)) else 0,
                         -max(0, int(row.get("match_count", 0) or 0)),
+                        action_name,
+                    ),
+                }
+            )
+        recommended_paths = [
+            str(item).strip().lower()
+            for item in traversal_plan.get("recommended_paths", [])
+            if str(item).strip()
+        ] if isinstance(traversal_plan.get("recommended_paths", []), list) else []
+        for row in traversal_rows:
+            label = str(row.get("label", "") or row.get("query", "") or "").strip()
+            container_role = str(row.get("container_role", "") or "").strip().lower()
+            action_name = str(
+                row.get("action_key", "")
+                or f"traverse_{container_role}_{self._normalize_probe_text(label)[:48]}"
+            ).strip().lower()
+            if (
+                not action_name
+                or action_name in seen_actions
+                or action_name in clean_discouraged
+                or (container_role and container_role in clean_discouraged)
+                or (container_role and f"avoid_{container_role}" in clean_discouraged)
+            ):
+                continue
+            seen_actions.add(action_name)
+            confidence = max(0.05, min(float(row.get("confidence", 0.0) or 0.0), 0.99))
+            candidates.append(
+                {
+                    "action": action_name,
+                    "title": label or action_name.replace("_", " ").title(),
+                    "mode": "surface_traversal",
+                    "query": str(row.get("query", "") or label or "").strip(),
+                    "element_id": str(row.get("element_id", "") or "").strip(),
+                    "automation_id": str(row.get("automation_id", "") or "").strip(),
+                    "control_type": str(row.get("control_type", "") or "").strip(),
+                    "class_name": str(row.get("class_name", "") or "").strip(),
+                    "container_role": container_role,
+                    "confidence": round(confidence, 4),
+                    "recommended_followups": [
+                        f"traverse_{path}"
+                        for path in recommended_paths
+                        if path and path != container_role
+                    ][:6],
+                    "sort_key": (
+                        0 if action_name in preferred_order or container_role in preferred_order or f"traverse_{container_role}" in preferred_order else 1,
+                        preferred_order.get(action_name, preferred_order.get(container_role, preferred_order.get(f"traverse_{container_role}", 100))),
+                        0 if container_role in {"menu", "tab", "tree", "sidebar", "dialog"} else 1,
+                        -round(confidence * 1000),
+                        -round(float(row.get("query_match_score", 0.0) or 0.0) * 1000),
                         action_name,
                     ),
                 }
@@ -8729,13 +8800,14 @@ class DesktopActionRouter:
         include_ocr_targets: bool,
     ) -> Dict[str, Any]:
         action_name = str(candidate.get("action", "") or "").strip().lower()
+        mode = str(candidate.get("mode", "workflow_hotkey") or "workflow_hotkey").strip().lower()
         hotkeys = [
             str(item).strip()
             for item in candidate.get("primary_hotkey", [])
             if str(item).strip()
         ] if isinstance(candidate.get("primary_hotkey", []), list) else []
-        if not action_name or not hotkeys:
-            return {"status": "skipped", "message": "missing safe wave hotkey", "candidate": dict(candidate)}
+        if not action_name:
+            return {"status": "skipped", "message": "missing safe wave action", "candidate": dict(candidate)}
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
         focus_title = str(
@@ -8745,17 +8817,66 @@ class DesktopActionRouter:
             or app_name
             or ""
         ).strip()
-        hotkey_payload: Dict[str, Any] = {"keys": hotkeys}
-        if focus_title:
-            hotkey_payload["window_title"] = focus_title
-        hotkey_result = self._call("keyboard_hotkey", hotkey_payload)
-        if str(hotkey_result.get("status", "") or "").strip().lower() != "success":
-            return {
-                "status": "error",
-                "message": str(hotkey_result.get("message", "") or "linked surface hotkey failed").strip(),
-                "candidate": dict(candidate),
-                "hotkey_result": hotkey_result,
-            }
+        action_result: Dict[str, Any]
+        method = ""
+        if mode == "surface_traversal":
+            capabilities = self._capabilities()
+            accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
+            vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
+            action_result = {"status": "error", "message": "no traversal action attempted"}
+            if accessibility_ready and (
+                str(candidate.get("element_id", "") or "").strip()
+                or str(candidate.get("query", "") or "").strip()
+            ):
+                invoke_payload: Dict[str, Any] = {"action": "click"}
+                if focus_title:
+                    invoke_payload["window_title"] = focus_title
+                if str(candidate.get("element_id", "") or "").strip():
+                    invoke_payload["element_id"] = str(candidate.get("element_id", "") or "").strip()
+                else:
+                    invoke_payload["query"] = str(candidate.get("query", "") or "").strip()
+                if str(candidate.get("control_type", "") or "").strip():
+                    invoke_payload["control_type"] = str(candidate.get("control_type", "") or "").strip()
+                action_result = self._call("accessibility_invoke_element", invoke_payload)
+                method = "accessibility_invoke_element"
+            if str(action_result.get("status", "") or "").strip().lower() != "success" and vision_ready:
+                click_payload: Dict[str, Any] = {
+                    "query": str(candidate.get("query", "") or candidate.get("title", "") or "").strip(),
+                    "verify_mode": "none",
+                    "attempts": 1,
+                    "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
+                    "target_mode": "auto",
+                }
+                if focus_title:
+                    click_payload["window_title"] = focus_title
+                if str(candidate.get("control_type", "") or "").strip():
+                    click_payload["control_type"] = str(candidate.get("control_type", "") or "").strip()
+                action_result = self._call("computer_click_target", click_payload)
+                method = "computer_click_target"
+            if str(action_result.get("status", "") or "").strip().lower() != "success":
+                return {
+                    "status": "error",
+                    "message": str(action_result.get("message", "") or "safe traversal action failed").strip(),
+                    "candidate": dict(candidate),
+                    "action_result": action_result,
+                    "method": method,
+                }
+        else:
+            if not hotkeys:
+                return {"status": "skipped", "message": "missing safe wave hotkey", "candidate": dict(candidate)}
+            hotkey_payload: Dict[str, Any] = {"keys": hotkeys}
+            if focus_title:
+                hotkey_payload["window_title"] = focus_title
+            action_result = self._call("keyboard_hotkey", hotkey_payload)
+            method = "keyboard_hotkey"
+            if str(action_result.get("status", "") or "").strip().lower() != "success":
+                return {
+                    "status": "error",
+                    "message": str(action_result.get("message", "") or "linked surface hotkey failed").strip(),
+                    "candidate": dict(candidate),
+                    "action_result": action_result,
+                    "method": method,
+                }
         if self.settle_delay_s > 0:
             time.sleep(min(self.settle_delay_s, 0.6))
         preferred_followups = [
@@ -8779,7 +8900,8 @@ class DesktopActionRouter:
                 "status": "error",
                 "message": str(next_snapshot.get("message", "") or "linked surface survey failed").strip(),
                 "candidate": dict(candidate),
-                "hotkey_result": hotkey_result,
+                "action_result": action_result,
+                "method": method,
                 "surface_snapshot": next_snapshot,
             }
         previous_surface_fingerprint = str(snapshot.get("surface_fingerprint", "") or "").strip()
@@ -8789,13 +8911,15 @@ class DesktopActionRouter:
                 "status": "skipped",
                 "message": "wave did not reveal a distinct linked surface",
                 "candidate": dict(candidate),
-                "hotkey_result": hotkey_result,
+                "action_result": action_result,
+                "method": method,
                 "surface_snapshot": next_snapshot,
             }
         return {
             "status": "success",
             "candidate": dict(candidate),
-            "hotkey_result": hotkey_result,
+            "action_result": action_result,
+            "method": method,
             "surface_snapshot": next_snapshot,
             "pre_surface_fingerprint": previous_surface_fingerprint,
             "post_surface_fingerprint": next_surface_fingerprint,
@@ -8859,6 +8983,11 @@ class DesktopActionRouter:
             strategy_profile = {
                 "known_surface": bool(current_surface_hint.get("known", False)) if isinstance(current_surface_hint, dict) else False,
                 "recommended_actions": adaptive_actions[:6],
+                "discouraged_actions": [
+                    str(item).strip().lower()
+                    for item in current_surface_hint.get("discouraged_wave_actions", [])
+                    if str(item).strip()
+                ][:8] if isinstance(current_surface_hint, dict) else [],
                 "top_actions": [
                     dict(item)
                     for item in current_surface_hint.get("wave_strategies", [])
@@ -8868,6 +8997,7 @@ class DesktopActionRouter:
             candidates = self._app_memory_wave_candidates(
                 snapshot=current_snapshot,
                 preferred_actions=self._dedupe_strings([*preferred_actions, *adaptive_actions]),
+                discouraged_actions=list(strategy_profile.get("discouraged_actions", [])),
                 limit=8,
             )
             if not candidates:
@@ -8910,6 +9040,7 @@ class DesktopActionRouter:
                             "title": str(candidate.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
                             "message": str(wave_result.get("message", "") or "").strip(),
                             "status": str(wave_result.get("status", "") or "skipped").strip() or "skipped",
+                            "method": str(wave_result.get("method", "") or "").strip(),
                         }
                     )
                     continue
@@ -8959,7 +9090,7 @@ class DesktopActionRouter:
                             "element_id": action_name,
                             "automation_id": action_name,
                             "probe_status": "success",
-                            "method": "keyboard_hotkey",
+                            "method": str(wave_result.get("method", "") or "keyboard_hotkey").strip(),
                             "effect_kind": "surface_wave",
                             "semantic_role": "navigator",
                             "effect_summary": f"Opened linked surface via {transition_label}.",
@@ -9037,6 +9168,7 @@ class DesktopActionRouter:
                         ) if isinstance(next_snapshot.get("surface_summary", {}), dict) else 0,
                         "memory_entry": wave_entry,
                         "adaptive_actions": adaptive_actions[:6],
+                        "method": str(wave_result.get("method", "") or "").strip(),
                     }
                 )
                 current_snapshot = next_snapshot
@@ -9279,6 +9411,9 @@ class DesktopActionRouter:
         blocked_count = 0
         error_count = 0
         previous_observation = baseline
+        previous_snapshot = dict(snapshot)
+        verified_count = 0
+        uncertain_count = 0
 
         for candidate in candidates[:bounded]:
             candidate_payload = dict(candidate)
@@ -9343,24 +9478,46 @@ class DesktopActionRouter:
             if self.settle_delay_s > 0:
                 time.sleep(min(self.settle_delay_s, 0.6))
 
+            post_snapshot = self.surface_snapshot(
+                app_name=app_name,
+                window_title=focus_title,
+                query=query,
+                limit=max(12, min(int(bounded * 3), 24)),
+                include_observation=True,
+                include_ocr_targets=include_ocr_targets,
+                include_elements=True,
+                include_workflow_probes=False,
+            )
+            post_snapshot = dict(post_snapshot) if isinstance(post_snapshot, dict) else {}
             post_observation = self._app_memory_probe_observation(
-                snapshot={},
+                snapshot=post_snapshot,
                 window_title=focus_title,
                 include_ocr_targets=include_ocr_targets,
                 vision_ready=vision_ready,
+            )
+            verification_summary = self._app_memory_probe_verification_summary(
+                candidate=candidate_payload,
+                before=previous_observation,
+                after=post_observation,
+                before_snapshot=previous_snapshot,
+                after_snapshot=post_snapshot,
             )
             effect_kind, effect_summary = self._classify_app_memory_probe_effect(
                 candidate=candidate_payload,
                 before=previous_observation,
                 after=post_observation,
+                verification=verification_summary,
             )
             semantic_role = self._app_memory_probe_semantic_role(
                 candidate=candidate_payload,
                 effect_kind=effect_kind,
             )
             probe_status = str(action_result.get("status", "") or "error").strip().lower() or "error"
-            if probe_status == "success":
+            if probe_status == "success" and bool(verification_summary.get("verified_effect", False)):
                 successful_count += 1
+                verified_count += 1
+            elif probe_status == "success":
+                uncertain_count += 1
             else:
                 error_count += 1
             screen_changed = bool(
@@ -9386,9 +9543,21 @@ class DesktopActionRouter:
                     "pre_surface_fingerprint": str(previous_observation.get("surface_fingerprint", "") or "").strip(),
                     "post_surface_fingerprint": str(post_observation.get("surface_fingerprint", "") or "").strip(),
                     "post_visible_text": str(post_observation.get("text", "") or "").strip()[:400],
+                    "verification_summary": verification_summary,
+                    "verification_confidence": round(float(verification_summary.get("confidence", 0.0) or 0.0), 4),
+                    "verified_effect": bool(verification_summary.get("verified_effect", False)),
+                    "new_ocr_terms": [str(item).strip() for item in verification_summary.get("new_ocr_terms", []) if str(item).strip()][:8],
+                    "removed_ocr_terms": [str(item).strip() for item in verification_summary.get("removed_ocr_terms", []) if str(item).strip()][:8],
+                    "post_snapshot_status": str(post_snapshot.get("status", "") or "").strip(),
+                    "native_learning_signals": (
+                        dict(post_snapshot.get("native_learning_signals", {}))
+                        if isinstance(post_snapshot.get("native_learning_signals", {}), dict)
+                        else {}
+                    ),
                 }
             )
             previous_observation = post_observation or previous_observation
+            previous_snapshot = post_snapshot or previous_snapshot
 
         ocr_target_count = len(
             [
@@ -9409,6 +9578,8 @@ class DesktopActionRouter:
             "ocr_target_count": ocr_target_count,
             "attempted_count": attempted_count,
             "successful_count": successful_count,
+            "verified_count": verified_count,
+            "uncertain_count": uncertain_count,
             "blocked_count": blocked_count,
             "error_count": error_count,
             "items": items[:bounded],
@@ -9442,14 +9613,29 @@ class DesktopActionRouter:
             for row in observation.get("targets", [])
             if isinstance(row, dict) and str(row.get("text", "") or "").strip()
         ] if include_ocr_targets and isinstance(observation.get("targets", []), list) else []
+        native_learning_signals = (
+            snapshot.get("native_learning_signals", {})
+            if isinstance(snapshot.get("native_learning_signals", {}), dict)
+            else {}
+        )
+        vision_fusion = (
+            snapshot.get("vision_fusion", {})
+            if isinstance(snapshot.get("vision_fusion", {}), dict)
+            else {}
+        )
         return {
             "status": str(observation.get("status", "skipped") or "skipped"),
             "screen_hash": str(observation.get("screen_hash", "") or "").strip(),
             "text": str(observation.get("text", "") or "").strip(),
             "screenshot_path": str(observation.get("screenshot_path", "") or "").strip(),
             "targets": normalized_targets[:40],
+            "target_texts": [str(row.get("text", "") or "").strip() for row in normalized_targets[:40] if str(row.get("text", "") or "").strip()],
+            "target_count": len(normalized_targets[:40]),
             "window_title": str(window_title or "").strip(),
             "active_window_title": str(active_window_payload.get("title", "") or window_title or "").strip(),
+            "window_signature": str(active_window_payload.get("window_signature", "") or "").strip(),
+            "native_learning_signals": dict(native_learning_signals),
+            "vision_fusion": dict(vision_fusion),
             "surface_fingerprint": self._app_memory_probe_surface_fingerprint(
                 observation={
                     "active_window_title": str(active_window_payload.get("title", "") or window_title or "").strip(),
@@ -9458,6 +9644,82 @@ class DesktopActionRouter:
                 },
                 window_title=window_title,
             ),
+        }
+
+    def _app_memory_probe_verification_summary(
+        self,
+        *,
+        candidate: Dict[str, Any],
+        before: Dict[str, Any],
+        after: Dict[str, Any],
+        before_snapshot: Dict[str, Any],
+        after_snapshot: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        before_hash = str(before.get("screen_hash", "") or "").strip()
+        after_hash = str(after.get("screen_hash", "") or "").strip()
+        before_title = str(before.get("active_window_title", "") or before.get("window_title", "") or "").strip()
+        after_title = str(after.get("active_window_title", "") or after.get("window_title", "") or "").strip()
+        before_surface = str(before.get("surface_fingerprint", "") or before_snapshot.get("surface_fingerprint", "") or "").strip()
+        after_surface = str(after.get("surface_fingerprint", "") or after_snapshot.get("surface_fingerprint", "") or "").strip()
+        before_targets = {
+            self._normalize_probe_text(item)
+            for item in before.get("target_texts", [])
+            if self._normalize_probe_text(item)
+        }
+        after_targets = {
+            self._normalize_probe_text(item)
+            for item in after.get("target_texts", [])
+            if self._normalize_probe_text(item)
+        }
+        new_terms = sorted(term for term in after_targets if term and term not in before_targets)[:8]
+        removed_terms = sorted(term for term in before_targets if term and term not in after_targets)[:8]
+        screen_changed = bool(before_hash and after_hash and before_hash != after_hash)
+        window_changed = bool(before_title and after_title and self._normalize_probe_text(before_title) != self._normalize_probe_text(after_title))
+        surface_changed = bool(before_surface and after_surface and before_surface != after_surface)
+        target_delta = max(0, len(new_terms)) + max(0, len(removed_terms))
+        native_after = (
+            after_snapshot.get("native_learning_signals", {})
+            if isinstance(after_snapshot.get("native_learning_signals", {}), dict)
+            else {}
+        )
+        reparenting_risk = max(
+            0.0,
+            min(
+                1.0,
+                float(native_after.get("reparenting_risk", 0.0) or 0.0),
+            ),
+        )
+        confidence = min(
+            1.0,
+            max(
+                0.0,
+                (0.38 if surface_changed else 0.0)
+                + (0.32 if window_changed else 0.0)
+                + (0.18 if screen_changed else 0.0)
+                + min(0.18, target_delta * 0.05)
+                + (0.05 if bool(new_terms) else 0.0)
+                + (0.04 if bool(candidate.get("element_id", "")) else 0.0)
+                - min(0.1, reparenting_risk * 0.08),
+            ),
+        )
+        verified_effect = bool(
+            surface_changed
+            or window_changed
+            or confidence >= 0.52
+            or (screen_changed and target_delta >= 1)
+        )
+        return {
+            "verified_effect": verified_effect,
+            "confidence": round(confidence, 4),
+            "screen_changed": screen_changed,
+            "window_changed": window_changed,
+            "surface_changed": surface_changed,
+            "target_delta_count": target_delta,
+            "new_ocr_terms": new_terms,
+            "removed_ocr_terms": removed_terms,
+            "reparenting_risk": round(reparenting_risk, 4),
+            "custom_surface_suspected": bool(native_after.get("custom_surface_suspected", False)),
+            "verification_mode": "multi_signal_before_after",
         }
 
     def _app_memory_probe_candidates(
@@ -9660,14 +9922,17 @@ class DesktopActionRouter:
         candidate: Dict[str, Any],
         before: Dict[str, Any],
         after: Dict[str, Any],
+        verification: Dict[str, Any],
     ) -> tuple[str, str]:
-        before_hash = str(before.get("screen_hash", "") or "").strip()
-        after_hash = str(after.get("screen_hash", "") or "").strip()
         before_title = self._normalize_probe_text(before.get("active_window_title", "") or before.get("window_title", ""))
         after_title = self._normalize_probe_text(after.get("active_window_title", "") or after.get("window_title", ""))
         control_type = self._normalize_probe_text(candidate.get("control_type", ""))
         label = str(candidate.get("label", "") or candidate.get("query", "") or "").strip()
-        changed = bool(before_hash and after_hash and before_hash != after_hash)
+        changed = bool(
+            verification.get("screen_changed", False)
+            or verification.get("surface_changed", False)
+            or verification.get("window_changed", False)
+        )
         if after_title and before_title and after_title != before_title:
             return ("window_transition", f"Focused or opened a different window after invoking '{label}'.")
         if changed and control_type in {"checkbox", "radiobutton", "togglebutton"}:
@@ -9676,6 +9941,8 @@ class DesktopActionRouter:
             return ("navigation", f"Invoking '{label}' changed the visible app surface or navigated content.")
         if changed:
             return ("surface_change", f"Invoking '{label}' changed the visible surface.")
+        if verification.get("target_delta_count", 0):
+            return ("soft_surface_change", f"Invoking '{label}' changed visible labels or OCR targets, but the surface identity stayed close.")
         return ("no_observed_change", f"Invoking '{label}' did not produce a reliable visible change in this bounded probe.")
 
     def _surface_snapshot_fingerprint(
@@ -10233,6 +10500,33 @@ class DesktopActionRouter:
                 *recommended_actions,
             ]
         )[:10]
+        native_learning_signals = self._surface_native_learning_signals(
+            native_window_topology=native_window_topology,
+            window_reacquisition=window_reacquisition,
+            elements=element_rows,
+            surface_summary=surface_summary,
+            observation=observation,
+        )
+        vision_fusion = self._surface_vision_fusion(
+            app_profile=app_profile,
+            target_window=primary_candidate,
+            active_window=active_window,
+            surface_summary=surface_summary,
+            observation=observation,
+            elements=element_rows,
+            workflow_surfaces=workflow_surfaces,
+            query=str(query or "").strip(),
+            native_learning_signals=native_learning_signals,
+        )
+        safe_traversal_plan = self._surface_safe_traversal_plan(
+            elements=element_rows,
+            surface_summary=surface_summary,
+            workflow_surfaces=workflow_surfaces,
+            observation=observation,
+            query=str(query or "").strip(),
+            native_learning_signals=native_learning_signals,
+            limit=max(6, min(bounded, 18)),
+        )
         return {
             "status": "success",
             "app_profile": app_profile if app_profile.get("status") == "success" else {},
@@ -10282,6 +10576,9 @@ class DesktopActionRouter:
             "workflow_surfaces": workflow_surfaces,
             "surface_summary": surface_summary,
             "surface_intelligence": surface_intelligence,
+            "vision_fusion": vision_fusion,
+            "native_learning_signals": native_learning_signals,
+            "safe_traversal_plan": safe_traversal_plan,
             "surface_flags": flags,
             "recommended_actions": recommended_actions,
             "filters": {
@@ -10293,6 +10590,295 @@ class DesktopActionRouter:
                 "include_elements": bool(include_elements),
                 "include_workflow_probes": bool(include_workflow_probes),
             },
+        }
+
+    def _surface_native_learning_signals(
+        self,
+        *,
+        native_window_topology: Dict[str, Any],
+        window_reacquisition: Dict[str, Any],
+        elements: List[Dict[str, Any]],
+        surface_summary: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        descendant_chain_depth = max(
+            int(native_window_topology.get("descendant_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_chain_depth", 0) or 0),
+        )
+        dialog_chain_depth = max(
+            int(native_window_topology.get("descendant_dialog_chain_depth", 0) or 0),
+            int(window_reacquisition.get("descendant_dialog_chain_depth", 0) or 0),
+        )
+        owner_chain_depth = max(
+            int(native_window_topology.get("active_owner_chain_depth", 0) or 0),
+            int(window_reacquisition.get("candidate", {}).get("owner_chain_depth", 0) or 0)
+            if isinstance(window_reacquisition.get("candidate", {}), dict)
+            else 0,
+        )
+        same_root_owner_dialog_like_count = max(
+            int(native_window_topology.get("same_root_owner_dialog_like_count", 0) or 0),
+            int(window_reacquisition.get("same_root_owner_dialog_like_count", 0) or 0),
+        )
+        direct_child_dialog_like_count = max(
+            int(native_window_topology.get("direct_child_dialog_like_count", 0) or 0),
+            int(window_reacquisition.get("direct_child_dialog_like_count", 0) or 0),
+        )
+        sparse_accessibility = len([row for row in elements if isinstance(row, dict)]) <= 2
+        rich_ocr_targets = len(
+            [row for row in observation.get("targets", []) if isinstance(observation.get("targets", []), list) and isinstance(row, dict)]
+        ) >= 3
+        custom_surface_suspected = bool(
+            sparse_accessibility
+            and rich_ocr_targets
+            and not bool(surface_summary.get("query_candidates", []))
+        )
+        reparenting_risk = min(
+            1.0,
+            max(
+                0.0,
+                (0.22 if bool(native_window_topology.get("owner_chain_visible", False)) else 0.0)
+                + min(0.22, same_root_owner_dialog_like_count * 0.05)
+                + min(0.18, direct_child_dialog_like_count * 0.06)
+                + min(0.18, dialog_chain_depth * 0.07)
+                + min(0.12, owner_chain_depth * 0.04)
+                + min(0.16, float(window_reacquisition.get("descendant_anchor_recovery_pressure", 0.0) or 0.0))
+            ),
+        )
+        anomaly_flags: List[str] = []
+        if custom_surface_suspected:
+            anomaly_flags.append("custom_surface")
+        if reparenting_risk >= 0.45:
+            anomaly_flags.append("reparenting_risk")
+        if dialog_chain_depth > 0:
+            anomaly_flags.append("dialog_chain")
+        if bool(native_window_topology.get("child_dialog_like_visible", False)):
+            anomaly_flags.append("child_dialog_cluster")
+        if sparse_accessibility:
+            anomaly_flags.append("sparse_accessibility")
+        return {
+            "status": "success",
+            "custom_surface_suspected": custom_surface_suspected,
+            "sparse_accessibility": sparse_accessibility,
+            "rich_ocr_targets": rich_ocr_targets,
+            "reparenting_risk": round(reparenting_risk, 4),
+            "descendant_chain_depth": descendant_chain_depth,
+            "dialog_chain_depth": dialog_chain_depth,
+            "owner_chain_depth": owner_chain_depth,
+            "same_root_owner_dialog_like_count": same_root_owner_dialog_like_count,
+            "direct_child_dialog_like_count": direct_child_dialog_like_count,
+            "topology_signature": str(native_window_topology.get("topology_signature", "") or "").strip(),
+            "modal_chain_signature": str(
+                native_window_topology.get("modal_chain_signature", "")
+                or window_reacquisition.get("modal_chain_signature", "")
+                or ""
+            ).strip(),
+            "child_chain_signature": str(
+                native_window_topology.get("child_chain_signature", "")
+                or window_reacquisition.get("child_chain_signature", "")
+                or ""
+            ).strip(),
+            "preferred_descendant_title": str(
+                window_reacquisition.get("preferred_descendant", {}).get("title", "")
+                if isinstance(window_reacquisition.get("preferred_descendant", {}), dict)
+                else ""
+            ).strip(),
+            "anomaly_flags": anomaly_flags,
+        }
+
+    def _surface_vision_fusion(
+        self,
+        *,
+        app_profile: Dict[str, Any],
+        target_window: Dict[str, Any],
+        active_window: Dict[str, Any],
+        surface_summary: Dict[str, Any],
+        observation: Dict[str, Any],
+        elements: List[Dict[str, Any]],
+        workflow_surfaces: List[Dict[str, Any]],
+        query: str,
+        native_learning_signals: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        top_labels = [
+            str(dict(row).get("label", "") or "").strip()
+            for row in surface_summary.get("top_labels", [])
+            if isinstance(row, dict)
+        ][:8] if isinstance(surface_summary.get("top_labels", []), list) else []
+        ocr_terms = [
+            str(dict(row).get("text", "") or "").strip()
+            for row in observation.get("targets", [])
+            if isinstance(observation.get("targets", []), list) and isinstance(row, dict)
+        ][:12]
+        command_terms = self._dedupe_strings(
+            [
+                *top_labels,
+                *ocr_terms,
+                *[
+                    str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+                    for row in elements[:24]
+                    if isinstance(row, dict)
+                ],
+                *[
+                    str(row.get("title", "") or row.get("action", "") or "").strip()
+                    for row in workflow_surfaces[:12]
+                    if isinstance(row, dict)
+                ],
+            ]
+        )[:16]
+        model_mode = (
+            "hybrid_vision_plus_accessibility"
+            if ocr_terms and elements
+            else ("vision_first" if ocr_terms else "accessibility_first")
+        )
+        confidence = min(
+            1.0,
+            max(
+                0.0,
+                (0.25 if top_labels else 0.0)
+                + (0.25 if ocr_terms else 0.0)
+                + min(0.25, len(elements) * 0.02)
+                + min(0.15, len(workflow_surfaces) * 0.04)
+                + (0.05 if not bool(native_learning_signals.get("custom_surface_suspected", False)) else 0.0)
+            ),
+        )
+        return {
+            "status": "success",
+            "app_profile": str(app_profile.get("profile_id", "") or app_profile.get("name", "") or "").strip(),
+            "window_title": str(target_window.get("title", "") or active_window.get("title", "") or "").strip(),
+            "query": str(query or "").strip(),
+            "model_mode": model_mode,
+            "confidence": round(confidence, 4),
+            "source_counts": {
+                "top_labels": len(top_labels),
+                "ocr_targets": len(ocr_terms),
+                "elements": len([row for row in elements if isinstance(row, dict)]),
+                "workflow_surfaces": len([row for row in workflow_surfaces if isinstance(row, dict)]),
+            },
+            "top_labels": top_labels[:6],
+            "ocr_terms": ocr_terms[:8],
+            "command_terms": command_terms[:10],
+            "surface_role": str(surface_summary.get("surface_role", "") or "").strip(),
+            "native_attention": bool(native_learning_signals.get("anomaly_flags", [])),
+        }
+
+    def _surface_traversal_container_role(self, row: Dict[str, Any]) -> str:
+        control_type = self._normalize_probe_text(row.get("control_type", ""))
+        class_name = self._normalize_probe_text(row.get("class_name", ""))
+        label = self._normalize_probe_text(
+            row.get("label", "") or row.get("name", "") or row.get("automation_id", "") or row.get("text", "")
+        )
+        haystack = " ".join(part for part in [control_type, class_name, label] if part)
+        if control_type == "menuitem" or "menu" in haystack:
+            return "menu"
+        if "ribbon" in haystack:
+            return "ribbon"
+        if "toolbar" in haystack or "commandbar" in haystack or "command bar" in haystack:
+            return "toolbar"
+        if control_type == "tabitem" or "tab" in haystack:
+            return "tab"
+        if control_type == "treeitem" or "tree" in haystack or "nav" in haystack:
+            return "tree"
+        if control_type == "listitem":
+            if "table" in haystack or "grid" in haystack or "row" in haystack:
+                return "table"
+            if "sidebar" in haystack or "pane" in haystack:
+                return "sidebar"
+            return "list"
+        if control_type in {"button", "splitbutton"} and "sidebar" in haystack:
+            return "sidebar"
+        if "dialog" in haystack:
+            return "dialog"
+        return "surface"
+
+    def _surface_safe_traversal_plan(
+        self,
+        *,
+        elements: List[Dict[str, Any]],
+        surface_summary: Dict[str, Any],
+        workflow_surfaces: List[Dict[str, Any]],
+        observation: Dict[str, Any],
+        query: str,
+        native_learning_signals: Dict[str, Any],
+        limit: int,
+    ) -> Dict[str, Any]:
+        candidates: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        allowed_container_roles = {"menu", "toolbar", "ribbon", "tab", "tree", "list", "table", "sidebar", "dialog"}
+        for row in elements:
+            if not isinstance(row, dict):
+                continue
+            container_role = self._surface_traversal_container_role(row)
+            if container_role not in allowed_container_roles:
+                continue
+            risk_flags = self._app_memory_probe_risk_flags(candidate_row=row, summary=surface_summary)
+            if risk_flags:
+                continue
+            label = str(row.get("name", "") or row.get("automation_id", "") or "").strip()
+            if not label:
+                continue
+            key = self._element_identity_key(row) or f"{container_role}|{self._normalize_probe_text(label)}"
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            confidence = 0.42
+            if str(query or "").strip():
+                confidence += min(0.28, self._element_query_match_score(row, str(query or "").strip()))
+            if container_role in {"menu", "tab", "tree", "sidebar"}:
+                confidence += 0.12
+            if bool(native_learning_signals.get("custom_surface_suspected", False)):
+                confidence -= 0.06
+            candidates.append(
+                {
+                    "action_key": f"traverse_{container_role}_{self._normalize_probe_text(label)[:48]}",
+                    "label": label,
+                    "query": label,
+                    "control_type": str(row.get("control_type", "") or "").strip(),
+                    "element_id": str(row.get("element_id", "") or "").strip(),
+                    "automation_id": str(row.get("automation_id", "") or "").strip(),
+                    "class_name": str(row.get("class_name", "") or "").strip(),
+                    "container_role": container_role,
+                    "source": "element",
+                    "confidence": round(max(0.05, min(confidence, 0.95)), 4),
+                    "query_match_score": round(self._element_query_match_score(row, str(query or "").strip()), 4) if str(query or "").strip() else 0.0,
+                }
+            )
+        container_counts: Dict[str, int] = {}
+        for item in candidates:
+            role = str(item.get("container_role", "") or "").strip()
+            if role:
+                container_counts[role] = int(container_counts.get(role, 0) or 0) + 1
+        recommended_paths = self._dedupe_strings(
+            [
+                str(item.get("container_role", "") or "").strip()
+                for item in sorted(
+                    candidates,
+                    key=lambda row: (
+                        float(row.get("confidence", 0.0) or 0.0),
+                        float(row.get("query_match_score", 0.0) or 0.0),
+                        str(row.get("label", "")),
+                    ),
+                    reverse=True,
+                )
+            ]
+        )[:6]
+        return {
+            "status": "success",
+            "candidate_count": len(candidates),
+            "container_counts": container_counts,
+            "recommended_paths": recommended_paths,
+            "recursive_depth_limit": 2 if bool(native_learning_signals.get("custom_surface_suspected", False)) else 3,
+            "candidates": sorted(
+                candidates,
+                key=lambda row: (
+                    float(row.get("confidence", 0.0) or 0.0),
+                    float(row.get("query_match_score", 0.0) or 0.0),
+                    str(row.get("label", "")),
+                ),
+                reverse=True,
+            )[: max(1, min(int(limit or 8), 24))],
+            "workflow_surface_count": len([row for row in workflow_surfaces if isinstance(row, dict)]),
+            "ocr_target_count": len(
+                [row for row in observation.get("targets", []) if isinstance(observation.get("targets", []), list) and isinstance(row, dict)]
+            ),
         }
 
     def _surface_summary_from_snapshot(

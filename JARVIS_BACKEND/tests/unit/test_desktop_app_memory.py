@@ -468,6 +468,8 @@ def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) ->
             "ocr_target_count": 4,
             "attempted_count": 1,
             "successful_count": 1,
+            "verified_count": 1,
+            "uncertain_count": 0,
             "blocked_count": 0,
             "error_count": 0,
             "items": [
@@ -484,6 +486,15 @@ def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) ->
                     "pre_surface_fingerprint": "explorer|main",
                     "post_surface_fingerprint": "explorer|view-menu",
                     "vision_labels": ["View"],
+                    "verification_confidence": 0.91,
+                    "verified_effect": True,
+                    "verification_summary": {
+                        "verified_effect": True,
+                        "confidence": 0.91,
+                        "screen_changed": True,
+                        "surface_changed": True,
+                    },
+                    "native_learning_signals": {"custom_surface_suspected": False, "reparenting_risk": 0.1},
                 }
             ],
         },
@@ -493,13 +504,19 @@ def test_desktop_app_memory_records_probe_metrics_and_effects(tmp_path: Path) ->
     assert entry["metrics"]["probe_success_count"] == 1
     assert entry["metrics"]["ocr_target_count"] == 4
     assert entry["probe_summary"]["successful_count"] == 1
+    assert entry["verification_summary"]["verified_count"] == 1
+    assert entry["vision_summary"]["confidence"] == 0.0
+    assert entry["version_profile"]["signature"]
+    assert entry["staleness"]["stale"] is False
     assert entry["probe_effects"][0]["value"] == "navigation"
     assert entry["tested_controls"][0]["label"] == "view"
     assert entry["top_controls"][0]["last_probe_effect"] == "navigation"
+    assert entry["failure_memory_summary"]["entry_count"] == 0
 
     snapshot = memory.snapshot(app_name="explorer")
     assert snapshot["summary"]["probe_attempt_total"] == 1
     assert snapshot["summary"]["probe_success_total"] == 1
+    assert snapshot["summary"]["verified_effect_total"] == 1
     assert snapshot["summary"]["ocr_target_total"] == 4
     assert snapshot["items"][0]["surface_transitions"][0]["label"] == "View"
 
@@ -771,6 +788,167 @@ def test_desktop_action_router_surveys_linked_surface_waves_into_app_memory() ->
     assert "workspace search" in labels
     assert rows[0]["wave_strategies"]
     assert "recommended_actions" in dict(rows[0].get("wave_strategy_summary", {}))
+
+
+def test_desktop_action_router_surveys_safe_traversal_wave_candidates() -> None:
+    state = {"surface": "main"}
+
+    def _accessibility_rows() -> list[Dict[str, Any]]:
+        if state["surface"] == "main":
+            return [
+                {
+                    "element_id": "advanced_tab",
+                    "name": "Advanced",
+                    "control_type": "tabitem",
+                    "automation_id": "AdvancedTab",
+                    "root_window_title": "Demo Settings",
+                },
+                {
+                    "element_id": "general_tab",
+                    "name": "General",
+                    "control_type": "tabitem",
+                    "automation_id": "GeneralTab",
+                    "root_window_title": "Demo Settings",
+                },
+            ]
+        return [
+            {
+                "element_id": "expert_toggle",
+                "name": "Expert Mode",
+                "control_type": "togglebutton",
+                "automation_id": "ExpertToggle",
+                "root_window_title": "Demo Settings",
+            }
+        ]
+
+    def _computer_observe(payload: Dict[str, Any]) -> Dict[str, Any]:
+        include_targets = bool(payload.get("include_targets", False))
+        if state["surface"] == "main":
+            return {
+                "status": "success",
+                "screen_hash": "demo-main",
+                "text": "Demo Settings General Advanced",
+                "targets": (
+                    [
+                        {"text": "General", "confidence": 90.0},
+                        {"text": "Advanced", "confidence": 92.0},
+                    ]
+                    if include_targets
+                    else []
+                ),
+            }
+        return {
+            "status": "success",
+            "screen_hash": "demo-advanced",
+            "text": "Advanced Settings Expert Mode Diagnostics",
+            "targets": (
+                [
+                    {"text": "Expert Mode", "confidence": 93.0},
+                    {"text": "Diagnostics", "confidence": 85.0},
+                ]
+                if include_targets
+                else []
+            ),
+        }
+
+    def _invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if str(payload.get("element_id", "") or "").strip() == "advanced_tab":
+            state["surface"] = "advanced"
+        return {"status": "success", "message": "invoked"}
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 1777, "title": "Demo Settings", "exe": r"C:\Demo\settings.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 1777, "title": "Demo Settings"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "open_app": lambda _payload: {"status": "success", "requested_app": "demo-settings", "launch_method": "system_path"},
+            "computer_observe": _computer_observe,
+            "accessibility_list_elements": lambda _payload: {"status": "success", "items": _accessibility_rows()},
+            "accessibility_invoke_element": _invoke,
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory(
+        app_name="demo-settings",
+        query="advanced diagnostics",
+        ensure_app_launch=True,
+        include_observation=True,
+        include_ocr_targets=True,
+        follow_surface_waves=True,
+        max_surface_waves=1,
+    )
+
+    assert payload["status"] == "success"
+    wave_report = dict(payload.get("wave_report", {}))
+    assert int(wave_report.get("learned_surface_count", 0) or 0) == 1
+    assert any(str(item.get("method", "") or "") == "accessibility_invoke_element" for item in wave_report.get("items", []) if isinstance(item, dict))
+    memory_entry = dict(payload.get("memory_entry", {}))
+    assert memory_entry["safe_traversal_summary"]["candidate_count"] >= 1
+    assert memory_entry["surface_transitions"]
+
+
+def test_desktop_app_memory_tracks_failure_memory_and_surface_staleness(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+    entry = memory.record_survey(
+        app_name="custom-tool",
+        app_profile={"profile_id": "custom-tool", "name": "Custom Tool", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "custom-tool|main|surface",
+            "target_window": {"title": "Custom Tool", "class_name": "CustomSurface", "window_signature": "custom-main"},
+            "active_window": {"title": "Custom Tool"},
+            "surface_summary": {"control_counts": {"button": 1}, "top_labels": [{"label": "Sync", "count": 1}]},
+            "surface_intelligence": {"surface_role": "utility", "interaction_mode": "mouse_first"},
+            "vision_fusion": {"model_mode": "hybrid_vision_plus_accessibility", "confidence": 0.78, "top_labels": ["Sync"], "ocr_terms": ["Sync"]},
+            "native_learning_signals": {"custom_surface_suspected": True, "reparenting_risk": 0.62, "anomaly_flags": ["custom_surface", "reparenting_risk"]},
+            "safe_traversal_plan": {"candidate_count": 2, "recommended_paths": ["dialog", "tab"], "recursive_depth_limit": 2},
+            "elements": {"items": [{"element_id": "sync_btn", "name": "Sync", "control_type": "button"}]},
+        },
+        probe_report={
+            "status": "partial",
+            "attempted_count": 1,
+            "successful_count": 0,
+            "verified_count": 0,
+            "uncertain_count": 1,
+            "blocked_count": 0,
+            "error_count": 1,
+            "items": [
+                {
+                    "label": "Sync",
+                    "control_type": "button",
+                    "probe_status": "error",
+                    "effect_kind": "no_observed_change",
+                    "semantic_role": "action",
+                    "message": "dialog reparents and control disappears",
+                    "verification_confidence": 0.21,
+                    "pre_surface_fingerprint": "custom-tool|main|surface",
+                    "post_surface_fingerprint": "custom-tool|main|surface",
+                    "source": "element",
+                    "container_role": "dialog",
+                }
+            ],
+        },
+        survey_status="partial",
+    )
+
+    assert entry["vision_summary"]["model_mode"] == "hybrid_vision_plus_accessibility"
+    assert entry["native_learning_signals"]["custom_surface_suspected"] is True
+    assert entry["failure_memory_summary"]["entry_count"] >= 1
+    assert entry["discouraged_wave_actions"]
+    stale_snapshot = DesktopAppMemory._staleness_snapshot(
+        updated_at="2020-01-01T00:00:00+00:00",
+        version_signature=entry["version_profile"]["signature"],
+    )
+    assert stale_snapshot["stale"] is True
 
 
 def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Path) -> None:
