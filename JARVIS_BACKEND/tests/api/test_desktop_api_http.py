@@ -609,6 +609,10 @@ class FakeDesktopService:
             "allow_risky_probes": False,
             "skip_known_apps": True,
             "prefer_unknown_apps": True,
+            "continuous_learning": True,
+            "revisit_stale_apps": True,
+            "stale_after_hours": 72.0,
+            "revisit_failed_apps": True,
             "last_tick_at": "",
             "last_success_at": "",
             "last_error_at": "",
@@ -13766,6 +13770,10 @@ class FakeDesktopService:
         allow_risky_probes: bool | None = None,
         skip_known_apps: bool | None = None,
         prefer_unknown_apps: bool | None = None,
+        continuous_learning: bool | None = None,
+        revisit_stale_apps: bool | None = None,
+        stale_after_hours: float | None = None,
+        revisit_failed_apps: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13799,6 +13807,14 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["skip_known_apps"] = bool(skip_known_apps)
         if prefer_unknown_apps is not None:
             self.desktop_app_memory_daemon_state["prefer_unknown_apps"] = bool(prefer_unknown_apps)
+        if continuous_learning is not None:
+            self.desktop_app_memory_daemon_state["continuous_learning"] = bool(continuous_learning)
+        if revisit_stale_apps is not None:
+            self.desktop_app_memory_daemon_state["revisit_stale_apps"] = bool(revisit_stale_apps)
+        if stale_after_hours is not None:
+            self.desktop_app_memory_daemon_state["stale_after_hours"] = float(stale_after_hours)
+        if revisit_failed_apps is not None:
+            self.desktop_app_memory_daemon_state["revisit_failed_apps"] = bool(revisit_failed_apps)
         self.desktop_app_memory_daemon_state["last_config_source"] = source
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
 
@@ -13819,9 +13835,21 @@ class FakeDesktopService:
         allow_risky_probes: bool | None = None,
         skip_known_apps: bool | None = None,
         prefer_unknown_apps: bool | None = None,
+        continuous_learning: bool | None = None,
+        revisit_stale_apps: bool | None = None,
+        stale_after_hours: float | None = None,
+        revisit_failed_apps: bool | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
+        if continuous_learning is not None:
+            self.desktop_app_memory_daemon_state["continuous_learning"] = bool(continuous_learning)
+        if revisit_stale_apps is not None:
+            self.desktop_app_memory_daemon_state["revisit_stale_apps"] = bool(revisit_stale_apps)
+        if stale_after_hours is not None:
+            self.desktop_app_memory_daemon_state["stale_after_hours"] = float(stale_after_hours)
+        if revisit_failed_apps is not None:
+            self.desktop_app_memory_daemon_state["revisit_failed_apps"] = bool(revisit_failed_apps)
         payload = self.survey_desktop_app_memory_batch(
             app_names=app_names,
             query=query or str(self.desktop_app_memory_daemon_state.get("query", "") or ""),
@@ -13946,9 +13974,13 @@ class FakeDesktopService:
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        continuous_learning: bool = True,
+        revisit_stale_apps: bool = True,
+        stale_after_hours: float = 72.0,
+        revisit_failed_apps: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
-        del category, per_app_limit, ensure_app_launch, probe_controls, max_probe_controls, allow_risky_probes, skip_known_apps, prefer_unknown_apps
+        del category, per_app_limit, ensure_app_launch, probe_controls, max_probe_controls, allow_risky_probes
         target_apps = [str(item).strip() for item in (app_names or []) if str(item).strip()] or ([query] if query else ["notepad", "calculator"])
         campaign = {
             "campaign_id": f"cam_{len(self.desktop_app_memory_campaign_items) + 1}",
@@ -13967,11 +13999,20 @@ class FakeDesktopService:
             "max_apps": int(max_apps),
             "follow_surface_waves": bool(follow_surface_waves),
             "max_surface_waves": int(max_surface_waves),
+            "skip_known_apps": bool(skip_known_apps),
+            "prefer_unknown_apps": bool(prefer_unknown_apps),
+            "continuous_learning": bool(continuous_learning),
+            "revisit_stale_apps": bool(revisit_stale_apps),
+            "stale_after_hours": float(stale_after_hours),
+            "revisit_failed_apps": bool(revisit_failed_apps),
             "latest_cycle_status": "",
             "latest_cycle_message": "",
             "wave_attempt_count": 0,
             "learned_surface_count": 0,
             "known_surface_count": 0,
+            "reseed_count": 0,
+            "stale_reseed_count": 0,
+            "revisit_app_count": 0,
             "run_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "source": source,
@@ -22140,6 +22181,10 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
             "max_probe_controls": 2,
             "follow_surface_waves": True,
             "max_surface_waves": 2,
+            "continuous_learning": True,
+            "revisit_stale_apps": True,
+            "stale_after_hours": 96,
+            "revisit_failed_apps": True,
         },
     )
     assert status == 200
@@ -22148,6 +22193,10 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert configured["probe_controls"] is True
     assert configured["follow_surface_waves"] is True
     assert configured["max_surface_waves"] == 2
+    assert configured["continuous_learning"] is True
+    assert configured["revisit_stale_apps"] is True
+    assert configured["stale_after_hours"] == 96.0
+    assert configured["revisit_failed_apps"] is True
 
     status, triggered = request_json(
         "POST",
@@ -22160,6 +22209,10 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
             "follow_surface_waves": True,
             "max_surface_waves": 2,
             "skip_known_apps": False,
+            "continuous_learning": True,
+            "revisit_stale_apps": True,
+            "stale_after_hours": 48,
+            "revisit_failed_apps": True,
         },
     )
     assert status == 200
@@ -22209,6 +22262,10 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
             "prefer_unknown_apps": True,
             "follow_surface_waves": True,
             "max_surface_waves": 2,
+            "continuous_learning": True,
+            "revisit_stale_apps": True,
+            "stale_after_hours": 72,
+            "revisit_failed_apps": True,
         },
     )
     assert status == 200
@@ -22217,6 +22274,10 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert campaign_id
     assert created["campaign"]["follow_surface_waves"] is True
     assert created["campaign"]["max_surface_waves"] == 2
+    assert created["campaign"]["continuous_learning"] is True
+    assert created["campaign"]["revisit_stale_apps"] is True
+    assert created["campaign"]["stale_after_hours"] == 72.0
+    assert created["campaign"]["revisit_failed_apps"] is True
 
     status, listed = request_json(
         "GET",

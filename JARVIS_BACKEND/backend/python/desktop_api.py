@@ -325,6 +325,7 @@ class DesktopBackendService:
         self.desktop_action_router = DesktopActionRouter(
             rust_request_handler=self._desktop_router_rust_request,
             benchmark_guidance_provider=self._desktop_benchmark_control_guidance,
+            vision_runtime_provider=self._vision_runtime_profile_status,
         )
         self.desktop_app_memory_supervisor = DesktopAppMemorySupervisor(
             enabled=self._env_bool("JARVIS_DESKTOP_APP_MEMORY_DAEMON_ENABLED", False),
@@ -1801,7 +1802,10 @@ class DesktopBackendService:
         future = asyncio.run_coroutine_threadsafe(self.kernel.start(), self._loop)
         future.result(timeout=20)
         self.desktop_recovery_supervisor.start(self._execute_desktop_recovery_supervisor_tick)
-        self.desktop_app_memory_supervisor.start(self._execute_desktop_app_memory_supervisor_tick)
+        self.desktop_app_memory_supervisor.start(
+            self._execute_desktop_app_memory_supervisor_tick,
+            self._desktop_app_memory_supervisor_snapshot,
+        )
         self.desktop_evaluation_campaign_supervisor.start(self._execute_desktop_evaluation_campaign_supervisor_tick)
         self.desktop_evaluation_program_supervisor.start(self._execute_desktop_evaluation_program_supervisor_tick)
         self.desktop_evaluation_portfolio_supervisor.start(self._execute_desktop_evaluation_portfolio_supervisor_tick)
@@ -8204,6 +8208,19 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def _desktop_app_memory_supervisor_snapshot(
+        self,
+        *,
+        limit: int = 256,
+        app_name: str = "",
+        category: str = "",
+    ) -> Dict[str, Any]:
+        return self.desktop_app_memory_status(
+            limit=limit,
+            app_name=app_name,
+            category=category,
+        )
+
     def survey_desktop_app_memory(
         self,
         *,
@@ -8333,6 +8350,10 @@ class DesktopBackendService:
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        continuous_learning: bool = True,
+        revisit_stale_apps: bool = True,
+        stale_after_hours: float = 72.0,
+        revisit_failed_apps: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         supervisor = getattr(self, "desktop_app_memory_supervisor", None)
@@ -8356,7 +8377,6 @@ class DesktopBackendService:
                 if isinstance(catalog.get("items", []), list) and isinstance(item, dict)
                 and str(item.get("name", "") or item.get("profile_id", "") or "").strip()
             ]
-        target_apps = target_apps[: max(1, min(int(max_apps or 4), 32))]
         payload = supervisor.create_campaign(
             app_names=target_apps,
             label=label,
@@ -8372,6 +8392,10 @@ class DesktopBackendService:
             allow_risky_probes=allow_risky_probes,
             skip_known_apps=skip_known_apps,
             prefer_unknown_apps=prefer_unknown_apps,
+            continuous_learning=continuous_learning,
+            revisit_stale_apps=revisit_stale_apps,
+            stale_after_hours=stale_after_hours,
+            revisit_failed_apps=revisit_failed_apps,
             source=source,
         )
         payload["app_memory"] = _to_jsonable(
@@ -8460,6 +8484,10 @@ class DesktopBackendService:
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
+        continuous_learning: Optional[bool] = None,
+        revisit_stale_apps: Optional[bool] = None,
+        stale_after_hours: Optional[float] = None,
+        revisit_failed_apps: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8482,6 +8510,10 @@ class DesktopBackendService:
             allow_risky_probes=allow_risky_probes,
             skip_known_apps=skip_known_apps,
             prefer_unknown_apps=prefer_unknown_apps,
+            continuous_learning=continuous_learning,
+            revisit_stale_apps=revisit_stale_apps,
+            stale_after_hours=stale_after_hours,
+            revisit_failed_apps=revisit_failed_apps,
             source=source,
         )
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
@@ -8503,6 +8535,10 @@ class DesktopBackendService:
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
+        continuous_learning: Optional[bool] = None,
+        revisit_stale_apps: Optional[bool] = None,
+        stale_after_hours: Optional[float] = None,
+        revisit_failed_apps: Optional[bool] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8524,6 +8560,10 @@ class DesktopBackendService:
             allow_risky_probes=allow_risky_probes,
             skip_known_apps=skip_known_apps,
             prefer_unknown_apps=prefer_unknown_apps,
+            continuous_learning=continuous_learning,
+            revisit_stale_apps=revisit_stale_apps,
+            stale_after_hours=stale_after_hours,
+            revisit_failed_apps=revisit_failed_apps,
             source=source,
         )
         payload["supervisor"] = _to_jsonable(
@@ -45853,6 +45893,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
                     skip_known_apps=(self._parse_bool(body.get("skip_known_apps"), default=True) if "skip_known_apps" in body else None),
                     prefer_unknown_apps=(self._parse_bool(body.get("prefer_unknown_apps"), default=True) if "prefer_unknown_apps" in body else None),
+                    continuous_learning=(self._parse_bool(body.get("continuous_learning"), default=True) if "continuous_learning" in body else None),
+                    revisit_stale_apps=(self._parse_bool(body.get("revisit_stale_apps"), default=True) if "revisit_stale_apps" in body else None),
+                    stale_after_hours=((float(body.get("stale_after_hours")) if body.get("stale_after_hours") is not None else None) if "stale_after_hours" in body else None),
+                    revisit_failed_apps=(self._parse_bool(body.get("revisit_failed_apps"), default=True) if "revisit_failed_apps" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45878,6 +45922,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     allow_risky_probes=(self._parse_bool(body.get("allow_risky_probes"), default=False) if "allow_risky_probes" in body else None),
                     skip_known_apps=(self._parse_bool(body.get("skip_known_apps"), default=True) if "skip_known_apps" in body else None),
                     prefer_unknown_apps=(self._parse_bool(body.get("prefer_unknown_apps"), default=True) if "prefer_unknown_apps" in body else None),
+                    continuous_learning=(self._parse_bool(body.get("continuous_learning"), default=True) if "continuous_learning" in body else None),
+                    revisit_stale_apps=(self._parse_bool(body.get("revisit_stale_apps"), default=True) if "revisit_stale_apps" in body else None),
+                    stale_after_hours=((float(body.get("stale_after_hours")) if body.get("stale_after_hours") is not None else None) if "stale_after_hours" in body else None),
+                    revisit_failed_apps=(self._parse_bool(body.get("revisit_failed_apps"), default=True) if "revisit_failed_apps" in body else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45903,6 +45951,10 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
                     skip_known_apps=self._parse_bool(body.get("skip_known_apps", True), default=True),
                     prefer_unknown_apps=self._parse_bool(body.get("prefer_unknown_apps", True), default=True),
+                    continuous_learning=self._parse_bool(body.get("continuous_learning", True), default=True),
+                    revisit_stale_apps=self._parse_bool(body.get("revisit_stale_apps", True), default=True),
+                    stale_after_hours=(float(body.get("stale_after_hours", 72.0)) if body.get("stale_after_hours") is not None else 72.0),
+                    revisit_failed_apps=self._parse_bool(body.get("revisit_failed_apps", True), default=True),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)

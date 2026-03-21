@@ -1,0 +1,216 @@
+{
+  "values": {
+    "desktop_app_memory_supervisor": {
+      "config": {
+        "enabled": false,
+        "interval_s": 300.0,
+        "max_apps": 1,
+        "per_app_limit": 24,
+        "history_limit": 8,
+        "query": "",
+        "category": "",
+        "ensure_app_launch": true,
+        "probe_controls": true,
+        "max_probe_controls": 4,
+        "follow_surface_waves": true,
+        "max_surface_waves": 3,
+        "allow_risky_probes": false,
+        "skip_known_apps": true,
+        "prefer_unknown_apps": true,
+        "continuous_learning": true,
+        "revisit_stale_apps": true,
+        "stale_after_hours": 72.0,
+        "revisit_failed_apps": true
+      },
+      "runtime": {
+        "inflight": false,
+        "last_tick_at": "",
+        "last_success_at": "",
+        "last_error_at": "",
+        "last_duration_ms": 0.0,
+        "last_result_status": "",
+        "last_result_message": "",
+        "last_trigger_source": "",
+        "last_trigger_at": "",
+        "last_config_source": "",
+        "next_due_at": "",
+        "next_due_at_ts": 0.0,
+        "run_count": 0,
+        "manual_trigger_count": 0,
+        "auto_trigger_count": 0,
+        "consecutive_error_count": 0,
+        "last_summary": {},
+        "updated_at": "2026-03-21T12:55:16.910095+00:00"
+      },
+      "history": [],
+      "campaigns": {
+        "cam_stale-app-campaign_1774097716905811000": {
+          "campaign_id": "cam_stale-app-campaign_1774097716905811000",
+          "label": "Stale app campaign",
+          "status": "completed",
+          "created_at": "2026-03-21T12:55:16.905816+00:00",
+          "updated_at": "2026-03-21T12:55:16.910078+00:00",
+          "query": "",
+          "category": "",
+          "target_apps": [
+            "notepad"
+          ],
+          "pending_apps": [],
+          "completed_apps": [
+            "notepad"
+          ],
+          "partial_apps": [],
+          "failed_apps": [],
+          "skipped_apps": [],
+          "max_apps": 4,
+          "per_app_limit": 24,
+          "ensure_app_launch": true,
+          "probe_controls": true,
+          "max_probe_controls": 4,
+          "follow_surface_waves": true,
+          "max_surface_waves": 3,
+          "allow_risky_probes": false,
+          "skip_known_apps": true,
+          "prefer_unknown_apps": true,
+          "continuous_learning": true,
+          "revisit_stale_apps": true,
+          "stale_after_hours": 24.0,
+          "revisit_failed_apps": true,
+          "target_selection_summary": {
+            "known_count": 1,
+            "unknown_count": 0,
+            "stale_count": 1,
+            "attention_count": 1,
+            "failure_memory_count": 1,
+            "healthy_count": 0
+          },
+          "unknown_target_count": 0,
+          "stale_target_count": 1,
+          "attention_target_count": 1,
+          "failure_target_count": 1,
+          "healthy_target_count": 0,
+          "reseed_count": 1,
+          "stale_reseed_count": 1,
+          "revisit_app_count": 1,
+          "cycle_generation": 1,
+          "latest_reseed_reason": "campaign_reseed",
+          "latest_reseed_summary": {
+            "selection_strategy": "campaign_reseed",
+            "ordered_apps": [
+              "notepad"
+            ],
+            "reason_counts": {
+              "stale": 1
+            },
+            "unknown_count": 0,
+            "stale_count": 1,
+            "attention_count": 0,
+            "failure_memory_count": 0,
+            "retry_failed_count": 0,
+            "retry_partial_count": 0,
+            "retry_skipped_count": 0,
+            "revisit_app_count": 1,
+            "force_known_revisit": true
+          },
+          "run_count": 2,
+          "latest_cycle_status": "success",
+          "latest_cycle_message": "campaign surveyed apps",
+          "latest_cycle_at": "2026-03-21T12:55:16.910027+00:00",
+          "latest_cycle_source": "manual",
+          "history": [
+            {
+              "executed_at": "2026-03-21T12:55:16.907793+00:00",
+              "source": "manual",
+              "status": "success",
+              "message": "campaign surveyed apps",
+              "target_apps": [
+                "notepad"
+              ],
+              "surveyed_app_count": 1,
+              "success_count": 1,
+              "partial_count": 0,
+              "error_count": 0,
+              "skipped_app_count": 0,
+              "wave_attempt_count": 1,
+              "learned_surface_count": 1,
+              "known_surface_count": 0,
+              "selection_strategy": "campaign_pending",
+              "reseed_count": 0,
+              "stale_reseed_count": 0,
+              "revisit_app_count": 0,
+              "stale_candidate_count": 0,
+              "attention_candidate_count": 0,
+              "failure_candidate_count": 0,
+              "unknown_candidate_count": 0,
+              "reseed_summary": {}
+            },
+            {
+              "executed_at": "2026-03-21T12:55:16.910027+00:00",
+              "source": "manual",
+              "status": "success",
+              "message": "campaign surveyed apps",
+              "target_apps": [
+                "notepad"
+              ],
+              "surveyed_app_count": 1,
+              "success_count": 1,
+              "partial_count": 0,
+              "error_count": 0,
+              "skipped_app_count": 0,
+              "wave_attempt_count": 1,
+              "learned_surface_count": 1,
+              "known_surface_count": 0,
+              "selection_strategy": "campaign_reseed",
+              "reseed_count": 1,
+              "stale_reseed_count": 1,
+              "revisit_app_count": 1,
+              "stale_candidate_count": 1,
+              "attention_candidate_count": 0,
+              "failure_candidate_count": 0,
+              "unknown_candidate_count": 0,
+              "reseed_summary": {
+                "selection_strategy": "campaign_reseed",
+                "ordered_apps": [
+                  "notepad"
+                ],
+                "reason_counts": {
+                  "stale": 1
+                },
+                "unknown_count": 0,
+                "stale_count": 1,
+                "attention_count": 0,
+                "failure_memory_count": 0,
+                "retry_failed_count": 0,
+                "retry_partial_count": 0,
+                "retry_skipped_count": 0,
+                "revisit_app_count": 1,
+                "force_known_revisit": true
+              }
+            }
+          ],
+          "target_app_count": 1,
+          "pending_app_count": 0,
+          "completed_app_count": 1,
+          "partial_app_count": 0,
+          "failed_app_count": 0,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 2,
+          "learned_surface_count": 2,
+          "known_surface_count": 0
+        }
+      }
+    }
+  },
+  "__localstore_meta__": {
+    "version": 3,
+    "entries": {
+      "desktop_app_memory_supervisor": {
+        "version": 3,
+        "updated_at": 1774097716.9101758,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774097716.9101856
+  }
+}

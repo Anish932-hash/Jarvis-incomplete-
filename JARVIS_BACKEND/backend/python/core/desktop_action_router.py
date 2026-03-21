@@ -16,6 +16,7 @@ from backend.python.perception.surface_intelligence import SurfaceIntelligenceAn
 ActionHandler = Callable[[Dict[str, Any]], Dict[str, Any]]
 RustRequestHandler = Callable[[str, Dict[str, Any], float], Dict[str, Any]]
 BenchmarkGuidanceProvider = Callable[[], Dict[str, Any]]
+VisionRuntimeProvider = Callable[[], Dict[str, Any]]
 EXPLORATION_ADVANCE_ACTION = "advance_surface_exploration"
 EXPLORATION_FLOW_ACTION = "complete_surface_exploration_flow"
 RESUMEABLE_MISSION_ACTIONS = {"complete_wizard_flow", "complete_form_flow", EXPLORATION_ADVANCE_ACTION, EXPLORATION_FLOW_ACTION}
@@ -2771,6 +2772,7 @@ class DesktopActionRouter:
         mission_memory: Optional[DesktopMissionMemory] = None,
         rust_request_handler: Optional[RustRequestHandler] = None,
         benchmark_guidance_provider: Optional[BenchmarkGuidanceProvider] = None,
+        vision_runtime_provider: Optional[VisionRuntimeProvider] = None,
         settle_delay_s: float = 0.35,
     ) -> None:
         self._handlers = self._default_handlers()
@@ -2783,6 +2785,7 @@ class DesktopActionRouter:
         self._surface_intelligence = SurfaceIntelligenceAnalyzer()
         self._rust_request_handler = rust_request_handler if callable(rust_request_handler) else None
         self._benchmark_guidance_provider = benchmark_guidance_provider if callable(benchmark_guidance_provider) else None
+        self._vision_runtime_provider = vision_runtime_provider if callable(vision_runtime_provider) else None
         self.settle_delay_s = max(0.0, min(float(settle_delay_s), 5.0))
 
     def advise(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -8432,6 +8435,7 @@ class DesktopActionRouter:
         command_candidate_count = len(memory_entry.get("command_candidates", []) if isinstance(memory_entry.get("command_candidates", []), list) else [])
         harvest_summary = memory_entry.get("harvest_summary", {}) if isinstance(memory_entry.get("harvest_summary", {}), dict) else {}
         survey_count = int(dict(memory_entry.get("metrics", {})).get("survey_count", 0) or 0) if isinstance(memory_entry.get("metrics", {}), dict) else 0
+        vision_learning_route = snapshot.get("vision_learning_route", {}) if isinstance(snapshot.get("vision_learning_route", {}), dict) else {}
         message_parts: List[str] = []
         if launch_result:
             if str(launch_result.get("status", "") or "").strip().lower() == "success":
@@ -8448,22 +8452,37 @@ class DesktopActionRouter:
             message_parts.append(
                 f"Semantic harvesting captured {harvested_menu_like} menu/toolbar/ribbon command hint{'s' if harvested_menu_like != 1 else ''}, {harvested_hotkeys} accelerator hint{'s' if harvested_hotkeys != 1 else ''}, and {harvested_ocr_phrases} OCR command phrase{'s' if harvested_ocr_phrases != 1 else ''}."
             )
+        route_profile = str(vision_learning_route.get("route_profile", "") or "").strip()
+        if route_profile:
+            route_message = (
+                f"Vision routing selected {route_profile.replace('_', ' ')}"
+                if route_profile
+                else ""
+            )
+            if bool(vision_learning_route.get("local_runtime_ready", False)):
+                route_message = f"{route_message} with the local vision runtime ready"
+            elif bool(vision_learning_route.get("api_assist_recommended", False)):
+                route_message = f"{route_message} with external multimodal assist recommended for this surface"
+            if bool(route_message):
+                message_parts.append(route_message.strip() + ".")
         if isinstance(probe_report, dict) and probe_report:
             attempted_count = int(probe_report.get("attempted_count", 0) or 0)
             successful_count = int(probe_report.get("successful_count", 0) or 0)
             blocked_count = int(probe_report.get("blocked_count", 0) or 0)
             ocr_target_count = int(probe_report.get("ocr_target_count", 0) or 0)
+            stabilized_count = int(probe_report.get("stabilized_count", 0) or 0)
             if attempted_count or blocked_count or ocr_target_count:
                 message_parts.append(
-                    f"Vision-guided probing tested {attempted_count} control{'s' if attempted_count != 1 else ''}, learned {successful_count} verified effect{'s' if successful_count != 1 else ''}, and skipped {blocked_count} risky target{'s' if blocked_count != 1 else ''} from {ocr_target_count} OCR target{'s' if ocr_target_count != 1 else ''}."
+                    f"Vision-guided probing tested {attempted_count} control{'s' if attempted_count != 1 else ''}, learned {successful_count} verified effect{'s' if successful_count != 1 else ''}, stabilized {stabilized_count} custom or reparenting-heavy surface{'s' if stabilized_count != 1 else ''}, and skipped {blocked_count} risky target{'s' if blocked_count != 1 else ''} from {ocr_target_count} OCR target{'s' if ocr_target_count != 1 else ''}."
                 )
         if isinstance(wave_report, dict) and wave_report:
             attempted_wave_count = int(wave_report.get("attempted_count", 0) or 0)
             learned_surface_count = int(wave_report.get("learned_surface_count", 0) or 0)
             known_surface_count = int(wave_report.get("known_surface_count", 0) or 0)
+            stabilized_wave_count = int(wave_report.get("stabilized_count", 0) or 0)
             if attempted_wave_count or learned_surface_count:
                 message_parts.append(
-                    f"Linked-surface learning opened {attempted_wave_count} safe workflow wave{'s' if attempted_wave_count != 1 else ''}, captured {learned_surface_count} additional surface{'s' if learned_surface_count != 1 else ''}, and reused {known_surface_count} known surface memory hit{'s' if known_surface_count != 1 else ''}."
+                    f"Linked-surface learning opened {attempted_wave_count} safe workflow wave{'s' if attempted_wave_count != 1 else ''}, captured {learned_surface_count} additional surface{'s' if learned_surface_count != 1 else ''}, stabilized {stabilized_wave_count} linked surface{'s' if stabilized_wave_count != 1 else ''}, and reused {known_surface_count} known surface memory hit{'s' if known_surface_count != 1 else ''}."
                 )
             strategy_profile = dict(wave_report.get("strategy_profile", {})) if isinstance(wave_report.get("strategy_profile", {}), dict) else {}
             adaptive_actions = [
@@ -8674,6 +8693,13 @@ class DesktopActionRouter:
             if isinstance(snapshot.get("safe_traversal_plan", {}), dict)
             else {}
         )
+        vision_route = self._app_memory_vision_route(snapshot=snapshot)
+        preferred_wave_mode = str(vision_route.get("preferred_wave_mode", "") or "").strip().lower()
+        preferred_container_roles = {
+            str(item).strip().lower()
+            for item in vision_route.get("preferred_container_roles", [])
+            if str(item).strip()
+        } if isinstance(vision_route.get("preferred_container_roles", []), list) else set()
         traversal_rows = [
             dict(row)
             for row in traversal_plan.get("candidates", [])
@@ -8725,7 +8751,7 @@ class DesktopActionRouter:
                         if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
                     ] if isinstance(row.get("recommended_followups", []), list) else [],
                     "sort_key": (
-                        0 if action_name in preferred_order else 1,
+                        0 if action_name in preferred_order or preferred_wave_mode == "workflow_hotkey_first" else 1,
                         preferred_order.get(action_name, APP_MEMORY_WAVE_PRIORITY.get(action_name, 100)),
                         1 if bool(row.get("matched", False)) else 0,
                         -max(0, int(row.get("match_count", 0) or 0)),
@@ -8773,7 +8799,15 @@ class DesktopActionRouter:
                         if path and path != container_role
                     ][:6],
                     "sort_key": (
-                        0 if action_name in preferred_order or container_role in preferred_order or f"traverse_{container_role}" in preferred_order else 1,
+                        0
+                        if (
+                            action_name in preferred_order
+                            or container_role in preferred_order
+                            or f"traverse_{container_role}" in preferred_order
+                            or preferred_wave_mode in {"surface_traversal_first", "vision_guided_safe_traversal"}
+                            or container_role in preferred_container_roles
+                        )
+                        else 1,
                         preferred_order.get(action_name, preferred_order.get(container_role, preferred_order.get(f"traverse_{container_role}", 100))),
                         0 if container_role in {"menu", "tab", "tree", "sidebar", "dialog"} else 1,
                         -round(confidence * 1000),
@@ -8810,6 +8844,7 @@ class DesktopActionRouter:
             return {"status": "skipped", "message": "missing safe wave action", "candidate": dict(candidate)}
         target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
         active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        vision_route = self._app_memory_vision_route(snapshot=snapshot)
         focus_title = str(
             target_window.get("title", "")
             or active_window.get("title", "")
@@ -8824,9 +8859,32 @@ class DesktopActionRouter:
             accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
             vision_ready = bool(capabilities.get("vision", {}).get("available")) if isinstance(capabilities.get("vision", {}), dict) else False
             action_result = {"status": "error", "message": "no traversal action attempted"}
-            if accessibility_ready and (
-                str(candidate.get("element_id", "") or "").strip()
-                or str(candidate.get("query", "") or "").strip()
+            prefer_vision_first = str(vision_route.get("preferred_wave_mode", "") or "").strip().lower() in {
+                "vision_guided_safe_traversal",
+                "surface_traversal_first",
+            }
+            preferred_target_mode = str(vision_route.get("preferred_target_mode", "auto") or "auto").strip().lower()
+            if prefer_vision_first and vision_ready:
+                click_payload: Dict[str, Any] = {
+                    "query": str(candidate.get("query", "") or candidate.get("title", "") or "").strip(),
+                    "verify_mode": "none",
+                    "attempts": 1,
+                    "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
+                    "target_mode": "ocr" if preferred_target_mode in {"ocr", "vision"} else "auto",
+                }
+                if focus_title:
+                    click_payload["window_title"] = focus_title
+                if str(candidate.get("control_type", "") or "").strip():
+                    click_payload["control_type"] = str(candidate.get("control_type", "") or "").strip()
+                action_result = self._call("computer_click_target", click_payload)
+                method = "computer_click_target"
+            if (
+                str(action_result.get("status", "") or "").strip().lower() != "success"
+                and accessibility_ready
+                and (
+                    str(candidate.get("element_id", "") or "").strip()
+                    or str(candidate.get("query", "") or "").strip()
+                )
             ):
                 invoke_payload: Dict[str, Any] = {"action": "click"}
                 if focus_title:
@@ -8839,13 +8897,13 @@ class DesktopActionRouter:
                     invoke_payload["control_type"] = str(candidate.get("control_type", "") or "").strip()
                 action_result = self._call("accessibility_invoke_element", invoke_payload)
                 method = "accessibility_invoke_element"
-            if str(action_result.get("status", "") or "").strip().lower() != "success" and vision_ready:
-                click_payload: Dict[str, Any] = {
+            if str(action_result.get("status", "") or "").strip().lower() != "success" and vision_ready and not prefer_vision_first:
+                click_payload = {
                     "query": str(candidate.get("query", "") or candidate.get("title", "") or "").strip(),
                     "verify_mode": "none",
                     "attempts": 1,
                     "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
-                    "target_mode": "auto",
+                    "target_mode": "ocr" if preferred_target_mode in {"ocr", "vision"} else "auto",
                 }
                 if focus_title:
                     click_payload["window_title"] = focus_title
@@ -8895,6 +8953,31 @@ class DesktopActionRouter:
             include_workflow_probes=include_workflow_probes,
             preferred_actions=preferred_followups,
         )
+        stabilization_result: Dict[str, Any] = {}
+        if (
+            str(next_snapshot.get("status", "") or "").strip().lower() == "success"
+            and bool(self._app_memory_vision_route(snapshot=next_snapshot).get("needs_native_stabilization", False))
+        ):
+            stabilization_result = self._stabilize_app_memory_learning_surface(
+                snapshot=dict(next_snapshot),
+                route=self._app_memory_vision_route(snapshot=next_snapshot),
+                candidate=candidate,
+                app_name=app_name,
+                window_title=focus_title,
+                query=query,
+                include_observation=include_observation,
+                include_elements=include_elements,
+                include_workflow_probes=include_workflow_probes,
+                include_ocr_targets=include_ocr_targets,
+                limit=max(12, min(int(limit or 24), 48)),
+            )
+            stabilized_snapshot = (
+                stabilization_result.get("stabilized_snapshot", {})
+                if isinstance(stabilization_result.get("stabilized_snapshot", {}), dict)
+                else {}
+            )
+            if stabilized_snapshot and str(stabilization_result.get("status", "") or "").strip().lower() in {"success", "partial"}:
+                next_snapshot = dict(stabilized_snapshot)
         if str(next_snapshot.get("status", "") or "").strip().lower() != "success":
             return {
                 "status": "error",
@@ -8903,6 +8986,7 @@ class DesktopActionRouter:
                 "action_result": action_result,
                 "method": method,
                 "surface_snapshot": next_snapshot,
+                "stabilization_summary": stabilization_result,
             }
         previous_surface_fingerprint = str(snapshot.get("surface_fingerprint", "") or "").strip()
         next_surface_fingerprint = str(next_snapshot.get("surface_fingerprint", "") or "").strip()
@@ -8914,6 +8998,7 @@ class DesktopActionRouter:
                 "action_result": action_result,
                 "method": method,
                 "surface_snapshot": next_snapshot,
+                "stabilization_summary": stabilization_result,
             }
         return {
             "status": "success",
@@ -8923,6 +9008,7 @@ class DesktopActionRouter:
             "surface_snapshot": next_snapshot,
             "pre_surface_fingerprint": previous_surface_fingerprint,
             "post_surface_fingerprint": next_surface_fingerprint,
+            "stabilization_summary": stabilization_result,
         }
 
     def _survey_app_memory_waves(
@@ -8960,6 +9046,7 @@ class DesktopActionRouter:
         items: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         known_surface_count = 0
+        stabilized_wave_count = 0
         clean_source = str(source or "manual").strip().lower() or "manual"
         wave_source = clean_source if "wave" in clean_source else f"{clean_source}_wave"
         strategy_profile: Dict[str, Any] = {
@@ -9006,6 +9093,7 @@ class DesktopActionRouter:
                     "attempted_count": len(attempted_keys),
                     "learned_surface_count": len(items),
                     "known_surface_count": known_surface_count,
+                    "stabilized_count": stabilized_wave_count,
                     "items": items,
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
@@ -9132,10 +9220,21 @@ class DesktopActionRouter:
                                 "pre_surface_fingerprint": str(wave_result.get("pre_surface_fingerprint", "") or "").strip(),
                                 "post_surface_fingerprint": next_fingerprint,
                                 "known_surface": bool(wave_hint.get("known", False)),
+                                "stabilization_summary": (
+                                    dict(wave_result.get("stabilization_summary", {}))
+                                    if isinstance(wave_result.get("stabilization_summary", {}), dict)
+                                    else {}
+                                ),
                             }
                         ],
                         "skipped": [],
                         "stop_reason": "captured_linked_surface",
+                        "stabilized_count": 1
+                        if (
+                            isinstance(wave_result.get("stabilization_summary", {}), dict)
+                            and bool(dict(wave_result.get("stabilization_summary", {})).get("stabilized", False))
+                        )
+                        else 0,
                         "recommended_next_actions": [
                             str(item).strip()
                             for item in candidate.get("recommended_followups", [])
@@ -9169,8 +9268,18 @@ class DesktopActionRouter:
                         "memory_entry": wave_entry,
                         "adaptive_actions": adaptive_actions[:6],
                         "method": str(wave_result.get("method", "") or "").strip(),
+                        "stabilization_summary": (
+                            dict(wave_result.get("stabilization_summary", {}))
+                            if isinstance(wave_result.get("stabilization_summary", {}), dict)
+                            else {}
+                        ),
                     }
                 )
+                if (
+                    isinstance(wave_result.get("stabilization_summary", {}), dict)
+                    and bool(dict(wave_result.get("stabilization_summary", {})).get("stabilized", False))
+                ):
+                    stabilized_wave_count += 1
                 current_snapshot = next_snapshot
                 preferred_actions = [
                     str(item).strip().lower()
@@ -9185,6 +9294,7 @@ class DesktopActionRouter:
                     "attempted_count": len(attempted_keys),
                     "learned_surface_count": len(items),
                     "known_surface_count": known_surface_count,
+                    "stabilized_count": stabilized_wave_count,
                     "items": items,
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
@@ -9196,6 +9306,7 @@ class DesktopActionRouter:
             "attempted_count": len(attempted_keys),
             "learned_surface_count": len(items),
             "known_surface_count": known_surface_count,
+            "stabilized_count": stabilized_wave_count,
             "items": items,
             "skipped": skipped,
             "strategy_profile": strategy_profile,
@@ -9360,6 +9471,212 @@ class DesktopActionRouter:
             },
         }
 
+    def _app_memory_vision_route(self, *, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        route = (
+            snapshot.get("vision_learning_route", {})
+            if isinstance(snapshot.get("vision_learning_route", {}), dict)
+            else {}
+        )
+        if route:
+            return dict(route)
+        return {
+            "status": "success",
+            "route_profile": "accessibility_first",
+            "model_preference": "accessibility",
+            "preferred_probe_mode": "accessibility_first",
+            "preferred_wave_mode": "workflow_hotkey_first",
+            "preferred_target_mode": "auto",
+            "preferred_verification_mode": "multi_signal_before_after",
+            "local_runtime_ready": False,
+            "ocr_ready": False,
+            "api_assist_recommended": False,
+            "needs_native_stabilization": False,
+            "native_recovery_mode": "none",
+            "follow_descendant_chain": False,
+            "max_descendant_focus_steps": 1,
+            "weird_app_pressure": 0.0,
+            "preferred_container_roles": [],
+            "reason_codes": [],
+            "runtime_profile": {},
+        }
+
+    def _stabilize_app_memory_learning_surface(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        route: Dict[str, Any],
+        candidate: Dict[str, Any],
+        app_name: str,
+        window_title: str,
+        query: str,
+        include_observation: bool,
+        include_elements: bool,
+        include_workflow_probes: bool,
+        include_ocr_targets: bool,
+        limit: int,
+    ) -> Dict[str, Any]:
+        if not isinstance(snapshot, dict):
+            return {"status": "skipped", "reason": "missing_snapshot"}
+        current_route = dict(route) if isinstance(route, dict) else {}
+        current_mode = str(current_route.get("native_recovery_mode", "none") or "none").strip().lower()
+        current_weird_pressure = max(0.0, min(float(current_route.get("weird_app_pressure", 0.0) or 0.0), 1.0))
+        current_signals = (
+            snapshot.get("native_learning_signals", {})
+            if isinstance(snapshot.get("native_learning_signals", {}), dict)
+            else {}
+        )
+        reparenting_risk = max(0.0, min(float(current_signals.get("reparenting_risk", 0.0) or 0.0), 1.0))
+        if (
+            not bool(current_route.get("needs_native_stabilization", False))
+            and current_mode == "none"
+            and reparenting_risk < 0.45
+            and current_weird_pressure < 0.5
+        ):
+            return {"status": "skipped", "reason": "not_needed"}
+
+        target_window = snapshot.get("target_window", {}) if isinstance(snapshot.get("target_window", {}), dict) else {}
+        active_window = snapshot.get("active_window", {}) if isinstance(snapshot.get("active_window", {}), dict) else {}
+        focus_title = str(
+            target_window.get("title", "")
+            or active_window.get("title", "")
+            or window_title
+            or app_name
+            or ""
+        ).strip()
+        query_terms = self._dedupe_strings(
+            [
+                str(candidate.get("query", "") or "").strip(),
+                str(candidate.get("label", "") or "").strip(),
+                str(query or "").strip(),
+                str(candidate.get("automation_id", "") or "").strip(),
+            ]
+        )
+        requested_action = current_mode if current_mode in {"focus_related_window", "focus_related_window_chain"} else "focus_related_window"
+        recovery_payload: Dict[str, Any] = {
+            "query": query_terms[0] if query_terms else str(query or "").strip(),
+            "app_name": str(app_name or "").strip(),
+            "window_title": focus_title,
+            "hint_query": str(query or "").strip(),
+            "descendant_hint_query": query_terms[0] if query_terms else str(query or "").strip(),
+            "preferred_title": str(active_window.get("title", "") or focus_title).strip(),
+            "follow_descendant_chain": bool(current_route.get("follow_descendant_chain", False)),
+            "max_descendant_focus_steps": max(1, min(int(current_route.get("max_descendant_focus_steps", 1) or 1), 6)),
+        }
+        target_hwnd = int(target_window.get("hwnd", 0) or 0)
+        target_pid = int(target_window.get("pid", 0) or 0)
+        if target_hwnd > 0:
+            recovery_payload["hwnd"] = target_hwnd
+        if target_pid > 0:
+            recovery_payload["pid"] = target_pid
+        recovery_result = self._call(requested_action, recovery_payload)
+        recovery_method = requested_action
+        if str(recovery_result.get("status", "") or "").strip().lower() != "success":
+            reacquire_payload: Dict[str, Any] = {
+                "app_name": str(app_name or "").strip(),
+                "window_title": focus_title,
+                "query": query_terms[0] if query_terms else str(query or "").strip(),
+                "include_candidates": False,
+                "limit": max(12, min(int(limit or 24), 80)),
+            }
+            if target_hwnd > 0:
+                reacquire_payload["hwnd"] = target_hwnd
+            if target_pid > 0:
+                reacquire_payload["pid"] = target_pid
+            reacquired = self._call("reacquire_window", reacquire_payload)
+            if str(reacquired.get("status", "") or "").strip().lower() == "success":
+                candidate_window = (
+                    reacquired.get("candidate", {})
+                    if isinstance(reacquired.get("candidate", {}), dict)
+                    else {}
+                )
+                focus_payload: Dict[str, Any] = {
+                    "title": str(candidate_window.get("title", "") or focus_title).strip(),
+                }
+                reacquired_hwnd = int(candidate_window.get("hwnd", 0) or 0)
+                if reacquired_hwnd > 0:
+                    focus_payload["hwnd"] = reacquired_hwnd
+                recovery_result = self._call("focus_window", focus_payload)
+                recovery_method = "reacquire_then_focus"
+                if isinstance(recovery_result, dict):
+                    recovery_result = {
+                        **dict(recovery_result),
+                        "reacquire_candidate": candidate_window,
+                    }
+        if str(recovery_result.get("status", "") or "").strip().lower() != "success":
+            return {
+                "status": "error",
+                "reason": "recovery_failed",
+                "recovery_method": recovery_method,
+                "recovery_result": recovery_result,
+            }
+        if self.settle_delay_s > 0:
+            time.sleep(min(self.settle_delay_s, 0.6))
+        recovery_window = (
+            recovery_result.get("window", {})
+            if isinstance(recovery_result.get("window", {}), dict)
+            else {}
+        )
+        reacquire_candidate = (
+            recovery_result.get("reacquire_candidate", {})
+            if isinstance(recovery_result.get("reacquire_candidate", {}), dict)
+            else {}
+        )
+        stabilized_focus_title = str(
+            recovery_window.get("title", "")
+            or reacquire_candidate.get("title", "")
+            or focus_title
+            or ""
+        ).strip()
+        stabilized_snapshot = self.surface_snapshot(
+            app_name=app_name,
+            window_title=stabilized_focus_title,
+            query=query,
+            limit=max(12, min(int(limit or 24), 48)),
+            include_observation=include_observation,
+            include_ocr_targets=include_ocr_targets,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+        )
+        stabilized_snapshot = dict(stabilized_snapshot) if isinstance(stabilized_snapshot, dict) else {}
+        if str(stabilized_snapshot.get("status", "") or "").strip().lower() != "success":
+            return {
+                "status": "error",
+                "reason": "stabilized_snapshot_failed",
+                "recovery_method": recovery_method,
+                "recovery_result": recovery_result,
+                "stabilized_snapshot": stabilized_snapshot,
+            }
+        stabilized_signals = (
+            stabilized_snapshot.get("native_learning_signals", {})
+            if isinstance(stabilized_snapshot.get("native_learning_signals", {}), dict)
+            else {}
+        )
+        stabilized_reparenting_risk = max(
+            0.0,
+            min(float(stabilized_signals.get("reparenting_risk", 0.0) or 0.0), 1.0),
+        )
+        previous_surface = str(snapshot.get("surface_fingerprint", "") or "").strip()
+        stabilized_surface = str(stabilized_snapshot.get("surface_fingerprint", "") or "").strip()
+        improved = bool(
+            (previous_surface and stabilized_surface and previous_surface != stabilized_surface)
+            or stabilized_reparenting_risk < reparenting_risk
+            or not bool(stabilized_signals.get("custom_surface_suspected", False))
+        )
+        return {
+            "status": "success" if improved else "partial",
+            "reason": "native_recovery_applied" if improved else "native_recovery_no_clear_improvement",
+            "recovery_method": recovery_method,
+            "recovery_result": recovery_result,
+            "stabilized_snapshot": stabilized_snapshot,
+            "stabilized": improved,
+            "requested_window_title": focus_title,
+            "stabilized_window_title": stabilized_focus_title,
+            "previous_surface_fingerprint": previous_surface,
+            "stabilized_surface_fingerprint": stabilized_surface,
+            "previous_reparenting_risk": round(reparenting_risk, 4),
+            "stabilized_reparenting_risk": round(stabilized_reparenting_risk, 4),
+        }
+
     def _probe_app_memory_controls(
         self,
         *,
@@ -9399,6 +9716,9 @@ class DesktopActionRouter:
             if isinstance(snapshot.get("target_window", {}), dict)
             else ""
         ).strip() or str(window_title or "").strip() or str(app_name or "").strip()
+        vision_route = self._app_memory_vision_route(snapshot=snapshot)
+        preferred_probe_mode = str(vision_route.get("preferred_probe_mode", "accessibility_first") or "accessibility_first").strip().lower()
+        preferred_target_mode = str(vision_route.get("preferred_target_mode", "auto") or "auto").strip().lower()
         baseline = self._app_memory_probe_observation(
             snapshot=snapshot,
             window_title=focus_title,
@@ -9414,9 +9734,21 @@ class DesktopActionRouter:
         previous_snapshot = dict(snapshot)
         verified_count = 0
         uncertain_count = 0
+        stabilized_count = 0
 
         for candidate in candidates[:bounded]:
             candidate_payload = dict(candidate)
+            candidate_element_id = str(
+                candidate_payload.get("element_id", "")
+                or candidate_payload.get("linked_element_id", "")
+                or ""
+            ).strip()
+            candidate_query = str(candidate_payload.get("query", "") or candidate_payload.get("label", "") or "").strip()
+            candidate_control_type = str(
+                candidate_payload.get("linked_control_type", "")
+                or candidate_payload.get("control_type", "")
+                or ""
+            ).strip()
             risk_flags = [
                 str(item).strip()
                 for item in candidate_payload.get("risk_flags", [])
@@ -9442,31 +9774,60 @@ class DesktopActionRouter:
             attempted_count += 1
             action_result: Dict[str, Any] = {"status": "error", "message": "no probe action attempted"}
             method = "unavailable"
-            if accessibility_ready and (
-                str(candidate_payload.get("element_id", "") or "").strip()
-                or str(candidate_payload.get("query", "") or "").strip()
+            prefer_vision_first = preferred_probe_mode in {"vision_first", "local_vision_assist", "api_vision_assist"}
+            if prefer_vision_first and vision_ready:
+                click_payload: Dict[str, Any] = {
+                    "query": str(candidate_payload.get("query", "") or candidate_payload.get("label", "") or "").strip(),
+                    "verify_mode": "none",
+                    "attempts": 1,
+                    "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
+                    "target_mode": (
+                        "ocr"
+                        if preferred_target_mode in {"ocr", "vision"}
+                        or str(candidate_payload.get("source", "") or "").strip().lower() == "ocr"
+                        else "auto"
+                    ),
+                }
+                if focus_title:
+                    click_payload["window_title"] = focus_title
+                if str(candidate_payload.get("control_type", "") or "").strip():
+                    click_payload["control_type"] = str(candidate_payload.get("control_type", "") or "").strip()
+                action_result = self._call("computer_click_target", click_payload)
+                method = "computer_click_target"
+            if (
+                str(action_result.get("status", "") or "").strip().lower() != "success"
+                and accessibility_ready
+                and (
+                    candidate_element_id
+                    or candidate_query
+                )
             ):
                 invoke_payload: Dict[str, Any] = {
                     "action": "click",
                 }
                 if focus_title:
                     invoke_payload["window_title"] = focus_title
-                if str(candidate_payload.get("element_id", "") or "").strip():
-                    invoke_payload["element_id"] = str(candidate_payload.get("element_id", "") or "").strip()
+                if candidate_element_id:
+                    invoke_payload["element_id"] = candidate_element_id
                 else:
-                    invoke_payload["query"] = str(candidate_payload.get("query", "") or "").strip()
-                if str(candidate_payload.get("control_type", "") or "").strip():
-                    invoke_payload["control_type"] = str(candidate_payload.get("control_type", "") or "").strip()
+                    invoke_payload["query"] = candidate_query
+                if candidate_control_type:
+                    invoke_payload["control_type"] = candidate_control_type
                 action_result = self._call("accessibility_invoke_element", invoke_payload)
                 method = "accessibility_invoke_element"
 
-            if (str(action_result.get("status", "") or "").strip().lower() != "success") and vision_ready:
-                click_payload: Dict[str, Any] = {
+            if (str(action_result.get("status", "") or "").strip().lower() != "success") and vision_ready and not prefer_vision_first:
+                click_payload = {
                     "query": str(candidate_payload.get("query", "") or candidate_payload.get("label", "") or "").strip(),
                     "verify_mode": "none",
                     "attempts": 1,
                     "post_wait_s": max(0.0, min(self.settle_delay_s, 0.6)),
-                    "target_mode": "ocr" if str(candidate_payload.get("source", "") or "").strip().lower() == "ocr" else "auto",
+                    "target_mode": (
+                        "ocr"
+                        if preferred_target_mode in {"ocr", "vision"}
+                        or str(candidate_payload.get("source", "") or "").strip().lower() == "ocr"
+                        else "auto"
+                    ),
                 }
                 if focus_title:
                     click_payload["window_title"] = focus_title
@@ -9495,12 +9856,112 @@ class DesktopActionRouter:
                 include_ocr_targets=include_ocr_targets,
                 vision_ready=vision_ready,
             )
+            if (
+                method == "computer_click_target"
+                and str(action_result.get("status", "") or "").strip().lower() == "success"
+                and accessibility_ready
+                and (candidate_element_id or candidate_query)
+            ):
+                no_visible_change = bool(
+                    str(post_snapshot.get("surface_fingerprint", "") or "").strip()
+                    == str(previous_snapshot.get("surface_fingerprint", "") or "").strip()
+                    and str(post_observation.get("screen_hash", "") or "").strip()
+                    == str(previous_observation.get("screen_hash", "") or "").strip()
+                    and str(post_observation.get("active_window_title", "") or "").strip()
+                    == str(previous_observation.get("active_window_title", "") or "").strip()
+                )
+                if no_visible_change:
+                    invoke_payload = {
+                        "action": "click",
+                    }
+                    if focus_title:
+                        invoke_payload["window_title"] = focus_title
+                    if candidate_element_id:
+                        invoke_payload["element_id"] = candidate_element_id
+                    else:
+                        invoke_payload["query"] = candidate_query
+                    if candidate_control_type:
+                        invoke_payload["control_type"] = candidate_control_type
+                    invoke_result = self._call("accessibility_invoke_element", invoke_payload)
+                    invoke_status = str(invoke_result.get("status", "") or "").strip().lower()
+                    if invoke_status == "success":
+                        action_result = {
+                            **dict(invoke_result),
+                            "fallback_from": "computer_click_target",
+                        }
+                        method = "computer_click_target->accessibility_invoke_element"
+                        if self.settle_delay_s > 0:
+                            time.sleep(min(self.settle_delay_s, 0.6))
+                        post_snapshot = self.surface_snapshot(
+                            app_name=app_name,
+                            window_title=focus_title,
+                            query=query,
+                            limit=max(12, min(int(bounded * 3), 24)),
+                            include_observation=True,
+                            include_ocr_targets=include_ocr_targets,
+                            include_elements=True,
+                            include_workflow_probes=False,
+                        )
+                        post_snapshot = dict(post_snapshot) if isinstance(post_snapshot, dict) else {}
+                        post_observation = self._app_memory_probe_observation(
+                            snapshot=post_snapshot,
+                            window_title=focus_title,
+                            include_ocr_targets=include_ocr_targets,
+                            vision_ready=vision_ready,
+                        )
+            stabilization_result: Dict[str, Any] = {}
+            post_route = self._app_memory_vision_route(snapshot=post_snapshot)
+            effective_route = dict(post_route or vision_route)
+            needs_stabilization = bool(
+                vision_route.get("needs_native_stabilization", False)
+                or post_route.get("needs_native_stabilization", False)
+                or float(
+                    (
+                        post_snapshot.get("native_learning_signals", {})
+                        if isinstance(post_snapshot.get("native_learning_signals", {}), dict)
+                        else {}
+                    ).get("reparenting_risk", 0.0)
+                    or 0.0
+                )
+                >= 0.45
+            )
+            if needs_stabilization:
+                stabilization_result = self._stabilize_app_memory_learning_surface(
+                    snapshot=post_snapshot,
+                    route=effective_route,
+                    candidate=candidate_payload,
+                    app_name=app_name,
+                    window_title=focus_title,
+                    query=query,
+                    include_observation=True,
+                    include_elements=True,
+                    include_workflow_probes=False,
+                    include_ocr_targets=include_ocr_targets,
+                    limit=max(12, min(int(bounded * 3), 24)),
+                )
+                stabilized_snapshot = (
+                    stabilization_result.get("stabilized_snapshot", {})
+                    if isinstance(stabilization_result.get("stabilized_snapshot", {}), dict)
+                    else {}
+                )
+                if stabilized_snapshot and str(stabilization_result.get("status", "") or "").strip().lower() in {"success", "partial"}:
+                    post_snapshot = dict(stabilized_snapshot)
+                    post_observation = self._app_memory_probe_observation(
+                        snapshot=post_snapshot,
+                        window_title=focus_title,
+                        include_ocr_targets=include_ocr_targets,
+                        vision_ready=vision_ready,
+                    )
+                    if bool(stabilization_result.get("stabilized", False)):
+                        stabilized_count += 1
             verification_summary = self._app_memory_probe_verification_summary(
                 candidate=candidate_payload,
                 before=previous_observation,
                 after=post_observation,
                 before_snapshot=previous_snapshot,
                 after_snapshot=post_snapshot,
+                route=effective_route,
+                stabilization=stabilization_result,
             )
             effect_kind, effect_summary = self._classify_app_memory_probe_effect(
                 candidate=candidate_payload,
@@ -9549,6 +10010,17 @@ class DesktopActionRouter:
                     "new_ocr_terms": [str(item).strip() for item in verification_summary.get("new_ocr_terms", []) if str(item).strip()][:8],
                     "removed_ocr_terms": [str(item).strip() for item in verification_summary.get("removed_ocr_terms", []) if str(item).strip()][:8],
                     "post_snapshot_status": str(post_snapshot.get("status", "") or "").strip(),
+                    "vision_learning_route": (
+                        dict(effective_route)
+                        if isinstance(effective_route, dict)
+                        else (
+                            dict(post_snapshot.get("vision_learning_route", {}))
+                            if isinstance(post_snapshot.get("vision_learning_route", {}), dict)
+                            else dict(vision_route)
+                        )
+                    ),
+                    "stabilization_summary": stabilization_result if isinstance(stabilization_result, dict) else {},
+                    "native_stabilized": bool(verification_summary.get("native_stabilized", False)),
                     "native_learning_signals": (
                         dict(post_snapshot.get("native_learning_signals", {}))
                         if isinstance(post_snapshot.get("native_learning_signals", {}), dict)
@@ -9580,6 +10052,7 @@ class DesktopActionRouter:
             "successful_count": successful_count,
             "verified_count": verified_count,
             "uncertain_count": uncertain_count,
+            "stabilized_count": stabilized_count,
             "blocked_count": blocked_count,
             "error_count": error_count,
             "items": items[:bounded],
@@ -9654,6 +10127,8 @@ class DesktopActionRouter:
         after: Dict[str, Any],
         before_snapshot: Dict[str, Any],
         after_snapshot: Dict[str, Any],
+        route: Optional[Dict[str, Any]] = None,
+        stabilization: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         before_hash = str(before.get("screen_hash", "") or "").strip()
         after_hash = str(after.get("screen_hash", "") or "").strip()
@@ -9689,6 +10164,9 @@ class DesktopActionRouter:
                 float(native_after.get("reparenting_risk", 0.0) or 0.0),
             ),
         )
+        route_payload = dict(route) if isinstance(route, dict) else {}
+        stabilization_payload = dict(stabilization) if isinstance(stabilization, dict) else {}
+        native_stabilized = bool(stabilization_payload.get("stabilized", False))
         confidence = min(
             1.0,
             max(
@@ -9699,6 +10177,7 @@ class DesktopActionRouter:
                 + min(0.18, target_delta * 0.05)
                 + (0.05 if bool(new_terms) else 0.0)
                 + (0.04 if bool(candidate.get("element_id", "")) else 0.0)
+                + (0.08 if native_stabilized else 0.0)
                 - min(0.1, reparenting_risk * 0.08),
             ),
         )
@@ -9719,7 +10198,18 @@ class DesktopActionRouter:
             "removed_ocr_terms": removed_terms,
             "reparenting_risk": round(reparenting_risk, 4),
             "custom_surface_suspected": bool(native_after.get("custom_surface_suspected", False)),
-            "verification_mode": "multi_signal_before_after",
+            "native_stabilized": native_stabilized,
+            "native_recovery_mode": str(route_payload.get("native_recovery_mode", "") or "").strip(),
+            "preferred_probe_mode": str(route_payload.get("preferred_probe_mode", "") or "").strip(),
+            "route_profile": str(route_payload.get("route_profile", "") or "").strip(),
+            "local_runtime_ready": bool(route_payload.get("local_runtime_ready", False)),
+            "api_assist_recommended": bool(route_payload.get("api_assist_recommended", False)),
+            "stabilization_reason": str(stabilization_payload.get("reason", "") or "").strip(),
+            "verification_mode": (
+                "native_stabilized_before_after"
+                if native_stabilized
+                else str(route_payload.get("preferred_verification_mode", "") or "multi_signal_before_after").strip()
+            ),
         }
 
     def _app_memory_probe_candidates(
@@ -9772,6 +10262,48 @@ class DesktopActionRouter:
             "ocr": 6,
         }
 
+        def _candidate_lookup_labels(row: Dict[str, Any]) -> List[str]:
+            labels: List[str] = []
+            for value in (
+                row.get("name", ""),
+                row.get("label", ""),
+                row.get("text", ""),
+                row.get("automation_id", ""),
+            ):
+                normalized = self._normalize_probe_text(value)
+                if normalized and normalized not in labels:
+                    labels.append(normalized)
+            combined = self._normalize_probe_text(
+                " ".join(
+                    value
+                    for value in (
+                        row.get("name", ""),
+                        row.get("label", ""),
+                        row.get("text", ""),
+                        row.get("automation_id", ""),
+                    )
+                    if str(value or "").strip()
+                )
+            )
+            if combined and combined not in labels:
+                labels.append(combined)
+            return labels
+
+        accessible_label_index: Dict[str, Dict[str, Any]] = {}
+        for row in [
+            *query_candidates,
+            target_control_state,
+            *related_rows,
+            *selection_rows,
+            *element_rows,
+            *inventory_rows,
+        ]:
+            if not isinstance(row, dict) or not row:
+                continue
+            for lookup_label in _candidate_lookup_labels(row):
+                if lookup_label and lookup_label not in accessible_label_index:
+                    accessible_label_index[lookup_label] = dict(row)
+
         def _append_candidate(raw: Dict[str, Any], *, source: str) -> None:
             label = str(
                 raw.get("name", "")
@@ -9797,6 +10329,11 @@ class DesktopActionRouter:
                     str(raw.get("text", "") or "").strip(),
                 ]
             )
+            linked_row = (
+                dict(accessible_label_index.get(normalized_label, {}))
+                if normalized_label in accessible_label_index
+                else {}
+            )
             candidate = {
                 "identity": identity,
                 "source": source,
@@ -9806,6 +10343,9 @@ class DesktopActionRouter:
                 "control_type": control_type,
                 "element_id": str(raw.get("element_id", "") or "").strip(),
                 "automation_id": str(raw.get("automation_id", "") or "").strip(),
+                "linked_element_id": str(linked_row.get("element_id", "") or "").strip(),
+                "linked_automation_id": str(linked_row.get("automation_id", "") or "").strip(),
+                "linked_control_type": str(linked_row.get("control_type", "") or "").strip(),
                 "state_text": str(raw.get("state_text", "") or "").strip(),
                 "class_name": str(raw.get("class_name", "") or "").strip(),
                 "vision_labels": vision_labels[:10],
@@ -9874,11 +10414,35 @@ class DesktopActionRouter:
             for item in summary.get("confirmation_candidates", [])
             if str(item).strip()
         }
-        risky_terms = {
+        surface_flags = (
+            summary.get("surface_flags", {})
+            if isinstance(summary.get("surface_flags", {}), dict)
+            else {}
+        )
+        confirmation_surface = bool(
+            confirmation_candidates
+            or destructive_candidates
+            or bool(surface_flags.get("requires_confirmation", False))
+            or bool(surface_flags.get("warning_surface_visible", False))
+            or bool(surface_flags.get("destructive_warning_visible", False))
+            or bool(surface_flags.get("permission_review_visible", False))
+            or bool(surface_flags.get("secure_desktop_likely", False))
+        )
+        always_risky_terms = {
             "apply",
             "delete",
             "remove",
             "uninstall",
+            "reset",
+            "restore",
+            "format",
+            "erase",
+            "clear data",
+            "restart",
+            "reboot",
+            "shutdown",
+        }
+        contextual_risky_terms = {
             "install",
             "save",
             "save as",
@@ -9887,11 +10451,6 @@ class DesktopActionRouter:
             "send",
             "publish",
             "sync",
-            "reset",
-            "restore",
-            "format",
-            "erase",
-            "clear data",
             "yes",
             "ok",
             "allow",
@@ -9899,9 +10458,6 @@ class DesktopActionRouter:
             "accept",
             "run",
             "execute",
-            "restart",
-            "reboot",
-            "shutdown",
             "close",
             "exit",
             "quit",
@@ -9912,7 +10468,9 @@ class DesktopActionRouter:
             flags.append("destructive_candidate")
         if label in confirmation_candidates:
             flags.append("confirmation_candidate")
-        if any(term in label for term in risky_terms):
+        if any(term in label for term in always_risky_terms):
+            flags.append("risky_keyword")
+        if confirmation_surface and any(term in label for term in contextual_risky_terms):
             flags.append("risky_keyword")
         return self._dedupe_strings(flags)
 
@@ -10527,6 +11085,19 @@ class DesktopActionRouter:
             native_learning_signals=native_learning_signals,
             limit=max(6, min(bounded, 18)),
         )
+        vision_runtime_profile = self._vision_runtime_profile(capabilities=capabilities)
+        vision_learning_route = self._surface_vision_learning_route(
+            capabilities=capabilities,
+            vision_runtime_profile=vision_runtime_profile,
+            surface_summary=surface_summary,
+            surface_intelligence=surface_intelligence,
+            vision_fusion=vision_fusion,
+            native_learning_signals=native_learning_signals,
+            safe_traversal_plan=safe_traversal_plan,
+            elements=element_rows,
+            observation=observation,
+            query=str(query or "").strip(),
+        )
         return {
             "status": "success",
             "app_profile": app_profile if app_profile.get("status") == "success" else {},
@@ -10577,6 +11148,8 @@ class DesktopActionRouter:
             "surface_summary": surface_summary,
             "surface_intelligence": surface_intelligence,
             "vision_fusion": vision_fusion,
+            "vision_runtime_profile": vision_runtime_profile,
+            "vision_learning_route": vision_learning_route,
             "native_learning_signals": native_learning_signals,
             "safe_traversal_plan": safe_traversal_plan,
             "surface_flags": flags,
@@ -10677,6 +11250,17 @@ class DesktopActionRouter:
                 or window_reacquisition.get("child_chain_signature", "")
                 or ""
             ).strip(),
+            "descendant_anchor_recovery_available": bool(
+                window_reacquisition.get("descendant_anchor_recovery_available", False)
+            ),
+            "descendant_anchor_recovery_match_score": round(
+                max(0.0, min(float(window_reacquisition.get("descendant_anchor_recovery_match_score", 0.0) or 0.0), 1.0)),
+                4,
+            ),
+            "descendant_anchor_recovery_pressure": round(
+                max(0.0, min(float(window_reacquisition.get("descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0)),
+                4,
+            ),
             "preferred_descendant_title": str(
                 window_reacquisition.get("preferred_descendant", {}).get("title", "")
                 if isinstance(window_reacquisition.get("preferred_descendant", {}), dict)
@@ -10758,6 +11342,229 @@ class DesktopActionRouter:
             "command_terms": command_terms[:10],
             "surface_role": str(surface_summary.get("surface_role", "") or "").strip(),
             "native_attention": bool(native_learning_signals.get("anomaly_flags", [])),
+        }
+
+    def _vision_runtime_profile(self, *, capabilities: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        capability_payload = capabilities if isinstance(capabilities, dict) else {}
+        vision_capabilities = (
+            capability_payload.get("vision", {})
+            if isinstance(capability_payload.get("vision", {}), dict)
+            else {}
+        )
+        provider = self._vision_runtime_provider
+        payload: Dict[str, Any] = {}
+        if callable(provider):
+            try:
+                raw_payload = provider()
+                payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+            except Exception as exc:  # noqa: BLE001
+                payload = {
+                    "status": "error",
+                    "runtime_status": "error",
+                    "message": str(exc),
+                }
+        runtime_status = str(payload.get("runtime_status", payload.get("status", "")) or "").strip().lower()
+        loaded_count = max(0, int(payload.get("loaded_count", 0) or 0))
+        ocr_ready = bool(
+            vision_capabilities.get("available", False)
+            or (
+                isinstance(vision_capabilities.get("capabilities", {}), dict)
+                and bool(vision_capabilities.get("capabilities", {}).get("ocr_targets", False))
+            )
+        )
+        local_runtime_ready = bool(
+            loaded_count > 0
+            or runtime_status in {"ready", "warm", "loaded", "success"}
+        )
+        provider_mode = "managed_runtime" if payload else ("ocr_tooling" if ocr_ready else "unavailable")
+        return {
+            "status": str(payload.get("status", "success" if (local_runtime_ready or ocr_ready) else "idle") or "idle"),
+            "runtime_status": runtime_status or ("ready" if local_runtime_ready else ("ocr_only" if ocr_ready else "idle")),
+            "available": bool(payload.get("available", local_runtime_ready or ocr_ready)),
+            "loaded_count": loaded_count,
+            "local_runtime_ready": local_runtime_ready,
+            "ocr_ready": ocr_ready,
+            "provider_mode": provider_mode,
+            "profile_id": str(payload.get("profile_id", "") or "").strip(),
+            "template_id": str(payload.get("template_id", "") or "").strip(),
+            "models": [str(item).strip() for item in payload.get("models", []) if str(item).strip()][:8]
+            if isinstance(payload.get("models", []), list)
+            else [],
+            "message": str(payload.get("message", "") or "").strip(),
+        }
+
+    def _surface_vision_learning_route(
+        self,
+        *,
+        capabilities: Dict[str, Any],
+        vision_runtime_profile: Dict[str, Any],
+        surface_summary: Dict[str, Any],
+        surface_intelligence: Dict[str, Any],
+        vision_fusion: Dict[str, Any],
+        native_learning_signals: Dict[str, Any],
+        safe_traversal_plan: Dict[str, Any],
+        elements: List[Dict[str, Any]],
+        observation: Dict[str, Any],
+        query: str,
+    ) -> Dict[str, Any]:
+        clean_query = str(query or "").strip()
+        ocr_ready = bool(vision_runtime_profile.get("ocr_ready", False))
+        local_runtime_ready = bool(vision_runtime_profile.get("local_runtime_ready", False))
+        model_mode = str(vision_fusion.get("model_mode", "") or "").strip().lower()
+        vision_confidence = max(0.0, min(float(vision_fusion.get("confidence", 0.0) or 0.0), 1.0))
+        custom_surface_suspected = bool(native_learning_signals.get("custom_surface_suspected", False))
+        reparenting_risk = max(0.0, min(float(native_learning_signals.get("reparenting_risk", 0.0) or 0.0), 1.0))
+        descendant_chain_depth = max(0, int(native_learning_signals.get("descendant_chain_depth", 0) or 0))
+        dialog_chain_depth = max(0, int(native_learning_signals.get("dialog_chain_depth", 0) or 0))
+        owner_chain_depth = max(0, int(native_learning_signals.get("owner_chain_depth", 0) or 0))
+        descendant_anchor_recovery_available = bool(
+            native_learning_signals.get("descendant_anchor_recovery_available", False)
+        )
+        descendant_anchor_recovery_pressure = max(
+            0.0,
+            min(float(native_learning_signals.get("descendant_anchor_recovery_pressure", 0.0) or 0.0), 1.0),
+        )
+        surface_role = str(surface_intelligence.get("surface_role", "") or surface_summary.get("surface_role", "") or "").strip().lower()
+        interaction_mode = str(surface_intelligence.get("interaction_mode", "") or "").strip().lower()
+        query_candidate_count = len(
+            [row for row in surface_summary.get("query_candidates", []) if isinstance(row, dict)]
+        ) if isinstance(surface_summary.get("query_candidates", []), list) else 0
+        element_count = len([row for row in elements if isinstance(row, dict)])
+        target_count = len(
+            [row for row in observation.get("targets", []) if isinstance(row, dict)]
+        ) if isinstance(observation.get("targets", []), list) else 0
+        candidate_count = max(0, int(safe_traversal_plan.get("candidate_count", 0) or 0))
+        recommended_paths = [
+            str(item).strip().lower()
+            for item in safe_traversal_plan.get("recommended_paths", [])
+            if str(item).strip()
+        ] if isinstance(safe_traversal_plan.get("recommended_paths", []), list) else []
+        weird_app_pressure = min(
+            1.0,
+            (0.42 if custom_surface_suspected else 0.0)
+            + min(0.34, reparenting_risk * 0.45)
+            + min(0.14, descendant_chain_depth * 0.04)
+            + min(0.12, dialog_chain_depth * 0.04)
+            + min(0.08, owner_chain_depth * 0.03)
+            + (0.08 if descendant_anchor_recovery_available else 0.0)
+            + (0.06 if candidate_count <= 1 and query_candidate_count <= 1 else 0.0),
+        )
+        api_assist_recommended = bool(
+            not local_runtime_ready
+            and ocr_ready
+            and (
+                weird_app_pressure >= 0.58
+                or (custom_surface_suspected and vision_confidence < 0.62)
+                or (element_count <= 1 and target_count > 0)
+            )
+        )
+        needs_native_stabilization = bool(
+            custom_surface_suspected
+            or reparenting_risk >= 0.45
+            or descendant_anchor_recovery_available
+            or descendant_anchor_recovery_pressure >= 0.5
+            or descendant_chain_depth >= 2
+            or dialog_chain_depth >= 2
+        )
+        native_recovery_mode = "none"
+        if needs_native_stabilization:
+            if (
+                reparenting_risk >= 0.58
+                or descendant_chain_depth >= 2
+                or descendant_anchor_recovery_available
+                or descendant_anchor_recovery_pressure >= 0.55
+            ):
+                native_recovery_mode = "focus_related_window_chain"
+            elif custom_surface_suspected or dialog_chain_depth >= 1:
+                native_recovery_mode = "focus_related_window"
+            else:
+                native_recovery_mode = "reacquire_window"
+        model_preference = "accessibility"
+        if local_runtime_ready:
+            model_preference = "local_runtime"
+        elif api_assist_recommended:
+            model_preference = "api_assist"
+        elif ocr_ready:
+            model_preference = "ocr_only"
+        preferred_probe_mode = "accessibility_first"
+        if needs_native_stabilization and model_preference == "local_runtime":
+            preferred_probe_mode = "local_vision_assist"
+        elif needs_native_stabilization and model_preference == "api_assist":
+            preferred_probe_mode = "api_vision_assist"
+        elif target_count > 0 and element_count <= 1:
+            preferred_probe_mode = "vision_first"
+        elif model_mode == "hybrid_vision_plus_accessibility" or (target_count > 0 and element_count > 0):
+            preferred_probe_mode = "hybrid_verify"
+        elif target_count > 0:
+            preferred_probe_mode = "vision_first"
+        preferred_wave_mode = "workflow_hotkey_first"
+        if recommended_paths and (
+            surface_role in {"settings", "file_manager", "browser", "navigator"}
+            or weird_app_pressure >= 0.45
+            or query_candidate_count <= 1
+        ):
+            preferred_wave_mode = "vision_guided_safe_traversal"
+        elif interaction_mode in {"mouse_first", "mixed"} and recommended_paths:
+            preferred_wave_mode = "surface_traversal_first"
+        preferred_target_mode = "auto"
+        if preferred_probe_mode in {"vision_first", "api_vision_assist"}:
+            preferred_target_mode = "ocr"
+        elif preferred_probe_mode == "local_vision_assist":
+            preferred_target_mode = "hybrid"
+        preferred_verification_mode = (
+            "native_stabilized_before_after"
+            if needs_native_stabilization
+            else "multi_signal_before_after"
+        )
+        reason_codes: List[str] = []
+        if local_runtime_ready:
+            reason_codes.append("local_vision_runtime_ready")
+        elif api_assist_recommended:
+            reason_codes.append("api_vision_assist_recommended")
+        elif ocr_ready:
+            reason_codes.append("ocr_targets_ready")
+        if custom_surface_suspected:
+            reason_codes.append("custom_surface_suspected")
+        if reparenting_risk >= 0.45:
+            reason_codes.append("reparenting_risk")
+        if descendant_anchor_recovery_available:
+            reason_codes.append("descendant_anchor_recovery_available")
+        if clean_query and query_candidate_count <= 1 and target_count > 0:
+            reason_codes.append("query_needs_visual_grounding")
+        if recommended_paths:
+            reason_codes.append("safe_traversal_paths_available")
+        route_profile = preferred_probe_mode
+        if needs_native_stabilization:
+            route_profile = f"{preferred_probe_mode}_native_stabilized"
+        return {
+            "status": "success",
+            "route_profile": route_profile,
+            "model_preference": model_preference,
+            "preferred_probe_mode": preferred_probe_mode,
+            "preferred_wave_mode": preferred_wave_mode,
+            "preferred_target_mode": preferred_target_mode,
+            "preferred_verification_mode": preferred_verification_mode,
+            "local_runtime_ready": local_runtime_ready,
+            "ocr_ready": ocr_ready,
+            "api_assist_recommended": api_assist_recommended,
+            "needs_native_stabilization": needs_native_stabilization,
+            "native_recovery_mode": native_recovery_mode,
+            "follow_descendant_chain": native_recovery_mode == "focus_related_window_chain",
+            "max_descendant_focus_steps": 4 if native_recovery_mode == "focus_related_window_chain" else (2 if native_recovery_mode == "focus_related_window" else 1),
+            "weird_app_pressure": round(weird_app_pressure, 4),
+            "vision_confidence": round(vision_confidence, 4),
+            "query_candidate_count": query_candidate_count,
+            "element_count": element_count,
+            "ocr_target_count": target_count,
+            "preferred_container_roles": recommended_paths[:6],
+            "reason_codes": self._dedupe_strings(reason_codes)[:10],
+            "runtime_profile": {
+                "provider_mode": str(vision_runtime_profile.get("provider_mode", "") or "").strip(),
+                "runtime_status": str(vision_runtime_profile.get("runtime_status", "") or "").strip(),
+                "loaded_count": max(0, int(vision_runtime_profile.get("loaded_count", 0) or 0)),
+                "profile_id": str(vision_runtime_profile.get("profile_id", "") or "").strip(),
+                "template_id": str(vision_runtime_profile.get("template_id", "") or "").strip(),
+            },
         }
 
     def _surface_traversal_container_role(self, row: Dict[str, Any]) -> str:

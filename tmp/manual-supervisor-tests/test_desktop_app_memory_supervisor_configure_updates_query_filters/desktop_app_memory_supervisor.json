@@ -1,0 +1,61 @@
+{
+  "values": {
+    "desktop_app_memory_supervisor": {
+      "config": {
+        "enabled": true,
+        "interval_s": 300.0,
+        "max_apps": 3,
+        "per_app_limit": 24,
+        "history_limit": 8,
+        "query": "settings",
+        "category": "system",
+        "ensure_app_launch": true,
+        "probe_controls": true,
+        "max_probe_controls": 5,
+        "follow_surface_waves": true,
+        "max_surface_waves": 4,
+        "allow_risky_probes": false,
+        "skip_known_apps": true,
+        "prefer_unknown_apps": true,
+        "continuous_learning": true,
+        "revisit_stale_apps": true,
+        "stale_after_hours": 96.0,
+        "revisit_failed_apps": true
+      },
+      "runtime": {
+        "inflight": false,
+        "last_tick_at": "",
+        "last_success_at": "",
+        "last_error_at": "",
+        "last_duration_ms": 0.0,
+        "last_result_status": "",
+        "last_result_message": "",
+        "last_trigger_source": "",
+        "last_trigger_at": "",
+        "last_config_source": "unit_test",
+        "next_due_at": "",
+        "next_due_at_ts": 0.0,
+        "run_count": 0,
+        "manual_trigger_count": 0,
+        "auto_trigger_count": 0,
+        "consecutive_error_count": 0,
+        "last_summary": {},
+        "updated_at": "2026-03-21T12:55:16.896510+00:00"
+      },
+      "history": [],
+      "campaigns": {}
+    }
+  },
+  "__localstore_meta__": {
+    "version": 1,
+    "entries": {
+      "desktop_app_memory_supervisor": {
+        "version": 1,
+        "updated_at": 1774097716.8965456,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774097716.8965497
+  }
+}

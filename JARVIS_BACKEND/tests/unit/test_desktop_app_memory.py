@@ -1116,3 +1116,292 @@ def test_desktop_app_memory_records_adaptive_wave_strategies(tmp_path: Path) -> 
     assert hint["known"] is True
     assert hint["wave_strategies"]
     assert hint["recommended_wave_actions"]
+
+
+def test_desktop_action_router_surface_snapshot_builds_api_assist_route_for_weird_app() -> None:
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 700, "title": "Custom Tool", "exe": r"C:\Apps\custom-tool.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 700, "title": "Custom Tool", "window_signature": "custom-tool-main"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "computer_observe": lambda payload: {
+                "status": "success",
+                "screen_hash": "weird-surface",
+                "text": "Custom Tool detached floating dialog",
+                "targets": (
+                    [
+                        {"text": "Sync", "confidence": 91.0},
+                        {"text": "Advanced", "confidence": 88.0},
+                        {"text": "Detached dialog", "confidence": 86.0},
+                    ]
+                    if bool(payload.get("include_targets", False))
+                    else []
+                ),
+            },
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {
+                        "element_id": "sync_btn",
+                        "name": "Sync",
+                        "control_type": "button",
+                        "automation_id": "SyncButton",
+                        "root_window_title": "Custom Tool",
+                    }
+                ],
+            },
+            "window_topology": lambda _payload: {
+                "status": "success",
+                "topology_signature": "custom-topology",
+                "descendant_chain_depth": 2,
+                "descendant_dialog_chain_depth": 2,
+                "active_owner_chain_depth": 1,
+                "same_root_owner_dialog_like_count": 2,
+                "direct_child_dialog_like_count": 1,
+                "owner_chain_visible": True,
+                "child_dialog_like_visible": True,
+            },
+            "reacquire_window": lambda _payload: {
+                "status": "success",
+                "candidate": {"title": "Custom Tool Child", "hwnd": 701, "owner_chain_depth": 1},
+                "descendant_chain_depth": 2,
+                "descendant_dialog_chain_depth": 2,
+                "same_root_owner_dialog_like_count": 2,
+                "direct_child_dialog_like_count": 1,
+                "descendant_anchor_recovery_available": True,
+                "descendant_anchor_recovery_match_score": 0.82,
+                "descendant_anchor_recovery_pressure": 0.77,
+                "preferred_descendant": {"title": "Advanced"},
+            },
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.surface_snapshot(
+        app_name="custom-tool",
+        query="diagnostics",
+        include_observation=True,
+        include_ocr_targets=True,
+        include_elements=True,
+        include_workflow_probes=False,
+    )
+
+    route = dict(payload.get("vision_learning_route", {}))
+    assert payload["status"] == "success"
+    assert route["api_assist_recommended"] is True
+    assert route["needs_native_stabilization"] is True
+    assert str(route.get("preferred_probe_mode", "")) == "api_vision_assist"
+    assert str(route.get("native_recovery_mode", "")) == "focus_related_window_chain"
+    assert float(route.get("weird_app_pressure", 0.0) or 0.0) >= 0.58
+
+
+def test_desktop_action_router_stabilizes_custom_probe_and_persists_route_memory() -> None:
+    state = {"surface": "main"}
+
+    def _current_title() -> str:
+        if state["surface"] == "unstable":
+            return "Custom Tool Floating Dialog"
+        if state["surface"] == "stabilized":
+            return "Custom Tool Advanced"
+        return "Custom Tool"
+
+    def _computer_observe(payload: Dict[str, Any]) -> Dict[str, Any]:
+        include_targets = bool(payload.get("include_targets", False))
+        if state["surface"] == "unstable":
+            return {
+                "status": "success",
+                "screen_hash": "hash-unstable",
+                "text": "Detached floating sync dialog",
+                "targets": (
+                    [
+                        {"text": "Detached", "confidence": 89.0},
+                        {"text": "Confirm", "confidence": 87.0},
+                        {"text": "Advanced", "confidence": 82.0},
+                    ]
+                    if include_targets
+                    else []
+                ),
+            }
+        if state["surface"] == "stabilized":
+            return {
+                "status": "success",
+                "screen_hash": "hash-stable",
+                "text": "Advanced sync details",
+                "targets": (
+                    [
+                        {"text": "Advanced", "confidence": 92.0},
+                        {"text": "Diagnostics", "confidence": 88.0},
+                    ]
+                    if include_targets
+                    else []
+                ),
+            }
+        return {
+            "status": "success",
+            "screen_hash": "hash-main",
+            "text": "Custom Tool main surface",
+            "targets": (
+                [
+                    {"text": "Sync", "confidence": 91.0},
+                    {"text": "Open", "confidence": 84.0},
+                ]
+                if include_targets
+                else []
+            ),
+        }
+
+    def _accessibility_rows() -> list[Dict[str, Any]]:
+        if state["surface"] == "unstable":
+            return []
+        if state["surface"] == "stabilized":
+            return [
+                {
+                    "element_id": "advanced_btn",
+                    "name": "Advanced",
+                    "control_type": "button",
+                    "automation_id": "AdvancedButton",
+                    "root_window_title": _current_title(),
+                }
+            ]
+        return [
+            {
+                "element_id": "sync_btn",
+                "name": "Sync",
+                "control_type": "button",
+                "automation_id": "SyncButton",
+                "root_window_title": _current_title(),
+            }
+        ]
+
+    def _window_topology(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if state["surface"] == "unstable":
+            return {
+                "status": "success",
+                "topology_signature": "custom-unstable",
+                "descendant_chain_depth": 2,
+                "descendant_dialog_chain_depth": 2,
+                "active_owner_chain_depth": 1,
+                "same_root_owner_dialog_like_count": 2,
+                "direct_child_dialog_like_count": 1,
+                "owner_chain_visible": True,
+                "child_dialog_like_visible": True,
+            }
+        return {
+            "status": "success",
+            "topology_signature": f"custom-{state['surface']}",
+            "descendant_chain_depth": 1 if state["surface"] == "stabilized" else 0,
+            "descendant_dialog_chain_depth": 0,
+            "active_owner_chain_depth": 0,
+            "same_root_owner_dialog_like_count": 0,
+            "direct_child_dialog_like_count": 0,
+            "owner_chain_visible": False,
+            "child_dialog_like_visible": False,
+        }
+
+    def _reacquire_window(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if state["surface"] == "unstable":
+            return {
+                "status": "success",
+                "candidate": {"title": "Custom Tool Floating Dialog", "hwnd": 702, "owner_chain_depth": 1},
+                "descendant_chain_depth": 2,
+                "descendant_dialog_chain_depth": 2,
+                "same_root_owner_dialog_like_count": 2,
+                "direct_child_dialog_like_count": 1,
+                "descendant_anchor_recovery_available": True,
+                "descendant_anchor_recovery_match_score": 0.85,
+                "descendant_anchor_recovery_pressure": 0.81,
+                "preferred_descendant": {"title": "Advanced"},
+            }
+        return {
+            "status": "success",
+            "candidate": {"title": _current_title(), "hwnd": 700, "owner_chain_depth": 0},
+            "descendant_chain_depth": 0,
+            "descendant_dialog_chain_depth": 0,
+            "same_root_owner_dialog_like_count": 0,
+            "direct_child_dialog_like_count": 0,
+            "descendant_anchor_recovery_available": False,
+            "descendant_anchor_recovery_match_score": 0.0,
+            "descendant_anchor_recovery_pressure": 0.0,
+            "preferred_descendant": {"title": "Advanced" if state["surface"] == "stabilized" else ""},
+        }
+
+    def _accessibility_invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if str(payload.get("element_id", "") or "").strip() == "sync_btn":
+            state["surface"] = "unstable"
+        return {"status": "success", "message": f"invoked {payload.get('element_id', payload.get('query', 'unknown'))}"}
+
+    def _focus_related_window(_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if state["surface"] == "unstable":
+            state["surface"] = "stabilized"
+        return {
+            "status": "success",
+            "focus_applied": True,
+            "window": {"title": _current_title(), "hwnd": 700 if state["surface"] == "stabilized" else 702},
+        }
+
+    router = DesktopActionRouter(
+        action_handlers={
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 700, "title": _current_title(), "exe": r"C:\Apps\custom-tool.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 700, "title": _current_title(), "window_signature": f"custom-{state['surface']}"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "open_app": lambda _payload: {"status": "success", "requested_app": "custom-tool", "launch_method": "system_path"},
+            "computer_observe": _computer_observe,
+            "accessibility_list_elements": lambda _payload: {"status": "success", "items": _accessibility_rows()},
+            "accessibility_invoke_element": _accessibility_invoke,
+            "computer_click_target": lambda payload: {"status": "success", "message": f"clicked {payload.get('query', 'unknown')}"},
+            "window_topology": _window_topology,
+            "reacquire_window": _reacquire_window,
+            "focus_related_window": _focus_related_window,
+            "focus_related_window_chain": _focus_related_window,
+            "focus_window": lambda payload: {"status": "success", "window": {"title": str(payload.get("title", "") or _current_title())}},
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        vision_runtime_provider=lambda: {
+            "status": "success",
+            "runtime_status": "ready",
+            "loaded_count": 2,
+            "available": True,
+            "profile_id": "vision-runtime-balanced",
+            "template_id": "local-vision",
+        },
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory(
+        app_name="custom-tool",
+        query="sync",
+        ensure_app_launch=True,
+        include_observation=True,
+        include_ocr_targets=True,
+        probe_controls=True,
+        max_probe_controls=1,
+        follow_surface_waves=False,
+    )
+
+    assert payload["status"] == "success"
+    assert int(payload["probe_report"]["stabilized_count"] or 0) == 1
+    assert "local vision runtime ready" in str(payload["message"]).lower()
+    tested_control = payload["memory_entry"]["tested_controls"][0]
+    assert bool(tested_control.get("native_stabilized", False)) is True
+    assert str(dict(tested_control.get("verification_summary", {})).get("verification_mode", "")) == "native_stabilized_before_after"
+    assert str(dict(tested_control.get("vision_learning_route", {})).get("native_recovery_mode", "")) == "focus_related_window_chain"
+    assert payload["memory_entry"]["vision_learning_route"]["local_runtime_ready"] is True
+    assert int(payload["memory_entry"]["native_stabilization_summary"]["stabilized_total"] or 0) >= 1
+    assert int(payload["app_memory"]["summary"]["native_stabilization_total"] or 0) >= 1

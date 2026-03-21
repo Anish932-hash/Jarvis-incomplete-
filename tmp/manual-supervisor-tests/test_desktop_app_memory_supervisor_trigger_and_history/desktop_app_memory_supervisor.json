@@ -1,0 +1,112 @@
+{
+  "values": {
+    "desktop_app_memory_supervisor": {
+      "config": {
+        "enabled": false,
+        "interval_s": 300.0,
+        "max_apps": 2,
+        "per_app_limit": 24,
+        "history_limit": 8,
+        "query": "",
+        "category": "",
+        "ensure_app_launch": true,
+        "probe_controls": true,
+        "max_probe_controls": 4,
+        "follow_surface_waves": true,
+        "max_surface_waves": 3,
+        "allow_risky_probes": false,
+        "skip_known_apps": true,
+        "prefer_unknown_apps": true,
+        "continuous_learning": true,
+        "revisit_stale_apps": true,
+        "stale_after_hours": 72.0,
+        "revisit_failed_apps": true
+      },
+      "runtime": {
+        "inflight": false,
+        "last_tick_at": "2026-03-21T12:55:16.892876+00:00",
+        "last_success_at": "2026-03-21T12:55:16.892876+00:00",
+        "last_error_at": "",
+        "last_duration_ms": 2.63,
+        "last_result_status": "success",
+        "last_result_message": "surveyed apps",
+        "last_trigger_source": "manual",
+        "last_trigger_at": "2026-03-21T12:55:16.890247+00:00",
+        "last_config_source": "",
+        "next_due_at": "2026-03-21T13:00:16.892876+00:00",
+        "next_due_at_ts": 1774098016.8928764,
+        "run_count": 1,
+        "manual_trigger_count": 1,
+        "auto_trigger_count": 0,
+        "consecutive_error_count": 0,
+        "last_summary": {
+          "surveyed_app_count": 2,
+          "success_count": 2,
+          "partial_count": 0,
+          "error_count": 0,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 4,
+          "learned_surface_count": 3,
+          "known_surface_count": 1
+        },
+        "updated_at": "2026-03-21T12:55:16.892969+00:00"
+      },
+      "history": [
+        {
+          "started_at": "2026-03-21T12:55:16.890247+00:00",
+          "completed_at": "2026-03-21T12:55:16.892876+00:00",
+          "duration_ms": 2.63,
+          "source": "manual",
+          "status": "success",
+          "message": "surveyed apps",
+          "surveyed_app_count": 2,
+          "success_count": 2,
+          "partial_count": 0,
+          "error_count": 0,
+          "query": "",
+          "category": "",
+          "app_names": [],
+          "max_apps": 2,
+          "ensure_app_launch": true,
+          "probe_controls": true,
+          "max_probe_controls": 4,
+          "follow_surface_waves": true,
+          "max_surface_waves": 3,
+          "allow_risky_probes": false,
+          "skip_known_apps": true,
+          "prefer_unknown_apps": true,
+          "continuous_learning": true,
+          "revisit_stale_apps": true,
+          "stale_after_hours": 72.0,
+          "revisit_failed_apps": true,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 4,
+          "learned_surface_count": 3,
+          "known_surface_count": 1,
+          "selection_strategy": "catalog_batch",
+          "stale_candidate_count": 0,
+          "attention_candidate_count": 0,
+          "failure_candidate_count": 0,
+          "unknown_candidate_count": 0,
+          "revisit_app_count": 0,
+          "selection_summary": {},
+          "failed_apps": [],
+          "skipped_apps": []
+        }
+      ],
+      "campaigns": {}
+    }
+  },
+  "__localstore_meta__": {
+    "version": 2,
+    "entries": {
+      "desktop_app_memory_supervisor": {
+        "version": 2,
+        "updated_at": 1774097716.8930151,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774097716.893024
+  }
+}

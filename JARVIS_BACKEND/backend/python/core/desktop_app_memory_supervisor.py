@@ -43,6 +43,10 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        continuous_learning: bool = True,
+        revisit_stale_apps: bool = True,
+        stale_after_hours: float = 72.0,
+        revisit_failed_apps: bool = True,
     ) -> None:
         self._store = LocalStore(state_path)
         self._lock = threading.RLock()
@@ -50,6 +54,7 @@ class DesktopAppMemorySupervisor:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._execute_callback: Optional[Callable[..., Dict[str, Any]]] = None
+        self._memory_snapshot_callback: Optional[Callable[..., Dict[str, Any]]] = None
         self._config = self._default_config(
             enabled=enabled,
             interval_s=interval_s,
@@ -66,15 +71,25 @@ class DesktopAppMemorySupervisor:
             allow_risky_probes=allow_risky_probes,
             skip_known_apps=skip_known_apps,
             prefer_unknown_apps=prefer_unknown_apps,
+            continuous_learning=continuous_learning,
+            revisit_stale_apps=revisit_stale_apps,
+            stale_after_hours=stale_after_hours,
+            revisit_failed_apps=revisit_failed_apps,
         )
         self._runtime = self._default_runtime()
         self._history: list[Dict[str, Any]] = []
         self._campaigns: Dict[str, Dict[str, Any]] = {}
         self._load()
 
-    def start(self, execute_callback: Callable[..., Dict[str, Any]]) -> None:
+    def start(
+        self,
+        execute_callback: Callable[..., Dict[str, Any]],
+        memory_snapshot_callback: Optional[Callable[..., Dict[str, Any]]] = None,
+    ) -> None:
         with self._lock:
             self._execute_callback = execute_callback
+            if memory_snapshot_callback is not None:
+                self._memory_snapshot_callback = memory_snapshot_callback
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
@@ -137,9 +152,18 @@ class DesktopAppMemorySupervisor:
             wave_attempt_total = 0
             learned_surface_total = 0
             known_surface_total = 0
+            reseed_total = 0
+            stale_reseed_total = 0
+            revisit_app_total = 0
+            stale_target_total = 0
+            attention_target_total = 0
+            failure_target_total = 0
+            unknown_target_total = 0
+            selection_strategy_counts: Dict[str, int] = {}
             for item in items:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 self._increment_count(source_counts, str(item.get("source", "") or "unknown"))
+                self._increment_count(selection_strategy_counts, str(item.get("selection_strategy", "") or "unclassified"))
                 surveyed_app_total += self._coerce_int(item.get("surveyed_app_count", 0), minimum=0, maximum=1_000_000, default=0)
                 success_total += self._coerce_int(item.get("success_count", 0), minimum=0, maximum=1_000_000, default=0)
                 partial_total += self._coerce_int(item.get("partial_count", 0), minimum=0, maximum=1_000_000, default=0)
@@ -148,6 +172,13 @@ class DesktopAppMemorySupervisor:
                 wave_attempt_total += self._coerce_int(item.get("wave_attempt_count", 0), minimum=0, maximum=1_000_000, default=0)
                 learned_surface_total += self._coerce_int(item.get("learned_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
                 known_surface_total += self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+                reseed_total += self._coerce_int(item.get("reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+                stale_reseed_total += self._coerce_int(item.get("stale_reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+                revisit_app_total += self._coerce_int(item.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+                stale_target_total += self._coerce_int(item.get("stale_candidate_count", 0), minimum=0, maximum=1_000_000, default=0)
+                attention_target_total += self._coerce_int(item.get("attention_candidate_count", 0), minimum=0, maximum=1_000_000, default=0)
+                failure_target_total += self._coerce_int(item.get("failure_candidate_count", 0), minimum=0, maximum=1_000_000, default=0)
+                unknown_target_total += self._coerce_int(item.get("unknown_candidate_count", 0), minimum=0, maximum=1_000_000, default=0)
             return {
                 "status": "success",
                 "count": len(limited),
@@ -170,6 +201,14 @@ class DesktopAppMemorySupervisor:
                     "wave_attempt_total": wave_attempt_total,
                     "learned_surface_total": learned_surface_total,
                     "known_surface_total": known_surface_total,
+                    "reseed_total": reseed_total,
+                    "stale_reseed_total": stale_reseed_total,
+                    "revisit_app_total": revisit_app_total,
+                    "stale_candidate_total": stale_target_total,
+                    "attention_candidate_total": attention_target_total,
+                    "failure_candidate_total": failure_target_total,
+                    "unknown_candidate_total": unknown_target_total,
+                    "selection_strategy_counts": self._sorted_count_map(selection_strategy_counts),
                 },
             }
 
@@ -241,6 +280,13 @@ class DesktopAppMemorySupervisor:
             wave_attempt_total = 0
             learned_surface_total = 0
             known_surface_total = 0
+            stale_target_total = 0
+            attention_target_total = 0
+            failure_target_total = 0
+            unknown_target_total = 0
+            reseed_total = 0
+            stale_reseed_total = 0
+            revisit_app_total = 0
             for item in rows:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 pending_total += self._coerce_int(item.get("pending_app_count", 0), minimum=0, maximum=1_000_000, default=0)
@@ -250,6 +296,13 @@ class DesktopAppMemorySupervisor:
                 wave_attempt_total += self._coerce_int(item.get("wave_attempt_count", 0), minimum=0, maximum=1_000_000, default=0)
                 learned_surface_total += self._coerce_int(item.get("learned_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
                 known_surface_total += self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
+                stale_target_total += self._coerce_int(item.get("stale_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                attention_target_total += self._coerce_int(item.get("attention_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                failure_target_total += self._coerce_int(item.get("failure_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                unknown_target_total += self._coerce_int(item.get("unknown_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                reseed_total += self._coerce_int(item.get("reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+                stale_reseed_total += self._coerce_int(item.get("stale_reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+                revisit_app_total += self._coerce_int(item.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
             return {
                 "status": "success",
                 "count": len(limited),
@@ -269,6 +322,13 @@ class DesktopAppMemorySupervisor:
                     "wave_attempt_total": wave_attempt_total,
                     "learned_surface_total": learned_surface_total,
                     "known_surface_total": known_surface_total,
+                    "stale_target_total": stale_target_total,
+                    "attention_target_total": attention_target_total,
+                    "failure_target_total": failure_target_total,
+                    "unknown_target_total": unknown_target_total,
+                    "reseed_total": reseed_total,
+                    "stale_reseed_total": stale_reseed_total,
+                    "revisit_app_total": revisit_app_total,
                 },
             }
 
@@ -289,12 +349,35 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: bool = False,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        continuous_learning: bool = True,
+        revisit_stale_apps: bool = True,
+        stale_after_hours: float = 72.0,
+        revisit_failed_apps: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_apps = self._dedupe_strings([str(item).strip() for item in app_names if str(item).strip()])
         if not clean_apps:
             return {"status": "error", "message": "at least one app is required to create a learning campaign"}
         with self._lock:
+            stale_after_hours_value = self._coerce_float(
+                stale_after_hours,
+                minimum=4.0,
+                maximum=720.0,
+                default=72.0,
+            )
+            target_summary = self._classify_target_apps_locked(
+                clean_apps,
+                category=str(category or "").strip(),
+                stale_after_hours=stale_after_hours_value,
+                prefer_unknown_apps=prefer_unknown_apps,
+            )
+            ordered_target_apps = (
+                list(target_summary.get("ordered_apps", []))
+                if isinstance(target_summary.get("ordered_apps", []), list)
+                else []
+            )
+            if not ordered_target_apps:
+                ordered_target_apps = clean_apps[:]
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -305,8 +388,8 @@ class DesktopAppMemorySupervisor:
                 "updated_at": now,
                 "query": str(query or "").strip(),
                 "category": str(category or "").strip(),
-                "target_apps": clean_apps,
-                "pending_apps": clean_apps[:],
+                "target_apps": ordered_target_apps,
+                "pending_apps": ordered_target_apps[:],
                 "completed_apps": [],
                 "partial_apps": [],
                 "failed_apps": [],
@@ -321,6 +404,22 @@ class DesktopAppMemorySupervisor:
                 "allow_risky_probes": bool(allow_risky_probes),
                 "skip_known_apps": bool(skip_known_apps),
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
+                "continuous_learning": bool(continuous_learning),
+                "revisit_stale_apps": bool(revisit_stale_apps),
+                "stale_after_hours": stale_after_hours_value,
+                "revisit_failed_apps": bool(revisit_failed_apps),
+                "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
+                "unknown_target_count": self._coerce_int(dict(target_summary.get("summary", {})).get("unknown_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "stale_target_count": self._coerce_int(dict(target_summary.get("summary", {})).get("stale_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "attention_target_count": self._coerce_int(dict(target_summary.get("summary", {})).get("attention_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "failure_target_count": self._coerce_int(dict(target_summary.get("summary", {})).get("failure_memory_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "healthy_target_count": self._coerce_int(dict(target_summary.get("summary", {})).get("healthy_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "reseed_count": 0,
+                "stale_reseed_count": 0,
+                "revisit_app_count": 0,
+                "cycle_generation": 0,
+                "latest_reseed_reason": "",
+                "latest_reseed_summary": {},
                 "run_count": 0,
                 "latest_cycle_status": "",
                 "latest_cycle_message": "",
@@ -353,6 +452,10 @@ class DesktopAppMemorySupervisor:
             if not isinstance(campaign, dict):
                 return {"status": "error", "message": "desktop app memory campaign not found"}
             pending_apps = [str(item).strip() for item in campaign.get("pending_apps", []) if str(item).strip()]
+            reseed_summary: Dict[str, Any] = {}
+            if not pending_apps:
+                reseed_summary = self._reseed_campaign_pending_locked(campaign)
+                pending_apps = [str(item).strip() for item in campaign.get("pending_apps", []) if str(item).strip()]
             if not pending_apps:
                 campaign["status"] = "completed" if not campaign.get("failed_apps") and not campaign.get("partial_apps") else "attention"
                 campaign["updated_at"] = _utc_now_iso()
@@ -362,6 +465,7 @@ class DesktopAppMemorySupervisor:
                     "status": "success",
                     "message": "desktop app memory campaign has no pending apps left",
                     "campaign": copy.deepcopy(campaign),
+                    "reseed": copy.deepcopy(reseed_summary),
                     "campaigns": self.campaigns(limit=8),
                 }
 
@@ -372,6 +476,7 @@ class DesktopAppMemorySupervisor:
                 default=4,
             )
             target_batch = pending_apps[:batch_size]
+            force_known_revisit = bool(reseed_summary.get("force_known_revisit", False))
             result = callback(
                 app_names=target_batch,
                 max_apps=len(target_batch),
@@ -384,7 +489,7 @@ class DesktopAppMemorySupervisor:
                 follow_surface_waves=bool(campaign.get("follow_surface_waves", True)),
                 max_surface_waves=self._coerce_int(campaign.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
                 allow_risky_probes=bool(campaign.get("allow_risky_probes", False)),
-                skip_known_apps=bool(campaign.get("skip_known_apps", True)),
+                skip_known_apps=bool(campaign.get("skip_known_apps", True)) and not force_known_revisit,
                 prefer_unknown_apps=bool(campaign.get("prefer_unknown_apps", True)),
                 source=str(source or "manual").strip().lower() or "manual",
             )
@@ -421,6 +526,26 @@ class DesktopAppMemorySupervisor:
                     partial_apps.append({"app_name": normalized, "status": status, "message": str(item.get("message", "") or "").strip()})
                 else:
                     failed_apps.append({"app_name": normalized, "status": status or "error", "message": str(item.get("message", "") or "").strip()})
+            resolved_lookup = {
+                str(item).strip().lower()
+                for item in completed_apps
+                if str(item).strip()
+            }
+            resolved_lookup.update(
+                str(item.get("app_name", "") or "").strip().lower()
+                for item in skipped_apps
+                if isinstance(item, dict) and str(item.get("app_name", "") or "").strip()
+            )
+            partial_apps = [
+                item
+                for item in partial_apps
+                if str(item.get("app_name", "") or "").strip().lower() not in resolved_lookup
+            ]
+            failed_apps = [
+                item
+                for item in failed_apps
+                if str(item.get("app_name", "") or "").strip().lower() not in resolved_lookup
+            ]
             cycle_record = {
                 "executed_at": _utc_now_iso(),
                 "source": str(source or "manual").strip().lower() or "manual",
@@ -435,12 +560,32 @@ class DesktopAppMemorySupervisor:
                 "wave_attempt_count": self._coerce_int(dict(result.get("wave_summary", {})).get("wave_attempt_total", 0), minimum=0, maximum=1_000_000, default=0),
                 "learned_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("learned_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
                 "known_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("known_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
+                "selection_strategy": str(
+                    reseed_summary.get("selection_strategy", "campaign_pending")
+                    if isinstance(reseed_summary, dict) and reseed_summary
+                    else "campaign_pending"
+                ),
+                "reseed_count": 1 if reseed_summary else 0,
+                "stale_reseed_count": self._coerce_int(reseed_summary.get("stale_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "revisit_app_count": self._coerce_int(reseed_summary.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "stale_candidate_count": self._coerce_int(reseed_summary.get("stale_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "attention_candidate_count": self._coerce_int(reseed_summary.get("attention_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "failure_candidate_count": self._coerce_int(reseed_summary.get("failure_memory_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "unknown_candidate_count": self._coerce_int(reseed_summary.get("unknown_count", 0), minimum=0, maximum=1_000_000, default=0),
+                "reseed_summary": copy.deepcopy(reseed_summary),
             }
             campaign["completed_apps"] = self._dedupe_strings(completed_apps)
             campaign["partial_apps"] = partial_apps[-32:]
             campaign["failed_apps"] = failed_apps[-32:]
             campaign["skipped_apps"] = skipped_apps[-32:]
             campaign["pending_apps"] = next_pending
+            campaign["reseed_count"] = self._coerce_int(campaign.get("reseed_count", 0), minimum=0, maximum=1_000_000, default=0) + (1 if reseed_summary else 0)
+            campaign["stale_reseed_count"] = self._coerce_int(campaign.get("stale_reseed_count", 0), minimum=0, maximum=1_000_000, default=0) + self._coerce_int(reseed_summary.get("stale_count", 0), minimum=0, maximum=1_000_000, default=0)
+            campaign["revisit_app_count"] = self._coerce_int(campaign.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0) + self._coerce_int(reseed_summary.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+            campaign["cycle_generation"] = self._coerce_int(campaign.get("cycle_generation", 0), minimum=0, maximum=1_000_000, default=0) + (1 if reseed_summary else 0)
+            if reseed_summary:
+                campaign["latest_reseed_reason"] = str(reseed_summary.get("selection_strategy", "") or "").strip()
+                campaign["latest_reseed_summary"] = copy.deepcopy(reseed_summary)
             campaign["run_count"] = self._coerce_int(campaign.get("run_count", 0), minimum=0, maximum=1_000_000, default=0) + 1
             campaign["latest_cycle_status"] = cycle_record["status"]
             campaign["latest_cycle_message"] = cycle_record["message"]
@@ -463,6 +608,7 @@ class DesktopAppMemorySupervisor:
                 "status": str(result.get("status", "") or "success").strip().lower() or "success",
                 "message": cycle_record["message"] or "desktop app memory campaign cycle completed",
                 "result": result,
+                "reseed": copy.deepcopy(reseed_summary),
                 "campaign": copy.deepcopy(campaign),
                 "campaigns": self.campaigns(limit=8),
             }
@@ -485,6 +631,10 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
+        continuous_learning: Optional[bool] = None,
+        revisit_stale_apps: Optional[bool] = None,
+        stale_after_hours: Optional[float] = None,
+        revisit_failed_apps: Optional[bool] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -518,6 +668,19 @@ class DesktopAppMemorySupervisor:
                 self._config["skip_known_apps"] = bool(skip_known_apps)
             if prefer_unknown_apps is not None:
                 self._config["prefer_unknown_apps"] = bool(prefer_unknown_apps)
+            if continuous_learning is not None:
+                self._config["continuous_learning"] = bool(continuous_learning)
+            if revisit_stale_apps is not None:
+                self._config["revisit_stale_apps"] = bool(revisit_stale_apps)
+            if stale_after_hours is not None:
+                self._config["stale_after_hours"] = self._coerce_float(
+                    stale_after_hours,
+                    minimum=4.0,
+                    maximum=720.0,
+                    default=72.0,
+                )
+            if revisit_failed_apps is not None:
+                self._config["revisit_failed_apps"] = bool(revisit_failed_apps)
             self._runtime["last_config_source"] = str(source or "manual").strip().lower() or "manual"
             self._runtime["updated_at"] = _utc_now_iso()
             self._persist_locked()
@@ -542,6 +705,10 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
+        continuous_learning: Optional[bool] = None,
+        revisit_stale_apps: Optional[bool] = None,
+        stale_after_hours: Optional[float] = None,
+        revisit_failed_apps: Optional[bool] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -561,6 +728,10 @@ class DesktopAppMemorySupervisor:
                 allow_risky_probes=allow_risky_probes,
                 skip_known_apps=skip_known_apps,
                 prefer_unknown_apps=prefer_unknown_apps,
+                continuous_learning=continuous_learning,
+                revisit_stale_apps=revisit_stale_apps,
+                stale_after_hours=stale_after_hours,
+                revisit_failed_apps=revisit_failed_apps,
             )
         self._wakeup.set()
         return payload
@@ -599,6 +770,10 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: Optional[bool] = None,
         skip_known_apps: Optional[bool] = None,
         prefer_unknown_apps: Optional[bool] = None,
+        continuous_learning: Optional[bool] = None,
+        revisit_stale_apps: Optional[bool] = None,
+        stale_after_hours: Optional[float] = None,
+        revisit_failed_apps: Optional[bool] = None,
     ) -> Dict[str, Any]:
         callback = self._execute_callback
         if callback is None:
@@ -667,6 +842,44 @@ class DesktopAppMemorySupervisor:
             if prefer_unknown_apps is None
             else prefer_unknown_apps
         )
+        continuous_learning_value = bool(
+            self._config.get("continuous_learning", True)
+            if continuous_learning is None
+            else continuous_learning
+        )
+        revisit_stale_apps_value = bool(
+            self._config.get("revisit_stale_apps", True)
+            if revisit_stale_apps is None
+            else revisit_stale_apps
+        )
+        stale_after_hours_value = self._coerce_float(
+            stale_after_hours if stale_after_hours is not None else self._config.get("stale_after_hours", 72.0),
+            minimum=4.0,
+            maximum=720.0,
+            default=72.0,
+        )
+        revisit_failed_apps_value = bool(
+            self._config.get("revisit_failed_apps", True)
+            if revisit_failed_apps is None
+            else revisit_failed_apps
+        )
+
+        selection_summary: Dict[str, Any] = {}
+        if not app_names_value and continuous_learning_value:
+            selection_summary = self._select_supervisor_targets_locked(
+                max_apps=max_apps_value,
+                query=query_value,
+                category=category_value,
+                revisit_stale_apps=revisit_stale_apps_value,
+                stale_after_hours=stale_after_hours_value,
+                revisit_failed_apps=revisit_failed_apps_value,
+            )
+            selected_apps = selection_summary.get("selected_apps", []) if isinstance(selection_summary, dict) else []
+            if isinstance(selected_apps, list) and selected_apps:
+                app_names_value = self._dedupe_strings(
+                    [str(item).strip() for item in selected_apps if str(item).strip()]
+                )
+                skip_known_apps_value = False
 
         started_at = time.time()
         started_iso = _iso_from_ts(started_at)
@@ -722,10 +935,24 @@ class DesktopAppMemorySupervisor:
             "allow_risky_probes": allow_risky_probes_value,
             "skip_known_apps": skip_known_apps_value,
             "prefer_unknown_apps": prefer_unknown_apps_value,
+            "continuous_learning": continuous_learning_value,
+            "revisit_stale_apps": revisit_stale_apps_value,
+            "stale_after_hours": round(stale_after_hours_value, 4),
+            "revisit_failed_apps": revisit_failed_apps_value,
             "skipped_app_count": self._coerce_int(result.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0),
             "wave_attempt_count": self._coerce_int(dict(result.get("wave_summary", {})).get("wave_attempt_total", 0), minimum=0, maximum=1_000_000, default=0),
             "learned_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("learned_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
             "known_surface_count": self._coerce_int(dict(result.get("wave_summary", {})).get("known_surface_total", 0), minimum=0, maximum=1_000_000, default=0),
+            "selection_strategy": str(
+                selection_summary.get("selection_strategy", "explicit_targets" if app_names_value else "catalog_batch")
+                or "catalog_batch"
+            ),
+            "stale_candidate_count": self._coerce_int(selection_summary.get("stale_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "attention_candidate_count": self._coerce_int(selection_summary.get("attention_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "failure_candidate_count": self._coerce_int(selection_summary.get("failure_memory_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "unknown_candidate_count": self._coerce_int(selection_summary.get("unknown_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "revisit_app_count": self._coerce_int(selection_summary.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0),
+            "selection_summary": copy.deepcopy(selection_summary),
             "failed_apps": [
                 dict(item)
                 for item in result.get("failed_apps", [])
@@ -801,6 +1028,10 @@ class DesktopAppMemorySupervisor:
             "allow_risky_probes": bool(self._config.get("allow_risky_probes", False)),
             "skip_known_apps": bool(self._config.get("skip_known_apps", True)),
             "prefer_unknown_apps": bool(self._config.get("prefer_unknown_apps", True)),
+            "continuous_learning": bool(self._config.get("continuous_learning", True)),
+            "revisit_stale_apps": bool(self._config.get("revisit_stale_apps", True)),
+            "stale_after_hours": self._coerce_float(self._config.get("stale_after_hours", 72.0), minimum=4.0, maximum=720.0, default=72.0),
+            "revisit_failed_apps": bool(self._config.get("revisit_failed_apps", True)),
             "last_tick_at": str(self._runtime.get("last_tick_at", "") or ""),
             "last_success_at": str(self._runtime.get("last_success_at", "") or ""),
             "last_error_at": str(self._runtime.get("last_error_at", "") or ""),
@@ -857,6 +1088,10 @@ class DesktopAppMemorySupervisor:
             "allow_risky_probes": bool(config.get("allow_risky_probes", self._config["allow_risky_probes"])),
             "skip_known_apps": bool(config.get("skip_known_apps", self._config["skip_known_apps"])),
             "prefer_unknown_apps": bool(config.get("prefer_unknown_apps", self._config["prefer_unknown_apps"])),
+            "continuous_learning": bool(config.get("continuous_learning", self._config["continuous_learning"])),
+            "revisit_stale_apps": bool(config.get("revisit_stale_apps", self._config["revisit_stale_apps"])),
+            "stale_after_hours": self._coerce_float(config.get("stale_after_hours", self._config["stale_after_hours"]), minimum=4.0, maximum=720.0, default=72.0),
+            "revisit_failed_apps": bool(config.get("revisit_failed_apps", self._config["revisit_failed_apps"])),
         })
         self._runtime.update({
             "last_tick_at": str(runtime.get("last_tick_at", "") or ""),
@@ -904,6 +1139,10 @@ class DesktopAppMemorySupervisor:
         allow_risky_probes: bool,
         skip_known_apps: bool,
         prefer_unknown_apps: bool,
+        continuous_learning: bool,
+        revisit_stale_apps: bool,
+        stale_after_hours: float,
+        revisit_failed_apps: bool,
     ) -> Dict[str, Any]:
         return {
             "enabled": bool(enabled),
@@ -921,6 +1160,10 @@ class DesktopAppMemorySupervisor:
             "allow_risky_probes": bool(allow_risky_probes),
             "skip_known_apps": bool(skip_known_apps),
             "prefer_unknown_apps": bool(prefer_unknown_apps),
+            "continuous_learning": bool(continuous_learning),
+            "revisit_stale_apps": bool(revisit_stale_apps),
+            "stale_after_hours": float(stale_after_hours),
+            "revisit_failed_apps": bool(revisit_failed_apps),
         }
 
     @staticmethod
@@ -994,6 +1237,25 @@ class DesktopAppMemorySupervisor:
             self._coerce_int(item.get("known_surface_count", 0), minimum=0, maximum=1_000_000, default=0)
             for item in history_items
         )
+        campaign["reseed_count"] = self._coerce_int(campaign.get("reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["stale_reseed_count"] = self._coerce_int(campaign.get("stale_reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["revisit_app_count"] = self._coerce_int(campaign.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["unknown_target_count"] = self._coerce_int(campaign.get("unknown_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["stale_target_count"] = self._coerce_int(campaign.get("stale_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["attention_target_count"] = self._coerce_int(campaign.get("attention_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["failure_target_count"] = self._coerce_int(campaign.get("failure_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["healthy_target_count"] = self._coerce_int(campaign.get("healthy_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["cycle_generation"] = self._coerce_int(campaign.get("cycle_generation", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["target_selection_summary"] = (
+            dict(campaign.get("target_selection_summary", {}))
+            if isinstance(campaign.get("target_selection_summary", {}), dict)
+            else {}
+        )
+        campaign["latest_reseed_summary"] = (
+            dict(campaign.get("latest_reseed_summary", {}))
+            if isinstance(campaign.get("latest_reseed_summary", {}), dict)
+            else {}
+        )
 
     @staticmethod
     def _increment_count(mapping: Dict[str, int], key: str) -> None:
@@ -1001,6 +1263,329 @@ class DesktopAppMemorySupervisor:
         if not clean:
             return
         mapping[clean] = int(mapping.get(clean, 0)) + 1
+
+    def _reseed_campaign_pending_locked(self, campaign: Dict[str, Any]) -> Dict[str, Any]:
+        if not bool(campaign.get("continuous_learning", True)):
+            return {}
+        target_apps = [str(item).strip() for item in campaign.get("target_apps", []) if str(item).strip()]
+        if not target_apps:
+            return {}
+        stale_after_hours = self._coerce_float(
+            campaign.get("stale_after_hours", self._config.get("stale_after_hours", 72.0)),
+            minimum=4.0,
+            maximum=720.0,
+            default=72.0,
+        )
+        target_summary = self._classify_target_apps_locked(
+            target_apps,
+            category=str(campaign.get("category", "") or "").strip(),
+            stale_after_hours=stale_after_hours,
+            prefer_unknown_apps=bool(campaign.get("prefer_unknown_apps", True)),
+        )
+        completed_lookup = {
+            str(item).strip().lower()
+            for item in campaign.get("completed_apps", [])
+            if str(item).strip()
+        }
+        reasons: Dict[str, str] = {}
+        ordered: list[str] = []
+
+        def _enqueue(values: list[str], reason: str) -> None:
+            for raw in values:
+                clean = str(raw or "").strip()
+                lowered = clean.lower()
+                if not clean or lowered in reasons:
+                    continue
+                reasons[lowered] = reason
+                ordered.append(clean)
+
+        if bool(campaign.get("revisit_failed_apps", True)):
+            _enqueue(self._campaign_retry_candidates(campaign.get("failed_apps", []), allow_healthy_retry=True), "retry_failed")
+            _enqueue(self._campaign_retry_candidates(campaign.get("partial_apps", []), allow_healthy_retry=True), "retry_partial")
+            _enqueue(self._campaign_retry_candidates(campaign.get("skipped_apps", []), allow_healthy_retry=False), "retry_skipped")
+
+        unknown_candidates = [
+            str(item).strip()
+            for item in target_summary.get("unknown_apps", [])
+            if str(item).strip() and str(item).strip().lower() not in completed_lookup
+        ] if isinstance(target_summary.get("unknown_apps", []), list) else []
+        _enqueue(unknown_candidates, "unknown")
+        if bool(campaign.get("revisit_stale_apps", True)):
+            _enqueue(
+                [str(item).strip() for item in target_summary.get("stale_apps", []) if str(item).strip()]
+                if isinstance(target_summary.get("stale_apps", []), list)
+                else [],
+                "stale",
+            )
+        _enqueue(
+            [str(item).strip() for item in target_summary.get("attention_apps", []) if str(item).strip()]
+            if isinstance(target_summary.get("attention_apps", []), list)
+            else [],
+            "attention",
+        )
+        _enqueue(
+            [str(item).strip() for item in target_summary.get("failure_memory_apps", []) if str(item).strip()]
+            if isinstance(target_summary.get("failure_memory_apps", []), list)
+            else [],
+            "failure_memory",
+        )
+        if not ordered:
+            return {}
+        reason_counts: Dict[str, int] = {}
+        for value in reasons.values():
+            reason_counts[value] = int(reason_counts.get(value, 0) or 0) + 1
+        known_lookup = {
+            str(item).strip().lower()
+            for item in target_summary.get("known_apps", [])
+            if str(item).strip()
+        } if isinstance(target_summary.get("known_apps", []), list) else set()
+        campaign["pending_apps"] = ordered
+        summary = {
+            "selection_strategy": "campaign_reseed",
+            "ordered_apps": ordered[:],
+            "reason_counts": reason_counts,
+            "unknown_count": len(unknown_candidates),
+            "stale_count": int(reason_counts.get("stale", 0) or 0),
+            "attention_count": int(reason_counts.get("attention", 0) or 0),
+            "failure_memory_count": int(reason_counts.get("failure_memory", 0) or 0),
+            "retry_failed_count": int(reason_counts.get("retry_failed", 0) or 0),
+            "retry_partial_count": int(reason_counts.get("retry_partial", 0) or 0),
+            "retry_skipped_count": int(reason_counts.get("retry_skipped", 0) or 0),
+            "revisit_app_count": sum(1 for item in ordered if str(item).strip().lower() in known_lookup),
+            "force_known_revisit": any(reason != "unknown" for reason in reasons.values()),
+        }
+        campaign["latest_reseed_reason"] = "campaign_reseed"
+        campaign["latest_reseed_summary"] = copy.deepcopy(summary)
+        return summary
+
+    def _campaign_retry_candidates(self, raw_items: Any, *, allow_healthy_retry: bool) -> list[str]:
+        if not isinstance(raw_items, list):
+            return []
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            app_name = str(item.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            reason = str(item.get("reason", item.get("message", "")) or "").strip().lower()
+            if (not allow_healthy_retry) and ("healthy" in reason or "known" in reason or "memory_reuse" in reason):
+                continue
+            lowered = app_name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            ordered.append(app_name)
+        return ordered
+
+    def _select_supervisor_targets_locked(
+        self,
+        *,
+        max_apps: int,
+        query: str,
+        category: str,
+        revisit_stale_apps: bool,
+        stale_after_hours: float,
+        revisit_failed_apps: bool,
+    ) -> Dict[str, Any]:
+        rows = self._memory_snapshot_rows_locked(limit=max(64, min(max_apps * 24, 512)), category=category)
+        candidate_names = self._memory_candidate_app_names(rows, query=query, category=category)
+        if not candidate_names:
+            return {}
+        target_summary = self._classify_target_apps_locked(
+            candidate_names,
+            category=category,
+            stale_after_hours=stale_after_hours,
+            prefer_unknown_apps=True,
+        )
+        candidates: list[str] = []
+        if revisit_stale_apps:
+            candidates.extend(
+                [str(item).strip() for item in target_summary.get("stale_apps", []) if str(item).strip()]
+                if isinstance(target_summary.get("stale_apps", []), list)
+                else []
+            )
+        candidates.extend(
+            [str(item).strip() for item in target_summary.get("attention_apps", []) if str(item).strip()]
+            if isinstance(target_summary.get("attention_apps", []), list)
+            else []
+        )
+        if revisit_failed_apps:
+            candidates.extend(
+                [str(item).strip() for item in target_summary.get("failure_memory_apps", []) if str(item).strip()]
+                if isinstance(target_summary.get("failure_memory_apps", []), list)
+                else []
+            )
+        candidates = self._dedupe_strings(candidates)
+        if not candidates:
+            return {}
+        selected = candidates[:max_apps]
+        known_lookup = {
+            str(item).strip().lower()
+            for item in target_summary.get("known_apps", [])
+            if str(item).strip()
+        } if isinstance(target_summary.get("known_apps", []), list) else set()
+        return {
+            "selection_strategy": "stale_memory_revisit",
+            "selected_apps": selected,
+            "ordered_apps": candidates,
+            "stale_count": len(target_summary.get("stale_apps", [])) if isinstance(target_summary.get("stale_apps", []), list) else 0,
+            "attention_count": len(target_summary.get("attention_apps", [])) if isinstance(target_summary.get("attention_apps", []), list) else 0,
+            "failure_memory_count": len(target_summary.get("failure_memory_apps", [])) if isinstance(target_summary.get("failure_memory_apps", []), list) else 0,
+            "unknown_count": len(target_summary.get("unknown_apps", [])) if isinstance(target_summary.get("unknown_apps", []), list) else 0,
+            "revisit_app_count": sum(1 for item in selected if str(item).strip().lower() in known_lookup),
+        }
+
+    def _memory_snapshot_rows_locked(self, *, limit: int, category: str = "") -> list[Dict[str, Any]]:
+        callback = self._memory_snapshot_callback
+        if callback is None:
+            return []
+        try:
+            payload = callback(limit=limit, category=category)
+        except Exception:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        return [
+            dict(item)
+            for item in payload.get("items", [])
+            if isinstance(payload.get("items", []), list) and isinstance(item, dict)
+        ]
+
+    def _memory_candidate_app_names(self, rows: list[Dict[str, Any]], *, query: str, category: str) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        clean_query = self._normalize_name(query)
+        clean_category = self._normalize_name(category)
+        for row in rows:
+            app_name = str(
+                row.get("app_name", "")
+                or row.get("profile_name", "")
+                or row.get("profile_id", "")
+                or ""
+            ).strip()
+            if not app_name:
+                continue
+            if clean_category:
+                row_category = self._normalize_name(row.get("category", ""))
+                if row_category and clean_category not in row_category:
+                    continue
+            if clean_query:
+                haystack = " ".join(
+                    part
+                    for part in [
+                        self._normalize_name(app_name),
+                        self._normalize_name(row.get("profile_name", "")),
+                        self._normalize_name(row.get("profile_id", "")),
+                        self._normalize_name(row.get("window_title", "")),
+                    ]
+                    if part
+                )
+                if clean_query not in haystack:
+                    continue
+            lowered = app_name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            ordered.append(app_name)
+        return ordered
+
+    def _classify_target_apps_locked(
+        self,
+        app_names: list[str],
+        *,
+        category: str,
+        stale_after_hours: float,
+        prefer_unknown_apps: bool,
+    ) -> Dict[str, Any]:
+        rows = self._memory_snapshot_rows_locked(limit=max(128, min(len(app_names) * 12, 640)), category=category)
+        known_apps: list[str] = []
+        unknown_apps: list[str] = []
+        stale_apps: list[str] = []
+        attention_apps: list[str] = []
+        failure_memory_apps: list[str] = []
+        healthy_apps: list[str] = []
+        scored: list[tuple[float, str]] = []
+        stale_threshold = max(4.0, float(stale_after_hours or 72.0))
+        for app_name in self._dedupe_strings(app_names):
+            matched_rows = [row for row in rows if self._app_name_matches_row(app_name, row)]
+            known = bool(matched_rows)
+            stale = False
+            attention = False
+            healthy = False
+            failure_count = 0
+            age_hours = 0.0
+            for row in matched_rows:
+                staleness = row.get("staleness", {}) if isinstance(row.get("staleness", {}), dict) else {}
+                age_hours = max(age_hours, float(staleness.get("age_hours", 0.0) or 0.0))
+                stale = stale or bool(staleness.get("stale", False)) or age_hours >= stale_threshold
+                health = row.get("learning_health", {}) if isinstance(row.get("learning_health", {}), dict) else {}
+                status = str(health.get("status", "") or "").strip().lower()
+                attention = attention or status in {"degraded", "attention"}
+                healthy = healthy or status == "healthy"
+                failure_summary = row.get("failure_memory_summary", {}) if isinstance(row.get("failure_memory_summary", {}), dict) else {}
+                failure_count = max(
+                    failure_count,
+                    self._coerce_int(failure_summary.get("entry_count", 0), minimum=0, maximum=1_000_000, default=0),
+                )
+            priority = age_hours
+            if known:
+                known_apps.append(app_name)
+            else:
+                unknown_apps.append(app_name)
+                priority += 500.0 if prefer_unknown_apps else 320.0
+            if stale:
+                stale_apps.append(app_name)
+                priority += 260.0
+            if attention:
+                attention_apps.append(app_name)
+                priority += 180.0
+            if failure_count > 0:
+                failure_memory_apps.append(app_name)
+                priority += 120.0 + min(float(failure_count) * 16.0, 160.0)
+            if healthy and not stale and failure_count <= 0 and not attention:
+                healthy_apps.append(app_name)
+                priority -= 30.0
+            scored.append((priority, app_name))
+        scored.sort(key=lambda item: (item[0], item[1].lower()), reverse=True)
+        return {
+            "ordered_apps": [item[1] for item in scored],
+            "known_apps": self._dedupe_strings(known_apps),
+            "unknown_apps": self._dedupe_strings(unknown_apps),
+            "stale_apps": self._dedupe_strings(stale_apps),
+            "attention_apps": self._dedupe_strings(attention_apps),
+            "failure_memory_apps": self._dedupe_strings(failure_memory_apps),
+            "healthy_apps": self._dedupe_strings(healthy_apps),
+            "summary": {
+                "known_count": len(self._dedupe_strings(known_apps)),
+                "unknown_count": len(self._dedupe_strings(unknown_apps)),
+                "stale_count": len(self._dedupe_strings(stale_apps)),
+                "attention_count": len(self._dedupe_strings(attention_apps)),
+                "failure_memory_count": len(self._dedupe_strings(failure_memory_apps)),
+                "healthy_count": len(self._dedupe_strings(healthy_apps)),
+            },
+        }
+
+    @staticmethod
+    def _normalize_name(value: Any) -> str:
+        clean = "".join(character.lower() if character.isalnum() else " " for character in str(value or ""))
+        return " ".join(part for part in clean.split() if part)
+
+    def _app_name_matches_row(self, app_name: str, row: Dict[str, Any]) -> bool:
+        target = self._normalize_name(app_name)
+        if not target:
+            return False
+        for candidate in [
+            row.get("app_name", ""),
+            row.get("profile_name", ""),
+            row.get("profile_id", ""),
+            row.get("window_title", ""),
+        ]:
+            normalized = self._normalize_name(candidate)
+            if normalized and (normalized == target or target in normalized or normalized in target):
+                return True
+        return False
 
     @staticmethod
     def _sorted_count_map(mapping: Dict[str, int]) -> Dict[str, int]:
