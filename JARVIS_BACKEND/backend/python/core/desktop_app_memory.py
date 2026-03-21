@@ -269,6 +269,49 @@ class DesktopAppMemory:
                     for item in wave_payload.get("recommended_next_actions", [])
                     if str(item).strip()
                 ][:8] if isinstance(wave_payload.get("recommended_next_actions", []), list) else [],
+                "recommended_container_roles": self._dedupe_strings(
+                    [
+                        self._normalize_text(item)
+                        for item in (
+                            dict(wave_payload.get("strategy_profile", {})).get("recommended_container_roles", [])
+                            if isinstance(wave_payload.get("strategy_profile", {}), dict)
+                            and isinstance(dict(wave_payload.get("strategy_profile", {})).get("recommended_container_roles", []), list)
+                            else []
+                        )
+                        if self._normalize_text(item)
+                    ]
+                )[:8],
+                "traversed_container_roles": self._dedupe_strings(
+                    [
+                        str(item).strip().lower()
+                        for item in wave_payload.get("traversed_container_roles", [])
+                        if isinstance(wave_payload.get("traversed_container_roles", []), list) and str(item).strip()
+                    ]
+                )[:8] if isinstance(wave_payload.get("traversed_container_roles", []), list) else [],
+                "role_attempt_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=10_000_000, default=0)
+                    for key, value in (
+                        dict(wave_payload.get("role_attempt_counts", {})).items()
+                        if isinstance(wave_payload.get("role_attempt_counts", {}), dict)
+                        else []
+                    )
+                    if str(key).strip()
+                },
+                "role_learned_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=10_000_000, default=0)
+                    for key, value in (
+                        dict(wave_payload.get("role_learned_counts", {})).items()
+                        if isinstance(wave_payload.get("role_learned_counts", {}), dict)
+                        else []
+                    )
+                    if str(key).strip()
+                },
+                "recursive_depth_limit": self._coerce_int(
+                    wave_payload.get("recursive_depth_limit", 0),
+                    minimum=0,
+                    maximum=32,
+                    default=0,
+                ),
                 "updated_at": now,
             }
             entry["last_vision_summary"] = {
@@ -618,6 +661,7 @@ class DesktopAppMemory:
                 "version_profile": dict(version_profile),
                 "staleness": dict(entry.get("staleness", {})) if isinstance(entry.get("staleness", {}), dict) else {},
                 "failure_memory": self._failure_memory_summary(entry),
+                "revalidation_summary": self._revalidation_summary(entry),
             }
             survey_history = [dict(item) for item in entry.get("survey_history", []) if isinstance(item, dict)]
             survey_history.append(survey_record)
@@ -670,6 +714,12 @@ class DesktopAppMemory:
                 "category": clean_category,
             },
             "summary": self._snapshot_summary(rows),
+            "revalidation": self.revalidation_targets(
+                limit=max(4, min(bounded, 24)),
+                app_name=app_name,
+                profile_id=profile_id,
+                category=category,
+            ),
         }
 
     def reset(
@@ -822,11 +872,37 @@ class DesktopAppMemory:
         current["last_post_surface_fingerprint"] = str(
             row.get("post_surface_fingerprint", "") or current.get("last_post_surface_fingerprint", "") or ""
         ).strip()
+        current["last_surface_fingerprint"] = str(
+            row.get("post_surface_fingerprint", "")
+            or row.get("pre_surface_fingerprint", "")
+            or default_surface_fingerprint
+            or current.get("last_surface_fingerprint", "")
+            or ""
+        ).strip()
+        current["surface_fingerprints"] = self._merge_recent_strings(
+            current.get("surface_fingerprints", []),
+            [
+                str(row.get("pre_surface_fingerprint", "") or "").strip(),
+                str(row.get("post_surface_fingerprint", "") or "").strip(),
+                str(default_surface_fingerprint or "").strip(),
+                str(current.get("last_surface_fingerprint", "") or "").strip(),
+            ],
+            limit=12,
+        )
         current["vision_labels"] = self._merge_recent_strings(
             current.get("vision_labels", []),
             [str(item).strip() for item in row.get("vision_labels", []) if str(item).strip()] if isinstance(row.get("vision_labels", []), list) else [],
             limit=10,
         )
+        revalidation = self._control_revalidation_snapshot(current)
+        current["revalidation_due"] = bool(revalidation.get("revalidation_due", False))
+        current["revalidation_priority"] = round(float(revalidation.get("priority", 0.0) or 0.0), 4)
+        current["revalidation_reason_codes"] = [
+            str(item).strip()
+            for item in revalidation.get("reason_codes", [])
+            if str(item).strip()
+        ][:8] if isinstance(revalidation.get("reason_codes", []), list) else []
+        current["container_role"] = str(revalidation.get("container_role", "") or current.get("container_role", "") or "").strip()
         controls[identity] = current
         self._increment_count(entry.setdefault("probe_status_counts", {}), probe_status)
         self._increment_count(entry.setdefault("probe_effect_counts", {}), str(row.get("effect_kind", "") or "").strip())
@@ -978,6 +1054,22 @@ class DesktopAppMemory:
             recommended_followups,
             limit=10,
         )
+        container_role = self._normalize_text(row.get("container_role", ""))
+        if container_role:
+            current["container_role"] = container_role
+        followup_roles = self._dedupe_strings(
+            [
+                self._normalize_text(str(item or "").strip()[len("traverse_"):])
+                for item in recommended_followups
+                if str(item or "").strip().lower().startswith("traverse_")
+                and self._normalize_text(str(item or "").strip()[len("traverse_"):])
+            ]
+        )
+        current["recommended_container_roles"] = self._merge_recent_strings(
+            current.get("recommended_container_roles", []),
+            [container_role, *followup_roles],
+            limit=10,
+        )
         current["stop_reasons"] = self._merge_recent_strings(
             current.get("stop_reasons", []),
             [str(row.get("stop_reason", "") or "").strip()],
@@ -985,12 +1077,18 @@ class DesktopAppMemory:
         )
         strategies[action_name] = current
         self._increment_count(entry.setdefault("wave_action_counts", {}), action_name)
+        if container_role:
+            self._increment_count(entry.setdefault("wave_container_role_counts", {}), container_role)
         if clean_status == "success":
             self._increment_count(entry.setdefault("wave_success_action_counts", {}), action_name)
+            if container_role:
+                self._increment_count(entry.setdefault("wave_success_container_role_counts", {}), container_role)
         if bool(row.get("known_surface", False)):
             self._increment_count(entry.setdefault("wave_known_surface_action_counts", {}), action_name)
         for followup in recommended_followups:
             self._increment_count(entry.setdefault("wave_followup_counts", {}), followup)
+        for followup_role in followup_roles:
+            self._increment_count(entry.setdefault("wave_followup_role_counts", {}), followup_role)
 
     def _trim_entry_locked(self, entry: Dict[str, Any]) -> None:
         entry["window_title_counts"] = self._trim_count_map(entry.get("window_title_counts", {}), limit=24)
@@ -1015,6 +1113,9 @@ class DesktopAppMemory:
         entry["probe_role_counts"] = self._trim_count_map(entry.get("probe_role_counts", {}), limit=24, skip_empty=True)
         entry["tested_control_counts"] = self._trim_count_map(entry.get("tested_control_counts", {}), limit=32, skip_empty=True)
         entry["wave_stop_reason_counts"] = self._trim_count_map(entry.get("wave_stop_reason_counts", {}), limit=12, skip_empty=True)
+        entry["wave_container_role_counts"] = self._trim_count_map(entry.get("wave_container_role_counts", {}), limit=12, skip_empty=True)
+        entry["wave_success_container_role_counts"] = self._trim_count_map(entry.get("wave_success_container_role_counts", {}), limit=12, skip_empty=True)
+        entry["wave_followup_role_counts"] = self._trim_count_map(entry.get("wave_followup_role_counts", {}), limit=12, skip_empty=True)
         entry["menu_command_counts"] = self._trim_count_map(entry.get("menu_command_counts", {}), limit=32, skip_empty=True)
         entry["toolbar_action_counts"] = self._trim_count_map(entry.get("toolbar_action_counts", {}), limit=32, skip_empty=True)
         entry["ribbon_action_counts"] = self._trim_count_map(entry.get("ribbon_action_counts", {}), limit=32, skip_empty=True)
@@ -1148,6 +1249,8 @@ class DesktopAppMemory:
         item["learned_commands"] = self._top_commands(row.get("learned_commands", {}), limit=10)
         item["wave_strategies"] = self._top_wave_strategies(row.get("wave_strategies", {}), limit=8)
         item["wave_strategy_summary"] = self._wave_strategy_summary(row)
+        item["wave_container_roles"] = self._top_count_rows(row.get("wave_container_role_counts", {}), limit=6)
+        item["wave_followup_roles"] = self._top_count_rows(row.get("wave_followup_role_counts", {}), limit=6)
         item["menu_commands"] = self._top_count_rows(row.get("menu_command_counts", {}), limit=8, label_field="label")
         item["toolbar_actions"] = self._top_count_rows(row.get("toolbar_action_counts", {}), limit=8, label_field="label")
         item["ribbon_actions"] = self._top_count_rows(row.get("ribbon_action_counts", {}), limit=8, label_field="label")
@@ -1209,6 +1312,8 @@ class DesktopAppMemory:
         item["failure_memory"] = self._top_failure_memory(row.get("failure_memory", {}), limit=8)
         item["failure_memory_summary"] = self._failure_memory_summary(row)
         item["discouraged_wave_actions"] = list(dict(item.get("failure_memory_summary", {})).get("discouraged_actions", []))
+        item["revalidation_targets"] = self._entry_revalidation_targets(row, limit=6)
+        item["revalidation_summary"] = self._revalidation_summary(row)
         item["capability_profile"] = self._capability_profile_snapshot(row)
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
@@ -1251,6 +1356,8 @@ class DesktopAppMemory:
         surface_transition_total = 0
         learned_command_total = 0
         wave_strategy_total = 0
+        wave_container_role_counts: Dict[str, int] = {}
+        wave_followup_role_counts: Dict[str, int] = {}
         discovered_control_total = 0
         command_candidate_total = 0
         menu_command_total = 0
@@ -1262,6 +1369,9 @@ class DesktopAppMemory:
         verification_event_total = 0
         verified_effect_total = 0
         uncertain_effect_total = 0
+        revalidation_target_total = 0
+        overdue_revalidation_total = 0
+        revalidation_hotspot_total = 0
         safe_traversal_candidate_total = 0
         custom_surface_total = 0
         reparenting_risk_total = 0
@@ -1312,6 +1422,20 @@ class DesktopAppMemory:
             surface_transition_total += len(row.get("surface_transitions", {})) if isinstance(row.get("surface_transitions", {}), dict) else 0
             learned_command_total += len(row.get("learned_commands", {})) if isinstance(row.get("learned_commands", {}), dict) else 0
             wave_strategy_total += len(row.get("wave_strategies", {})) if isinstance(row.get("wave_strategies", {}), dict) else 0
+            for key, count in self._normalize_count_map(row.get("wave_container_role_counts", {})).items():
+                wave_container_role_counts[key] = self._coerce_int(
+                    wave_container_role_counts.get(key, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + count
+            for key, count in self._normalize_count_map(row.get("wave_followup_role_counts", {})).items():
+                wave_followup_role_counts[key] = self._coerce_int(
+                    wave_followup_role_counts.get(key, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + count
             discovered_control_total += len(row.get("controls", {})) if isinstance(row.get("controls", {}), dict) else 0
             command_candidate_total += len(self._trim_count_map(row.get("command_candidate_counts", {}), limit=32))
             menu_command_total += len(row.get("menu_command_counts", {})) if isinstance(row.get("menu_command_counts", {}), dict) else 0
@@ -1322,6 +1446,10 @@ class DesktopAppMemory:
             harvested_hotkey_total += len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0
             if bool(dict(row.get("staleness", {})).get("stale", False)) if isinstance(row.get("staleness", {}), dict) else False:
                 stale_entry_total += 1
+            revalidation_summary = self._revalidation_summary(row)
+            revalidation_target_total += self._coerce_int(revalidation_summary.get("target_count", 0), minimum=0, maximum=10_000_000, default=0)
+            overdue_revalidation_total += self._coerce_int(revalidation_summary.get("overdue_count", 0), minimum=0, maximum=10_000_000, default=0)
+            revalidation_hotspot_total += self._coerce_int(revalidation_summary.get("failure_hotspot_count", 0), minimum=0, maximum=10_000_000, default=0)
             learning_health = self._learning_health_snapshot(row)
             if str(learning_health.get("status", "") or "") == "healthy":
                 healthy_app_count += 1
@@ -1357,6 +1485,9 @@ class DesktopAppMemory:
             "verification_event_total": verification_event_total,
             "verified_effect_total": verified_effect_total,
             "uncertain_effect_total": uncertain_effect_total,
+            "revalidation_target_total": revalidation_target_total,
+            "overdue_revalidation_total": overdue_revalidation_total,
+            "revalidation_hotspot_total": revalidation_hotspot_total,
             "wave_survey_total": wave_survey_total,
             "wave_attempt_total": wave_attempt_total,
             "wave_success_total": wave_success_total,
@@ -1373,6 +1504,8 @@ class DesktopAppMemory:
             "surface_transition_total": surface_transition_total,
             "learned_command_total": learned_command_total,
             "wave_strategy_total": wave_strategy_total,
+            "top_wave_container_roles": self._top_count_rows(wave_container_role_counts, limit=6),
+            "top_wave_followup_roles": self._top_count_rows(wave_followup_role_counts, limit=6),
             "discovered_control_total": discovered_control_total,
             "command_candidate_total": command_candidate_total,
             "menu_command_total": menu_command_total,
@@ -1501,6 +1634,21 @@ class DesktopAppMemory:
         return " ".join(str(value or "").strip().lower().split())
 
     @staticmethod
+    def _dedupe_strings(values: List[str]) -> List[str]:
+        ordered: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            clean = str(value or "").strip()
+            if not clean:
+                continue
+            lowered = clean.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            ordered.append(clean)
+        return ordered
+
+    @staticmethod
     def _coerce_int(value: Any, *, minimum: int, maximum: int, default: int) -> int:
         try:
             numeric = int(value)
@@ -1607,9 +1755,355 @@ class DesktopAppMemory:
                         if isinstance(row.get("last_stabilization_summary", {}), dict)
                         else {}
                     ),
+                    "revalidation": DesktopAppMemory._control_revalidation_snapshot(row),
                 }
             )
         return trimmed
+
+    @classmethod
+    def _control_container_role(cls, row: Dict[str, Any]) -> str:
+        explicit = cls._normalize_text(row.get("container_role", ""))
+        if explicit:
+            return explicit
+        control_type = cls._normalize_text(row.get("control_type", ""))
+        learned_role = cls._normalize_text(row.get("learned_role", ""))
+        label = cls._normalize_text(row.get("label", "") or row.get("identity", "") or "")
+        if control_type == "menuitem":
+            return "menu"
+        if control_type == "tabitem":
+            return "tab"
+        if control_type == "treeitem":
+            return "tree"
+        if control_type == "listitem":
+            return "list"
+        if control_type in {"dataitem", "headeritem", "row", "listviewitem"}:
+            return "table"
+        if control_type in {"checkbox", "radiobutton", "togglebutton"}:
+            return "form"
+        if learned_role == "review_required":
+            return "dialog"
+        if "sidebar" in label or "navigation" in label:
+            return "sidebar"
+        if "ribbon" in label:
+            return "ribbon"
+        if "toolbar" in label:
+            return "toolbar"
+        return ""
+
+    @classmethod
+    def _control_revalidation_snapshot(
+        cls,
+        row: Dict[str, Any],
+        *,
+        stale_after_hours: float = 72.0,
+    ) -> Dict[str, Any]:
+        last_probe_at = str(row.get("last_probe_at", "") or row.get("last_seen_at", "") or "").strip()
+        age_hours = 0.0
+        if last_probe_at:
+            try:
+                parsed = datetime.fromisoformat(last_probe_at.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                age_hours = max(
+                    0.0,
+                    (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() / 3600.0,
+                )
+            except Exception:
+                age_hours = 0.0
+        verified_count = cls._coerce_int(row.get("verified_effect_count", 0), minimum=0, maximum=10_000_000, default=0)
+        uncertain_count = cls._coerce_int(row.get("uncertain_effect_count", 0), minimum=0, maximum=10_000_000, default=0)
+        blocked_count = cls._coerce_int(row.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
+        error_count = cls._coerce_int(row.get("probe_error_count", 0), minimum=0, maximum=10_000_000, default=0)
+        probe_count = cls._coerce_int(row.get("probe_count", 0), minimum=0, maximum=10_000_000, default=0)
+        confidence = round(max(0.0, min(float(row.get("last_verification_confidence", 0.0) or 0.0), 1.0)), 4)
+        stale_threshold = max(4.0, min(float(stale_after_hours or 72.0), 720.0))
+        overdue = bool(verified_count > 0 and age_hours >= stale_threshold)
+        reason_codes: List[str] = []
+        if verified_count <= 0 and probe_count > 0:
+            reason_codes.append("never_verified")
+        if uncertain_count > verified_count:
+            reason_codes.append("uncertain_effect")
+        if confidence < 0.58 and probe_count > 0:
+            reason_codes.append("low_confidence")
+        if blocked_count > 0:
+            reason_codes.append("blocked_history")
+        if error_count > 0:
+            reason_codes.append("error_history")
+        if overdue:
+            reason_codes.append("stale_verification")
+        priority = 0.0
+        if verified_count <= 0 and probe_count > 0:
+            priority += 240.0
+        priority += min(150.0, float(uncertain_count) * 28.0)
+        priority += min(120.0, float(blocked_count) * 18.0)
+        priority += min(140.0, float(error_count) * 24.0)
+        if confidence < 0.8 and probe_count > 0:
+            priority += (0.8 - confidence) * 140.0
+        if overdue:
+            priority += min(180.0, 80.0 + max(0.0, age_hours - stale_threshold) * 3.5)
+        return {
+            "identity": str(row.get("identity", "") or "").strip(),
+            "label": str(row.get("label", "") or row.get("identity", "") or "").strip(),
+            "control_type": str(row.get("control_type", "") or "").strip(),
+            "learned_role": str(row.get("learned_role", "") or "").strip(),
+            "container_role": cls._control_container_role(row),
+            "last_probe_at": last_probe_at,
+            "last_probe_effect": str(row.get("last_probe_effect", "") or "").strip(),
+            "last_probe_method": str(row.get("last_probe_method", "") or "").strip(),
+            "probe_count": probe_count,
+            "verified_effect_count": verified_count,
+            "uncertain_effect_count": uncertain_count,
+            "blocked_count": blocked_count,
+            "error_count": error_count,
+            "verification_confidence": confidence,
+            "age_hours": round(age_hours, 4),
+            "stale_after_hours": round(stale_threshold, 4),
+            "overdue": overdue,
+            "revalidation_due": bool(reason_codes),
+            "reason_codes": cls._dedupe_strings(reason_codes),
+            "priority": round(priority, 4),
+            "last_surface_fingerprint": str(
+                row.get("last_surface_fingerprint", "")
+                or row.get("last_post_surface_fingerprint", "")
+                or ""
+            ).strip(),
+            "surface_fingerprints": cls._dedupe_strings(
+                [
+                    str(item).strip()
+                    for item in row.get("surface_fingerprints", [])
+                    if isinstance(row.get("surface_fingerprints", []), list) and str(item).strip()
+                ]
+            )[:8] if isinstance(row.get("surface_fingerprints", []), list) else [],
+        }
+
+    @classmethod
+    def _entry_revalidation_targets(
+        cls,
+        row: Dict[str, Any],
+        *,
+        limit: int = 8,
+        stale_after_hours: float = 72.0,
+        container_roles: List[str] | None = None,
+        surface_fingerprint: str = "",
+        minimum_priority: float = 0.0,
+        include_healthy: bool = False,
+    ) -> List[Dict[str, Any]]:
+        allowed_roles = {
+            cls._normalize_text(item)
+            for item in (container_roles or [])
+            if cls._normalize_text(item)
+        }
+        clean_surface_fingerprint = str(surface_fingerprint or "").strip()
+        minimum_priority_value = max(0.0, float(minimum_priority or 0.0))
+        controls = row.get("controls", {}) if isinstance(row.get("controls", {}), dict) else {}
+        targets: List[Dict[str, Any]] = []
+        for control in controls.values():
+            if not isinstance(control, dict):
+                continue
+            snapshot = cls._control_revalidation_snapshot(control, stale_after_hours=stale_after_hours)
+            if allowed_roles and str(snapshot.get("container_role", "") or "").strip() not in allowed_roles:
+                continue
+            if clean_surface_fingerprint:
+                surface_fingerprints = [
+                    str(item).strip()
+                    for item in snapshot.get("surface_fingerprints", [])
+                    if isinstance(snapshot.get("surface_fingerprints", []), list) and str(item).strip()
+                ] if isinstance(snapshot.get("surface_fingerprints", []), list) else []
+                if clean_surface_fingerprint not in surface_fingerprints and clean_surface_fingerprint != str(snapshot.get("last_surface_fingerprint", "") or "").strip():
+                    continue
+            if float(snapshot.get("priority", 0.0) or 0.0) < minimum_priority_value:
+                continue
+            if (not include_healthy) and (not bool(snapshot.get("revalidation_due", False))):
+                continue
+            targets.append(
+                {
+                    **snapshot,
+                    "app_name": str(row.get("app_name", "") or "").strip(),
+                    "profile_id": str(row.get("profile_id", "") or "").strip(),
+                    "category": str(row.get("category", "") or "").strip(),
+                    "window_title": str(row.get("window_title", "") or "").strip(),
+                    "version_signature": str(
+                        dict(row.get("version_profile", {})).get("signature", "")
+                        if isinstance(row.get("version_profile", {}), dict)
+                        else ""
+                    ).strip(),
+                    "query_examples": [
+                        str(item).strip()
+                        for item in control.get("query_examples", [])
+                        if str(item).strip()
+                    ][:6] if isinstance(control.get("query_examples", []), list) else [],
+                }
+            )
+        targets.sort(
+            key=lambda item: (
+                float(item.get("priority", 0.0) or 0.0),
+                1 if bool(item.get("overdue", False)) else 0,
+                float(item.get("age_hours", 0.0) or 0.0),
+                str(item.get("label", "")),
+            ),
+            reverse=True,
+        )
+        return targets[: max(1, int(limit or 1))]
+
+    @classmethod
+    def _revalidation_summary(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        targets = cls._entry_revalidation_targets(row, limit=12)
+        container_counts: Dict[str, int] = {}
+        reason_counts: Dict[str, int] = {}
+        priority_total = 0.0
+        overdue_count = 0
+        failure_hotspot_count = 0
+        for item in targets:
+            role = str(item.get("container_role", "") or "").strip()
+            if role:
+                container_counts[role] = int(container_counts.get(role, 0) or 0) + 1
+            priority_total += float(item.get("priority", 0.0) or 0.0)
+            if bool(item.get("overdue", False)):
+                overdue_count += 1
+            reasons = [
+                str(value).strip()
+                for value in item.get("reason_codes", [])
+                if str(value).strip()
+            ] if isinstance(item.get("reason_codes", []), list) else []
+            if any(reason in {"blocked_history", "error_history"} for reason in reasons):
+                failure_hotspot_count += 1
+            for reason in reasons:
+                reason_counts[reason] = int(reason_counts.get(reason, 0) or 0) + 1
+        top_container_roles = [
+            {"value": str(key), "count": int(value)}
+            for key, value in sorted(container_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)[:6]
+        ]
+        return {
+            "target_count": len(targets),
+            "overdue_count": overdue_count,
+            "failure_hotspot_count": failure_hotspot_count,
+            "priority_total": round(priority_total, 4),
+            "reason_counts": {str(key): int(value) for key, value in sorted(reason_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)},
+            "container_role_counts": {str(key): int(value) for key, value in sorted(container_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)},
+            "top_container_roles": top_container_roles,
+            "top_targets": targets[:4],
+        }
+
+    def revalidation_targets(
+        self,
+        *,
+        limit: int = 24,
+        app_name: str = "",
+        profile_id: str = "",
+        category: str = "",
+        stale_after_hours: float = 72.0,
+        container_roles: List[str] | None = None,
+        surface_fingerprint: str = "",
+        minimum_priority: float = 0.0,
+        include_healthy: bool = False,
+    ) -> Dict[str, Any]:
+        bounded = self._coerce_int(limit, minimum=1, maximum=256, default=24)
+        clean_app_name = self._normalize_text(app_name)
+        clean_profile_id = self._normalize_text(profile_id)
+        clean_category = self._normalize_text(category)
+        clean_surface_fingerprint = str(surface_fingerprint or "").strip()
+        with self._lock:
+            rows = [dict(row) for row in self._entries.values()]
+        if clean_app_name:
+            rows = [
+                row
+                for row in rows
+                if clean_app_name in self._normalize_text(row.get("app_name", ""))
+                or clean_app_name in self._normalize_text(row.get("window_title", ""))
+                or clean_app_name in self._normalize_text(row.get("profile_name", ""))
+            ]
+        if clean_profile_id:
+            rows = [row for row in rows if self._normalize_text(row.get("profile_id", "")) == clean_profile_id]
+        if clean_category:
+            rows = [row for row in rows if self._normalize_text(row.get("category", "")) == clean_category]
+        targets: List[Dict[str, Any]] = []
+        for row in rows:
+            targets.extend(
+                self._entry_revalidation_targets(
+                    row,
+                    limit=max(4, min(bounded, 24)),
+                    stale_after_hours=stale_after_hours,
+                    container_roles=container_roles,
+                    surface_fingerprint=clean_surface_fingerprint,
+                    minimum_priority=minimum_priority,
+                    include_healthy=include_healthy,
+                )
+            )
+        targets.sort(
+            key=lambda item: (
+                float(item.get("priority", 0.0) or 0.0),
+                1 if bool(item.get("overdue", False)) else 0,
+                float(item.get("age_hours", 0.0) or 0.0),
+                str(item.get("app_name", "")),
+                str(item.get("label", "")),
+            ),
+            reverse=True,
+        )
+        selected = targets[:bounded]
+        container_counts: Dict[str, int] = {}
+        reason_counts: Dict[str, int] = {}
+        app_counts: Dict[str, int] = {}
+        priority_total = 0.0
+        for item in targets:
+            role = str(item.get("container_role", "") or "").strip()
+            if role:
+                container_counts[role] = int(container_counts.get(role, 0) or 0) + 1
+            app_value = str(item.get("app_name", "") or "").strip()
+            if app_value:
+                app_counts[app_value] = int(app_counts.get(app_value, 0) or 0) + 1
+            priority_total += float(item.get("priority", 0.0) or 0.0)
+            for reason in item.get("reason_codes", []) if isinstance(item.get("reason_codes", []), list) else []:
+                clean_reason = str(reason).strip()
+                if clean_reason:
+                    reason_counts[clean_reason] = int(reason_counts.get(clean_reason, 0) or 0) + 1
+        return {
+            "status": "success",
+            "count": len(selected),
+            "total": len(targets),
+            "items": selected,
+            "summary": {
+                "target_count": len(targets),
+                "overdue_count": sum(1 for item in targets if bool(item.get("overdue", False))),
+                "failure_hotspot_count": sum(
+                    1
+                    for item in targets
+                    if any(
+                        reason in {"blocked_history", "error_history"}
+                        for reason in (
+                            [str(value).strip() for value in item.get("reason_codes", []) if str(value).strip()]
+                            if isinstance(item.get("reason_codes", []), list)
+                            else []
+                        )
+                    )
+                ),
+                "priority_total": round(priority_total, 4),
+                "top_container_roles": [
+                    {"value": str(key), "count": int(value)}
+                    for key, value in sorted(container_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)[:6]
+                ],
+                "top_reason_codes": [
+                    {"value": str(key), "count": int(value)}
+                    for key, value in sorted(reason_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)[:8]
+                ],
+                "top_apps": [
+                    {"value": str(key), "count": int(value)}
+                    for key, value in sorted(app_counts.items(), key=lambda item: (int(item[1]), str(item[0])), reverse=True)[:8]
+                ],
+            },
+            "filters": {
+                "app_name": clean_app_name,
+                "profile_id": clean_profile_id,
+                "category": clean_category,
+                "surface_fingerprint": clean_surface_fingerprint,
+                "minimum_priority": round(max(0.0, float(minimum_priority or 0.0)), 4),
+                "container_roles": [
+                    self._normalize_text(item)
+                    for item in (container_roles or [])
+                    if self._normalize_text(item)
+                ],
+                "include_healthy": bool(include_healthy),
+            },
+        }
 
     @staticmethod
     def _normalize_metrics(raw: Any) -> Dict[str, int]:
@@ -2184,9 +2678,24 @@ class DesktopAppMemory:
             for item in strategies
             if cls._coerce_int(item.get("success_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
         ][:6]
+        top_container_roles = cls._top_count_rows(
+            row.get("wave_success_container_role_counts", {}) or row.get("wave_container_role_counts", {}),
+            limit=6,
+        )
+        top_followup_roles = cls._top_count_rows(row.get("wave_followup_role_counts", {}), limit=6)
+        recommended_container_roles = cls._dedupe_strings(
+            [
+                str(item.get("value", "") or "").strip().lower()
+                for item in [*top_container_roles, *top_followup_roles]
+                if isinstance(item, dict) and str(item.get("value", "") or "").strip()
+            ]
+        )[:6]
         return {
             "total_actions": len(row.get("wave_strategies", {})) if isinstance(row.get("wave_strategies", {}), dict) else 0,
             "recommended_actions": recommended_actions,
+            "recommended_container_roles": recommended_container_roles,
+            "top_container_roles": top_container_roles,
+            "top_followup_roles": top_followup_roles,
             "top_actions": strategies[:4],
             "stop_reasons": cls._top_count_rows(row.get("wave_stop_reason_counts", {}), limit=6),
         }
@@ -2411,6 +2920,12 @@ class DesktopAppMemory:
         if matched_row is not None:
             wave_strategy_summary = self._wave_strategy_summary(matched_row)
             failure_memory_summary = self._failure_memory_summary(matched_row)
+            revalidation_summary = self._revalidation_summary(matched_row)
+            surface_revalidation_targets = self._entry_revalidation_targets(
+                matched_row,
+                limit=6,
+                surface_fingerprint=clean_surface_fingerprint,
+            ) if clean_surface_fingerprint else revalidation_summary.get("top_targets", [])
             return {
                 "status": "success",
                 "known": bool(matched_node),
@@ -2421,6 +2936,7 @@ class DesktopAppMemory:
                 "wave_strategies": self._top_wave_strategies(matched_row.get("wave_strategies", {}), limit=6),
                 "wave_strategy_summary": wave_strategy_summary,
                 "recommended_wave_actions": wave_strategy_summary.get("recommended_actions", []),
+                "recommended_wave_container_roles": wave_strategy_summary.get("recommended_container_roles", []),
                 "menu_commands": self._top_count_rows(matched_row.get("menu_command_counts", {}), limit=6, label_field="label"),
                 "toolbar_actions": self._top_count_rows(matched_row.get("toolbar_action_counts", {}), limit=6, label_field="label"),
                 "ribbon_actions": self._top_count_rows(matched_row.get("ribbon_action_counts", {}), limit=6, label_field="label"),
@@ -2473,6 +2989,12 @@ class DesktopAppMemory:
                 ),
                 "failure_memory_summary": failure_memory_summary,
                 "discouraged_wave_actions": list(failure_memory_summary.get("discouraged_actions", [])),
+                "revalidation_summary": revalidation_summary,
+                "revalidation_targets": [
+                    dict(item)
+                    for item in (surface_revalidation_targets or revalidation_summary.get("top_targets", []))
+                    if isinstance(item, dict)
+                ],
                 "shortcut_actions": self._snapshot_item(matched_row).get("shortcut_actions", []),
             }
         return {
@@ -2483,8 +3005,17 @@ class DesktopAppMemory:
             "capability_profile": {"status": "success", "features": {}, "top_features": []},
             "learned_commands": [],
             "wave_strategies": [],
-            "wave_strategy_summary": {"total_actions": 0, "recommended_actions": [], "top_actions": [], "stop_reasons": []},
+            "wave_strategy_summary": {
+                "total_actions": 0,
+                "recommended_actions": [],
+                "recommended_container_roles": [],
+                "top_container_roles": [],
+                "top_followup_roles": [],
+                "top_actions": [],
+                "stop_reasons": [],
+            },
             "recommended_wave_actions": [],
+            "recommended_wave_container_roles": [],
             "menu_commands": [],
             "toolbar_actions": [],
             "ribbon_actions": [],
@@ -2501,5 +3032,7 @@ class DesktopAppMemory:
             "staleness": {},
             "failure_memory_summary": {"entry_count": 0, "top_failures": [], "discouraged_actions": []},
             "discouraged_wave_actions": [],
+            "revalidation_summary": {"target_count": 0, "overdue_count": 0, "failure_hotspot_count": 0, "top_targets": []},
+            "revalidation_targets": [],
             "shortcut_actions": [],
         }

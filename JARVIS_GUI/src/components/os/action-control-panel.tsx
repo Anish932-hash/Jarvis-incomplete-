@@ -2265,6 +2265,14 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopAppMemoryWaveReport.strategy_profile),
     [desktopAppMemoryWaveReport]
   );
+  const desktopAppMemorySurveyTargeting = useMemo(
+    () => asObjectRecord(desktopAppMemorySurveyState?.targeting),
+    [desktopAppMemorySurveyState]
+  );
+  const desktopAppMemorySurveyRevalidation = useMemo(
+    () => asObjectRecord(desktopAppMemorySurveyState?.revalidation),
+    [desktopAppMemorySurveyState]
+  );
   const desktopAppMemoryWaveRecommendedActions = useMemo(
     () =>
       Array.isArray(desktopAppMemoryWaveStrategyProfile.recommended_actions)
@@ -2273,6 +2281,24 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
             .filter((item) => Boolean(item))
         : [],
     [desktopAppMemoryWaveStrategyProfile]
+  );
+  const desktopAppMemoryWaveRecommendedContainerRoles = useMemo(
+    () =>
+      Array.isArray(desktopAppMemorySurveyTargeting.recommended_wave_container_roles)
+        ? desktopAppMemorySurveyTargeting.recommended_wave_container_roles
+            .map((item) => String(item ?? '').trim())
+            .filter((item) => Boolean(item))
+        : [],
+    [desktopAppMemorySurveyTargeting]
+  );
+  const desktopAppMemoryWaveTraversedRoles = useMemo(
+    () =>
+      Array.isArray(desktopAppMemoryWaveReport.traversed_container_roles)
+        ? desktopAppMemoryWaveReport.traversed_container_roles
+            .map((item) => String(item ?? '').trim())
+            .filter((item) => Boolean(item))
+        : [],
+    [desktopAppMemoryWaveReport]
   );
   const desktopAppMemoryWaveTopActions = useMemo(
     () =>
@@ -13693,6 +13719,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         max_surface_waves: 3,
         allow_risky_probes: false,
         include_ocr_targets: true,
+        revalidate_known_controls: true,
+        prefer_failure_memory: true,
       });
       setDesktopAppMemorySurveyState(payload);
       const memoryPayload = isObjectRecord(payload.app_memory) ? (payload.app_memory as DesktopAppMemoryResponse) : null;
@@ -13753,6 +13781,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         include_ocr_targets: true,
         skip_known_apps: true,
         prefer_unknown_apps: true,
+        revalidate_known_controls: true,
+        prefer_failure_memory: true,
         source: 'manual',
       });
       setDesktopAppMemoryBatchState(payload);
@@ -13832,6 +13862,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
+        continuous_learning: true,
+        revisit_stale_apps: true,
+        stale_after_hours: 72,
+        revisit_failed_apps: true,
+        revalidate_known_controls: true,
+        prioritize_failure_hotspots: true,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13871,6 +13907,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
+        continuous_learning: true,
+        revisit_stale_apps: true,
+        stale_after_hours: 72,
+        revisit_failed_apps: true,
+        revalidate_known_controls: true,
+        prioritize_failure_hotspots: true,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13923,6 +13965,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
+        continuous_learning: true,
+        revisit_stale_apps: true,
+        stale_after_hours: 72,
+        revisit_failed_apps: true,
+        revalidate_known_controls: true,
+        prioritize_failure_hotspots: true,
         source: 'manual',
       });
       syncDesktopAppMemoryCampaignArtifacts(payload);
@@ -19916,10 +19964,43 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   {' • '}known hits:{Number(desktopAppMemoryWaveReport.known_surface_count ?? 0)}
                                                 </p>
                                               ) : null}
+                                              {desktopAppMemoryWaveTraversedRoles.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  recursive roles:{' '}
+                                                  {desktopAppMemoryWaveTraversedRoles.slice(0, 5).join(' • ')}
+                                                  {' • '}depth:{Number(desktopAppMemoryWaveReport.recursive_depth_limit ?? 0)}
+                                                </p>
+                                              ) : null}
+                                              {Object.keys(asObjectRecord(desktopAppMemoryWaveReport.role_learned_counts)).length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  learned by role:{' '}
+                                                  {Object.entries(asObjectRecord(desktopAppMemoryWaveReport.role_learned_counts))
+                                                    .slice(0, 4)
+                                                    .map(([key, value]) => `${key}:${Number(value ?? 0)}`)
+                                                    .join(' • ')}
+                                                </p>
+                                              ) : null}
                                               {desktopAppMemoryWaveRecommendedActions.length > 0 ? (
                                                 <p className="mt-1 text-[10px] text-muted-foreground">
                                                   adaptive survey plan:{' '}
                                                   {desktopAppMemoryWaveRecommendedActions.slice(0, 4).join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {desktopAppMemoryWaveRecommendedContainerRoles.length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  adaptive roles:{' '}
+                                                  {desktopAppMemoryWaveRecommendedContainerRoles.slice(0, 4).join(' • ')}
+                                                </p>
+                                              ) : null}
+                                              {Object.keys(desktopAppMemorySurveyRevalidation).length > 0 ? (
+                                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                                  revalidation targets:{Number(desktopAppMemorySurveyRevalidation.count ?? 0)}
+                                                  {' • '}focus:{Array.isArray(asObjectRecord(desktopAppMemorySurveyTargeting).target_container_roles)
+                                                    ? (asObjectRecord(desktopAppMemorySurveyTargeting).target_container_roles as unknown[])
+                                                        .slice(0, 4)
+                                                        .map((item) => String(item))
+                                                        .join(' • ')
+                                                    : 'n/a'}
                                                 </p>
                                               ) : null}
                                               {desktopAppMemoryWaveTopActions.length > 0 ? (
@@ -19959,6 +20040,21 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}risky:{String(Boolean(desktopAppMemoryDaemonState.allow_risky_probes))}
                                             </p>
                                             <p className="mt-1">
+                                              continuous:{String(Boolean(desktopAppMemoryDaemonState.continuous_learning))}
+                                              {' • '}stale revisit:{String(Boolean(desktopAppMemoryDaemonState.revisit_stale_apps))}
+                                              {' • '}failed revisit:{String(Boolean(desktopAppMemoryDaemonState.revisit_failed_apps))}
+                                              {' • '}stale after:{Number(desktopAppMemoryDaemonState.stale_after_hours ?? 0)}h
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              hotspot focus:{String(Boolean(desktopAppMemoryDaemonState.prioritize_failure_hotspots))}
+                                              {' • '}revalidate:{String(Boolean(desktopAppMemoryDaemonState.revalidate_known_controls))}
+                                              {' • '}roles:
+                                              {Array.isArray(desktopAppMemoryDaemonState.target_container_roles) &&
+                                              desktopAppMemoryDaemonState.target_container_roles.length > 0
+                                                ? ` ${desktopAppMemoryDaemonState.target_container_roles.slice(0, 4).map((item) => String(item)).join(' • ')}`
+                                                : ' adaptive'}
+                                            </p>
+                                            <p className="mt-1">
                                               history:{Number(desktopAppMemoryDaemonHistory.count ?? 0)}
                                               {' • '}manual:{Number(desktopAppMemoryDaemonState.manual_trigger_count ?? 0)}
                                               {' • '}auto:{Number(desktopAppMemoryDaemonState.auto_trigger_count ?? 0)}
@@ -19996,6 +20092,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}max apps:{Number(desktopLatestAppMemoryCampaign.max_apps ?? 0)}
                                               {' • '}max waves:{Number(desktopLatestAppMemoryCampaign.max_surface_waves ?? 0)}
                                             </p>
+                                            <p className="mt-1">
+                                              effective waves:{Number(
+                                                desktopLatestAppMemoryCampaign.effective_max_surface_waves ??
+                                                  desktopLatestAppMemoryCampaign.max_surface_waves ??
+                                                  0
+                                              )}
+                                              {' • '}adaptive roles:{String(
+                                                Boolean(desktopLatestAppMemoryCampaign.adaptive_target_container_roles)
+                                              )}
+                                              {' • '}adaptive waves:{String(
+                                                Boolean(desktopLatestAppMemoryCampaign.adaptive_surface_wave_depth)
+                                              )}
+                                            </p>
                                             <p className="mt-1 text-[10px] text-muted-foreground">
                                               targets:
                                               {Array.isArray(desktopLatestAppMemoryCampaign.target_apps) &&
@@ -20016,6 +20125,44 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               )}
                                               {' • '}probes:{String(Boolean(desktopLatestAppMemoryCampaign.probe_controls))}
                                               {' • '}waves:{String(Boolean(desktopLatestAppMemoryCampaign.follow_surface_waves))}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              continuous:{String(Boolean(desktopLatestAppMemoryCampaign.continuous_learning))}
+                                              {' • '}stale revisit:{String(Boolean(desktopLatestAppMemoryCampaign.revisit_stale_apps))}
+                                              {' • '}failed revisit:{String(Boolean(desktopLatestAppMemoryCampaign.revisit_failed_apps))}
+                                              {' • '}stale after:{Number(desktopLatestAppMemoryCampaign.stale_after_hours ?? 0)}h
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              hotspot focus:{String(Boolean(desktopLatestAppMemoryCampaign.prioritize_failure_hotspots))}
+                                              {' • '}revalidate:{String(Boolean(desktopLatestAppMemoryCampaign.revalidate_known_controls))}
+                                              {' • '}roles:
+                                              {Array.isArray(desktopLatestAppMemoryCampaign.target_container_roles) &&
+                                              desktopLatestAppMemoryCampaign.target_container_roles.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaign.target_container_roles
+                                                    .slice(0, 4)
+                                                    .map((item) => String(item))
+                                                    .join(' • ')}`
+                                                : ' adaptive'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              focus:
+                                              {Array.isArray(asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_container_roles) &&
+                                              (asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_container_roles as unknown[]).length > 0
+                                                ? ` ${(asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_container_roles as unknown[])
+                                                    .filter((item): item is Record<string, unknown> => isObjectRecord(item))
+                                                    .slice(0, 3)
+                                                    .map((item) => String(item.value ?? 'role'))
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                              {' • '}reasons:
+                                              {Array.isArray(asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_reason_codes) &&
+                                              (asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_reason_codes as unknown[]).length > 0
+                                                ? ` ${(asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_reason_codes as unknown[])
+                                                    .filter((item): item is Record<string, unknown> => isObjectRecord(item))
+                                                    .slice(0, 3)
+                                                    .map((item) => String(item.value ?? 'reason'))
+                                                    .join(' • ')}`
+                                                : ' n/a'}
                                             </p>
                                             <p className="mt-1 text-[10px] text-muted-foreground">
                                               wave attempts:{Number(desktopLatestAppMemoryCampaign.wave_attempt_count ?? 0)}
@@ -20060,6 +20207,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {' • '}waves:{Number(campaign.wave_attempt_count ?? 0)}
                                                       </p>
                                                       <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        effective waves:{Number(campaign.effective_max_surface_waves ?? campaign.max_surface_waves ?? 0)}
+                                                        {' • '}adaptive roles:{String(Boolean(campaign.adaptive_target_container_roles))}
+                                                        {' • '}roles:
+                                                        {Array.isArray(campaign.target_container_roles) && campaign.target_container_roles.length > 0
+                                                          ? ` ${campaign.target_container_roles.slice(0, 3).map((item) => String(item)).join(' • ')}`
+                                                          : ' adaptive'}
+                                                      </p>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
                                                         targets:
                                                         {Array.isArray(campaign.target_apps) && campaign.target_apps.length > 0
                                                           ? ` ${campaign.target_apps.slice(0, 3).map((item) => String(item)).join(' • ')}`
@@ -20099,8 +20254,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 const capabilityProfile = asObjectRecord(item.capability_profile);
                                                 const waveSummary = asObjectRecord(item.wave_summary);
                                                 const waveStrategySummary = asObjectRecord(item.wave_strategy_summary);
+                                                const revalidationSummary = asObjectRecord(item.revalidation_summary);
                                                 const waveStrategies = Array.isArray(item.wave_strategies)
                                                   ? item.wave_strategies.filter((strategy): strategy is Record<string, unknown> => isObjectRecord(strategy))
+                                                  : [];
+                                                const waveContainerRoles = Array.isArray(item.wave_container_roles)
+                                                  ? item.wave_container_roles.filter((role): role is Record<string, unknown> => isObjectRecord(role))
+                                                  : [];
+                                                const waveFollowupRoles = Array.isArray(item.wave_followup_roles)
+                                                  ? item.wave_followup_roles.filter((role): role is Record<string, unknown> => isObjectRecord(role))
                                                   : [];
                                                 return (
                                                   <div
@@ -20135,6 +20297,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       {' • '}linked surfaces:{Number(asObjectRecord(item.metrics).wave_success_count ?? waveSummary.learned_surface_count ?? 0)}
                                                       {' • '}known hits:{Number(asObjectRecord(item.metrics).wave_known_surface_hit_count ?? waveSummary.known_surface_count ?? 0)}
                                                       {' • '}strategies:{Number(waveStrategySummary.total_actions ?? 0)}
+                                                    </p>
+                                                    <p className="mt-1">
+                                                      revalidation:{Number(revalidationSummary.target_count ?? 0)}
+                                                      {' • '}overdue:{Number(revalidationSummary.overdue_count ?? 0)}
+                                                      {' • '}hotspots:{Number(revalidationSummary.failure_hotspot_count ?? 0)}
                                                     </p>
                                                     <p className="mt-1">
                                                       menu:{Number(harvestSummary.menu_command_count ?? 0)}
@@ -20209,6 +20376,34 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {waveStrategies
                                                           .slice(0, 3)
                                                           .map((strategy) => `${String(strategy.action ?? 'action')} (${Number(strategy.success_count ?? 0)}/${Number(strategy.sample_count ?? 0)})`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {Array.isArray(waveStrategySummary.recommended_container_roles) &&
+                                                    waveStrategySummary.recommended_container_roles.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        wave roles:{' '}
+                                                        {waveStrategySummary.recommended_container_roles
+                                                          .slice(0, 4)
+                                                          .map((role) => String(role))
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {waveContainerRoles.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        observed roles:{' '}
+                                                        {waveContainerRoles
+                                                          .slice(0, 4)
+                                                          .map((role) => `${String(role.value ?? 'role')}:${Number(role.count ?? 0)}`)
+                                                          .join(' • ')}
+                                                      </p>
+                                                    ) : null}
+                                                    {waveFollowupRoles.length > 0 ? (
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        followup roles:{' '}
+                                                        {waveFollowupRoles
+                                                          .slice(0, 4)
+                                                          .map((role) => `${String(role.value ?? 'role')}:${Number(role.count ?? 0)}`)
                                                           .join(' • ')}
                                                       </p>
                                                     ) : null}

@@ -613,6 +613,9 @@ class FakeDesktopService:
             "revisit_stale_apps": True,
             "stale_after_hours": 72.0,
             "revisit_failed_apps": True,
+            "revalidate_known_controls": True,
+            "prioritize_failure_hotspots": True,
+            "target_container_roles": [],
             "last_tick_at": "",
             "last_success_at": "",
             "last_error_at": "",
@@ -13447,6 +13450,9 @@ class FakeDesktopService:
         max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        target_container_roles: list[str] | None = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
         del limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
         entry = {
@@ -13524,6 +13530,11 @@ class FakeDesktopService:
                 "error_count": 0,
                 "ocr_target_count": 5 if probe_controls else 0,
             },
+            "revalidation_summary": {
+                "target_count": 2 if revalidate_known_controls else 0,
+                "overdue_count": 1 if revalidate_known_controls else 0,
+                "failure_hotspot_count": 1 if prefer_failure_memory else 0,
+            },
         }
         self.desktop_app_memory_items.insert(0, entry)
         return {
@@ -13544,6 +13555,33 @@ class FakeDesktopService:
                 "attempted_count": int(max_surface_waves) if follow_surface_waves else 0,
                 "learned_surface_count": int(max_surface_waves) if follow_surface_waves else 0,
                 "known_surface_count": 1 if follow_surface_waves else 0,
+                "traversed_container_roles": (
+                    [str(item).strip().lower() for item in (target_container_roles or ["menu", "dialog"]) if str(item).strip()]
+                    if follow_surface_waves
+                    else []
+                ),
+                "role_attempt_counts": (
+                    {
+                        str((target_container_roles or ["menu"])[0]).strip().lower(): int(max_surface_waves),
+                    }
+                    if follow_surface_waves and (target_container_roles or ["menu"])
+                    else {}
+                ),
+                "role_learned_counts": (
+                    {
+                        str((target_container_roles or ["menu"])[0]).strip().lower(): int(max_surface_waves),
+                    }
+                    if follow_surface_waves and (target_container_roles or ["menu"])
+                    else {}
+                ),
+                "recursive_depth_limit": int(max_surface_waves) if follow_surface_waves else 0,
+                "strategy_profile": {
+                    "recommended_container_roles": [
+                        str(item).strip().lower()
+                        for item in (target_container_roles or ["menu", "dialog"])
+                        if str(item).strip()
+                    ][:4],
+                },
                 "stop_reason": "completed" if follow_surface_waves else "disabled",
             },
             "surface_hint": {
@@ -13560,6 +13598,36 @@ class FakeDesktopService:
                     "features": {"search_surface": True},
                     "top_features": [{"value": "search_surface", "count": 1}],
                 },
+                "revalidation_summary": {
+                    "target_count": 2 if revalidate_known_controls else 0,
+                    "overdue_count": 1 if revalidate_known_controls else 0,
+                    "failure_hotspot_count": 1 if prefer_failure_memory else 0,
+                },
+            },
+            "revalidation": {
+                "status": "success",
+                "count": 2 if revalidate_known_controls else 0,
+                "items": [
+                    {
+                        "label": "File",
+                        "priority": 180.0,
+                        "container_role": (target_container_roles or ["menu"])[0] if (target_container_roles or ["menu"]) else "menu",
+                        "revalidation_due": bool(revalidate_known_controls),
+                    }
+                ] if revalidate_known_controls else [],
+            },
+            "targeting": {
+                "target_container_roles": [
+                    str(item).strip().lower()
+                    for item in (target_container_roles or ["menu"])
+                    if str(item).strip()
+                ][:4],
+                "adaptive_container_roles": not bool(target_container_roles),
+                "recommended_wave_container_roles": [
+                    str(item).strip().lower()
+                    for item in (target_container_roles or ["menu", "dialog"])
+                    if str(item).strip()
+                ][:4],
             },
             "memory_entry": entry,
             "app_memory": self.desktop_app_memory_status(app_name=app_name or "", profile_id="", category=""),
@@ -13586,6 +13654,9 @@ class FakeDesktopService:
         include_ocr_targets: bool = True,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        target_container_roles: list[str] | None = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         del category, per_app_limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
@@ -13604,6 +13675,10 @@ class FakeDesktopService:
         wave_attempt_total = 0
         learned_surface_total = 0
         known_surface_total = 0
+        traversed_container_roles: list[str] = []
+        role_attempt_counts: dict[str, int] = {}
+        role_learned_counts: dict[str, int] = {}
+        recommended_container_roles: list[str] = []
         for app_name in candidates[: max(1, int(max_apps))]:
             if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
                 skipped_apps.append(
@@ -13622,11 +13697,51 @@ class FakeDesktopService:
                 follow_surface_waves=follow_surface_waves,
                 max_surface_waves=max_surface_waves,
                 allow_risky_probes=allow_risky_probes,
+                target_container_roles=target_container_roles,
+                revalidate_known_controls=revalidate_known_controls,
+                prefer_failure_memory=prefer_failure_memory,
             )
             wave_report = dict(payload.get("wave_report", {}))
             wave_attempt_total += int(wave_report.get("attempted_count", 0) or 0)
             learned_surface_total += int(wave_report.get("learned_surface_count", 0) or 0)
             known_surface_total += int(wave_report.get("known_surface_count", 0) or 0)
+            traversed_roles = (
+                list(wave_report.get("traversed_container_roles", []))
+                if isinstance(wave_report.get("traversed_container_roles", []), list)
+                else []
+            )
+            for role in traversed_roles:
+                clean_role = str(role).strip().lower()
+                if clean_role and clean_role not in traversed_container_roles:
+                    traversed_container_roles.append(clean_role)
+            wave_role_attempt_counts = (
+                dict(wave_report.get("role_attempt_counts", {}))
+                if isinstance(wave_report.get("role_attempt_counts", {}), dict)
+                else {}
+            )
+            for key, value in wave_role_attempt_counts.items():
+                clean_key = str(key).strip().lower()
+                if clean_key:
+                    role_attempt_counts[clean_key] = int(role_attempt_counts.get(clean_key, 0) or 0) + int(value or 0)
+            wave_role_learned_counts = (
+                dict(wave_report.get("role_learned_counts", {}))
+                if isinstance(wave_report.get("role_learned_counts", {}), dict)
+                else {}
+            )
+            for key, value in wave_role_learned_counts.items():
+                clean_key = str(key).strip().lower()
+                if clean_key:
+                    role_learned_counts[clean_key] = int(role_learned_counts.get(clean_key, 0) or 0) + int(value or 0)
+            payload_targeting = dict(payload.get("targeting", {})) if isinstance(payload.get("targeting", {}), dict) else {}
+            recommended_roles = (
+                list(payload_targeting.get("recommended_wave_container_roles", []))
+                if isinstance(payload_targeting.get("recommended_wave_container_roles", []), list)
+                else []
+            )
+            for role in recommended_roles:
+                clean_role = str(role).strip().lower()
+                if clean_role and clean_role not in recommended_container_roles:
+                    recommended_container_roles.append(clean_role)
             items.append(
                 {
                     "app_name": app_name,
@@ -13634,6 +13749,7 @@ class FakeDesktopService:
                     "message": payload.get("message", ""),
                     "memory_entry": payload.get("memory_entry", {}),
                     "wave_report": wave_report,
+                    "targeting": payload_targeting,
                 }
             )
         return {
@@ -13654,12 +13770,23 @@ class FakeDesktopService:
                 "skipped_count": len(skipped_apps),
                 "skip_known_apps": bool(skip_known_apps),
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
+                "revalidate_known_controls": bool(revalidate_known_controls),
+                "prefer_failure_memory": bool(prefer_failure_memory),
+                "target_container_roles": [
+                    str(item).strip().lower()
+                    for item in (target_container_roles or [])
+                    if str(item).strip()
+                ],
                 "explicit_app_count": len(app_names or []),
             },
             "wave_summary": {
                 "wave_attempt_total": wave_attempt_total,
                 "learned_surface_total": learned_surface_total,
                 "known_surface_total": known_surface_total,
+                "traversed_container_roles": traversed_container_roles[:8],
+                "role_attempt_counts": role_attempt_counts,
+                "role_learned_counts": role_learned_counts,
+                "recommended_container_roles": recommended_container_roles[:8],
             },
             "app_memory": self.desktop_app_memory_status(app_name=query or "", profile_id="", category=""),
         }
@@ -13774,6 +13901,9 @@ class FakeDesktopService:
         revisit_stale_apps: bool | None = None,
         stale_after_hours: float | None = None,
         revisit_failed_apps: bool | None = None,
+        revalidate_known_controls: bool | None = None,
+        prioritize_failure_hotspots: bool | None = None,
+        target_container_roles: list[str] | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13815,6 +13945,16 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["stale_after_hours"] = float(stale_after_hours)
         if revisit_failed_apps is not None:
             self.desktop_app_memory_daemon_state["revisit_failed_apps"] = bool(revisit_failed_apps)
+        if revalidate_known_controls is not None:
+            self.desktop_app_memory_daemon_state["revalidate_known_controls"] = bool(revalidate_known_controls)
+        if prioritize_failure_hotspots is not None:
+            self.desktop_app_memory_daemon_state["prioritize_failure_hotspots"] = bool(prioritize_failure_hotspots)
+        if target_container_roles is not None:
+            self.desktop_app_memory_daemon_state["target_container_roles"] = [
+                str(item).strip().lower()
+                for item in target_container_roles
+                if str(item).strip()
+            ]
         self.desktop_app_memory_daemon_state["last_config_source"] = source
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
 
@@ -13839,6 +13979,9 @@ class FakeDesktopService:
         revisit_stale_apps: bool | None = None,
         stale_after_hours: float | None = None,
         revisit_failed_apps: bool | None = None,
+        revalidate_known_controls: bool | None = None,
+        prioritize_failure_hotspots: bool | None = None,
+        target_container_roles: list[str] | None = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -13850,6 +13993,16 @@ class FakeDesktopService:
             self.desktop_app_memory_daemon_state["stale_after_hours"] = float(stale_after_hours)
         if revisit_failed_apps is not None:
             self.desktop_app_memory_daemon_state["revisit_failed_apps"] = bool(revisit_failed_apps)
+        if revalidate_known_controls is not None:
+            self.desktop_app_memory_daemon_state["revalidate_known_controls"] = bool(revalidate_known_controls)
+        if prioritize_failure_hotspots is not None:
+            self.desktop_app_memory_daemon_state["prioritize_failure_hotspots"] = bool(prioritize_failure_hotspots)
+        if target_container_roles is not None:
+            self.desktop_app_memory_daemon_state["target_container_roles"] = [
+                str(item).strip().lower()
+                for item in target_container_roles
+                if str(item).strip()
+            ]
         payload = self.survey_desktop_app_memory_batch(
             app_names=app_names,
             query=query or str(self.desktop_app_memory_daemon_state.get("query", "") or ""),
@@ -13895,6 +14048,30 @@ class FakeDesktopService:
                 self.desktop_app_memory_daemon_state.get("prefer_unknown_apps", True)
                 if prefer_unknown_apps is None
                 else prefer_unknown_apps
+            ),
+            target_container_roles=[
+                str(item).strip().lower()
+                for item in (
+                    self.desktop_app_memory_daemon_state.get("target_container_roles", [])
+                    if target_container_roles is None
+                    else target_container_roles
+                )
+                if isinstance(
+                    self.desktop_app_memory_daemon_state.get("target_container_roles", [])
+                    if target_container_roles is None
+                    else target_container_roles,
+                    list,
+                ) and str(item).strip()
+            ],
+            revalidate_known_controls=bool(
+                self.desktop_app_memory_daemon_state.get("revalidate_known_controls", True)
+                if revalidate_known_controls is None
+                else revalidate_known_controls
+            ),
+            prefer_failure_memory=bool(
+                self.desktop_app_memory_daemon_state.get("prioritize_failure_hotspots", True)
+                if prioritize_failure_hotspots is None
+                else prioritize_failure_hotspots
             ),
             source=source,
         )
@@ -13952,6 +14129,17 @@ class FakeDesktopService:
             "summary": {
                 "pending_app_total": sum(int(row.get("pending_app_count", 0) or 0) for row in rows),
                 "completed_app_total": sum(int(row.get("completed_app_count", 0) or 0) for row in rows),
+                "skipped_app_total": sum(int(row.get("skipped_app_count", 0) or 0) for row in rows),
+                "adaptive_target_role_total": sum(
+                    1 for row in rows if bool(row.get("adaptive_target_container_roles", False))
+                ),
+                "adaptive_wave_depth_total": sum(
+                    1 for row in rows if bool(row.get("adaptive_surface_wave_depth", False))
+                ),
+                "top_target_container_roles": [
+                    {"value": "dialog", "count": sum(1 for row in rows if "dialog" in [str(item).strip().lower() for item in row.get("target_container_roles", []) if isinstance(row.get("target_container_roles", []), list)])},
+                    {"value": "menu", "count": sum(1 for row in rows if "menu" in [str(item).strip().lower() for item in row.get("target_container_roles", []) if isinstance(row.get("target_container_roles", []), list)])},
+                ],
             },
             "filters": {"campaign_id": campaign_id, "status": status},
             "app_memory": self.desktop_app_memory_status(limit=64),
@@ -13978,6 +14166,9 @@ class FakeDesktopService:
         revisit_stale_apps: bool = True,
         stale_after_hours: float = 72.0,
         revisit_failed_apps: bool = True,
+        revalidate_known_controls: bool = True,
+        prioritize_failure_hotspots: bool = True,
+        target_container_roles: list[str] | None = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         del category, per_app_limit, ensure_app_launch, probe_controls, max_probe_controls, allow_risky_probes
@@ -13999,12 +14190,32 @@ class FakeDesktopService:
             "max_apps": int(max_apps),
             "follow_surface_waves": bool(follow_surface_waves),
             "max_surface_waves": int(max_surface_waves),
+            "effective_max_surface_waves": int(max_surface_waves) + (2 if not target_container_roles else 0),
+            "adaptive_surface_wave_depth": not bool(target_container_roles),
             "skip_known_apps": bool(skip_known_apps),
             "prefer_unknown_apps": bool(prefer_unknown_apps),
             "continuous_learning": bool(continuous_learning),
             "revisit_stale_apps": bool(revisit_stale_apps),
             "stale_after_hours": float(stale_after_hours),
             "revisit_failed_apps": bool(revisit_failed_apps),
+            "revalidate_known_controls": bool(revalidate_known_controls),
+            "prioritize_failure_hotspots": bool(prioritize_failure_hotspots),
+            "target_container_roles": [
+                str(item).strip().lower()
+                for item in (target_container_roles or [])
+                if str(item).strip()
+            ] or ["dialog", "menu"],
+            "adaptive_target_container_roles": not bool(target_container_roles),
+            "revalidation_focus_summary": {
+                "top_container_roles": [
+                    {"value": "dialog", "count": 3},
+                    {"value": "menu", "count": 2},
+                ],
+                "top_reason_codes": [
+                    {"value": "verification_needed", "count": 2},
+                    {"value": "failure_hotspot", "count": 1},
+                ],
+            },
             "latest_cycle_status": "",
             "latest_cycle_message": "",
             "wave_attempt_count": 0,
@@ -14041,6 +14252,13 @@ class FakeDesktopService:
             max_apps=max_apps or int(match.get("max_apps", 2) or 2),
             follow_surface_waves=bool(match.get("follow_surface_waves", True)),
             max_surface_waves=int(match.get("max_surface_waves", 3) or 3),
+            target_container_roles=[
+                str(item).strip().lower()
+                for item in match.get("target_container_roles", [])
+                if isinstance(match.get("target_container_roles", []), list) and str(item).strip()
+            ],
+            revalidate_known_controls=bool(match.get("revalidate_known_controls", True)),
+            prefer_failure_memory=bool(match.get("prioritize_failure_hotspots", True)),
             source=source,
         )
         handled = {
@@ -14062,9 +14280,21 @@ class FakeDesktopService:
         match["wave_attempt_count"] = int(match.get("wave_attempt_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("wave_attempt_total", 0) or 0)
         match["learned_surface_count"] = int(match.get("learned_surface_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("learned_surface_total", 0) or 0)
         match["known_surface_count"] = int(match.get("known_surface_count", 0) or 0) + int(dict(batch.get("wave_summary", {})).get("known_surface_total", 0) or 0)
+        match["traversed_container_roles"] = [
+            str(item).strip().lower()
+            for item in dict(batch.get("wave_summary", {})).get("traversed_container_roles", [])
+            if isinstance(dict(batch.get("wave_summary", {})).get("traversed_container_roles", []), list) and str(item).strip()
+        ]
+        match["role_learned_counts"] = (
+            dict(dict(batch.get("wave_summary", {})).get("role_learned_counts", {}))
+            if isinstance(dict(batch.get("wave_summary", {})).get("role_learned_counts", {}), dict)
+            else {}
+        )
         match["latest_cycle_status"] = str(batch.get("status", "") or "success")
         match["latest_cycle_message"] = str(batch.get("message", "") or "")
         match["run_count"] = int(match.get("run_count", 0) or 0) + 1
+        match["adaptive_target_container_roles"] = bool(match.get("adaptive_target_container_roles", False))
+        match["adaptive_surface_wave_depth"] = bool(match.get("adaptive_surface_wave_depth", False))
         match["status"] = "completed" if not match.get("pending_apps", []) else "active"
         match["updated_at"] = datetime.now(timezone.utc).isoformat()
         return {
@@ -22136,6 +22366,8 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert isinstance(survey["memory_entry"].get("surface_nodes", []), list)
     assert isinstance(survey["memory_entry"].get("learned_commands", []), list)
     assert int(dict(survey.get("wave_report", {})).get("learned_surface_count", 0) or 0) == 2
+    assert len(dict(survey.get("wave_report", {})).get("traversed_container_roles", [])) >= 1
+    assert len(dict(survey.get("targeting", {})).get("recommended_wave_container_roles", [])) >= 1
     assert survey["app_memory"]["status"] == "success"
 
     status, cleared = request_json(
@@ -22169,6 +22401,8 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert batch["surveyed_app_count"] >= 1
     assert batch["success_count"] >= 1
     assert int(dict(batch.get("wave_summary", {})).get("wave_attempt_total", 0) or 0) >= 2
+    assert len(dict(batch.get("wave_summary", {})).get("traversed_container_roles", [])) >= 1
+    assert len(dict(batch.get("wave_summary", {})).get("recommended_container_roles", [])) >= 1
 
     status, configured = request_json(
         "POST",
@@ -22278,6 +22512,10 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert created["campaign"]["revisit_stale_apps"] is True
     assert created["campaign"]["stale_after_hours"] == 72.0
     assert created["campaign"]["revisit_failed_apps"] is True
+    assert created["campaign"]["adaptive_target_container_roles"] is True
+    assert created["campaign"]["adaptive_surface_wave_depth"] is True
+    assert created["campaign"]["effective_max_surface_waves"] >= created["campaign"]["max_surface_waves"]
+    assert created["campaign"]["revalidation_focus_summary"]["top_container_roles"][0]["value"] == "dialog"
 
     status, listed = request_json(
         "GET",
@@ -22286,6 +22524,9 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert status == 200
     assert listed["status"] == "success"
     assert listed["count"] >= 1
+    assert listed["summary"]["adaptive_target_role_total"] >= 1
+    assert listed["summary"]["adaptive_wave_depth_total"] >= 1
+    assert listed["summary"]["top_target_container_roles"][0]["value"] == "dialog"
 
     status, executed = request_json(
         "POST",
@@ -22297,6 +22538,9 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert str(executed.get("campaign", {}).get("campaign_id", "")) == campaign_id
     assert int(executed.get("campaign", {}).get("completed_app_count", 0) or 0) >= 0
     assert int(executed.get("campaign", {}).get("wave_attempt_count", 0) or 0) >= 0
+    assert executed["campaign"]["adaptive_target_container_roles"] is True
+    assert executed["campaign"]["effective_max_surface_waves"] >= executed["campaign"]["max_surface_waves"]
+    assert len(executed["result"]["wave_summary"]["traversed_container_roles"]) >= 1
 
 
 def test_desktop_evaluation_catalog_route(api_server: tuple[str, FakeDesktopService]) -> None:

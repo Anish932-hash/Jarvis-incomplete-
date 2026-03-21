@@ -8317,6 +8317,9 @@ class DesktopActionRouter:
         include_ocr_targets: bool = True,
         follow_surface_waves: bool = True,
         max_surface_waves: int = 3,
+        target_container_roles: Optional[List[str]] = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_app_name = str(app_name or "").strip()
@@ -8377,6 +8380,52 @@ class DesktopActionRouter:
             profile_id=str(app_profile.get("profile_id", "") or "").strip(),
             surface_fingerprint=str(snapshot.get("surface_fingerprint", "") or "").strip(),
         )
+        normalized_target_container_roles = self._dedupe_strings(
+            [
+                self._normalize_probe_text(item)
+                for item in (target_container_roles or [])
+                if self._normalize_probe_text(item)
+            ]
+        )
+        revalidation_payload = self._app_memory.revalidation_targets(
+            app_name=clean_app_name,
+            profile_id=str(app_profile.get("profile_id", "") or "").strip(),
+            category=str(app_profile.get("category", "") or "").strip(),
+            limit=max(4, min(max(int(max_probe_controls or 4) * 2, 8), 24)),
+            container_roles=normalized_target_container_roles,
+            include_healthy=False,
+        ) if revalidate_known_controls else {"status": "success", "items": [], "summary": {"target_count": 0}}
+        revalidation_targets = [
+            dict(item)
+            for item in revalidation_payload.get("items", [])
+            if isinstance(revalidation_payload.get("items", []), list) and isinstance(item, dict)
+        ]
+        effective_target_container_roles = list(normalized_target_container_roles)
+        if not effective_target_container_roles:
+            effective_target_container_roles = self._dedupe_strings(
+                [
+                    self._normalize_probe_text(item.get("value", ""))
+                    for item in (
+                        dict(revalidation_payload.get("summary", {})).get("top_container_roles", [])
+                        if isinstance(revalidation_payload.get("summary", {}), dict)
+                        and isinstance(dict(revalidation_payload.get("summary", {})).get("top_container_roles", []), list)
+                        else []
+                    )
+                    if isinstance(item, dict) and self._normalize_probe_text(item.get("value", ""))
+                ]
+            )[:4]
+        adaptive_container_roles = bool(effective_target_container_roles and not normalized_target_container_roles)
+        failure_memory_summary = (
+            dict(surface_hint.get("failure_memory_summary", {}))
+            if isinstance(surface_hint.get("failure_memory_summary", {}), dict)
+            else {}
+        )
+        discouraged_probe_labels = [
+            str(item.get("title", "") or item.get("action", "") or "").strip()
+            for item in failure_memory_summary.get("top_failures", [])
+            if isinstance(failure_memory_summary.get("top_failures", []), list) and isinstance(item, dict)
+            and str(item.get("title", "") or item.get("action", "") or "").strip()
+        ][:8]
         if include_exploration:
             exploration_plan = self._surface_exploration_from_snapshot(
                 snapshot=dict(snapshot),
@@ -8395,6 +8444,10 @@ class DesktopActionRouter:
                 max_probe_controls=max_probe_controls,
                 allow_risky_probes=allow_risky_probes,
                 include_ocr_targets=include_ocr_targets,
+                revalidation_targets=revalidation_targets,
+                target_container_roles=effective_target_container_roles,
+                discouraged_labels=discouraged_probe_labels,
+                prefer_failure_memory=prefer_failure_memory,
             )
         wave_report: Dict[str, Any] = {}
         if follow_surface_waves:
@@ -8411,6 +8464,9 @@ class DesktopActionRouter:
                 include_ocr_targets=include_ocr_targets,
                 source=clean_source,
                 max_surface_waves=max_surface_waves,
+                target_container_roles=effective_target_container_roles,
+                revalidation_targets=revalidation_targets,
+                prefer_failure_memory=prefer_failure_memory,
             )
         memory_entry = self._app_memory.record_survey(
             app_name=clean_app_name,
@@ -8480,9 +8536,21 @@ class DesktopActionRouter:
             learned_surface_count = int(wave_report.get("learned_surface_count", 0) or 0)
             known_surface_count = int(wave_report.get("known_surface_count", 0) or 0)
             stabilized_wave_count = int(wave_report.get("stabilized_count", 0) or 0)
+            traversed_container_roles = [
+                str(item).strip()
+                for item in wave_report.get("traversed_container_roles", [])
+                if isinstance(wave_report.get("traversed_container_roles", []), list) and str(item).strip()
+            ]
+            recursive_depth_limit = max(0, int(wave_report.get("recursive_depth_limit", 0) or 0))
             if attempted_wave_count or learned_surface_count:
                 message_parts.append(
                     f"Linked-surface learning opened {attempted_wave_count} safe workflow wave{'s' if attempted_wave_count != 1 else ''}, captured {learned_surface_count} additional surface{'s' if learned_surface_count != 1 else ''}, stabilized {stabilized_wave_count} linked surface{'s' if stabilized_wave_count != 1 else ''}, and reused {known_surface_count} known surface memory hit{'s' if known_surface_count != 1 else ''}."
+                )
+            if traversed_container_roles:
+                message_parts.append(
+                    f"Recursive traversal covered {', '.join(traversed_container_roles[:5])} container role"
+                    f"{'s' if len(traversed_container_roles[:5]) != 1 else ''}"
+                    f"{f' with a depth budget of {recursive_depth_limit}' if recursive_depth_limit > 0 else ''}."
                 )
             strategy_profile = dict(wave_report.get("strategy_profile", {})) if isinstance(wave_report.get("strategy_profile", {}), dict) else {}
             adaptive_actions = [
@@ -8496,6 +8564,17 @@ class DesktopActionRouter:
                 )
         if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
             message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
+        if revalidation_targets:
+            message_parts.append(
+                f"Revalidation memory prioritized {len(revalidation_targets)} stale or uncertain learned control"
+                f"{'s' if len(revalidation_targets) != 1 else ''} before exploring unknowns."
+            )
+        if effective_target_container_roles:
+            message_parts.append(
+                f"{'Revalidation memory automatically focused' if adaptive_container_roles else 'Traversal focus was narrowed to'} "
+                f"{', '.join(effective_target_container_roles[:5])} container role"
+                f"{'s' if len(effective_target_container_roles[:5]) != 1 else ''}."
+            )
         if isinstance(exploration_plan, dict) and exploration_plan:
             branch_action_count = int(exploration_plan.get("branch_action_count", 0) or 0)
             hypothesis_count = int(exploration_plan.get("hypothesis_count", 0) or 0)
@@ -8512,6 +8591,21 @@ class DesktopActionRouter:
             "probe_report": probe_report,
             "wave_report": wave_report,
             "surface_hint": surface_hint,
+            "revalidation": revalidation_payload if isinstance(revalidation_payload, dict) else {},
+            "targeting": {
+                "target_container_roles": effective_target_container_roles[:8],
+                "adaptive_container_roles": adaptive_container_roles,
+                "recommended_wave_container_roles": [
+                    self._normalize_probe_text(item)
+                    for item in (
+                        dict(wave_report.get("strategy_profile", {})).get("recommended_container_roles", [])
+                        if isinstance(wave_report.get("strategy_profile", {}), dict)
+                        and isinstance(dict(wave_report.get("strategy_profile", {})).get("recommended_container_roles", []), list)
+                        else []
+                    )
+                    if self._normalize_probe_text(item)
+                ][:6],
+            },
             "memory_entry": memory_entry,
             "app_memory": app_memory,
         }
@@ -8537,6 +8631,9 @@ class DesktopActionRouter:
         max_surface_waves: int = 3,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        target_container_roles: Optional[List[str]] = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
         source: str = "batch",
     ) -> Dict[str, Any]:
         bounded_max_apps = max(1, min(int(max_apps or 4), 32))
@@ -8568,12 +8665,27 @@ class DesktopActionRouter:
         error_count = 0
         wave_attempt_total = 0
         learned_surface_total = 0
+        known_surface_total = 0
+        adaptive_targeted_app_count = 0
+        adaptive_wave_depth_app_count = 0
+        traversed_container_roles: List[str] = []
+        recommended_wave_container_roles: List[str] = []
+        role_attempt_counts: Dict[str, int] = {}
+        role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
         for profile in selected_profiles:
             requested_app_name = str(profile.get("_requested_app_name", "") or "").strip()
             target_app_name = str(requested_app_name or profile.get("name", "") or profile.get("profile_id", "") or "").strip()
             if not target_app_name:
                 continue
+            adaptive_targeting = self._app_memory_batch_targeting(
+                app_name=target_app_name,
+                profile_id=str(profile.get("profile_id", "") or "").strip(),
+                category=str(profile.get("category", "") or "").strip(),
+                requested_target_container_roles=target_container_roles,
+                requested_max_surface_waves=max_surface_waves,
+                revalidate_known_controls=revalidate_known_controls,
+            )
             try:
                 survey_payload = self.survey_app_memory(
                     app_name=target_app_name,
@@ -8590,7 +8702,14 @@ class DesktopActionRouter:
                     allow_risky_probes=allow_risky_probes,
                     include_ocr_targets=include_ocr_targets,
                     follow_surface_waves=follow_surface_waves,
-                    max_surface_waves=max_surface_waves,
+                    max_surface_waves=int(adaptive_targeting.get("max_surface_waves", max_surface_waves) or max_surface_waves or 3),
+                    target_container_roles=[
+                        str(item).strip()
+                        for item in adaptive_targeting.get("target_container_roles", [])
+                        if isinstance(adaptive_targeting.get("target_container_roles", []), list) and str(item).strip()
+                    ] if isinstance(adaptive_targeting, dict) else target_container_roles,
+                    revalidate_known_controls=revalidate_known_controls,
+                    prefer_failure_memory=prefer_failure_memory,
                     source=clean_source,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -8607,6 +8726,56 @@ class DesktopActionRouter:
             )
             wave_attempt_total += int(wave_report.get("attempted_count", 0) or 0)
             learned_surface_total += int(wave_report.get("learned_surface_count", 0) or 0)
+            known_surface_total += int(wave_report.get("known_surface_count", 0) or 0)
+            traversed_container_roles = self._dedupe_strings(
+                [
+                    *traversed_container_roles,
+                    *[
+                        self._normalize_probe_text(item)
+                        for item in wave_report.get("traversed_container_roles", [])
+                        if isinstance(wave_report.get("traversed_container_roles", []), list)
+                        and self._normalize_probe_text(item)
+                    ],
+                ]
+            )
+            for key, value in (
+                dict(wave_report.get("role_attempt_counts", {})).items()
+                if isinstance(wave_report.get("role_attempt_counts", {}), dict)
+                else []
+            ):
+                clean_key = self._normalize_probe_text(key)
+                if not clean_key:
+                    continue
+                role_attempt_counts[clean_key] = max(0, int(role_attempt_counts.get(clean_key, 0) or 0)) + max(0, int(value or 0))
+            for key, value in (
+                dict(wave_report.get("role_learned_counts", {})).items()
+                if isinstance(wave_report.get("role_learned_counts", {}), dict)
+                else []
+            ):
+                clean_key = self._normalize_probe_text(key)
+                if not clean_key:
+                    continue
+                role_learned_counts[clean_key] = max(0, int(role_learned_counts.get(clean_key, 0) or 0)) + max(0, int(value or 0))
+            survey_targeting = (
+                dict(survey_payload.get("targeting", {}))
+                if isinstance(survey_payload.get("targeting", {}), dict)
+                else {}
+            )
+            recommended_wave_container_roles = self._dedupe_strings(
+                [
+                    *recommended_wave_container_roles,
+                    *[
+                        self._normalize_probe_text(item)
+                        for item in survey_targeting.get("recommended_wave_container_roles", [])
+                        if isinstance(survey_targeting.get("recommended_wave_container_roles", []), list)
+                        and self._normalize_probe_text(item)
+                    ],
+                ]
+            )
+            if bool(adaptive_targeting.get("adaptive_target_container_roles", False)):
+                adaptive_targeted_app_count += 1
+            if bool(adaptive_targeting.get("adaptive_surface_wave_depth", False)):
+                adaptive_wave_depth_app_count += 1
             item = {
                 "app_name": target_app_name,
                 "profile_id": str(profile.get("profile_id", "") or "").strip(),
@@ -8619,6 +8788,15 @@ class DesktopActionRouter:
                 ),
                 "status": result_status,
                 "message": str(survey_payload.get("message", "") or "").strip(),
+                "targeting": {
+                    **(dict(adaptive_targeting) if isinstance(adaptive_targeting, dict) else {}),
+                    **survey_targeting,
+                },
+                "revalidation": (
+                    dict(survey_payload.get("revalidation", {}))
+                    if isinstance(survey_payload.get("revalidation", {}), dict)
+                    else {}
+                ),
                 "memory_entry": memory_entry,
                 "wave_report": wave_report,
             }
@@ -8651,6 +8829,18 @@ class DesktopActionRouter:
                 f"{'s' if wave_attempt_total != 1 else ''} and captured {learned_surface_total} additional surface"
                 f"{'s' if learned_surface_total != 1 else ''}."
             )
+        if adaptive_targeted_app_count or adaptive_wave_depth_app_count:
+            message = (
+                f"{message} Hotspot memory auto-focused {adaptive_targeted_app_count} app"
+                f"{'s' if adaptive_targeted_app_count != 1 else ''}"
+                f" and deepened wave traversal for {adaptive_wave_depth_app_count} app"
+                f"{'s' if adaptive_wave_depth_app_count != 1 else ''}."
+            )
+        if traversed_container_roles:
+            message = (
+                f"{message} Recursive safe traversal covered "
+                f"{', '.join(traversed_container_roles[:5])} across the surveyed app set."
+            )
         return {
             "status": overall_status,
             "message": message,
@@ -8668,11 +8858,127 @@ class DesktopActionRouter:
             "selection_summary": dict(selection.get("selection_summary", {})) if isinstance(selection.get("selection_summary", {}), dict) else {},
             "wave_summary": {
                 "attempted_count": wave_attempt_total,
+                "wave_attempt_total": wave_attempt_total,
                 "learned_surface_count": learned_surface_total,
+                "learned_surface_total": learned_surface_total,
+                "known_surface_count": known_surface_total,
+                "known_surface_total": known_surface_total,
                 "follow_surface_waves": bool(follow_surface_waves),
                 "max_surface_waves": max(0, min(int(max_surface_waves or 0), 8)),
+                "adaptive_targeted_app_count": adaptive_targeted_app_count,
+                "adaptive_wave_depth_app_count": adaptive_wave_depth_app_count,
+                "traversed_container_roles": traversed_container_roles[:8],
+                "role_attempt_counts": {str(key): int(value) for key, value in sorted(role_attempt_counts.items())},
+                "role_learned_counts": {str(key): int(value) for key, value in sorted(role_learned_counts.items())},
+                "recommended_container_roles": recommended_wave_container_roles[:8],
+            },
+            "targeting": {
+                "target_container_roles": self._dedupe_strings(
+                    [
+                        self._normalize_probe_text(item)
+                        for item in (target_container_roles or [])
+                        if self._normalize_probe_text(item)
+                    ]
+                ),
+                "revalidate_known_controls": bool(revalidate_known_controls),
+                "prefer_failure_memory": bool(prefer_failure_memory),
+                "adaptive_targeted_app_count": adaptive_targeted_app_count,
+                "adaptive_wave_depth_app_count": adaptive_wave_depth_app_count,
+                "recommended_wave_container_roles": recommended_wave_container_roles[:8],
             },
             "app_memory": app_memory,
+        }
+
+    def _app_memory_batch_targeting(
+        self,
+        *,
+        app_name: str,
+        profile_id: str,
+        category: str,
+        requested_target_container_roles: Optional[List[str]],
+        requested_max_surface_waves: int,
+        revalidate_known_controls: bool,
+    ) -> Dict[str, Any]:
+        explicit_roles = self._dedupe_strings(
+            [
+                self._normalize_probe_text(item)
+                for item in (requested_target_container_roles or [])
+                if self._normalize_probe_text(item)
+            ]
+        )
+        base_max_surface_waves = max(1, min(int(requested_max_surface_waves or 3), 8))
+        if not revalidate_known_controls:
+            return {
+                "target_container_roles": explicit_roles,
+                "adaptive_target_container_roles": False,
+                "max_surface_waves": base_max_surface_waves,
+                "adaptive_surface_wave_depth": False,
+                "revalidation_summary": {"target_count": 0, "failure_hotspot_count": 0, "overdue_count": 0},
+            }
+        clean_app_name = str(app_name or "").strip()
+        clean_profile_id = str(profile_id or "").strip()
+        clean_category = str(category or "").strip()
+        limit = max(6, min(base_max_surface_waves * 4, 18))
+        revalidation_payload = self._app_memory.revalidation_targets(
+            app_name=clean_app_name,
+            profile_id=clean_profile_id,
+            category=clean_category,
+            limit=limit,
+            container_roles=explicit_roles,
+            include_healthy=False,
+        )
+        if int(revalidation_payload.get("count", 0) or 0) <= 0 and clean_app_name and (clean_profile_id or clean_category):
+            revalidation_payload = self._app_memory.revalidation_targets(
+                app_name=clean_app_name,
+                profile_id="",
+                category="",
+                limit=limit,
+                container_roles=explicit_roles,
+                include_healthy=False,
+            )
+        revalidation_summary = (
+            dict(revalidation_payload.get("summary", {}))
+            if isinstance(revalidation_payload.get("summary", {}), dict)
+            else {}
+        )
+        effective_roles = list(explicit_roles)
+        adaptive_target_container_roles = False
+        if not effective_roles:
+            effective_roles = self._dedupe_strings(
+                [
+                    self._normalize_probe_text(item.get("value", ""))
+                    for item in revalidation_summary.get("top_container_roles", [])
+                    if isinstance(revalidation_summary.get("top_container_roles", []), list)
+                    and isinstance(item, dict)
+                    and self._normalize_probe_text(item.get("value", ""))
+                ]
+            )[:4]
+            adaptive_target_container_roles = bool(effective_roles)
+        role_set = {str(item).strip().lower() for item in effective_roles if str(item).strip()}
+        target_count = max(0, int(revalidation_summary.get("target_count", 0) or 0))
+        failure_hotspot_count = max(0, int(revalidation_summary.get("failure_hotspot_count", 0) or 0))
+        overdue_count = max(0, int(revalidation_summary.get("overdue_count", 0) or 0))
+        depth_bonus = 0
+        if role_set.intersection({"menu", "tab", "toolbar", "ribbon"}):
+            depth_bonus = max(depth_bonus, 1)
+        if role_set.intersection({"tree", "sidebar", "table"}):
+            depth_bonus = max(depth_bonus, 2)
+        if "dialog" in role_set:
+            depth_bonus = max(depth_bonus, 3)
+        if target_count >= 4:
+            depth_bonus = max(depth_bonus, 2)
+        if failure_hotspot_count > 0:
+            depth_bonus = max(depth_bonus, 2)
+        if overdue_count >= 2:
+            depth_bonus = max(depth_bonus, 1)
+        effective_max_surface_waves = max(base_max_surface_waves, min(8, base_max_surface_waves + depth_bonus))
+        adaptive_surface_wave_depth = bool(effective_max_surface_waves > base_max_surface_waves and not requested_target_container_roles)
+        return {
+            "target_container_roles": effective_roles[:8],
+            "adaptive_target_container_roles": adaptive_target_container_roles,
+            "max_surface_waves": effective_max_surface_waves,
+            "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
+            "revalidation_summary": revalidation_summary,
         }
 
     def _app_memory_wave_candidates(
@@ -8681,6 +8987,11 @@ class DesktopActionRouter:
         snapshot: Dict[str, Any],
         preferred_actions: Optional[List[str]] = None,
         discouraged_actions: Optional[List[str]] = None,
+        target_container_roles: Optional[List[str]] = None,
+        revalidation_targets: Optional[List[Dict[str, Any]]] = None,
+        prefer_failure_memory: bool = True,
+        traversed_container_roles: Optional[List[str]] = None,
+        role_attempt_counts: Optional[Dict[str, Any]] = None,
         limit: int = 6,
     ) -> List[Dict[str, Any]]:
         workflow_rows = [
@@ -8718,6 +9029,35 @@ class DesktopActionRouter:
             for item in (discouraged_actions or [])
             if str(item).strip()
         }
+        targeted_roles = {
+            self._normalize_probe_text(item)
+            for item in (target_container_roles or [])
+            if self._normalize_probe_text(item)
+        }
+        traversed_roles = {
+            self._normalize_probe_text(item)
+            for item in (traversed_container_roles or [])
+            if self._normalize_probe_text(item)
+        }
+        normalized_role_attempt_counts = {
+            self._normalize_probe_text(key): max(0, int(value or 0))
+            for key, value in (
+                role_attempt_counts.items()
+                if isinstance(role_attempt_counts, dict)
+                else []
+            )
+            if self._normalize_probe_text(key)
+        }
+        prioritized_labels = {
+            self._normalize_probe_text(
+                dict(item).get("label", "") or dict(item).get("query", "") or dict(item).get("identity", "")
+            )
+            for item in (revalidation_targets or [])
+            if isinstance(item, dict)
+            and self._normalize_probe_text(
+                dict(item).get("label", "") or dict(item).get("query", "") or dict(item).get("identity", "")
+            )
+        }
         seen_actions: set[str] = set()
         candidates: List[Dict[str, Any]] = []
         for row in workflow_rows:
@@ -8751,7 +9091,7 @@ class DesktopActionRouter:
                         if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
                     ] if isinstance(row.get("recommended_followups", []), list) else [],
                     "sort_key": (
-                        0 if action_name in preferred_order or preferred_wave_mode == "workflow_hotkey_first" else 1,
+                        0 if action_name in preferred_order or action_name in prioritized_labels or preferred_wave_mode == "workflow_hotkey_first" else 1,
                         preferred_order.get(action_name, APP_MEMORY_WAVE_PRIORITY.get(action_name, 100)),
                         1 if bool(row.get("matched", False)) else 0,
                         -max(0, int(row.get("match_count", 0) or 0)),
@@ -8779,8 +9119,26 @@ class DesktopActionRouter:
                 or (container_role and f"avoid_{container_role}" in clean_discouraged)
             ):
                 continue
+            if targeted_roles and container_role not in targeted_roles:
+                continue
             seen_actions.add(action_name)
             confidence = max(0.05, min(float(row.get("confidence", 0.0) or 0.0), 0.99))
+            normalized_label = self._normalize_probe_text(label)
+            role_attempt_count = max(0, int(normalized_role_attempt_counts.get(container_role, 0) or 0))
+            role_unseen = bool(container_role and container_role not in traversed_roles)
+            untraversed_target_role = bool(container_role and container_role in targeted_roles and role_unseen)
+            prioritized_candidate = bool(
+                normalized_label in prioritized_labels
+                or action_name in prioritized_labels
+                or container_role in targeted_roles
+            )
+            if prefer_failure_memory and container_role in clean_discouraged and not prioritized_candidate:
+                continue
+            recursive_followups = [
+                f"traverse_{path}"
+                for path in row.get("recursive_followups", [])
+                if isinstance(row.get("recursive_followups", []), list) and str(path).strip()
+            ]
             candidates.append(
                 {
                     "action": action_name,
@@ -8793,27 +9151,46 @@ class DesktopActionRouter:
                     "class_name": str(row.get("class_name", "") or "").strip(),
                     "container_role": container_role,
                     "confidence": round(confidence, 4),
-                    "recommended_followups": [
-                        f"traverse_{path}"
-                        for path in recommended_paths
-                        if path and path != container_role
-                    ][:6],
+                    "recommended_followups": self._dedupe_strings(
+                        [
+                            *recursive_followups,
+                            *[
+                                f"traverse_{path}"
+                                for path in recommended_paths
+                                if path and path != container_role
+                            ],
+                        ]
+                    )[:6],
                     "sort_key": (
-                        0
-                        if (
-                            action_name in preferred_order
-                            or container_role in preferred_order
-                            or f"traverse_{container_role}" in preferred_order
-                            or preferred_wave_mode in {"surface_traversal_first", "vision_guided_safe_traversal"}
-                            or container_role in preferred_container_roles
-                        )
-                        else 1,
+                        0 if untraversed_target_role else (
+                            1
+                            if (
+                                prioritized_candidate
+                                or (
+                                    role_unseen
+                                    and (
+                                        preferred_wave_mode in {"surface_traversal_first", "vision_guided_safe_traversal"}
+                                        or container_role in preferred_container_roles
+                                        or not traversed_roles
+                                    )
+                                )
+                                or action_name in preferred_order
+                                or container_role in preferred_order
+                                or f"traverse_{container_role}" in preferred_order
+                            )
+                            else 2
+                        ),
+                        0 if role_unseen else 1,
+                        role_attempt_count,
                         preferred_order.get(action_name, preferred_order.get(container_role, preferred_order.get(f"traverse_{container_role}", 100))),
                         0 if container_role in {"menu", "tab", "tree", "sidebar", "dialog"} else 1,
                         -round(confidence * 1000),
                         -round(float(row.get("query_match_score", 0.0) or 0.0) * 1000),
                         action_name,
                     ),
+                    "role_attempt_count": role_attempt_count,
+                    "role_unseen": role_unseen,
+                    "target_role_priority": untraversed_target_role,
                 }
             )
         candidates.sort(key=lambda row: row.get("sort_key", (9, 999, 9, 0, "")))
@@ -9026,6 +9403,9 @@ class DesktopActionRouter:
         include_ocr_targets: bool,
         source: str,
         max_surface_waves: int,
+        target_container_roles: Optional[List[str]] = None,
+        revalidation_targets: Optional[List[Dict[str, Any]]] = None,
+        prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
         bounded_waves = max(0, min(int(max_surface_waves or 0), 8))
         if bounded_waves <= 0:
@@ -9043,6 +9423,9 @@ class DesktopActionRouter:
         seen_fingerprints = {initial_surface_fingerprint} if initial_surface_fingerprint else set()
         attempted_keys: set[str] = set()
         preferred_actions: List[str] = []
+        traversed_container_roles: List[str] = []
+        role_attempt_counts: Dict[str, int] = {}
+        role_learned_counts: Dict[str, int] = {}
         items: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         known_surface_count = 0
@@ -9052,6 +9435,7 @@ class DesktopActionRouter:
         strategy_profile: Dict[str, Any] = {
             "known_surface": False,
             "recommended_actions": [],
+            "recommended_container_roles": [],
             "top_actions": [],
         }
         while len(items) < bounded_waves:
@@ -9070,6 +9454,12 @@ class DesktopActionRouter:
             strategy_profile = {
                 "known_surface": bool(current_surface_hint.get("known", False)) if isinstance(current_surface_hint, dict) else False,
                 "recommended_actions": adaptive_actions[:6],
+                "recommended_container_roles": [
+                    self._normalize_probe_text(item)
+                    for item in current_surface_hint.get("recommended_wave_container_roles", [])
+                    if isinstance(current_surface_hint.get("recommended_wave_container_roles", []), list)
+                    and self._normalize_probe_text(item)
+                ][:6] if isinstance(current_surface_hint, dict) else [],
                 "discouraged_actions": [
                     str(item).strip().lower()
                     for item in current_surface_hint.get("discouraged_wave_actions", [])
@@ -9085,6 +9475,24 @@ class DesktopActionRouter:
                 snapshot=current_snapshot,
                 preferred_actions=self._dedupe_strings([*preferred_actions, *adaptive_actions]),
                 discouraged_actions=list(strategy_profile.get("discouraged_actions", [])),
+                target_container_roles=self._dedupe_strings(
+                    [
+                        *[
+                            self._normalize_probe_text(item)
+                            for item in (target_container_roles or [])
+                            if self._normalize_probe_text(item)
+                        ],
+                        *[
+                            self._normalize_probe_text(item)
+                            for item in strategy_profile.get("recommended_container_roles", [])
+                            if self._normalize_probe_text(item)
+                        ],
+                    ]
+                )[:8],
+                revalidation_targets=revalidation_targets,
+                prefer_failure_memory=prefer_failure_memory,
+                traversed_container_roles=traversed_container_roles,
+                role_attempt_counts=role_attempt_counts,
                 limit=8,
             )
             if not candidates:
@@ -9098,6 +9506,20 @@ class DesktopActionRouter:
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
                     "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
+                    "traversed_container_roles": self._dedupe_strings(traversed_container_roles),
+                    "role_attempt_counts": {str(key): int(value) for key, value in sorted(role_attempt_counts.items())},
+                    "role_learned_counts": {str(key): int(value) for key, value in sorted(role_learned_counts.items())},
+                    "recursive_depth_limit": max(
+                        1,
+                        min(
+                            8,
+                            int(
+                                dict(current_snapshot.get("safe_traversal_plan", {})).get("recursive_depth_limit", bounded_waves)
+                                if isinstance(current_snapshot.get("safe_traversal_plan", {}), dict)
+                                else bounded_waves
+                            ),
+                        ),
+                    ),
                     "stop_reason": "no_safe_wave_candidates" if not items else "exhausted_linked_surfaces",
                 }
             progressed = False
@@ -9105,10 +9527,13 @@ class DesktopActionRouter:
                 action_name = str(candidate.get("action", "") or "").strip().lower()
                 if not action_name:
                     continue
+                candidate_container_role = self._normalize_probe_text(candidate.get("container_role", ""))
                 attempt_key = f"{current_fingerprint}|{action_name}"
                 if attempt_key in attempted_keys:
                     continue
                 attempted_keys.add(attempt_key)
+                if candidate_container_role:
+                    role_attempt_counts[candidate_container_role] = max(0, int(role_attempt_counts.get(candidate_container_role, 0) or 0)) + 1
                 wave_result = self._execute_app_memory_wave_candidate(
                     candidate=candidate,
                     snapshot=current_snapshot,
@@ -9129,6 +9554,7 @@ class DesktopActionRouter:
                             "message": str(wave_result.get("message", "") or "").strip(),
                             "status": str(wave_result.get("status", "") or "skipped").strip() or "skipped",
                             "method": str(wave_result.get("method", "") or "").strip(),
+                            "container_role": candidate_container_role,
                         }
                     )
                     continue
@@ -9141,6 +9567,7 @@ class DesktopActionRouter:
                             "title": str(candidate.get("title", action_name.replace("_", " ").title()) or action_name.replace("_", " ").title()).strip(),
                             "message": "linked surface already captured in this survey chain",
                             "status": "duplicate_surface",
+                            "container_role": candidate_container_role,
                         }
                     )
                     continue
@@ -9153,6 +9580,9 @@ class DesktopActionRouter:
                 )
                 if isinstance(wave_hint, dict) and bool(wave_hint.get("known")):
                     known_surface_count += 1
+                if candidate_container_role:
+                    role_learned_counts[candidate_container_role] = max(0, int(role_learned_counts.get(candidate_container_role, 0) or 0)) + 1
+                    traversed_container_roles = self._dedupe_strings([*traversed_container_roles, candidate_container_role])
                 wave_exploration_plan: Dict[str, Any] = {}
                 if include_exploration:
                     wave_exploration_plan = self._surface_exploration_from_snapshot(
@@ -9216,6 +9646,7 @@ class DesktopActionRouter:
                                     for item in candidate.get("recommended_followups", [])
                                     if str(item).strip()
                                 ],
+                                "container_role": candidate_container_role,
                                 "surface_fingerprint": next_fingerprint,
                                 "pre_surface_fingerprint": str(wave_result.get("pre_surface_fingerprint", "") or "").strip(),
                                 "post_surface_fingerprint": next_fingerprint,
@@ -9255,6 +9686,7 @@ class DesktopActionRouter:
                             for item in candidate.get("recommended_followups", [])
                             if str(item).strip()
                         ],
+                        "container_role": candidate_container_role,
                         "surface_fingerprint": next_fingerprint,
                         "window_title": str(next_snapshot.get("target_window", {}).get("title", "") or next_snapshot.get("active_window", {}).get("title", "") or "").strip(),
                         "known_surface": bool(wave_hint.get("known", False)) if isinstance(wave_hint, dict) else False,
@@ -9284,7 +9716,7 @@ class DesktopActionRouter:
                 preferred_actions = [
                     str(item).strip().lower()
                     for item in candidate.get("recommended_followups", [])
-                    if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+                    if str(item).strip()
                 ] if isinstance(candidate.get("recommended_followups", []), list) else []
                 progressed = True
                 break
@@ -9299,6 +9731,20 @@ class DesktopActionRouter:
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
                     "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
+                    "traversed_container_roles": self._dedupe_strings(traversed_container_roles),
+                    "role_attempt_counts": {str(key): int(value) for key, value in sorted(role_attempt_counts.items())},
+                    "role_learned_counts": {str(key): int(value) for key, value in sorted(role_learned_counts.items())},
+                    "recursive_depth_limit": max(
+                        1,
+                        min(
+                            8,
+                            int(
+                                dict(snapshot.get("safe_traversal_plan", {})).get("recursive_depth_limit", bounded_waves)
+                                if isinstance(snapshot.get("safe_traversal_plan", {}), dict)
+                                else bounded_waves
+                            ),
+                        ),
+                    ),
                     "stop_reason": "wave_candidates_exhausted",
                 }
         return {
@@ -9311,6 +9757,20 @@ class DesktopActionRouter:
             "skipped": skipped,
             "strategy_profile": strategy_profile,
             "recommended_next_actions": list(strategy_profile.get("recommended_actions", [])),
+            "traversed_container_roles": self._dedupe_strings(traversed_container_roles),
+            "role_attempt_counts": {str(key): int(value) for key, value in sorted(role_attempt_counts.items())},
+            "role_learned_counts": {str(key): int(value) for key, value in sorted(role_learned_counts.items())},
+            "recursive_depth_limit": max(
+                1,
+                min(
+                    8,
+                    int(
+                        dict(snapshot.get("safe_traversal_plan", {})).get("recursive_depth_limit", bounded_waves)
+                        if isinstance(snapshot.get("safe_traversal_plan", {}), dict)
+                        else bounded_waves
+                    ),
+                ),
+            ),
             "stop_reason": "max_surface_waves_reached",
         }
 
@@ -9408,6 +9868,11 @@ class DesktopActionRouter:
                 if isinstance(existing_memory.get("learning_health", {}), dict)
                 else ""
             ).strip()
+            revalidation_summary = (
+                dict(existing_memory.get("revalidation_summary", {}))
+                if isinstance(existing_memory.get("revalidation_summary", {}), dict)
+                else {}
+            )
             known_surface_count = len(existing_memory.get("surface_nodes", [])) if isinstance(existing_memory.get("surface_nodes", []), list) else 0
             learned_command_count = len(existing_memory.get("learned_commands", [])) if isinstance(existing_memory.get("learned_commands", []), list) else 0
             skip_reason = ""
@@ -9430,6 +9895,13 @@ class DesktopActionRouter:
                 "discovered_control_count": discovered_control_count,
                 "known_surface_count": known_surface_count,
                 "learned_command_count": learned_command_count,
+                "revalidation_target_count": int(revalidation_summary.get("target_count", 0) or 0),
+                "revalidation_failure_hotspot_count": int(revalidation_summary.get("failure_hotspot_count", 0) or 0),
+                "top_revalidation_container_roles": [
+                    dict(item)
+                    for item in revalidation_summary.get("top_container_roles", [])
+                    if isinstance(revalidation_summary.get("top_container_roles", []), list) and isinstance(item, dict)
+                ][:4],
             }
             if skip_reason:
                 skipped_apps.append(
@@ -9449,6 +9921,8 @@ class DesktopActionRouter:
                 key=lambda item: (
                     0 if not bool(dict(item.get("_selection", {})).get("known", False)) else 1,
                     0 if str(dict(item.get("_selection", {})).get("learning_status", "")) in {"attention", "degraded"} else 1,
+                    -int(dict(item.get("_selection", {})).get("revalidation_failure_hotspot_count", 0) or 0),
+                    -int(dict(item.get("_selection", {})).get("revalidation_target_count", 0) or 0),
                     int(dict(item.get("_selection", {})).get("survey_count", 0) or 0),
                     int(dict(item.get("_selection", {})).get("discovered_control_count", 0) or 0),
                     str(item.get("name", "") or item.get("profile_id", "") or "").lower(),
@@ -9468,6 +9942,12 @@ class DesktopActionRouter:
                 "skip_known_apps": bool(skip_known_apps),
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
                 "explicit_app_count": len(explicit_apps),
+                "revalidation_target_app_count": sum(
+                    1 for item in selected_profiles if int(dict(item.get("_selection", {})).get("revalidation_target_count", 0) or 0) > 0
+                ),
+                "failure_hotspot_app_count": sum(
+                    1 for item in selected_profiles if int(dict(item.get("_selection", {})).get("revalidation_failure_hotspot_count", 0) or 0) > 0
+                ),
             },
         }
 
@@ -9687,6 +10167,10 @@ class DesktopActionRouter:
         max_probe_controls: int = 4,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        revalidation_targets: Optional[List[Dict[str, Any]]] = None,
+        target_container_roles: Optional[List[str]] = None,
+        discouraged_labels: Optional[List[str]] = None,
+        prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
         capabilities = self._capabilities()
         accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
@@ -9697,6 +10181,10 @@ class DesktopActionRouter:
             query=query,
             limit=bounded,
             include_ocr_targets=include_ocr_targets,
+            revalidation_targets=revalidation_targets,
+            target_container_roles=target_container_roles,
+            discouraged_labels=discouraged_labels,
+            prefer_failure_memory=prefer_failure_memory,
         )
         if not candidates:
             return {
@@ -10219,6 +10707,10 @@ class DesktopActionRouter:
         query: str = "",
         limit: int = 4,
         include_ocr_targets: bool = True,
+        revalidation_targets: Optional[List[Dict[str, Any]]] = None,
+        target_container_roles: Optional[List[str]] = None,
+        discouraged_labels: Optional[List[str]] = None,
+        prefer_failure_memory: bool = True,
     ) -> List[Dict[str, Any]]:
         summary = snapshot.get("surface_summary", {}) if isinstance(snapshot.get("surface_summary", {}), dict) else {}
         observation = snapshot.get("observation", {}) if isinstance(snapshot.get("observation", {}), dict) else {}
@@ -10261,6 +10753,27 @@ class DesktopActionRouter:
             "inventory": 5,
             "ocr": 6,
         }
+        targeted_roles = {
+            self._normalize_probe_text(item)
+            for item in (target_container_roles or [])
+            if self._normalize_probe_text(item)
+        }
+        discouraged_lookup = {
+            self._normalize_probe_text(item)
+            for item in (discouraged_labels or [])
+            if self._normalize_probe_text(item)
+        }
+        prioritized_targets: Dict[str, Dict[str, Any]] = {}
+        for item in revalidation_targets or []:
+            if not isinstance(item, dict):
+                continue
+            for key in (
+                self._normalize_probe_text(item.get("identity", "")),
+                self._normalize_probe_text(item.get("label", "")),
+                self._normalize_probe_text(item.get("query", "")),
+            ):
+                if key and key not in prioritized_targets:
+                    prioritized_targets[key] = dict(item)
 
         def _candidate_lookup_labels(row: Dict[str, Any]) -> List[str]:
             labels: List[str] = []
@@ -10321,6 +10834,12 @@ class DesktopActionRouter:
             identity = self._element_identity_key(raw) or f"{source}|{normalized_label}|{control_type}"
             if identity in seen:
                 return
+            container_role = self._app_memory_candidate_container_role(raw, source=source)
+            priority_target = prioritized_targets.get(identity) or prioritized_targets.get(normalized_label)
+            if targeted_roles and container_role and container_role not in targeted_roles and not priority_target:
+                return
+            if prefer_failure_memory and normalized_label in discouraged_lookup and not priority_target:
+                return
             seen.add(identity)
             vision_labels = self._dedupe_strings(
                 [
@@ -10351,6 +10870,12 @@ class DesktopActionRouter:
                 "vision_labels": vision_labels[:10],
                 "risk_flags": self._app_memory_probe_risk_flags(candidate_row=raw, summary=summary),
                 "priority": source_priority.get(source, 9),
+                "container_role": container_role,
+                "revalidation_priority": round(
+                    max(0.0, min(float(dict(priority_target).get("priority", 0.0) or 0.0), 10_000.0)),
+                    4,
+                ) if priority_target else 0.0,
+                "revalidation_due": bool(dict(priority_target).get("revalidation_due", False)) if priority_target else False,
                 "query_match_score": self._element_query_match_score(
                     {"name": label, "state_text": str(raw.get("state_text", "") or "").strip()},
                     str(query or "").strip(),
@@ -10375,6 +10900,7 @@ class DesktopActionRouter:
 
         candidates.sort(
             key=lambda row: (
+                -float(row.get("revalidation_priority", 0.0) or 0.0),
                 -float(row.get("query_match_score", 0.0) or 0.0),
                 int(row.get("priority", 9) or 9),
                 0 if not row.get("risk_flags") else 1,
@@ -10382,6 +10908,40 @@ class DesktopActionRouter:
             )
         )
         return candidates[:bounded]
+
+    def _app_memory_candidate_container_role(self, row: Dict[str, Any], *, source: str = "") -> str:
+        control_type = self._normalize_probe_text(row.get("control_type", ""))
+        label = self._normalize_probe_text(
+            " ".join(
+                value
+                for value in (
+                    row.get("name", ""),
+                    row.get("label", ""),
+                    row.get("text", ""),
+                    row.get("automation_id", ""),
+                )
+                if str(value or "").strip()
+            )
+        )
+        if control_type == "menuitem":
+            return "menu"
+        if control_type == "tabitem":
+            return "tab"
+        if control_type == "treeitem":
+            return "tree"
+        if control_type == "listitem":
+            return "list"
+        if control_type in {"dataitem", "headeritem", "row", "listviewitem"}:
+            return "table"
+        if "sidebar" in label or "navigation" in label:
+            return "sidebar"
+        if "toolbar" in label:
+            return "toolbar"
+        if "ribbon" in label:
+            return "ribbon"
+        if control_type == "ocr_target" and source == "ocr":
+            return "vision"
+        return ""
 
     def _app_memory_probe_risk_flags(
         self,
@@ -11596,6 +12156,30 @@ class DesktopActionRouter:
             return "dialog"
         return "surface"
 
+    @staticmethod
+    def _safe_traversal_role_followups(container_role: str) -> List[str]:
+        role = str(container_role or "").strip().lower()
+        followups_map = {
+            "menu": ["dialog", "tab", "sidebar", "tree"],
+            "toolbar": ["dialog", "tab", "sidebar"],
+            "ribbon": ["dialog", "tab", "sidebar"],
+            "tab": ["sidebar", "tree", "table", "dialog", "menu"],
+            "sidebar": ["tree", "table", "dialog", "tab"],
+            "tree": ["table", "dialog", "sidebar", "tab"],
+            "list": ["table", "dialog", "sidebar"],
+            "table": ["dialog", "sidebar", "tab"],
+            "dialog": ["dialog", "tab", "tree", "sidebar"],
+        }
+        ordered: List[str] = []
+        seen: set[str] = set()
+        for value in followups_map.get(role, []):
+            clean = str(value or "").strip().lower()
+            if not clean or clean == role or clean in seen:
+                continue
+            seen.add(clean)
+            ordered.append(clean)
+        return ordered
+
     def _surface_safe_traversal_plan(
         self,
         *,
@@ -11633,6 +12217,7 @@ class DesktopActionRouter:
                 confidence += 0.12
             if bool(native_learning_signals.get("custom_surface_suspected", False)):
                 confidence -= 0.06
+            recursive_followups = self._safe_traversal_role_followups(container_role)
             candidates.append(
                 {
                     "action_key": f"traverse_{container_role}_{self._normalize_probe_text(label)[:48]}",
@@ -11646,6 +12231,7 @@ class DesktopActionRouter:
                     "source": "element",
                     "confidence": round(max(0.05, min(confidence, 0.95)), 4),
                     "query_match_score": round(self._element_query_match_score(row, str(query or "").strip()), 4) if str(query or "").strip() else 0.0,
+                    "recursive_followups": recursive_followups[:6],
                 }
             )
         container_counts: Dict[str, int] = {}

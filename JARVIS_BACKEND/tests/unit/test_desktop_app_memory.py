@@ -163,6 +163,263 @@ def test_desktop_action_router_surveys_app_memory_and_returns_snapshot() -> None
     assert "Known surface memory was reused" in str(repeated["message"])
 
 
+def test_desktop_app_memory_surfaces_revalidation_targets_for_uncertain_controls(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+
+    entry = memory.record_survey(
+        app_name="settings",
+        query="sync",
+        app_profile={"profile_id": "settings", "name": "Settings", "category": "system"},
+        snapshot={
+            "surface_fingerprint": "settings|main|surface",
+            "target_window": {"title": "Settings"},
+            "active_window": {"title": "Settings"},
+            "surface_summary": {
+                "control_counts": {"button": 1},
+                "top_labels": [{"label": "Sync", "count": 1}],
+                "recommended_actions": ["click"],
+                "control_inventory": [{"name": "Sync", "control_type": "button", "automation_id": "SyncButton"}],
+            },
+            "surface_intelligence": {"surface_role": "settings", "interaction_mode": "hybrid"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "sync_button",
+                        "name": "Sync",
+                        "control_type": "button",
+                        "automation_id": "SyncButton",
+                        "root_window_title": "Settings",
+                    }
+                ]
+            },
+            "workflow_surfaces": [],
+        },
+        probe_report={
+            "status": "partial",
+            "attempted_count": 1,
+            "successful_count": 1,
+            "verified_count": 0,
+            "uncertain_count": 1,
+            "items": [
+                {
+                    "label": "Sync",
+                    "control_type": "button",
+                    "element_id": "sync_button",
+                    "automation_id": "SyncButton",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "no_observed_change",
+                    "semantic_role": "action",
+                    "effect_summary": "No reliable visible effect was observed.",
+                    "verification_confidence": 0.28,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.28},
+                    "pre_surface_fingerprint": "settings|main|surface",
+                    "post_surface_fingerprint": "settings|main|surface",
+                }
+            ],
+        },
+        source="manual",
+    )
+
+    assert entry["revalidation_summary"]["target_count"] >= 1
+    assert any(
+        str(item.get("label", "")).strip().lower() == "sync"
+        for item in entry["revalidation_targets"]
+    )
+
+    snapshot = memory.snapshot(app_name="settings")
+    assert snapshot["revalidation"]["count"] >= 1
+    first_target = dict(snapshot["revalidation"]["items"][0])
+    assert first_target["label"].lower() == "sync"
+    assert first_target["revalidation_due"] is True
+    assert any(
+        reason in {"never_verified", "low_confidence", "uncertain_effect"}
+        for reason in first_target["reason_codes"]
+    )
+
+
+def test_desktop_app_memory_revalidation_targets_filter_by_surface_and_role(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+
+    memory.record_survey(
+        app_name="notepad",
+        query="file",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|menu|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_counts": {"menuitem": 1},
+                "control_inventory": [{"name": "File", "control_type": "menuitem", "automation_id": "FileMenu"}],
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "keyboard_first"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "file_menu",
+                        "name": "File",
+                        "control_type": "menuitem",
+                        "automation_id": "FileMenu",
+                        "root_window_title": "Untitled - Notepad",
+                    }
+                ]
+            },
+        },
+        probe_report={
+            "status": "partial",
+            "attempted_count": 1,
+            "successful_count": 1,
+            "verified_count": 0,
+            "uncertain_count": 1,
+            "items": [
+                {
+                    "label": "File",
+                    "control_type": "menuitem",
+                    "element_id": "file_menu",
+                    "automation_id": "FileMenu",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "surface_change",
+                    "semantic_role": "navigation",
+                    "verification_confidence": 0.41,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.41},
+                    "pre_surface_fingerprint": "notepad|menu|surface",
+                    "post_surface_fingerprint": "notepad|menu|surface",
+                }
+            ],
+        },
+    )
+    memory.record_survey(
+        app_name="notepad",
+        query="project",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|sidebar|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_counts": {"treeitem": 1},
+                "control_inventory": [{"name": "Project", "control_type": "treeitem", "automation_id": "ProjectTree"}],
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "hybrid"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "project_tree",
+                        "name": "Project",
+                        "control_type": "treeitem",
+                        "automation_id": "ProjectTree",
+                        "root_window_title": "Untitled - Notepad",
+                    }
+                ]
+            },
+        },
+        probe_report={
+            "status": "partial",
+            "attempted_count": 1,
+            "successful_count": 1,
+            "verified_count": 0,
+            "uncertain_count": 1,
+            "items": [
+                {
+                    "label": "Project",
+                    "control_type": "treeitem",
+                    "element_id": "project_tree",
+                    "automation_id": "ProjectTree",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "surface_change",
+                    "semantic_role": "navigation",
+                    "verification_confidence": 0.44,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.44},
+                    "pre_surface_fingerprint": "notepad|sidebar|surface",
+                    "post_surface_fingerprint": "notepad|sidebar|surface",
+                }
+            ],
+        },
+    )
+
+    filtered = memory.revalidation_targets(
+        app_name="notepad",
+        surface_fingerprint="notepad|menu|surface",
+        container_roles=["menu"],
+        minimum_priority=1.0,
+    )
+
+    assert filtered["count"] == 1
+    assert filtered["filters"]["surface_fingerprint"] == "notepad|menu|surface"
+    assert filtered["filters"]["minimum_priority"] == 1.0
+    assert filtered["items"][0]["label"].lower() == "file"
+    assert filtered["items"][0]["container_role"] == "menu"
+    assert filtered["summary"]["top_container_roles"][0]["value"] == "menu"
+
+
+def test_desktop_app_memory_surface_hint_recommends_container_roles_from_wave_memory(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
+
+    entry = memory.record_survey(
+        app_name="demo-settings",
+        query="advanced",
+        app_profile={"profile_id": "demo-settings", "name": "Demo Settings", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "demo-settings|main|surface",
+            "target_window": {"title": "Demo Settings"},
+            "active_window": {"title": "Demo Settings"},
+            "surface_summary": {
+                "control_counts": {"tabitem": 1},
+                "control_inventory": [{"name": "Advanced", "control_type": "tabitem", "automation_id": "AdvancedTab"}],
+            },
+            "surface_intelligence": {"surface_role": "settings", "interaction_mode": "hybrid"},
+            "elements": {
+                "items": [
+                    {
+                        "element_id": "advanced_tab",
+                        "name": "Advanced",
+                        "control_type": "tabitem",
+                        "automation_id": "AdvancedTab",
+                        "root_window_title": "Demo Settings",
+                    }
+                ]
+            },
+        },
+        wave_report={
+            "attempted_count": 1,
+            "learned_surface_count": 1,
+            "known_surface_count": 0,
+            "stop_reason": "captured_linked_surface",
+            "items": [
+                {
+                    "action": "traverse_tab_advanced",
+                    "title": "Advanced",
+                    "container_role": "tab",
+                    "recommended_followups": ["traverse_sidebar", "traverse_dialog"],
+                    "surface_fingerprint": "demo-settings|advanced|surface",
+                    "pre_surface_fingerprint": "demo-settings|main|surface",
+                    "post_surface_fingerprint": "demo-settings|advanced|surface",
+                }
+            ],
+            "traversed_container_roles": ["tab"],
+            "role_attempt_counts": {"tab": 1},
+            "role_learned_counts": {"tab": 1},
+            "strategy_profile": {"recommended_container_roles": ["tab", "sidebar"]},
+            "recursive_depth_limit": 3,
+        },
+    )
+
+    assert "tab" in dict(entry.get("wave_strategy_summary", {})).get("recommended_container_roles", [])
+
+    hint = memory.surface_hint(
+        app_name="demo-settings",
+        profile_id="demo-settings",
+        surface_fingerprint="demo-settings|main|surface",
+    )
+
+    assert hint["known"] is True
+    assert "tab" in hint["recommended_wave_container_roles"]
+    assert "tab" in dict(hint.get("wave_strategy_summary", {})).get("recommended_container_roles", [])
+
+
 def test_desktop_action_router_surveys_app_memory_batch() -> None:
     def _open_app(payload: Dict[str, Any]) -> Dict[str, Any]:
         requested = str(payload.get("app_name", "") or "").strip()
@@ -211,6 +468,124 @@ def test_desktop_action_router_surveys_app_memory_batch() -> None:
     assert payload["surveyed_app_count"] >= 1
     assert payload["success_count"] >= 1
     assert payload["app_memory"]["status"] == "success"
+
+
+def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots() -> None:
+    app_memory = _isolated_app_memory()
+    app_memory.record_survey(
+        app_name="notepad",
+        query="confirm",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|dialog|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_counts": {"button": 2, "menuitem": 1},
+                "control_inventory": [
+                    {"name": "Confirm", "control_type": "button", "automation_id": "ConfirmButton"},
+                    {"name": "Apply", "control_type": "button", "automation_id": "ApplyButton"},
+                    {"name": "File", "control_type": "menuitem", "automation_id": "FileMenu"},
+                ],
+            },
+            "surface_intelligence": {"surface_role": "editor", "interaction_mode": "hybrid"},
+            "elements": {
+                "items": [
+                    {"element_id": "confirm_button", "name": "Confirm", "control_type": "button", "automation_id": "ConfirmButton"},
+                    {"element_id": "apply_button", "name": "Apply", "control_type": "button", "automation_id": "ApplyButton"},
+                    {"element_id": "file_menu", "name": "File", "control_type": "menuitem", "automation_id": "FileMenu"},
+                ]
+            },
+        },
+        probe_report={
+            "status": "partial",
+            "attempted_count": 3,
+            "successful_count": 3,
+            "verified_count": 0,
+            "uncertain_count": 3,
+            "items": [
+                {
+                    "label": "Confirm",
+                    "control_type": "button",
+                    "element_id": "confirm_button",
+                    "automation_id": "ConfirmButton",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "surface_change",
+                    "semantic_role": "review_required",
+                    "verification_confidence": 0.32,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.32},
+                    "pre_surface_fingerprint": "notepad|dialog|surface",
+                    "post_surface_fingerprint": "notepad|dialog|surface",
+                },
+                {
+                    "label": "Apply",
+                    "control_type": "button",
+                    "element_id": "apply_button",
+                    "automation_id": "ApplyButton",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "surface_change",
+                    "semantic_role": "review_required",
+                    "verification_confidence": 0.35,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.35},
+                    "pre_surface_fingerprint": "notepad|dialog|surface",
+                    "post_surface_fingerprint": "notepad|dialog|surface",
+                },
+                {
+                    "label": "File",
+                    "control_type": "menuitem",
+                    "element_id": "file_menu",
+                    "automation_id": "FileMenu",
+                    "probe_status": "success",
+                    "method": "accessibility_invoke_element",
+                    "effect_kind": "surface_change",
+                    "semantic_role": "navigation",
+                    "verification_confidence": 0.41,
+                    "verification_summary": {"verified_effect": False, "confidence": 0.41},
+                    "pre_surface_fingerprint": "notepad|dialog|surface",
+                    "post_surface_fingerprint": "notepad|dialog|surface",
+                },
+            ],
+        },
+    )
+
+    router = DesktopActionRouter(
+        action_handlers={},
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=app_memory,
+        settle_delay_s=0.0,
+    )
+    captured: list[Dict[str, Any]] = []
+
+    def _fake_survey_app_memory(**kwargs: Any) -> Dict[str, Any]:
+        captured.append(dict(kwargs))
+        return {
+            "status": "success",
+            "message": "ok",
+            "memory_entry": {"app_name": kwargs.get("app_name", ""), "profile_id": "notepad", "metrics": {}},
+            "wave_report": {"attempted_count": 0, "learned_surface_count": 0},
+            "surface_hint": {},
+            "app_memory": {"status": "success", "count": 1, "items": []},
+        }
+
+    object.__setattr__(router, "survey_app_memory", _fake_survey_app_memory)
+
+    payload = router.survey_app_memory_batch(
+        app_names=["notepad"],
+        max_apps=1,
+        probe_controls=False,
+        follow_surface_waves=True,
+        max_surface_waves=2,
+    )
+
+    assert payload["status"] == "success"
+    assert captured[-1]["app_name"] == "notepad"
+    assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
+    assert int(captured[-1]["max_surface_waves"] or 0) > 2
+    assert payload["wave_summary"]["adaptive_targeted_app_count"] == 1
+    assert payload["wave_summary"]["adaptive_wave_depth_app_count"] == 1
+    assert payload["items"][0]["targeting"]["target_container_roles"] == ["dialog", "menu"]
 
 
 def test_desktop_action_router_batch_skips_known_healthy_apps() -> None:
@@ -892,9 +1267,16 @@ def test_desktop_action_router_surveys_safe_traversal_wave_candidates() -> None:
     wave_report = dict(payload.get("wave_report", {}))
     assert int(wave_report.get("learned_surface_count", 0) or 0) == 1
     assert any(str(item.get("method", "") or "") == "accessibility_invoke_element" for item in wave_report.get("items", []) if isinstance(item, dict))
+    assert "tab" in [str(item).strip().lower() for item in wave_report.get("traversed_container_roles", []) if str(item).strip()]
+    assert int(dict(wave_report.get("role_learned_counts", {})).get("tab", 0) or 0) >= 1
     memory_entry = dict(payload.get("memory_entry", {}))
     assert memory_entry["safe_traversal_summary"]["candidate_count"] >= 1
     assert memory_entry["surface_transitions"]
+    assert "tab" in [
+        str(item).strip().lower()
+        for item in dict(memory_entry.get("wave_strategy_summary", {})).get("recommended_container_roles", [])
+        if str(item).strip()
+    ]
 
 
 def test_desktop_app_memory_tracks_failure_memory_and_surface_staleness(tmp_path: Path) -> None:

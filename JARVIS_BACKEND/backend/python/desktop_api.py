@@ -17,7 +17,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from backend.python.auth.permissions import PermissionError as RBACPermissionError
@@ -8239,6 +8239,9 @@ class DesktopBackendService:
         max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
+        target_container_roles: Optional[List[str]] = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -8260,6 +8263,9 @@ class DesktopBackendService:
                 max_surface_waves=max_surface_waves,
                 allow_risky_probes=allow_risky_probes,
                 include_ocr_targets=include_ocr_targets,
+                target_container_roles=target_container_roles,
+                revalidate_known_controls=revalidate_known_controls,
+                prefer_failure_memory=prefer_failure_memory,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory survey payload"}
         except Exception as exc:  # noqa: BLE001
@@ -8286,6 +8292,9 @@ class DesktopBackendService:
         include_ocr_targets: bool = True,
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
+        target_container_roles: Optional[List[str]] = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
         source: str = "manual",
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
@@ -8311,6 +8320,9 @@ class DesktopBackendService:
                 include_ocr_targets=include_ocr_targets,
                 skip_known_apps=skip_known_apps,
                 prefer_unknown_apps=prefer_unknown_apps,
+                target_container_roles=target_container_roles,
+                revalidate_known_controls=revalidate_known_controls,
+                prefer_failure_memory=prefer_failure_memory,
                 source=source,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
@@ -8354,6 +8366,9 @@ class DesktopBackendService:
         revisit_stale_apps: bool = True,
         stale_after_hours: float = 72.0,
         revisit_failed_apps: bool = True,
+        revalidate_known_controls: bool = True,
+        prioritize_failure_hotspots: bool = True,
+        target_container_roles: Optional[List[str]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         supervisor = getattr(self, "desktop_app_memory_supervisor", None)
@@ -8396,6 +8411,9 @@ class DesktopBackendService:
             revisit_stale_apps=revisit_stale_apps,
             stale_after_hours=stale_after_hours,
             revisit_failed_apps=revisit_failed_apps,
+            revalidate_known_controls=revalidate_known_controls,
+            prioritize_failure_hotspots=prioritize_failure_hotspots,
+            target_container_roles=target_container_roles,
             source=source,
         )
         payload["app_memory"] = _to_jsonable(
@@ -8488,6 +8506,9 @@ class DesktopBackendService:
         revisit_stale_apps: Optional[bool] = None,
         stale_after_hours: Optional[float] = None,
         revisit_failed_apps: Optional[bool] = None,
+        revalidate_known_controls: Optional[bool] = None,
+        prioritize_failure_hotspots: Optional[bool] = None,
+        target_container_roles: Optional[List[str]] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8514,6 +8535,9 @@ class DesktopBackendService:
             revisit_stale_apps=revisit_stale_apps,
             stale_after_hours=stale_after_hours,
             revisit_failed_apps=revisit_failed_apps,
+            revalidate_known_controls=revalidate_known_controls,
+            prioritize_failure_hotspots=prioritize_failure_hotspots,
+            target_container_roles=target_container_roles,
             source=source,
         )
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
@@ -8539,6 +8563,9 @@ class DesktopBackendService:
         revisit_stale_apps: Optional[bool] = None,
         stale_after_hours: Optional[float] = None,
         revisit_failed_apps: Optional[bool] = None,
+        revalidate_known_controls: Optional[bool] = None,
+        prioritize_failure_hotspots: Optional[bool] = None,
+        target_container_roles: Optional[List[str]] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8564,6 +8591,9 @@ class DesktopBackendService:
             revisit_stale_apps=revisit_stale_apps,
             stale_after_hours=stale_after_hours,
             revisit_failed_apps=revisit_failed_apps,
+            revalidate_known_controls=revalidate_known_controls,
+            prioritize_failure_hotspots=prioritize_failure_hotspots,
+            target_container_roles=target_container_roles,
             source=source,
         )
         payload["supervisor"] = _to_jsonable(
@@ -45837,6 +45867,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     max_surface_waves=self._parse_int(body.get("max_surface_waves", 3), 3, minimum=1, maximum=8),
                     allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
                     include_ocr_targets=self._parse_bool(body.get("include_ocr_targets", True), default=True),
+                    target_container_roles=(
+                        [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
+                        if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
+                    revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
+                    prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
@@ -45864,6 +45901,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     include_ocr_targets=self._parse_bool(body.get("include_ocr_targets", True), default=True),
                     skip_known_apps=self._parse_bool(body.get("skip_known_apps", True), default=True),
                     prefer_unknown_apps=self._parse_bool(body.get("prefer_unknown_apps", True), default=True),
+                    target_container_roles=(
+                        [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
+                        if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
+                    revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
+                    prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
@@ -45897,6 +45941,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     revisit_stale_apps=(self._parse_bool(body.get("revisit_stale_apps"), default=True) if "revisit_stale_apps" in body else None),
                     stale_after_hours=((float(body.get("stale_after_hours")) if body.get("stale_after_hours") is not None else None) if "stale_after_hours" in body else None),
                     revisit_failed_apps=(self._parse_bool(body.get("revisit_failed_apps"), default=True) if "revisit_failed_apps" in body else None),
+                    revalidate_known_controls=(self._parse_bool(body.get("revalidate_known_controls"), default=True) if "revalidate_known_controls" in body else None),
+                    prioritize_failure_hotspots=(self._parse_bool(body.get("prioritize_failure_hotspots"), default=True) if "prioritize_failure_hotspots" in body else None),
+                    target_container_roles=(
+                        [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
+                        if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45926,6 +45977,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     revisit_stale_apps=(self._parse_bool(body.get("revisit_stale_apps"), default=True) if "revisit_stale_apps" in body else None),
                     stale_after_hours=((float(body.get("stale_after_hours")) if body.get("stale_after_hours") is not None else None) if "stale_after_hours" in body else None),
                     revisit_failed_apps=(self._parse_bool(body.get("revisit_failed_apps"), default=True) if "revisit_failed_apps" in body else None),
+                    revalidate_known_controls=(self._parse_bool(body.get("revalidate_known_controls"), default=True) if "revalidate_known_controls" in body else None),
+                    prioritize_failure_hotspots=(self._parse_bool(body.get("prioritize_failure_hotspots"), default=True) if "prioritize_failure_hotspots" in body else None),
+                    target_container_roles=(
+                        [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
+                        if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -45955,6 +46013,13 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     revisit_stale_apps=self._parse_bool(body.get("revisit_stale_apps", True), default=True),
                     stale_after_hours=(float(body.get("stale_after_hours", 72.0)) if body.get("stale_after_hours") is not None else 72.0),
                     revisit_failed_apps=self._parse_bool(body.get("revisit_failed_apps", True), default=True),
+                    revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
+                    prioritize_failure_hotspots=self._parse_bool(body.get("prioritize_failure_hotspots", True), default=True),
+                    target_container_roles=(
+                        [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
+                        if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
