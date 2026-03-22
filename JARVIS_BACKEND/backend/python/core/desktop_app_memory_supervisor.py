@@ -458,6 +458,7 @@ class DesktopAppMemorySupervisor:
         target_container_roles: Optional[list[str]] = None,
         preferred_wave_actions: Optional[list[str]] = None,
         preferred_traversal_paths: Optional[list[str]] = None,
+        adaptive_app_profiles: Optional[list[Dict[str, Any]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_apps = self._dedupe_strings([str(item).strip() for item in app_names if str(item).strip()])
@@ -466,6 +467,11 @@ class DesktopAppMemorySupervisor:
         requested_preferred_wave_actions = self._dedupe_strings(
             [str(item).strip().lower() for item in (preferred_wave_actions or []) if str(item).strip()]
         )[:8]
+        clean_adaptive_profiles = [
+            dict(item)
+            for item in (adaptive_app_profiles or [])
+            if isinstance(item, dict)
+        ]
         with self._lock:
             stale_after_hours_value = self._coerce_float(
                 stale_after_hours,
@@ -524,6 +530,33 @@ class DesktopAppMemorySupervisor:
                 summary=dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 explicit_roles=bool(target_container_roles),
             )
+            adaptive_runtime_strategy_counts: Dict[str, int] = {}
+            runtime_band_counts: Dict[str, int] = {}
+            for item in clean_adaptive_profiles:
+                runtime_strategy_profile = str(
+                    item.get("adaptive_runtime_strategy_profile", "")
+                    or (
+                        dict(item.get("runtime_strategy", {})).get("strategy_profile", "")
+                        if isinstance(item.get("runtime_strategy", {}), dict)
+                        else ""
+                    )
+                    or ""
+                ).strip().lower()
+                if runtime_strategy_profile:
+                    adaptive_runtime_strategy_counts[runtime_strategy_profile] = int(
+                        adaptive_runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0
+                    ) + 1
+                runtime_band = str(
+                    item.get("runtime_band_preference", "")
+                    or (
+                        dict(item.get("runtime_strategy", {})).get("runtime_band_preference", "")
+                        if isinstance(item.get("runtime_strategy", {}), dict)
+                        else ""
+                    )
+                    or ""
+                ).strip().lower()
+                if runtime_band:
+                    runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -565,6 +598,15 @@ class DesktopAppMemorySupervisor:
                 "preferred_traversal_paths": effective_preferred_traversal_paths[:8],
                 "adaptive_preferred_traversal_paths": adaptive_preferred_traversal_paths,
                 "recommended_traversal_paths": summary_recommended_traversal_paths[:8],
+                "adaptive_app_profiles": clean_adaptive_profiles[:24],
+                "adaptive_runtime_strategy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(adaptive_runtime_strategy_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
                     "top_container_roles": [
@@ -658,7 +700,12 @@ class DesktopAppMemorySupervisor:
             target_batch = pending_apps[:batch_size]
             force_known_revisit = bool(reseed_summary.get("force_known_revisit", False))
             cycle_target_summary = self._classify_target_apps_locked(
-                target_batch or target_apps,
+                target_batch
+                or [
+                    str(item).strip()
+                    for item in campaign.get("target_apps", [])
+                    if isinstance(campaign.get("target_apps", []), list) and str(item).strip()
+                ],
                 category=str(campaign.get("category", "") or "").strip(),
                 stale_after_hours=self._coerce_float(
                     campaign.get("stale_after_hours", self._config.get("stale_after_hours", 72.0)),
@@ -739,6 +786,53 @@ class DesktopAppMemorySupervisor:
                 summary=dict(cycle_target_summary.get("summary", {})) if isinstance(cycle_target_summary, dict) else {},
                 explicit_roles=not bool(campaign.get("adaptive_target_container_roles", False)),
             )
+            campaign_adaptive_profiles = [
+                dict(item)
+                for item in campaign.get("adaptive_app_profiles", [])
+                if isinstance(campaign.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+            ]
+            effective_adaptive_profiles: list[Dict[str, Any]] = []
+            for app_name in target_batch:
+                normalized_keys = {
+                    str(app_name or "").strip().lower(),
+                }
+                for item in campaign_adaptive_profiles:
+                    candidate_keys = {
+                        str(item.get("app_name", "") or "").strip().lower(),
+                        str(item.get("profile_id", "") or "").strip().lower(),
+                        str(item.get("profile_name", "") or "").strip().lower(),
+                    }
+                    candidate_keys = {value for value in candidate_keys if value}
+                    if candidate_keys and candidate_keys.intersection(normalized_keys):
+                        effective_adaptive_profiles.append(dict(item))
+                        break
+            cycle_runtime_strategy_counts: Dict[str, int] = {}
+            cycle_runtime_band_counts: Dict[str, int] = {}
+            for item in effective_adaptive_profiles:
+                runtime_strategy_profile = str(
+                    item.get("adaptive_runtime_strategy_profile", "")
+                    or (
+                        dict(item.get("runtime_strategy", {})).get("strategy_profile", "")
+                        if isinstance(item.get("runtime_strategy", {}), dict)
+                        else ""
+                    )
+                    or ""
+                ).strip().lower()
+                if runtime_strategy_profile:
+                    cycle_runtime_strategy_counts[runtime_strategy_profile] = int(
+                        cycle_runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0
+                    ) + 1
+                runtime_band = str(
+                    item.get("runtime_band_preference", "")
+                    or (
+                        dict(item.get("runtime_strategy", {})).get("runtime_band_preference", "")
+                        if isinstance(item.get("runtime_strategy", {}), dict)
+                        else ""
+                    )
+                    or ""
+                ).strip().lower()
+                if runtime_band:
+                    cycle_runtime_band_counts[runtime_band] = int(cycle_runtime_band_counts.get(runtime_band, 0) or 0) + 1
             result = callback(
                 app_names=target_batch,
                 max_apps=len(target_batch),
@@ -758,6 +852,7 @@ class DesktopAppMemorySupervisor:
                 preferred_traversal_paths=effective_preferred_traversal_paths[:8],
                 revalidate_known_controls=bool(campaign.get("revalidate_known_controls", True)),
                 prefer_failure_memory=bool(campaign.get("prioritize_failure_hotspots", True)),
+                adaptive_app_profiles=effective_adaptive_profiles[: len(target_batch) + 4],
                 source=str(source or "manual").strip().lower() or "manual",
             )
             result = dict(result) if isinstance(result, dict) else {"status": "error", "message": "invalid campaign execution payload"}
@@ -846,6 +941,14 @@ class DesktopAppMemorySupervisor:
                 "preferred_traversal_paths": effective_preferred_traversal_paths[:8],
                 "adaptive_preferred_traversal_paths": adaptive_preferred_traversal_paths,
                 "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "adaptive_runtime_strategy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(cycle_runtime_strategy_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(cycle_runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
                 "preferred_path_hits": self._coerce_int(
@@ -992,6 +1095,14 @@ class DesktopAppMemorySupervisor:
                     ],
                 ]
             )[:8]
+            campaign["adaptive_runtime_strategy_counts"] = {
+                str(key): int(value)
+                for key, value in sorted(cycle_runtime_strategy_counts.items(), key=lambda entry: entry[0])
+            }
+            campaign["runtime_band_counts"] = {
+                str(key): int(value)
+                for key, value in sorted(cycle_runtime_band_counts.items(), key=lambda entry: entry[0])
+            }
             campaign["effective_max_surface_waves"] = effective_max_surface_waves
             campaign["adaptive_surface_wave_depth"] = adaptive_surface_wave_depth
             campaign["traversed_container_roles"] = self._dedupe_strings(

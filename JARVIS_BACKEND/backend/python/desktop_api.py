@@ -8786,6 +8786,11 @@ class DesktopBackendService:
                 for item in campaign_defaults.get("preferred_traversal_paths", [])
                 if isinstance(campaign_defaults.get("preferred_traversal_paths", []), list) and str(item).strip()
             ],
+            adaptive_app_profiles=[
+                dict(item)
+                for item in campaign_defaults.get("adaptive_app_profiles", [])
+                if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+            ],
             source=source,
         )
         result: Dict[str, Any] = {
@@ -8884,6 +8889,11 @@ class DesktopBackendService:
         memory_entry = survey.get("memory_entry", {}) if isinstance(survey.get("memory_entry", {}), dict) else {}
         metrics = memory_entry.get("metrics", {}) if isinstance(memory_entry.get("metrics", {}), dict) else {}
         probe_report = survey.get("probe_report", {}) if isinstance(survey.get("probe_report", {}), dict) else {}
+        adaptive_runtime_strategy = (
+            dict(selected_target.get("adaptive_runtime_strategy", {}))
+            if isinstance(selected_target.get("adaptive_runtime_strategy", {}), dict)
+            else {}
+        )
         return {
             "app_name": effective_app_name,
             "launch_resolution": str(resolved.get("resolution", "") or resolved.get("kind", "") or "").strip(),
@@ -8898,6 +8908,36 @@ class DesktopBackendService:
             "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
             "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
             "prepare_priority_band": str(selected_target.get("prepare_priority_band", "") or "").strip().lower(),
+            "runtime_strategy_profile": str(
+                adaptive_runtime_strategy.get("strategy_profile", "")
+                or selected_target.get("adaptive_runtime_strategy_profile", "")
+                or ""
+            ).strip().lower(),
+            "runtime_band_preference": str(
+                adaptive_runtime_strategy.get("runtime_band_preference", "")
+                or selected_target.get("runtime_band_preference", "")
+                or ""
+            ).strip().lower(),
+            "preferred_probe_mode": str(
+                adaptive_runtime_strategy.get("preferred_probe_mode", "")
+                or ""
+            ).strip().lower(),
+            "preferred_wave_mode": str(
+                adaptive_runtime_strategy.get("preferred_wave_mode", "")
+                or ""
+            ).strip().lower(),
+            "preferred_target_mode": str(
+                adaptive_runtime_strategy.get("preferred_target_mode", "")
+                or ""
+            ).strip().lower(),
+            "preferred_verification_mode": str(
+                adaptive_runtime_strategy.get("preferred_verification_mode", "")
+                or ""
+            ).strip().lower(),
+            "preferred_native_recovery_mode": str(
+                adaptive_runtime_strategy.get("preferred_native_recovery_mode", "")
+                or ""
+            ).strip().lower(),
             "required_tasks": [
                 str(item).strip().lower()
                 for item in selected_target.get("required_tasks", [])
@@ -9033,6 +9073,16 @@ class DesktopBackendService:
                 target_row=selected_target,
             )
         )
+        adaptive_runtime_strategy = self._desktop_machine_learning_runtime_strategy_for_target(
+            target_row=selected_target,
+        )
+        selected_target["adaptive_runtime_strategy"] = adaptive_runtime_strategy
+        selected_target["adaptive_runtime_strategy_profile"] = str(
+            adaptive_runtime_strategy.get("strategy_profile", "") or ""
+        ).strip().lower()
+        selected_target["runtime_band_preference"] = str(
+            adaptive_runtime_strategy.get("runtime_band_preference", "") or ""
+        ).strip().lower()
 
         launch_result: Dict[str, Any]
         if ensure_app_launch:
@@ -9139,6 +9189,28 @@ class DesktopBackendService:
             preferred_traversal_paths=preferred_traversal_paths or None,
             revalidate_known_controls=bool(selected_target.get("revalidate_known_controls", revalidate_known_controls)),
             prefer_failure_memory=bool(selected_target.get("prefer_failure_memory", prefer_failure_memory)),
+            learning_profile=str(selected_target.get("learning_profile", "") or "").strip().lower(),
+            execution_mode=str(selected_target.get("execution_mode", "") or "").strip().lower(),
+            adaptive_runtime_strategy=adaptive_runtime_strategy,
+            provider_model_readiness={
+                "required_tasks": list(selected_target.get("required_tasks", []))
+                if isinstance(selected_target.get("required_tasks", []), list)
+                else [],
+                "local_ready_tasks": list(selected_target.get("local_ready_tasks", []))
+                if isinstance(selected_target.get("local_ready_tasks", []), list)
+                else [],
+                "install_ready_tasks": list(selected_target.get("install_ready_tasks", []))
+                if isinstance(selected_target.get("install_ready_tasks", []), list)
+                else [],
+                "remote_ready_tasks": list(selected_target.get("remote_ready_tasks", []))
+                if isinstance(selected_target.get("remote_ready_tasks", []), list)
+                else [],
+                "blocker_codes": list(selected_target.get("blocker_codes", []))
+                if isinstance(selected_target.get("blocker_codes", []), list)
+                else [],
+                "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
+                "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
+            },
         )
         memory_snapshot = self.desktop_app_memory_status(app_name=effective_app_name, limit=24)
         launch_memory = self.desktop_app_launcher_memory(query=effective_app_name, limit=12)
@@ -9164,6 +9236,7 @@ class DesktopBackendService:
                 "profile": profile,
                 "plan": plan_payload,
                 "selected_target": selected_target,
+                "adaptive_runtime_strategy": adaptive_runtime_strategy,
                 "provider_model_readiness": {
                     "provider_actions": provider_actions,
                     "model_selection": model_selection,
@@ -9977,6 +10050,137 @@ class DesktopBackendService:
             "strategy_notes": "Learning should stay conservative and verification-heavy until coverage improves.",
         }
 
+    def _desktop_machine_learning_runtime_strategy_for_target(
+        self,
+        *,
+        target_row: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        learning_profile = str(target_row.get("learning_profile", "") or "").strip().lower() or "cautious_revalidate"
+        execution_mode = str(target_row.get("execution_mode", "") or "").strip().lower() or "degraded"
+        readiness_status = str(target_row.get("readiness_status", "") or "").strip().lower() or "ready"
+        local_ready_tasks = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target_row.get("local_ready_tasks", [])
+                if isinstance(target_row.get("local_ready_tasks", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        install_ready_tasks = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target_row.get("install_ready_tasks", [])
+                if isinstance(target_row.get("install_ready_tasks", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        remote_ready_tasks = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target_row.get("remote_ready_tasks", [])
+                if isinstance(target_row.get("remote_ready_tasks", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        blocker_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target_row.get("blocker_codes", [])
+                if isinstance(target_row.get("blocker_codes", []), list) and str(item).strip()
+            ],
+            limit=10,
+        )
+        reason_codes: List[str] = []
+        runtime_band_preference = "accessibility"
+        preferred_probe_mode = "accessibility_first"
+        preferred_wave_mode = "workflow_hotkey_first"
+        preferred_target_mode = "auto"
+        preferred_verification_mode = "multi_signal_before_after"
+        preferred_native_recovery_mode = "focus_related_window"
+        strategy_profile = "cautious_runtime"
+
+        if learning_profile == "manual_dependency_setup" or readiness_status == "blocked":
+            strategy_profile = "manual_dependency_setup_runtime"
+            runtime_band_preference = "accessibility"
+            preferred_probe_mode = "accessibility_first"
+            preferred_wave_mode = "workflow_hotkey_first"
+            preferred_target_mode = "auto"
+            preferred_verification_mode = "multi_signal_before_after"
+            preferred_native_recovery_mode = "reacquire_window"
+            reason_codes.extend(["readiness_blocked", "manual_dependency_setup"])
+        elif learning_profile == "deep_local_explore":
+            strategy_profile = "deep_local_runtime"
+            runtime_band_preference = "local"
+            preferred_probe_mode = "local_vision_assist"
+            preferred_wave_mode = "vision_guided_safe_traversal"
+            preferred_target_mode = "hybrid"
+            preferred_verification_mode = "native_stabilized_before_after"
+            preferred_native_recovery_mode = "focus_related_window_chain"
+            reason_codes.extend(["local_runtime_priority", "deep_local_explore"])
+        elif learning_profile == "hybrid_guided_explore":
+            strategy_profile = "hybrid_guided_runtime"
+            runtime_band_preference = "hybrid"
+            preferred_probe_mode = "hybrid_verify"
+            preferred_wave_mode = "vision_guided_safe_traversal"
+            preferred_target_mode = "hybrid"
+            preferred_verification_mode = "native_stabilized_before_after"
+            preferred_native_recovery_mode = "focus_related_window_chain"
+            reason_codes.extend(["hybrid_runtime_priority", "hybrid_guided_explore"])
+        elif learning_profile == "model_assisted_explore":
+            strategy_profile = "model_assisted_runtime"
+            runtime_band_preference = "api"
+            preferred_probe_mode = "api_vision_assist"
+            preferred_wave_mode = "vision_guided_safe_traversal"
+            preferred_target_mode = "ocr"
+            preferred_verification_mode = "native_stabilized_before_after"
+            preferred_native_recovery_mode = "focus_related_window_chain"
+            reason_codes.extend(["api_runtime_priority", "model_assisted_explore"])
+        else:
+            strategy_profile = "cautious_runtime"
+            runtime_band_preference = "hybrid" if execution_mode in {"local_ready", "hybrid_ready", "remote_assist"} else "accessibility"
+            preferred_probe_mode = "hybrid_verify" if execution_mode in {"local_ready", "hybrid_ready"} else "accessibility_first"
+            preferred_wave_mode = "surface_traversal_first" if execution_mode in {"local_ready", "hybrid_ready"} else "workflow_hotkey_first"
+            preferred_target_mode = "hybrid" if execution_mode in {"local_ready", "hybrid_ready"} else "auto"
+            preferred_verification_mode = "multi_signal_before_after"
+            preferred_native_recovery_mode = "focus_related_window"
+            reason_codes.extend(["verification_bias", learning_profile])
+
+        if execution_mode == "remote_assist" and runtime_band_preference == "hybrid":
+            runtime_band_preference = "api"
+        elif execution_mode == "degraded" and learning_profile != "manual_dependency_setup":
+            runtime_band_preference = "accessibility"
+
+        if local_ready_tasks:
+            reason_codes.append("local_ready_tasks")
+        if install_ready_tasks:
+            reason_codes.append("install_ready_tasks")
+        if remote_ready_tasks:
+            reason_codes.append("remote_ready_tasks")
+        if blocker_codes:
+            reason_codes.extend(blocker_codes[:4])
+
+        return {
+            "strategy_profile": strategy_profile,
+            "runtime_band_preference": runtime_band_preference,
+            "preferred_probe_mode": preferred_probe_mode,
+            "preferred_wave_mode": preferred_wave_mode,
+            "preferred_target_mode": preferred_target_mode,
+            "preferred_verification_mode": preferred_verification_mode,
+            "preferred_native_recovery_mode": preferred_native_recovery_mode,
+            "prefer_local_runtime": runtime_band_preference in {"local", "hybrid"},
+            "allow_api_assist": runtime_band_preference in {"hybrid", "api"},
+            "prefer_native_stabilization": learning_profile in {
+                "deep_local_explore",
+                "hybrid_guided_explore",
+                "model_assisted_explore",
+            },
+            "local_ready_task_count": len(local_ready_tasks),
+            "install_ready_task_count": len(install_ready_tasks),
+            "remote_ready_task_count": len(remote_ready_tasks),
+            "blocked": readiness_status == "blocked",
+            "reason_codes": self._machine_dedupe(reason_codes, limit=10),
+        }
+
     def _desktop_machine_finalize_app_learning_plan(
         self,
         *,
@@ -10028,6 +10232,16 @@ class DesktopBackendService:
                     target_row=item_payload,
                 )
             )
+            runtime_strategy = self._desktop_machine_learning_runtime_strategy_for_target(
+                target_row=item_payload,
+            )
+            item_payload["adaptive_runtime_strategy"] = runtime_strategy
+            item_payload["adaptive_runtime_strategy_profile"] = str(
+                runtime_strategy.get("strategy_profile", "") or ""
+            ).strip().lower()
+            item_payload["runtime_band_preference"] = str(
+                runtime_strategy.get("runtime_band_preference", "") or ""
+            ).strip().lower()
             annotated_targets.append(item_payload)
         profile_rank = {
             "deep_local_explore": 0,
@@ -10050,12 +10264,19 @@ class DesktopBackendService:
         campaign_targets = auto_targets[:] if auto_targets else [dict(item) for item in selected_targets]
         execution_mode_counts: Dict[str, int] = {}
         learning_profile_counts: Dict[str, int] = {}
+        runtime_strategy_counts: Dict[str, int] = {}
+        runtime_band_counts: Dict[str, int] = {}
         strategy_notes: List[str] = []
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             learning_profile = str(item.get("learning_profile", "") or "unknown").strip().lower() or "unknown"
             execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
             learning_profile_counts[learning_profile] = int(learning_profile_counts.get(learning_profile, 0) or 0) + 1
+            runtime_strategy = dict(item.get("adaptive_runtime_strategy", {})) if isinstance(item.get("adaptive_runtime_strategy", {}), dict) else {}
+            runtime_strategy_profile = str(runtime_strategy.get("strategy_profile", "") or item.get("adaptive_runtime_strategy_profile", "") or "unknown").strip().lower() or "unknown"
+            runtime_band = str(runtime_strategy.get("runtime_band_preference", "") or item.get("runtime_band_preference", "") or "unknown").strip().lower() or "unknown"
+            runtime_strategy_counts[runtime_strategy_profile] = int(runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0) + 1
+            runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
             note = str(item.get("strategy_notes", "") or "").strip()
             if note:
                 strategy_notes.append(note)
@@ -10133,6 +10354,14 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(learning_profile_counts.items(), key=lambda entry: entry[0])
                 },
+                "runtime_strategy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_strategy_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
             }
         )
         plan["summary"] = existing_summary
@@ -10177,6 +10406,14 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(learning_profile_counts.items(), key=lambda entry: entry[0])
                 },
+                "runtime_strategy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_strategy_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
                 "auto_learn_count": len(auto_targets),
                 "blocked_count": len(blocked_app_names),
                 "degraded_count": len(degraded_app_names),
@@ -10192,6 +10429,13 @@ class DesktopBackendService:
                         "effective_max_surface_waves": int(item.get("effective_max_surface_waves", 0) or 0),
                         "effective_max_probe_controls": int(item.get("effective_max_probe_controls", 0) or 0),
                         "priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
+                        "adaptive_runtime_strategy_profile": str(item.get("adaptive_runtime_strategy_profile", "") or "").strip().lower(),
+                        "runtime_band_preference": str(item.get("runtime_band_preference", "") or "").strip().lower(),
+                        "runtime_strategy": (
+                            dict(item.get("adaptive_runtime_strategy", {}))
+                            if isinstance(item.get("adaptive_runtime_strategy", {}), dict)
+                            else {}
+                        ),
                         "blocker_codes": [
                             str(code).strip().lower()
                             for code in item.get("blocker_codes", [])
@@ -11014,6 +11258,10 @@ class DesktopBackendService:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
         if router is None:
@@ -11040,6 +11288,10 @@ class DesktopBackendService:
                 preferred_traversal_paths=preferred_traversal_paths,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
+                learning_profile=learning_profile,
+                execution_mode=execution_mode,
+                adaptive_runtime_strategy=adaptive_runtime_strategy,
+                provider_model_readiness=provider_model_readiness,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory survey payload"}
         except Exception as exc:  # noqa: BLE001
@@ -11071,6 +11323,7 @@ class DesktopBackendService:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
@@ -11101,6 +11354,7 @@ class DesktopBackendService:
                 preferred_traversal_paths=preferred_traversal_paths,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
+                adaptive_app_profiles=adaptive_app_profiles,
                 source=source,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
@@ -11149,6 +11403,7 @@ class DesktopBackendService:
         target_container_roles: Optional[List[str]] = None,
         preferred_wave_actions: Optional[List[str]] = None,
         preferred_traversal_paths: Optional[List[str]] = None,
+        adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         supervisor = getattr(self, "desktop_app_memory_supervisor", None)
@@ -11196,6 +11451,7 @@ class DesktopBackendService:
             target_container_roles=target_container_roles,
             preferred_wave_actions=preferred_wave_actions,
             preferred_traversal_paths=preferred_traversal_paths,
+            adaptive_app_profiles=adaptive_app_profiles,
             source=source,
         )
         payload["app_memory"] = _to_jsonable(
@@ -48884,6 +49140,18 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     ),
                     revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
                     prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
+                    learning_profile=str(body.get("learning_profile", "") or "").strip(),
+                    execution_mode=str(body.get("execution_mode", "") or "").strip(),
+                    adaptive_runtime_strategy=(
+                        dict(body.get("adaptive_runtime_strategy", {}))
+                        if isinstance(body.get("adaptive_runtime_strategy", {}), dict)
+                        else None
+                    ),
+                    provider_model_readiness=(
+                        dict(body.get("provider_model_readiness", {}))
+                        if isinstance(body.get("provider_model_readiness", {}), dict)
+                        else None
+                    ),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
@@ -48928,6 +49196,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     ),
                     revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
                     prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
+                    adaptive_app_profiles=(
+                        [dict(item) for item in body.get("adaptive_app_profiles", []) if isinstance(item, dict)]
+                        if isinstance(body.get("adaptive_app_profiles", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
@@ -49068,6 +49341,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     preferred_traversal_paths=(
                         [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
                         if isinstance(body.get("preferred_traversal_paths", []), list)
+                        else None
+                    ),
+                    adaptive_app_profiles=(
+                        [dict(item) for item in body.get("adaptive_app_profiles", []) if isinstance(item, dict)]
+                        if isinstance(body.get("adaptive_app_profiles", []), list)
                         else None
                     ),
                     source=str(body.get("source", "manual") or "manual").strip(),

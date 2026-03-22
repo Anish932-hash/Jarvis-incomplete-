@@ -600,6 +600,20 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
         probe_controls=False,
         follow_surface_waves=True,
         max_surface_waves=2,
+        adaptive_app_profiles=[
+            {
+                "app_name": "notepad",
+                "learning_profile": "hybrid_guided_explore",
+                "execution_mode": "hybrid_ready",
+                "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                "runtime_band_preference": "hybrid",
+                "runtime_strategy": {
+                    "strategy_profile": "balanced_hybrid_guided_explore",
+                    "runtime_band_preference": "hybrid",
+                    "preferred_probe_mode": "local_vision_assist",
+                },
+            }
+        ],
     )
 
     assert payload["status"] == "success"
@@ -610,9 +624,13 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert int(captured[-1]["max_surface_waves"] or 0) > 2
     assert payload["wave_summary"]["adaptive_targeted_app_count"] == 1
     assert payload["wave_summary"]["adaptive_wave_depth_app_count"] == 1
+    assert payload["targeting"]["runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
+    assert payload["targeting"]["runtime_band_counts"]["hybrid"] == 1
     assert payload["items"][0]["targeting"]["target_container_roles"][:2] == ["dialog", "menu"]
     assert "sidebar" in payload["items"][0]["targeting"]["target_container_roles"]
     assert payload["items"][0]["targeting"]["preferred_wave_actions"] == ["command"]
+    assert payload["items"][0]["adaptive_learning_runtime"]["strategy_profile"] == "balanced_hybrid_guided_explore"
+    assert payload["items"][0]["adaptive_learning_runtime"]["selected_runtime_band"] == "hybrid"
     recommended_paths = payload["items"][0]["targeting"]["recommended_traversal_paths"]
     assert recommended_paths[:2] == ["dialog", "menu"]
     assert "sidebar" in recommended_paths

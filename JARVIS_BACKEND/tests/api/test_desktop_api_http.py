@@ -13876,6 +13876,8 @@ class FakeDesktopService:
                     "degraded_count": 1,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
+                    "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
+                    "runtime_band_counts": {"hybrid": 1, "accessibility": 1},
                 },
                 "targets": [
                     {
@@ -13892,6 +13894,13 @@ class FakeDesktopService:
                         "target_container_roles": ["tab", "menu", "dialog"],
                         "preferred_wave_actions": ["command", "focus_sidebar"],
                         "preferred_traversal_paths": ["tab", "menu", "dialog"],
+                        "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                        "runtime_band_preference": "hybrid",
+                        "adaptive_runtime_strategy": {
+                            "strategy_profile": "balanced_hybrid_guided_explore",
+                            "runtime_band_preference": "hybrid",
+                            "preferred_probe_mode": "local_vision_assist",
+                        },
                     },
                     {
                         "app_name": "Visual Studio Code",
@@ -13908,6 +13917,13 @@ class FakeDesktopService:
                         "target_container_roles": ["sidebar", "tree", "dialog"],
                         "preferred_wave_actions": ["command", "focus_tree"],
                         "preferred_traversal_paths": ["sidebar", "tree", "dialog"],
+                        "adaptive_runtime_strategy_profile": "degraded_cautious_revalidate",
+                        "runtime_band_preference": "accessibility",
+                        "adaptive_runtime_strategy": {
+                            "strategy_profile": "degraded_cautious_revalidate",
+                            "runtime_band_preference": "accessibility",
+                            "preferred_probe_mode": "accessibility_first",
+                        },
                     },
                 ],
                 "campaign_defaults": {
@@ -13923,18 +13939,34 @@ class FakeDesktopService:
                     "degraded_count": 1,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
+                    "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
+                    "runtime_band_counts": {"hybrid": 1, "accessibility": 1},
                     "adaptive_app_profiles": [
                         {
                             "app_name": "Google Chrome",
                             "learning_profile": "hybrid_guided_explore",
                             "execution_mode": "hybrid_ready",
                             "auto_learn_allowed": True,
+                            "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                            "runtime_band_preference": "hybrid",
+                            "runtime_strategy": {
+                                "strategy_profile": "balanced_hybrid_guided_explore",
+                                "runtime_band_preference": "hybrid",
+                                "preferred_probe_mode": "local_vision_assist",
+                            },
                         },
                         {
                             "app_name": "Visual Studio Code",
                             "learning_profile": "cautious_revalidate",
                             "execution_mode": "degraded",
                             "auto_learn_allowed": True,
+                            "adaptive_runtime_strategy_profile": "degraded_cautious_revalidate",
+                            "runtime_band_preference": "accessibility",
+                            "runtime_strategy": {
+                                "strategy_profile": "degraded_cautious_revalidate",
+                                "runtime_band_preference": "accessibility",
+                                "preferred_probe_mode": "accessibility_first",
+                            },
                         },
                     ],
                 },
@@ -14124,10 +14156,26 @@ class FakeDesktopService:
                 "execution_mode": "hybrid_ready",
                 "readiness_status": "ready",
                 "prepare_priority_band": "high",
+                "runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                "runtime_band_preference": "hybrid",
+                "preferred_probe_mode": "local_vision_assist",
+                "preferred_wave_mode": "surface_traversal_first",
+                "preferred_target_mode": "ocr",
+                "preferred_verification_mode": "before_after_delta",
+                "preferred_native_recovery_mode": "focus_related_window_chain",
                 "required_tasks": ["reasoning", "vision"],
                 "wave_attempt_count": 4,
                 "discovered_control_count": 6,
                 "probe_success_count": 2,
+            },
+            "adaptive_runtime_strategy": {
+                "strategy_profile": "balanced_hybrid_guided_explore",
+                "runtime_band_preference": "hybrid",
+                "preferred_probe_mode": "local_vision_assist",
+                "preferred_wave_mode": "surface_traversal_first",
+                "preferred_target_mode": "ocr",
+                "preferred_verification_mode": "before_after_delta",
+                "preferred_native_recovery_mode": "focus_related_window_chain",
             },
             "message": "Prepared app control.",
         }
@@ -14262,6 +14310,10 @@ class FakeDesktopService:
         preferred_traversal_paths: list[str] | None = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: dict[str, object] | None = None,
+        provider_model_readiness: dict[str, object] | None = None,
     ) -> Dict[str, Any]:
         del limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
         entry = {
@@ -14356,6 +14408,12 @@ class FakeDesktopService:
             for item in (preferred_traversal_paths or target_container_roles or ["menu", "dialog", "sidebar"])
             if str(item).strip()
         ][:6]
+        adaptive_runtime = dict(adaptive_runtime_strategy or {})
+        selected_runtime_band = str(
+            adaptive_runtime.get("runtime_band_preference", "")
+            or adaptive_runtime.get("selected_runtime_band", "")
+            or ("hybrid" if execution_mode else "local")
+        ).strip().lower() or ("hybrid" if execution_mode else "local")
         return {
             "status": "success",
             "message": "Learned app memory recorded from the surveyed surface.",
@@ -14444,6 +14502,24 @@ class FakeDesktopService:
                     "failure_hotspot_count": 1 if prefer_failure_memory else 0,
                 },
             },
+            "adaptive_learning_runtime": {
+                "status": "success",
+                "learning_profile": str(learning_profile or "").strip().lower(),
+                "execution_mode": str(execution_mode or "").strip().lower(),
+                "strategy_profile": str(
+                    adaptive_runtime.get("strategy_profile", "")
+                    or adaptive_runtime.get("adaptive_runtime_strategy_profile", "")
+                    or ""
+                ).strip().lower(),
+                "selected_runtime_band": selected_runtime_band,
+                "preferred_probe_mode": str(adaptive_runtime.get("preferred_probe_mode", "vision_first") or "vision_first").strip().lower(),
+                "preferred_wave_mode": str(adaptive_runtime.get("preferred_wave_mode", "surface_traversal_first") or "surface_traversal_first").strip().lower(),
+                "preferred_target_mode": str(adaptive_runtime.get("preferred_target_mode", "ocr") or "ocr").strip().lower(),
+                "preferred_verification_mode": str(adaptive_runtime.get("preferred_verification_mode", "before_after_delta") or "before_after_delta").strip().lower(),
+                "native_recovery_mode": str(adaptive_runtime.get("preferred_native_recovery_mode", "focus_related_window_chain") or "focus_related_window_chain").strip().lower(),
+                "adaptive_route_applied": bool(adaptive_runtime),
+                "provider_model_readiness": dict(provider_model_readiness or {}),
+            },
             "revalidation": {
                 "status": "success",
                 "count": 2 if revalidate_known_controls else 0,
@@ -14501,6 +14577,7 @@ class FakeDesktopService:
         preferred_traversal_paths: list[str] | None = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        adaptive_app_profiles: list[dict[str, object]] | None = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         del category, per_app_limit, ensure_app_launch, include_observation, include_elements, include_workflow_probes, include_exploration, include_ocr_targets
@@ -14528,6 +14605,9 @@ class FakeDesktopService:
         recommended_container_roles: list[str] = []
         recommended_traversal_paths: list[str] = []
         preferred_wave_action_counts: dict[str, int] = {}
+        runtime_strategy_counts: dict[str, int] = {}
+        runtime_band_counts: dict[str, int] = {}
+        clean_adaptive_profiles = [dict(item) for item in (adaptive_app_profiles or []) if isinstance(item, dict)]
         for app_name in candidates[: max(1, int(max_apps))]:
             if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
                 skipped_apps.append(
@@ -14538,6 +14618,14 @@ class FakeDesktopService:
                     }
                 )
                 continue
+            matched_adaptive_profile = next(
+                (
+                    dict(item)
+                    for item in clean_adaptive_profiles
+                    if str(item.get("app_name", "") or "").strip().lower() == str(app_name).strip().lower()
+                ),
+                {},
+            )
             payload = self.survey_desktop_app_memory(
                 app_name=app_name,
                 query=query or "save",
@@ -14551,8 +14639,16 @@ class FakeDesktopService:
                 preferred_traversal_paths=preferred_traversal_paths,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
+                learning_profile=str(matched_adaptive_profile.get("learning_profile", "") or "").strip().lower(),
+                execution_mode=str(matched_adaptive_profile.get("execution_mode", "") or "").strip().lower(),
+                adaptive_runtime_strategy=(
+                    dict(matched_adaptive_profile.get("runtime_strategy", {}))
+                    if isinstance(matched_adaptive_profile.get("runtime_strategy", {}), dict)
+                    else {}
+                ),
             )
             wave_report = dict(payload.get("wave_report", {}))
+            adaptive_learning_runtime = dict(payload.get("adaptive_learning_runtime", {}))
             wave_attempt_total += int(wave_report.get("attempted_count", 0) or 0)
             learned_surface_total += int(wave_report.get("learned_surface_count", 0) or 0)
             known_surface_total += int(wave_report.get("known_surface_count", 0) or 0)
@@ -14619,6 +14715,20 @@ class FakeDesktopService:
                 clean_action = str(action_name).strip().lower()
                 if clean_action:
                     preferred_wave_action_counts[clean_action] = int(preferred_wave_action_counts.get(clean_action, 0) or 0) + 1
+            runtime_strategy_profile = str(
+                adaptive_learning_runtime.get("strategy_profile", "")
+                or matched_adaptive_profile.get("adaptive_runtime_strategy_profile", "")
+                or ""
+            ).strip().lower()
+            if runtime_strategy_profile:
+                runtime_strategy_counts[runtime_strategy_profile] = int(runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0) + 1
+            runtime_band = str(
+                adaptive_learning_runtime.get("selected_runtime_band", "")
+                or matched_adaptive_profile.get("runtime_band_preference", "")
+                or ""
+            ).strip().lower()
+            if runtime_band:
+                runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
             items.append(
                 {
                     "app_name": app_name,
@@ -14627,6 +14737,8 @@ class FakeDesktopService:
                     "memory_entry": payload.get("memory_entry", {}),
                     "wave_report": wave_report,
                     "targeting": payload_targeting,
+                    "adaptive_profile": matched_adaptive_profile,
+                    "adaptive_learning_runtime": adaptive_learning_runtime,
                 }
             )
         return {
@@ -14649,6 +14761,8 @@ class FakeDesktopService:
                 "prefer_unknown_apps": bool(prefer_unknown_apps),
                 "revalidate_known_controls": bool(revalidate_known_controls),
                 "prefer_failure_memory": bool(prefer_failure_memory),
+                "runtime_strategy_counts": runtime_strategy_counts,
+                "runtime_band_counts": runtime_band_counts,
                 "target_container_roles": [
                     str(item).strip().lower()
                     for item in (target_container_roles or [])
@@ -15160,6 +15274,7 @@ class FakeDesktopService:
         target_container_roles: list[str] | None = None,
         preferred_wave_actions: list[str] | None = None,
         preferred_traversal_paths: list[str] | None = None,
+        adaptive_app_profiles: list[dict[str, object]] | None = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         del category, per_app_limit, ensure_app_launch, probe_controls, max_probe_controls, allow_risky_probes
@@ -15208,6 +15323,17 @@ class FakeDesktopService:
                 for item in (preferred_traversal_paths or ["dialog", "menu", "sidebar"])
                 if str(item).strip()
             ][:8],
+            "adaptive_app_profiles": [dict(item) for item in (adaptive_app_profiles or []) if isinstance(item, dict)][:8],
+            "adaptive_runtime_strategy_counts": {
+                str(item.get("adaptive_runtime_strategy_profile", "")).strip().lower(): 1
+                for item in (adaptive_app_profiles or [])
+                if isinstance(item, dict) and str(item.get("adaptive_runtime_strategy_profile", "")).strip()
+            },
+            "runtime_band_counts": {
+                str(item.get("runtime_band_preference", "")).strip().lower(): 1
+                for item in (adaptive_app_profiles or [])
+                if isinstance(item, dict) and str(item.get("runtime_band_preference", "")).strip()
+            },
             "adaptive_preferred_traversal_paths": not bool(preferred_traversal_paths),
             "recommended_traversal_paths": ["dialog", "menu", "sidebar"],
             "revalidation_focus_summary": {
@@ -23409,6 +23535,7 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert len(dict(survey.get("targeting", {})).get("preferred_wave_actions", [])) >= 1
     assert len(dict(survey.get("targeting", {})).get("recommended_traversal_paths", [])) >= 1
     assert survey["app_memory"]["status"] == "success"
+    assert dict(survey.get("adaptive_learning_runtime", {})).get("selected_runtime_band") in {"local", "hybrid"}
 
     status, cleared = request_json(
         "POST",
@@ -23506,6 +23633,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["effective_app_name"] == "chrome"
     assert prepared["summary"]["wave_attempt_count"] == 4
     assert prepared["summary"]["execution_mode"] == "hybrid_ready"
+    assert prepared["summary"]["runtime_strategy_profile"] == "balanced_hybrid_guided_explore"
+    assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
 
@@ -23523,6 +23652,9 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["plan"]["campaign_defaults"]["app_names"][0] == "Google Chrome"
     assert plan["plan"]["summary"]["degraded_count"] == 1
     assert plan["plan"]["campaign_defaults"]["strategy_profile"] == "hybrid_guided_explore"
+    assert plan["plan"]["summary"]["runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
+    assert plan["plan"]["summary"]["runtime_band_counts"]["hybrid"] == 1
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["runtime_band_preference"] == "hybrid"
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
     status, campaign = request_json(
@@ -23636,6 +23768,7 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert int(dict(batch.get("wave_summary", {})).get("traversal_path_execution_count", 0) or 0) >= 1
     assert len(dict(batch.get("wave_summary", {})).get("executed_traversal_paths", [])) >= 1
     assert len(dict(batch.get("targeting", {})).get("preferred_wave_actions", [])) >= 1
+    assert isinstance(dict(batch.get("targeting", {})).get("runtime_strategy_counts", {}), dict)
 
     status, configured = request_json(
         "POST",

@@ -241,6 +241,20 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
             revisit_failed_apps=True,
             revalidate_known_controls=True,
             prioritize_failure_hotspots=True,
+            adaptive_app_profiles=[
+                {
+                    "app_name": "notepad",
+                    "learning_profile": "hybrid_guided_explore",
+                    "execution_mode": "hybrid_ready",
+                    "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                    "runtime_band_preference": "hybrid",
+                    "runtime_strategy": {
+                        "strategy_profile": "balanced_hybrid_guided_explore",
+                        "runtime_band_preference": "hybrid",
+                        "preferred_probe_mode": "local_vision_assist",
+                    },
+                }
+            ],
         )
         assert created["status"] == "success"
         assert created["campaign"]["target_container_roles"] == ["dialog", "menu"]
@@ -252,6 +266,8 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert created["campaign"]["adaptive_preferred_traversal_paths"] is True
         assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["recommended_traversal_paths"]))
+        assert created["campaign"]["adaptive_runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
+        assert created["campaign"]["runtime_band_counts"]["hybrid"] == 1
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
@@ -261,10 +277,13 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(captured[-1]["preferred_traversal_paths"]))
         assert int(captured[-1]["max_surface_waves"] or 0) > 2
+        assert captured[-1]["adaptive_app_profiles"][0]["adaptive_runtime_strategy_profile"] == "balanced_hybrid_guided_explore"
         assert executed["campaign"]["adaptive_target_container_roles"] is True
         assert executed["campaign"]["adaptive_surface_wave_depth"] is True
         assert executed["campaign"]["adaptive_preferred_wave_actions"] is True
         assert executed["campaign"]["adaptive_preferred_traversal_paths"] is True
+        assert executed["campaign"]["adaptive_runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
+        assert executed["campaign"]["runtime_band_counts"]["hybrid"] == 1
         assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["recommended_traversal_paths"]))

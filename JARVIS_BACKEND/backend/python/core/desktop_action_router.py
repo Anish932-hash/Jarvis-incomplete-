@@ -8322,6 +8322,10 @@ class DesktopActionRouter:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_app_name = str(app_name or "").strip()
@@ -8343,6 +8347,13 @@ class DesktopActionRouter:
         )
         if not isinstance(snapshot, dict):
             return {"status": "error", "message": "invalid desktop app memory snapshot"}
+        snapshot = self._apply_adaptive_app_memory_runtime(
+            snapshot=snapshot,
+            learning_profile=learning_profile,
+            execution_mode=execution_mode,
+            adaptive_runtime_strategy=adaptive_runtime_strategy,
+            provider_model_readiness=provider_model_readiness,
+        )
         app_profile = snapshot.get("app_profile", {}) if isinstance(snapshot.get("app_profile", {}), dict) else {}
         if not app_profile and clean_app_name:
             matched_profile = self._app_profile_registry.match(app_name=clean_app_name, window_title=clean_window_title)
@@ -8487,6 +8498,10 @@ class DesktopActionRouter:
                 target_container_roles=effective_target_container_roles,
                 discouraged_labels=discouraged_probe_labels,
                 prefer_failure_memory=prefer_failure_memory,
+                learning_profile=learning_profile,
+                execution_mode=execution_mode,
+                adaptive_runtime_strategy=adaptive_runtime_strategy,
+                provider_model_readiness=provider_model_readiness,
             )
         wave_report: Dict[str, Any] = {}
         if follow_surface_waves:
@@ -8508,6 +8523,10 @@ class DesktopActionRouter:
                 preferred_traversal_paths=effective_preferred_traversal_paths,
                 revalidation_targets=revalidation_targets,
                 prefer_failure_memory=prefer_failure_memory,
+                learning_profile=learning_profile,
+                execution_mode=execution_mode,
+                adaptive_runtime_strategy=adaptive_runtime_strategy,
+                provider_model_readiness=provider_model_readiness,
             )
         memory_entry = self._app_memory.record_survey(
             app_name=clean_app_name,
@@ -8556,6 +8575,21 @@ class DesktopActionRouter:
                 if route_profile
                 else ""
             )
+            adaptive_runtime = (
+                dict(snapshot.get("adaptive_learning_runtime", {}))
+                if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict)
+                else {}
+            )
+            strategy_profile = str(adaptive_runtime.get("strategy_profile", "") or "").strip().lower()
+            selected_runtime_band = str(adaptive_runtime.get("selected_runtime_band", "") or "").strip().lower()
+            if strategy_profile:
+                route_message = (
+                    f"{route_message} using the {strategy_profile.replace('_', ' ')} profile"
+                    if route_message
+                    else f"Adaptive learning used the {strategy_profile.replace('_', ' ')} profile"
+                )
+            if selected_runtime_band:
+                route_message = f"{route_message} on the {selected_runtime_band.replace('_', ' ')} runtime band"
             if bool(vision_learning_route.get("local_runtime_ready", False)):
                 route_message = f"{route_message} with the local vision runtime ready"
             elif bool(vision_learning_route.get("api_assist_recommended", False)):
@@ -8644,6 +8678,11 @@ class DesktopActionRouter:
             "probe_report": probe_report,
             "wave_report": wave_report,
             "surface_hint": surface_hint,
+            "adaptive_learning_runtime": (
+                dict(snapshot.get("adaptive_learning_runtime", {}))
+                if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict)
+                else {}
+            ),
             "revalidation": revalidation_payload if isinstance(revalidation_payload, dict) else {},
             "targeting": {
                 "target_container_roles": effective_target_container_roles[:8],
@@ -8691,6 +8730,7 @@ class DesktopActionRouter:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
         source: str = "batch",
     ) -> Dict[str, Any]:
         bounded_max_apps = max(1, min(int(max_apps or 4), 32))
@@ -8732,14 +8772,44 @@ class DesktopActionRouter:
         recommended_wave_container_roles: List[str] = []
         recommended_traversal_paths: List[str] = []
         preferred_wave_action_counts: Dict[str, int] = {}
+        runtime_strategy_counts: Dict[str, int] = {}
+        runtime_band_counts: Dict[str, int] = {}
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
+        clean_adaptive_profiles = [
+            dict(item)
+            for item in (adaptive_app_profiles or [])
+            if isinstance(item, dict)
+        ]
+
+        def _adaptive_profile_for_target(target_name: str, profile_row: Dict[str, Any]) -> Dict[str, Any]:
+            normalized_target_keys = {
+                str(target_name or "").strip().lower(),
+                str(profile_row.get("profile_id", "") or "").strip().lower(),
+                str(profile_row.get("name", "") or "").strip().lower(),
+                str(profile_row.get("_requested_app_name", "") or "").strip().lower(),
+            }
+            normalized_target_keys = {item for item in normalized_target_keys if item}
+            if not normalized_target_keys:
+                return {}
+            for item in clean_adaptive_profiles:
+                candidate_keys = {
+                    str(item.get("app_name", "") or "").strip().lower(),
+                    str(item.get("profile_id", "") or "").strip().lower(),
+                    str(item.get("profile_name", "") or "").strip().lower(),
+                }
+                candidate_keys = {value for value in candidate_keys if value}
+                if candidate_keys and candidate_keys.intersection(normalized_target_keys):
+                    return dict(item)
+            return {}
+
         for profile in selected_profiles:
             requested_app_name = str(profile.get("_requested_app_name", "") or "").strip()
             target_app_name = str(requested_app_name or profile.get("name", "") or profile.get("profile_id", "") or "").strip()
             if not target_app_name:
                 continue
+            matched_adaptive_profile = _adaptive_profile_for_target(target_app_name, profile)
             adaptive_targeting = self._app_memory_batch_targeting(
                 app_name=target_app_name,
                 profile_id=str(profile.get("profile_id", "") or "").strip(),
@@ -8784,6 +8854,18 @@ class DesktopActionRouter:
                     ] if isinstance(adaptive_targeting, dict) else preferred_traversal_paths,
                     revalidate_known_controls=revalidate_known_controls,
                     prefer_failure_memory=prefer_failure_memory,
+                    learning_profile=str(matched_adaptive_profile.get("learning_profile", "") or "").strip().lower(),
+                    execution_mode=str(matched_adaptive_profile.get("execution_mode", "") or "").strip().lower(),
+                    adaptive_runtime_strategy=(
+                        dict(matched_adaptive_profile.get("runtime_strategy", {}))
+                        if isinstance(matched_adaptive_profile.get("runtime_strategy", {}), dict)
+                        else {}
+                    ),
+                    provider_model_readiness=(
+                        dict(matched_adaptive_profile.get("provider_model_readiness", {}))
+                        if isinstance(matched_adaptive_profile.get("provider_model_readiness", {}), dict)
+                        else {}
+                    ),
                     source=clean_source,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -8848,6 +8930,52 @@ class DesktopActionRouter:
                 if isinstance(survey_payload.get("targeting", {}), dict)
                 else {}
             )
+            adaptive_learning_runtime = (
+                dict(survey_payload.get("adaptive_learning_runtime", {}))
+                if isinstance(survey_payload.get("adaptive_learning_runtime", {}), dict)
+                else {}
+            )
+            if not adaptive_learning_runtime and matched_adaptive_profile:
+                matched_runtime_strategy = (
+                    dict(matched_adaptive_profile.get("runtime_strategy", {}))
+                    if isinstance(matched_adaptive_profile.get("runtime_strategy", {}), dict)
+                    else {}
+                )
+                adaptive_learning_runtime = {
+                    "status": "success",
+                    "learning_profile": str(matched_adaptive_profile.get("learning_profile", "") or "").strip().lower(),
+                    "execution_mode": str(matched_adaptive_profile.get("execution_mode", "") or "").strip().lower(),
+                    "strategy_profile": str(
+                        matched_adaptive_profile.get("adaptive_runtime_strategy_profile", "")
+                        or matched_runtime_strategy.get("strategy_profile", "")
+                        or ""
+                    ).strip().lower(),
+                    "selected_runtime_band": str(
+                        matched_adaptive_profile.get("runtime_band_preference", "")
+                        or matched_runtime_strategy.get("runtime_band_preference", "")
+                        or ""
+                    ).strip().lower(),
+                    "preferred_probe_mode": str(matched_runtime_strategy.get("preferred_probe_mode", "") or "").strip().lower(),
+                    "preferred_wave_mode": str(matched_runtime_strategy.get("preferred_wave_mode", "") or "").strip().lower(),
+                    "preferred_target_mode": str(matched_runtime_strategy.get("preferred_target_mode", "") or "").strip().lower(),
+                    "preferred_verification_mode": str(matched_runtime_strategy.get("preferred_verification_mode", "") or "").strip().lower(),
+                    "native_recovery_mode": str(matched_runtime_strategy.get("preferred_native_recovery_mode", "") or "").strip().lower(),
+                    "adaptive_route_applied": bool(matched_runtime_strategy),
+                }
+            runtime_strategy_profile = str(
+                adaptive_learning_runtime.get("strategy_profile", "")
+                or matched_adaptive_profile.get("adaptive_runtime_strategy_profile", "")
+                or ""
+            ).strip().lower()
+            if runtime_strategy_profile:
+                runtime_strategy_counts[runtime_strategy_profile] = int(runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0) + 1
+            runtime_band = str(
+                adaptive_learning_runtime.get("selected_runtime_band", "")
+                or matched_adaptive_profile.get("runtime_band_preference", "")
+                or ""
+            ).strip().lower()
+            if runtime_band:
+                runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
             recommended_wave_container_roles = self._dedupe_strings(
                 [
                     *recommended_wave_container_roles,
@@ -8902,6 +9030,8 @@ class DesktopActionRouter:
                     **(dict(adaptive_targeting) if isinstance(adaptive_targeting, dict) else {}),
                     **survey_targeting,
                 },
+                "adaptive_profile": matched_adaptive_profile,
+                "adaptive_learning_runtime": adaptive_learning_runtime,
                 "revalidation": (
                     dict(survey_payload.get("revalidation", {}))
                     if isinstance(survey_payload.get("revalidation", {}), dict)
@@ -9024,6 +9154,14 @@ class DesktopActionRouter:
                 "prefer_failure_memory": bool(prefer_failure_memory),
                 "adaptive_targeted_app_count": adaptive_targeted_app_count,
                 "adaptive_wave_depth_app_count": adaptive_wave_depth_app_count,
+                "runtime_strategy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_strategy_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
                 "recommended_traversal_paths": recommended_traversal_paths[:8],
                 "preferred_wave_actions": [
@@ -9458,6 +9596,10 @@ class DesktopActionRouter:
         include_elements: bool,
         include_workflow_probes: bool,
         include_ocr_targets: bool,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         action_name = str(candidate.get("action", "") or "").strip().lower()
         mode = str(candidate.get("mode", "workflow_hotkey") or "workflow_hotkey").strip().lower()
@@ -9579,6 +9721,13 @@ class DesktopActionRouter:
             include_workflow_probes=include_workflow_probes,
             preferred_actions=preferred_followups,
         )
+        next_snapshot = self._apply_adaptive_app_memory_runtime(
+            snapshot=dict(next_snapshot) if isinstance(next_snapshot, dict) else {},
+            learning_profile=learning_profile,
+            execution_mode=execution_mode,
+            adaptive_runtime_strategy=adaptive_runtime_strategy,
+            provider_model_readiness=provider_model_readiness,
+        )
         stabilization_result: Dict[str, Any] = {}
         if (
             str(next_snapshot.get("status", "") or "").strip().lower() == "success"
@@ -9603,7 +9752,13 @@ class DesktopActionRouter:
                 else {}
             )
             if stabilized_snapshot and str(stabilization_result.get("status", "") or "").strip().lower() in {"success", "partial"}:
-                next_snapshot = dict(stabilized_snapshot)
+                next_snapshot = self._apply_adaptive_app_memory_runtime(
+                    snapshot=dict(stabilized_snapshot),
+                    learning_profile=learning_profile,
+                    execution_mode=execution_mode,
+                    adaptive_runtime_strategy=adaptive_runtime_strategy,
+                    provider_model_readiness=provider_model_readiness,
+                )
         if str(next_snapshot.get("status", "") or "").strip().lower() != "success":
             return {
                 "status": "error",
@@ -9657,6 +9812,10 @@ class DesktopActionRouter:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidation_targets: Optional[List[Dict[str, Any]]] = None,
         prefer_failure_memory: bool = True,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         bounded_waves = max(0, min(int(max_surface_waves or 0), 8))
         if bounded_waves <= 0:
@@ -9847,6 +10006,10 @@ class DesktopActionRouter:
                     include_elements=include_elements,
                     include_workflow_probes=include_workflow_probes,
                     include_ocr_targets=include_ocr_targets,
+                    learning_profile=learning_profile,
+                    execution_mode=execution_mode,
+                    adaptive_runtime_strategy=adaptive_runtime_strategy,
+                    provider_model_readiness=provider_model_readiness,
                 )
                 if str(wave_result.get("status", "") or "").strip().lower() != "success":
                     skipped.append(
@@ -10297,6 +10460,279 @@ class DesktopActionRouter:
             "runtime_profile": {},
         }
 
+    def _adaptive_app_memory_runtime_route(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        base_route = self._app_memory_vision_route(snapshot=snapshot)
+        strategy = dict(adaptive_runtime_strategy) if isinstance(adaptive_runtime_strategy, dict) else {}
+        clean_learning_profile = str(learning_profile or strategy.get("learning_profile", "") or "").strip().lower()
+        clean_execution_mode = str(execution_mode or strategy.get("execution_mode", "") or "").strip().lower()
+        readiness_payload = (
+            dict(provider_model_readiness)
+            if isinstance(provider_model_readiness, dict)
+            else {}
+        )
+        if not strategy and not clean_learning_profile and not clean_execution_mode and not readiness_payload:
+            return base_route
+
+        if not strategy:
+            runtime_band_preference = "accessibility"
+            preferred_probe_mode = "accessibility_first"
+            preferred_wave_mode = "workflow_hotkey_first"
+            preferred_target_mode = "auto"
+            preferred_verification_mode = "multi_signal_before_after"
+            preferred_native_recovery_mode = "focus_related_window"
+            strategy_profile = "adaptive_runtime"
+            if clean_learning_profile == "deep_local_explore":
+                runtime_band_preference = "local"
+                preferred_probe_mode = "local_vision_assist"
+                preferred_wave_mode = "vision_guided_safe_traversal"
+                preferred_target_mode = "hybrid"
+                preferred_verification_mode = "native_stabilized_before_after"
+                preferred_native_recovery_mode = "focus_related_window_chain"
+                strategy_profile = "deep_local_runtime"
+            elif clean_learning_profile == "hybrid_guided_explore":
+                runtime_band_preference = "hybrid"
+                preferred_probe_mode = "hybrid_verify"
+                preferred_wave_mode = "vision_guided_safe_traversal"
+                preferred_target_mode = "hybrid"
+                preferred_verification_mode = "native_stabilized_before_after"
+                preferred_native_recovery_mode = "focus_related_window_chain"
+                strategy_profile = "hybrid_guided_runtime"
+            elif clean_learning_profile == "model_assisted_explore":
+                runtime_band_preference = "api"
+                preferred_probe_mode = "api_vision_assist"
+                preferred_wave_mode = "vision_guided_safe_traversal"
+                preferred_target_mode = "ocr"
+                preferred_verification_mode = "native_stabilized_before_after"
+                preferred_native_recovery_mode = "focus_related_window_chain"
+                strategy_profile = "model_assisted_runtime"
+            elif clean_learning_profile == "manual_dependency_setup":
+                runtime_band_preference = "accessibility"
+                preferred_probe_mode = "accessibility_first"
+                preferred_wave_mode = "workflow_hotkey_first"
+                preferred_target_mode = "auto"
+                preferred_verification_mode = "multi_signal_before_after"
+                preferred_native_recovery_mode = "reacquire_window"
+                strategy_profile = "manual_dependency_setup_runtime"
+            elif clean_execution_mode in {"local_ready", "hybrid_ready"}:
+                runtime_band_preference = "hybrid"
+                preferred_probe_mode = "hybrid_verify"
+                preferred_wave_mode = "surface_traversal_first"
+                preferred_target_mode = "hybrid"
+                strategy_profile = "hybrid_runtime"
+            elif clean_execution_mode == "remote_assist":
+                runtime_band_preference = "api"
+                preferred_probe_mode = "api_vision_assist"
+                preferred_wave_mode = "vision_guided_safe_traversal"
+                preferred_target_mode = "ocr"
+                strategy_profile = "api_assisted_runtime"
+            strategy = {
+                "strategy_profile": strategy_profile,
+                "runtime_band_preference": runtime_band_preference,
+                "preferred_probe_mode": preferred_probe_mode,
+                "preferred_wave_mode": preferred_wave_mode,
+                "preferred_target_mode": preferred_target_mode,
+                "preferred_verification_mode": preferred_verification_mode,
+                "preferred_native_recovery_mode": preferred_native_recovery_mode,
+                "allow_api_assist": runtime_band_preference in {"hybrid", "api"},
+                "prefer_local_runtime": runtime_band_preference in {"local", "hybrid"},
+                "prefer_native_stabilization": clean_learning_profile in {
+                    "deep_local_explore",
+                    "hybrid_guided_explore",
+                    "model_assisted_explore",
+                },
+                "reason_codes": self._dedupe_strings(
+                    [clean_learning_profile, clean_execution_mode]
+                )[:6],
+            }
+
+        merged = dict(base_route)
+        runtime_band_preference = str(strategy.get("runtime_band_preference", "") or "").strip().lower() or "accessibility"
+        actual_local_ready = bool(base_route.get("local_runtime_ready", False))
+        actual_ocr_ready = bool(base_route.get("ocr_ready", False))
+        actual_api_ready = bool(base_route.get("api_assist_recommended", False)) or bool(strategy.get("allow_api_assist", False))
+        selected_runtime_band = runtime_band_preference
+        if runtime_band_preference == "local" and not actual_local_ready:
+            selected_runtime_band = "hybrid" if actual_ocr_ready else "accessibility"
+        elif runtime_band_preference == "hybrid":
+            if not actual_local_ready and actual_api_ready and actual_ocr_ready:
+                selected_runtime_band = "api"
+            elif not actual_local_ready and not actual_ocr_ready:
+                selected_runtime_band = "accessibility"
+        elif runtime_band_preference == "api" and not actual_ocr_ready and actual_local_ready:
+            selected_runtime_band = "local"
+        elif runtime_band_preference == "api" and not actual_ocr_ready and not actual_local_ready:
+            selected_runtime_band = "accessibility"
+
+        preferred_probe_mode = str(strategy.get("preferred_probe_mode", "") or "").strip().lower()
+        if selected_runtime_band == "local":
+            preferred_probe_mode = (
+                preferred_probe_mode
+                if preferred_probe_mode in {"local_vision_assist", "hybrid_verify"}
+                else ("local_vision_assist" if actual_local_ready else "accessibility_first")
+            )
+            if preferred_probe_mode == "hybrid_verify" and not actual_ocr_ready:
+                preferred_probe_mode = "local_vision_assist"
+        elif selected_runtime_band == "hybrid":
+            if actual_local_ready and actual_ocr_ready:
+                preferred_probe_mode = "hybrid_verify"
+            elif actual_local_ready:
+                preferred_probe_mode = "local_vision_assist"
+            elif actual_api_ready and actual_ocr_ready:
+                preferred_probe_mode = "api_vision_assist"
+            elif actual_ocr_ready:
+                preferred_probe_mode = "vision_first"
+            else:
+                preferred_probe_mode = "accessibility_first"
+        elif selected_runtime_band == "api":
+            preferred_probe_mode = "api_vision_assist" if actual_ocr_ready else ("local_vision_assist" if actual_local_ready else "accessibility_first")
+        else:
+            if preferred_probe_mode in {"api_vision_assist", "vision_first"} and not actual_ocr_ready:
+                preferred_probe_mode = "accessibility_first"
+            elif preferred_probe_mode == "local_vision_assist" and not actual_local_ready:
+                preferred_probe_mode = "accessibility_first"
+            elif not preferred_probe_mode:
+                preferred_probe_mode = "accessibility_first"
+
+        preferred_wave_mode = str(strategy.get("preferred_wave_mode", "") or merged.get("preferred_wave_mode", "") or "").strip().lower()
+        if not preferred_wave_mode:
+            preferred_wave_mode = "workflow_hotkey_first"
+        if selected_runtime_band == "accessibility" and clean_learning_profile in {"cautious_revalidate", "manual_dependency_setup"}:
+            preferred_wave_mode = "workflow_hotkey_first"
+        elif selected_runtime_band in {"local", "hybrid", "api"} and str(merged.get("preferred_container_roles", "")):
+            if preferred_wave_mode not in {"surface_traversal_first", "vision_guided_safe_traversal"}:
+                preferred_wave_mode = "vision_guided_safe_traversal"
+
+        preferred_target_mode = str(strategy.get("preferred_target_mode", "") or "").strip().lower()
+        if not preferred_target_mode:
+            preferred_target_mode = str(merged.get("preferred_target_mode", "") or "auto").strip().lower()
+        if preferred_probe_mode in {"vision_first", "api_vision_assist"}:
+            preferred_target_mode = "ocr"
+        elif preferred_probe_mode in {"local_vision_assist", "hybrid_verify"}:
+            preferred_target_mode = "hybrid"
+
+        preferred_verification_mode = str(strategy.get("preferred_verification_mode", "") or "").strip().lower()
+        if not preferred_verification_mode:
+            preferred_verification_mode = str(merged.get("preferred_verification_mode", "") or "multi_signal_before_after").strip().lower()
+
+        needs_native_stabilization = bool(merged.get("needs_native_stabilization", False))
+        if not needs_native_stabilization and bool(strategy.get("prefer_native_stabilization", False)):
+            needs_native_stabilization = max(0.0, min(float(merged.get("weird_app_pressure", 0.0) or 0.0), 1.0)) >= 0.35
+        native_recovery_mode = str(merged.get("native_recovery_mode", "") or "none").strip().lower()
+        preferred_native_recovery_mode = str(strategy.get("preferred_native_recovery_mode", "") or "").strip().lower()
+        if needs_native_stabilization and preferred_native_recovery_mode:
+            native_recovery_mode = preferred_native_recovery_mode
+        if not needs_native_stabilization:
+            native_recovery_mode = "none"
+
+        if selected_runtime_band == "local":
+            model_preference = "local_runtime"
+        elif selected_runtime_band == "api":
+            model_preference = "api_assist"
+        elif selected_runtime_band == "hybrid":
+            model_preference = "hybrid_runtime"
+        else:
+            model_preference = "accessibility"
+
+        route_profile = preferred_probe_mode or "accessibility_first"
+        if needs_native_stabilization:
+            route_profile = f"{route_profile}_native_stabilized"
+
+        merged.update(
+            {
+                "route_profile": route_profile,
+                "model_preference": model_preference,
+                "preferred_probe_mode": preferred_probe_mode,
+                "preferred_wave_mode": preferred_wave_mode,
+                "preferred_target_mode": preferred_target_mode,
+                "preferred_verification_mode": preferred_verification_mode,
+                "needs_native_stabilization": needs_native_stabilization,
+                "native_recovery_mode": native_recovery_mode,
+                "follow_descendant_chain": native_recovery_mode == "focus_related_window_chain",
+                "max_descendant_focus_steps": 4 if native_recovery_mode == "focus_related_window_chain" else (2 if native_recovery_mode == "focus_related_window" else 1),
+                "adaptive_route_applied": True,
+                "adaptive_runtime_strategy_profile": str(strategy.get("strategy_profile", "") or "").strip().lower(),
+                "selected_runtime_band": selected_runtime_band,
+                "learning_profile": clean_learning_profile,
+                "execution_mode": clean_execution_mode,
+                "provider_model_readiness": readiness_payload,
+                "reason_codes": self._dedupe_strings(
+                    [
+                        *[
+                            str(item).strip()
+                            for item in merged.get("reason_codes", [])
+                            if isinstance(merged.get("reason_codes", []), list) and str(item).strip()
+                        ],
+                        *[
+                            str(item).strip()
+                            for item in strategy.get("reason_codes", [])
+                            if isinstance(strategy.get("reason_codes", []), list) and str(item).strip()
+                        ],
+                        *(["adaptive_runtime_route"] if clean_learning_profile or clean_execution_mode else []),
+                        *(["selected_runtime_band_" + selected_runtime_band] if selected_runtime_band else []),
+                    ]
+                )[:12],
+                "runtime_profile": {
+                    **(
+                        dict(merged.get("runtime_profile", {}))
+                        if isinstance(merged.get("runtime_profile", {}), dict)
+                        else {}
+                    ),
+                    "strategy_profile": str(strategy.get("strategy_profile", "") or "").strip().lower(),
+                    "selected_runtime_band": selected_runtime_band,
+                },
+            }
+        )
+        return merged
+
+    def _apply_adaptive_app_memory_runtime(
+        self,
+        *,
+        snapshot: Dict[str, Any],
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(snapshot, dict):
+            return {}
+        updated = dict(snapshot)
+        provider_model_payload = (
+            dict(provider_model_readiness)
+            if isinstance(provider_model_readiness, dict)
+            else {}
+        )
+        route = self._adaptive_app_memory_runtime_route(
+            snapshot=updated,
+            learning_profile=learning_profile,
+            execution_mode=execution_mode,
+            adaptive_runtime_strategy=adaptive_runtime_strategy,
+            provider_model_readiness=provider_model_readiness,
+        )
+        updated["vision_learning_route"] = route
+        updated["adaptive_learning_runtime"] = {
+            "status": "success",
+            "learning_profile": str(learning_profile or route.get("learning_profile", "") or "").strip().lower(),
+            "execution_mode": str(execution_mode or route.get("execution_mode", "") or "").strip().lower(),
+            "strategy_profile": str(route.get("adaptive_runtime_strategy_profile", "") or "").strip().lower(),
+            "selected_runtime_band": str(route.get("selected_runtime_band", "") or "").strip().lower(),
+            "preferred_probe_mode": str(route.get("preferred_probe_mode", "") or "").strip().lower(),
+            "preferred_wave_mode": str(route.get("preferred_wave_mode", "") or "").strip().lower(),
+            "preferred_target_mode": str(route.get("preferred_target_mode", "") or "").strip().lower(),
+            "preferred_verification_mode": str(route.get("preferred_verification_mode", "") or "").strip().lower(),
+            "native_recovery_mode": str(route.get("native_recovery_mode", "") or "").strip().lower(),
+            "adaptive_route_applied": bool(route.get("adaptive_route_applied", False)),
+            "provider_model_readiness": provider_model_payload,
+        }
+        return updated
+
     def _stabilize_app_memory_learning_surface(
         self,
         *,
@@ -10488,6 +10924,10 @@ class DesktopActionRouter:
         target_container_roles: Optional[List[str]] = None,
         discouraged_labels: Optional[List[str]] = None,
         prefer_failure_memory: bool = True,
+        learning_profile: str = "",
+        execution_mode: str = "",
+        adaptive_runtime_strategy: Optional[Dict[str, Any]] = None,
+        provider_model_readiness: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         capabilities = self._capabilities()
         accessibility_ready = bool(capabilities.get("accessibility", {}).get("available")) if isinstance(capabilities.get("accessibility", {}), dict) else False
@@ -10655,6 +11095,13 @@ class DesktopActionRouter:
                 include_workflow_probes=False,
             )
             post_snapshot = dict(post_snapshot) if isinstance(post_snapshot, dict) else {}
+            post_snapshot = self._apply_adaptive_app_memory_runtime(
+                snapshot=post_snapshot,
+                learning_profile=learning_profile,
+                execution_mode=execution_mode,
+                adaptive_runtime_strategy=adaptive_runtime_strategy,
+                provider_model_readiness=provider_model_readiness,
+            )
             post_observation = self._app_memory_probe_observation(
                 snapshot=post_snapshot,
                 window_title=focus_title,
@@ -10708,6 +11155,13 @@ class DesktopActionRouter:
                             include_workflow_probes=False,
                         )
                         post_snapshot = dict(post_snapshot) if isinstance(post_snapshot, dict) else {}
+                        post_snapshot = self._apply_adaptive_app_memory_runtime(
+                            snapshot=post_snapshot,
+                            learning_profile=learning_profile,
+                            execution_mode=execution_mode,
+                            adaptive_runtime_strategy=adaptive_runtime_strategy,
+                            provider_model_readiness=provider_model_readiness,
+                        )
                         post_observation = self._app_memory_probe_observation(
                             snapshot=post_snapshot,
                             window_title=focus_title,
@@ -10750,7 +11204,13 @@ class DesktopActionRouter:
                     else {}
                 )
                 if stabilized_snapshot and str(stabilization_result.get("status", "") or "").strip().lower() in {"success", "partial"}:
-                    post_snapshot = dict(stabilized_snapshot)
+                    post_snapshot = self._apply_adaptive_app_memory_runtime(
+                        snapshot=dict(stabilized_snapshot),
+                        learning_profile=learning_profile,
+                        execution_mode=execution_mode,
+                        adaptive_runtime_strategy=adaptive_runtime_strategy,
+                        provider_model_readiness=provider_model_readiness,
+                    )
                     post_observation = self._app_memory_probe_observation(
                         snapshot=post_snapshot,
                         window_title=focus_title,

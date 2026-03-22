@@ -2508,6 +2508,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachinePrepare.provider_model_readiness),
     [desktopMachinePrepare]
   );
+  const desktopMachinePrepareAdaptiveRuntime = useMemo(
+    () => asObjectRecord(desktopMachinePrepare.adaptive_runtime_strategy),
+    [desktopMachinePrepare]
+  );
   const desktopMachinePrepareSummary = useMemo(
     () => asObjectRecord(desktopMachinePrepare.summary),
     [desktopMachinePrepare]
@@ -2613,6 +2617,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopMachineAppLearningProfileCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineAppLearningSummary.learning_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningRuntimeStrategyCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.runtime_strategy_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningRuntimeBandCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.runtime_band_counts)).sort(
         (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
       ),
     [desktopMachineAppLearningSummary]
@@ -20796,6 +20814,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachineAppLearningRuntimeStrategyCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            runtime strategies:{' '}
+                                            {desktopMachineAppLearningRuntimeStrategyCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningRuntimeBandCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            runtime bands:{' '}
+                                            {desktopMachineAppLearningRuntimeBandCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineAppLearningAdaptiveProfiles.length > 0 ? (
                                           <p className="mt-1">
                                             adaptive apps:{' '}
@@ -20805,7 +20841,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 const appName = String(item.app_name ?? 'app').trim();
                                                 const profileName = String(item.learning_profile ?? '').trim();
                                                 const mode = String(item.execution_mode ?? '').trim();
-                                                return `${appName}${profileName ? `:${profileName}` : ''}${mode ? `:${mode}` : ''}`;
+                                                const runtimeBand = String(item.runtime_band_preference ?? '').trim();
+                                                return `${appName}${profileName ? `:${profileName}` : ''}${mode ? `:${mode}` : ''}${runtimeBand ? `:${runtimeBand}` : ''}`;
                                               })
                                               .join(' • ')}
                                           </p>
@@ -20922,6 +20959,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}priority:{String(desktopMachinePrepareSummary.prepare_priority_band ?? desktopMachinePrepare.prepare_priority_band ?? 'n/a')}
                                         </p>
                                         <p className="mt-1">
+                                          runtime:{String(
+                                            desktopMachinePrepareSummary.runtime_strategy_profile ??
+                                              desktopMachinePrepareAdaptiveRuntime.strategy_profile ??
+                                              'n/a'
+                                          )}
+                                          {' • '}band:{String(
+                                            desktopMachinePrepareSummary.runtime_band_preference ??
+                                              desktopMachinePrepareAdaptiveRuntime.runtime_band_preference ??
+                                              desktopMachinePrepareAdaptiveRuntime.selected_runtime_band ??
+                                              'n/a'
+                                          )}
+                                        </p>
+                                        <p className="mt-1">
                                           controls:{Number(desktopMachinePrepareSummary.discovered_control_count ?? 0)}
                                           {' • '}surfaces:{Number(desktopMachinePrepareSummary.known_surface_count ?? 0)}
                                           {' • '}waves:{Number(desktopMachinePrepareSummary.wave_attempt_count ?? 0)}
@@ -20947,6 +20997,28 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .slice(0, 4)
                                               .map((item) => String(item))
                                               .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {String(
+                                          desktopMachinePrepareSummary.preferred_probe_mode ??
+                                            desktopMachinePrepareAdaptiveRuntime.preferred_probe_mode ??
+                                            ''
+                                        ).trim() ? (
+                                          <p className="mt-1">
+                                            probe:{String(
+                                              desktopMachinePrepareSummary.preferred_probe_mode ??
+                                                desktopMachinePrepareAdaptiveRuntime.preferred_probe_mode
+                                            )}
+                                            {' • '}wave:{String(
+                                              desktopMachinePrepareSummary.preferred_wave_mode ??
+                                                desktopMachinePrepareAdaptiveRuntime.preferred_wave_mode ??
+                                                'n/a'
+                                            )}
+                                            {' • '}verify:{String(
+                                              desktopMachinePrepareSummary.preferred_verification_mode ??
+                                                desktopMachinePrepareAdaptiveRuntime.preferred_verification_mode ??
+                                                'n/a'
+                                            )}
                                           </p>
                                         ) : null}
                                         {Array.isArray(desktopMachinePrepareSummary.blocker_codes) && desktopMachinePrepareSummary.blocker_codes.length > 0 ? (
