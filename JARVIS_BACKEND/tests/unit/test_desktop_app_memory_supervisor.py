@@ -69,6 +69,8 @@ def test_desktop_app_memory_supervisor_configure_updates_query_filters(tmp_path:
         revisit_stale_apps=True,
         stale_after_hours=96.0,
         revisit_failed_apps=True,
+        preferred_wave_actions=["command", "focus_sidebar"],
+        preferred_traversal_paths=["menu", "dialog", "tree"],
         source="unit_test",
     )
     assert payload["status"] == "success"
@@ -86,6 +88,8 @@ def test_desktop_app_memory_supervisor_configure_updates_query_filters(tmp_path:
     assert payload["revisit_stale_apps"] is True
     assert payload["stale_after_hours"] == 96.0
     assert payload["revisit_failed_apps"] is True
+    assert payload["preferred_wave_actions"] == ["command", "focus_sidebar"]
+    assert payload["preferred_traversal_paths"] == ["menu", "dialog", "tree"]
 
 
 def test_desktop_app_memory_supervisor_campaign_create_and_run(tmp_path: Path) -> None:
@@ -185,7 +189,10 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
                 "wave_attempt_total": len(names) * 3,
                 "learned_surface_total": len(names) * 2,
                 "known_surface_total": 0,
+                "preferred_path_hits": len(names) * 2,
+                "traversal_path_execution_count": len(names) * 2,
                 "traversed_container_roles": ["dialog", "menu"],
+                "executed_traversal_paths": ["dialog", "tree"],
                 "role_attempt_counts": {"dialog": len(names) * 2, "menu": len(names)},
                 "role_learned_counts": {"dialog": len(names), "menu": len(names)},
                 "recommended_container_roles": ["dialog", "menu"],
@@ -242,6 +249,8 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert created["campaign"]["adaptive_surface_wave_depth"] is True
         assert created["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert created["campaign"]["adaptive_preferred_wave_actions"] is True
+        assert created["campaign"]["adaptive_preferred_traversal_paths"] is True
+        assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["recommended_traversal_paths"]))
 
         campaign_id = str(created["campaign"]["campaign_id"])
@@ -250,13 +259,19 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert executed["status"] == "success"
         assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
         assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert {"menu", "dialog", "tree"}.issubset(set(captured[-1]["preferred_traversal_paths"]))
         assert int(captured[-1]["max_surface_waves"] or 0) > 2
         assert executed["campaign"]["adaptive_target_container_roles"] is True
         assert executed["campaign"]["adaptive_surface_wave_depth"] is True
         assert executed["campaign"]["adaptive_preferred_wave_actions"] is True
+        assert executed["campaign"]["adaptive_preferred_traversal_paths"] is True
         assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["recommended_traversal_paths"]))
         assert executed["campaign"]["traversed_container_roles"] == ["dialog", "menu"]
+        assert executed["campaign"]["executed_traversal_paths"] == ["dialog", "tree"]
+        assert int(executed["campaign"].get("preferred_path_hits", 0) or 0) >= 2
+        assert int(executed["campaign"].get("traversal_path_execution_count", 0) or 0) >= 2
         assert int(dict(executed["campaign"].get("role_learned_counts", {})).get("dialog", 0) or 0) >= 1
         assert executed["campaign"]["revalidation_focus_summary"]["top_container_roles"][0]["value"] == "dialog"
         top_traversed_roles = {
@@ -552,6 +567,9 @@ def test_desktop_app_memory_supervisor_adapts_target_container_roles_from_revali
                     "staleness": {"age_hours": 8.0, "stale_after_hours": 72.0, "stale": False},
                     "learning_health": {"status": "degraded"},
                     "failure_memory_summary": {"entry_count": 1},
+                    "wave_strategy_summary": {
+                        "recommended_actions": ["open_command_palette", "focus_sidebar"],
+                    },
                     "revalidation_summary": {
                         "target_count": 4,
                         "overdue_count": 1,
@@ -578,8 +596,14 @@ def test_desktop_app_memory_supervisor_adapts_target_container_roles_from_revali
         assert payload["status"] == "success"
         assert captured[-1]["app_names"] == ["notepad"]
         assert captured[-1]["target_container_roles"] == ["menu", "dialog"]
+        assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert int(captured[-1]["max_surface_waves"] or 0) > 1
         latest = payload["supervisor"]["latest_run"]
         assert latest["adaptive_target_container_roles"] is True
+        assert latest["adaptive_preferred_wave_actions"] is True
+        assert latest["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert latest["adaptive_surface_wave_depth"] is True
+        assert int(latest["effective_max_surface_waves"] or 0) > int(latest["max_surface_waves"] or 0)
         assert latest["selection_summary"]["top_revalidation_container_roles"][0]["value"] == "menu"
     finally:
         supervisor.stop()

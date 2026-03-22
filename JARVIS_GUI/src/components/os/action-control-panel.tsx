@@ -2360,6 +2360,63 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return {};
   }, [desktopAppMemoryCampaignRows, desktopAppMemoryCampaigns]);
+  const desktopAppMemoryPreferredTraversalPaths = useMemo(() => {
+    const batchTargeting = asObjectRecord(desktopAppMemoryBatchState?.targeting);
+    const daemonLastSummary = asObjectRecord(desktopAppMemoryDaemon.last_summary);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const appendValues = (values: unknown) => {
+      if (!Array.isArray(values)) return;
+      for (const value of values) {
+        const clean = String(value ?? '').trim().toLowerCase();
+        if (!clean || seen.has(clean)) continue;
+        seen.add(clean);
+        ordered.push(clean);
+      }
+    };
+    appendValues(desktopLatestAppMemoryCampaign.preferred_traversal_paths);
+    appendValues(desktopLatestAppMemoryCampaign.recommended_traversal_paths);
+    appendValues(desktopAppMemoryDaemon.preferred_traversal_paths);
+    appendValues(batchTargeting.recommended_traversal_paths);
+    appendValues(daemonLastSummary.executed_traversal_paths);
+    return ordered.slice(0, 8);
+  }, [desktopAppMemoryBatchState?.targeting, desktopAppMemoryDaemon, desktopLatestAppMemoryCampaign]);
+  const desktopAppMemoryPreferredWaveActions = useMemo(() => {
+    const batchTargeting = asObjectRecord(desktopAppMemoryBatchState?.targeting);
+    const daemonLastSummary = asObjectRecord(desktopAppMemoryDaemon.last_summary);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    const appendValues = (values: unknown) => {
+      if (!Array.isArray(values)) return;
+      for (const value of values) {
+        const clean = String(value ?? '').trim().toLowerCase();
+        if (!clean || seen.has(clean)) continue;
+        seen.add(clean);
+        ordered.push(clean);
+      }
+    };
+    appendValues(desktopLatestAppMemoryCampaign.preferred_wave_actions);
+    appendValues(desktopAppMemoryDaemon.preferred_wave_actions);
+    appendValues(batchTargeting.preferred_wave_actions);
+    appendValues(daemonLastSummary.preferred_wave_actions);
+    return ordered.slice(0, 8);
+  }, [desktopAppMemoryBatchState?.targeting, desktopAppMemoryDaemon, desktopLatestAppMemoryCampaign]);
+  const desktopAppMemoryEffectiveMaxSurfaceWaves = useMemo(() => {
+    const daemonLastSummary = asObjectRecord(desktopAppMemoryDaemon.last_summary);
+    const candidates = [
+      desktopLatestAppMemoryCampaign.effective_max_surface_waves,
+      desktopLatestAppMemoryCampaign.max_surface_waves,
+      daemonLastSummary.effective_max_surface_waves,
+      desktopAppMemoryDaemon.max_surface_waves,
+    ];
+    let effective = 3;
+    for (const value of candidates) {
+      const numeric = Number(value ?? 0);
+      if (!Number.isFinite(numeric) || numeric <= 0) continue;
+      effective = Math.max(effective, Math.min(8, Math.max(1, Math.floor(numeric))));
+    }
+    return effective;
+  }, [desktopAppMemoryDaemon, desktopLatestAppMemoryCampaign]);
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
   const desktopRecoveryDaemonPolicyProfile =
@@ -13716,9 +13773,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         follow_surface_waves: true,
-        max_surface_waves: 3,
+        max_surface_waves: desktopAppMemoryEffectiveMaxSurfaceWaves,
         allow_risky_probes: false,
         include_ocr_targets: true,
+        preferred_wave_actions:
+          desktopAppMemoryPreferredWaveActions.length > 0 ? desktopAppMemoryPreferredWaveActions : undefined,
+        preferred_traversal_paths:
+          desktopAppMemoryPreferredTraversalPaths.length > 0 ? desktopAppMemoryPreferredTraversalPaths : undefined,
         revalidate_known_controls: true,
         prefer_failure_memory: true,
       });
@@ -13754,6 +13815,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
     desktopCoworkerAppName,
     desktopCoworkerEnsureLaunch,
+    desktopAppMemoryEffectiveMaxSurfaceWaves,
+    desktopAppMemoryPreferredTraversalPaths,
+    desktopAppMemoryPreferredWaveActions,
     desktopCoworkerQuery,
     desktopCoworkerWindowTitle,
     toast,
@@ -13776,11 +13840,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         follow_surface_waves: true,
-        max_surface_waves: 3,
+        max_surface_waves: desktopAppMemoryEffectiveMaxSurfaceWaves,
         allow_risky_probes: false,
         include_ocr_targets: true,
         skip_known_apps: true,
         prefer_unknown_apps: true,
+        preferred_wave_actions:
+          desktopAppMemoryPreferredWaveActions.length > 0 ? desktopAppMemoryPreferredWaveActions : undefined,
+        preferred_traversal_paths:
+          desktopAppMemoryPreferredTraversalPaths.length > 0 ? desktopAppMemoryPreferredTraversalPaths : undefined,
         revalidate_known_controls: true,
         prefer_failure_memory: true,
         source: 'manual',
@@ -13812,6 +13880,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
     desktopCoworkerAppName,
     desktopCoworkerEnsureLaunch,
+    desktopAppMemoryEffectiveMaxSurfaceWaves,
+    desktopAppMemoryPreferredTraversalPaths,
+    desktopAppMemoryPreferredWaveActions,
     refreshDesktopAppMemoryCampaigns,
     refreshDesktopAppMemoryDaemon,
     toast,
@@ -13858,7 +13929,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         follow_surface_waves: true,
-        max_surface_waves: 3,
+        max_surface_waves: desktopAppMemoryEffectiveMaxSurfaceWaves,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -13868,6 +13939,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         revisit_failed_apps: true,
         revalidate_known_controls: true,
         prioritize_failure_hotspots: true,
+        preferred_wave_actions:
+          desktopAppMemoryPreferredWaveActions.length > 0 ? desktopAppMemoryPreferredWaveActions : undefined,
+        preferred_traversal_paths:
+          desktopAppMemoryPreferredTraversalPaths.length > 0 ? desktopAppMemoryPreferredTraversalPaths : undefined,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13889,7 +13964,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     } finally {
       setDesktopAppMemoryDaemonBusy(false);
     }
-  }, [desktopCoworkerAppName, desktopCoworkerEnsureLaunch, toast]);
+  }, [
+    desktopCoworkerAppName,
+    desktopCoworkerEnsureLaunch,
+    desktopAppMemoryEffectiveMaxSurfaceWaves,
+    desktopAppMemoryPreferredTraversalPaths,
+    desktopAppMemoryPreferredWaveActions,
+    toast,
+  ]);
 
   const triggerDesktopAppMemoryDaemon = useCallback(async () => {
     setDesktopAppMemoryDaemonTriggerBusy(true);
@@ -13903,7 +13985,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         follow_surface_waves: true,
-        max_surface_waves: 3,
+        max_surface_waves: desktopAppMemoryEffectiveMaxSurfaceWaves,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -13913,6 +13995,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         revisit_failed_apps: true,
         revalidate_known_controls: true,
         prioritize_failure_hotspots: true,
+        preferred_wave_actions:
+          desktopAppMemoryPreferredWaveActions.length > 0 ? desktopAppMemoryPreferredWaveActions : undefined,
+        preferred_traversal_paths:
+          desktopAppMemoryPreferredTraversalPaths.length > 0 ? desktopAppMemoryPreferredTraversalPaths : undefined,
         source: 'manual',
         history_response_limit: 6,
       });
@@ -13944,6 +14030,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
     desktopCoworkerAppName,
     desktopCoworkerEnsureLaunch,
+    desktopAppMemoryEffectiveMaxSurfaceWaves,
+    desktopAppMemoryPreferredTraversalPaths,
+    desktopAppMemoryPreferredWaveActions,
     refreshDesktopAppMemoryCampaigns,
     refreshDesktopAppMemoryDaemon,
     toast,
@@ -13961,7 +14050,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         probe_controls: true,
         max_probe_controls: 4,
         follow_surface_waves: true,
-        max_surface_waves: 3,
+        max_surface_waves: desktopAppMemoryEffectiveMaxSurfaceWaves,
         allow_risky_probes: false,
         skip_known_apps: true,
         prefer_unknown_apps: true,
@@ -13971,6 +14060,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         revisit_failed_apps: true,
         revalidate_known_controls: true,
         prioritize_failure_hotspots: true,
+        preferred_wave_actions:
+          desktopAppMemoryPreferredWaveActions.length > 0 ? desktopAppMemoryPreferredWaveActions : undefined,
+        preferred_traversal_paths:
+          desktopAppMemoryPreferredTraversalPaths.length > 0 ? desktopAppMemoryPreferredTraversalPaths : undefined,
         source: 'manual',
       });
       syncDesktopAppMemoryCampaignArtifacts(payload);
@@ -14000,6 +14093,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
   }, [
     desktopCoworkerAppName,
     desktopCoworkerEnsureLaunch,
+    desktopAppMemoryEffectiveMaxSurfaceWaves,
+    desktopAppMemoryPreferredTraversalPaths,
+    desktopAppMemoryPreferredWaveActions,
     refreshDesktopAppMemoryCampaigns,
     syncDesktopAppMemoryCampaignArtifacts,
     toast,

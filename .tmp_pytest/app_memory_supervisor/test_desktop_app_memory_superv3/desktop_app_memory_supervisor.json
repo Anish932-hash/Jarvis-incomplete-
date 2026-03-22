@@ -1,0 +1,366 @@
+{
+  "values": {
+    "desktop_app_memory_supervisor": {
+      "config": {
+        "enabled": false,
+        "interval_s": 300.0,
+        "max_apps": 1,
+        "per_app_limit": 24,
+        "history_limit": 8,
+        "query": "",
+        "category": "",
+        "ensure_app_launch": true,
+        "probe_controls": true,
+        "max_probe_controls": 4,
+        "follow_surface_waves": true,
+        "max_surface_waves": 3,
+        "allow_risky_probes": false,
+        "skip_known_apps": true,
+        "prefer_unknown_apps": true,
+        "continuous_learning": true,
+        "revisit_stale_apps": true,
+        "stale_after_hours": 72.0,
+        "revisit_failed_apps": true,
+        "revalidate_known_controls": true,
+        "prioritize_failure_hotspots": true,
+        "target_container_roles": [],
+        "preferred_traversal_paths": []
+      },
+      "runtime": {
+        "inflight": false,
+        "last_tick_at": "",
+        "last_success_at": "",
+        "last_error_at": "",
+        "last_duration_ms": 0.0,
+        "last_result_status": "",
+        "last_result_message": "",
+        "last_trigger_source": "",
+        "last_trigger_at": "",
+        "last_config_source": "",
+        "next_due_at": "",
+        "next_due_at_ts": 0.0,
+        "run_count": 0,
+        "manual_trigger_count": 0,
+        "auto_trigger_count": 0,
+        "consecutive_error_count": 0,
+        "last_summary": {},
+        "updated_at": "2026-03-22T03:14:00.623166+00:00"
+      },
+      "history": [],
+      "campaigns": {
+        "cam_hotspot-learner_1774149240619701800": {
+          "campaign_id": "cam_hotspot-learner_1774149240619701800",
+          "label": "Hotspot learner",
+          "status": "completed",
+          "created_at": "2026-03-22T03:14:00.619711+00:00",
+          "updated_at": "2026-03-22T03:14:00.623079+00:00",
+          "query": "",
+          "category": "",
+          "target_apps": [
+            "notepad"
+          ],
+          "pending_apps": [],
+          "completed_apps": [
+            "notepad"
+          ],
+          "partial_apps": [],
+          "failed_apps": [],
+          "skipped_apps": [],
+          "max_apps": 4,
+          "per_app_limit": 24,
+          "ensure_app_launch": true,
+          "probe_controls": true,
+          "max_probe_controls": 4,
+          "follow_surface_waves": true,
+          "max_surface_waves": 2,
+          "effective_max_surface_waves": 5,
+          "adaptive_surface_wave_depth": true,
+          "allow_risky_probes": false,
+          "skip_known_apps": true,
+          "prefer_unknown_apps": true,
+          "continuous_learning": true,
+          "revisit_stale_apps": true,
+          "stale_after_hours": 72.0,
+          "revisit_failed_apps": true,
+          "revalidate_known_controls": true,
+          "prioritize_failure_hotspots": true,
+          "target_container_roles": [
+            "dialog",
+            "menu"
+          ],
+          "adaptive_target_container_roles": true,
+          "preferred_wave_actions": [
+            "open_command_palette",
+            "focus_sidebar"
+          ],
+          "adaptive_preferred_wave_actions": true,
+          "preferred_traversal_paths": [
+            "tree",
+            "menu",
+            "dialog"
+          ],
+          "adaptive_preferred_traversal_paths": true,
+          "recommended_traversal_paths": [
+            "tree",
+            "menu",
+            "dialog"
+          ],
+          "target_selection_summary": {
+            "known_count": 1,
+            "unknown_count": 0,
+            "stale_count": 0,
+            "attention_count": 1,
+            "failure_memory_count": 1,
+            "revalidation_count": 1,
+            "healthy_count": 0
+          },
+          "revalidation_focus_summary": {
+            "top_container_roles": [
+              {
+                "value": "dialog",
+                "count": 3
+              },
+              {
+                "value": "menu",
+                "count": 2
+              }
+            ],
+            "top_reason_codes": [
+              {
+                "value": "never_verified",
+                "count": 3
+              },
+              {
+                "value": "blocked_history",
+                "count": 2
+              }
+            ],
+            "top_preferred_wave_actions": [
+              {
+                "value": "open_command_palette",
+                "count": 1
+              },
+              {
+                "value": "focus_sidebar",
+                "count": 1
+              }
+            ],
+            "top_recommended_traversal_paths": [
+              {
+                "value": "tree",
+                "count": 2
+              },
+              {
+                "value": "menu",
+                "count": 2
+              },
+              {
+                "value": "dialog",
+                "count": 2
+              }
+            ]
+          },
+          "unknown_target_count": 0,
+          "stale_target_count": 0,
+          "attention_target_count": 1,
+          "failure_target_count": 1,
+          "revalidation_target_count": 1,
+          "healthy_target_count": 0,
+          "reseed_count": 0,
+          "stale_reseed_count": 0,
+          "revisit_app_count": 0,
+          "cycle_generation": 0,
+          "latest_reseed_reason": "",
+          "latest_reseed_summary": {},
+          "run_count": 1,
+          "latest_cycle_status": "success",
+          "latest_cycle_message": "campaign adapted hotspot traversal",
+          "latest_cycle_at": "2026-03-22T03:14:00.622824+00:00",
+          "latest_cycle_source": "manual",
+          "history": [
+            {
+              "executed_at": "2026-03-22T03:14:00.622824+00:00",
+              "source": "manual",
+              "status": "success",
+              "message": "campaign adapted hotspot traversal",
+              "target_apps": [
+                "notepad"
+              ],
+              "surveyed_app_count": 1,
+              "success_count": 1,
+              "partial_count": 0,
+              "error_count": 0,
+              "skipped_app_count": 0,
+              "wave_attempt_count": 3,
+              "learned_surface_count": 2,
+              "known_surface_count": 0,
+              "target_container_roles": [
+                "dialog",
+                "menu"
+              ],
+              "adaptive_target_container_roles": true,
+              "preferred_wave_actions": [
+                "open_command_palette",
+                "focus_sidebar"
+              ],
+              "adaptive_preferred_wave_actions": true,
+              "preferred_traversal_paths": [
+                "tree",
+                "menu",
+                "dialog"
+              ],
+              "adaptive_preferred_traversal_paths": true,
+              "recommended_traversal_paths": [
+                "tree",
+                "menu",
+                "dialog"
+              ],
+              "max_surface_waves": 5,
+              "adaptive_surface_wave_depth": true,
+              "preferred_path_hits": 2,
+              "traversal_path_execution_count": 2,
+              "traversed_container_roles": [
+                "dialog",
+                "menu"
+              ],
+              "role_attempt_counts": {
+                "dialog": 2,
+                "menu": 1
+              },
+              "role_learned_counts": {
+                "dialog": 1,
+                "menu": 1
+              },
+              "executed_traversal_paths": [
+                "dialog",
+                "tree"
+              ],
+              "selection_strategy": "campaign_pending",
+              "reseed_count": 0,
+              "stale_reseed_count": 0,
+              "revisit_app_count": 0,
+              "stale_candidate_count": 0,
+              "attention_candidate_count": 0,
+              "failure_candidate_count": 0,
+              "revalidation_candidate_count": 0,
+              "unknown_candidate_count": 0,
+              "cycle_target_summary": {
+                "ordered_apps": [
+                  "notepad"
+                ],
+                "known_apps": [
+                  "notepad"
+                ],
+                "unknown_apps": [],
+                "stale_apps": [],
+                "attention_apps": [
+                  "notepad"
+                ],
+                "failure_memory_apps": [
+                  "notepad"
+                ],
+                "revalidation_apps": [
+                  "notepad"
+                ],
+                "healthy_apps": [],
+                "top_revalidation_container_roles": [
+                  {
+                    "value": "dialog",
+                    "count": 3
+                  },
+                  {
+                    "value": "menu",
+                    "count": 2
+                  }
+                ],
+                "top_revalidation_reason_codes": [
+                  {
+                    "value": "never_verified",
+                    "count": 3
+                  },
+                  {
+                    "value": "blocked_history",
+                    "count": 2
+                  }
+                ],
+                "top_preferred_wave_actions": [
+                  {
+                    "value": "open_command_palette",
+                    "count": 1
+                  },
+                  {
+                    "value": "focus_sidebar",
+                    "count": 1
+                  }
+                ],
+                "top_recommended_traversal_paths": [
+                  {
+                    "value": "tree",
+                    "count": 2
+                  },
+                  {
+                    "value": "menu",
+                    "count": 2
+                  },
+                  {
+                    "value": "dialog",
+                    "count": 2
+                  }
+                ],
+                "summary": {
+                  "known_count": 1,
+                  "unknown_count": 0,
+                  "stale_count": 0,
+                  "attention_count": 1,
+                  "failure_memory_count": 1,
+                  "revalidation_count": 1,
+                  "healthy_count": 0
+                }
+              },
+              "reseed_summary": {}
+            }
+          ],
+          "target_app_count": 1,
+          "pending_app_count": 0,
+          "completed_app_count": 1,
+          "partial_app_count": 0,
+          "failed_app_count": 0,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 3,
+          "learned_surface_count": 2,
+          "known_surface_count": 0,
+          "traversed_container_roles": [
+            "dialog",
+            "menu"
+          ],
+          "executed_traversal_paths": [
+            "dialog",
+            "tree"
+          ],
+          "role_attempt_counts": {
+            "dialog": 2,
+            "menu": 1
+          },
+          "role_learned_counts": {
+            "dialog": 1,
+            "menu": 1
+          },
+          "preferred_path_hits": 2,
+          "traversal_path_execution_count": 2
+        }
+      }
+    }
+  },
+  "__localstore_meta__": {
+    "version": 2,
+    "entries": {
+      "desktop_app_memory_supervisor": {
+        "version": 2,
+        "updated_at": 1774149240.6233575,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774149240.6233695
+  }
+}

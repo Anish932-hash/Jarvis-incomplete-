@@ -50,6 +50,8 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: bool = True,
         prioritize_failure_hotspots: bool = True,
         target_container_roles: Optional[list[str]] = None,
+        preferred_wave_actions: Optional[list[str]] = None,
+        preferred_traversal_paths: Optional[list[str]] = None,
     ) -> None:
         self._store = LocalStore(state_path)
         self._lock = threading.RLock()
@@ -81,6 +83,8 @@ class DesktopAppMemorySupervisor:
             revalidate_known_controls=revalidate_known_controls,
             prioritize_failure_hotspots=prioritize_failure_hotspots,
             target_container_roles=target_container_roles or [],
+            preferred_wave_actions=preferred_wave_actions or [],
+            preferred_traversal_paths=preferred_traversal_paths or [],
         )
         self._runtime = self._default_runtime()
         self._history: list[Dict[str, Any]] = []
@@ -299,9 +303,12 @@ class DesktopAppMemorySupervisor:
             revisit_app_total = 0
             adaptive_target_role_total = 0
             adaptive_wave_depth_total = 0
+            preferred_path_hit_total = 0
+            traversal_path_execution_total = 0
             target_container_role_counts: Dict[str, int] = {}
             traversed_container_role_counts: Dict[str, int] = {}
             preferred_wave_action_counts: Dict[str, int] = {}
+            preferred_traversal_path_counts: Dict[str, int] = {}
             recommended_traversal_path_counts: Dict[str, int] = {}
             for item in rows:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
@@ -320,6 +327,8 @@ class DesktopAppMemorySupervisor:
                 reseed_total += self._coerce_int(item.get("reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
                 stale_reseed_total += self._coerce_int(item.get("stale_reseed_count", 0), minimum=0, maximum=1_000_000, default=0)
                 revisit_app_total += self._coerce_int(item.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
+                preferred_path_hit_total += self._coerce_int(item.get("preferred_path_hits", 0), minimum=0, maximum=1_000_000, default=0)
+                traversal_path_execution_total += self._coerce_int(item.get("traversal_path_execution_count", 0), minimum=0, maximum=1_000_000, default=0)
                 if bool(item.get("adaptive_target_container_roles", False)):
                     adaptive_target_role_total += 1
                 if bool(item.get("adaptive_surface_wave_depth", False)):
@@ -341,6 +350,10 @@ class DesktopAppMemorySupervisor:
                     clean_action = str(action_name or "").strip().lower()
                     if clean_action:
                         preferred_wave_action_counts[clean_action] = int(preferred_wave_action_counts.get(clean_action, 0) or 0) + 1
+                for path_name in item.get("preferred_traversal_paths", []) if isinstance(item.get("preferred_traversal_paths", []), list) else []:
+                    clean_path = str(path_name or "").strip().lower()
+                    if clean_path:
+                        preferred_traversal_path_counts[clean_path] = int(preferred_traversal_path_counts.get(clean_path, 0) or 0) + 1
                 for path_name in item.get("recommended_traversal_paths", []) if isinstance(item.get("recommended_traversal_paths", []), list) else []:
                     clean_path = str(path_name or "").strip().lower()
                     if clean_path:
@@ -374,6 +387,8 @@ class DesktopAppMemorySupervisor:
                     "revisit_app_total": revisit_app_total,
                     "adaptive_target_role_total": adaptive_target_role_total,
                     "adaptive_wave_depth_total": adaptive_wave_depth_total,
+                    "preferred_path_hit_total": preferred_path_hit_total,
+                    "traversal_path_execution_total": traversal_path_execution_total,
                     "top_target_container_roles": [
                         {"value": str(key), "count": int(value)}
                         for key, value in sorted(
@@ -394,6 +409,14 @@ class DesktopAppMemorySupervisor:
                         {"value": str(key), "count": int(value)}
                         for key, value in sorted(
                             preferred_wave_action_counts.items(),
+                            key=lambda entry: (int(entry[1]), str(entry[0])),
+                            reverse=True,
+                        )[:6]
+                    ],
+                    "top_preferred_traversal_paths": [
+                        {"value": str(key), "count": int(value)}
+                        for key, value in sorted(
+                            preferred_traversal_path_counts.items(),
                             key=lambda entry: (int(entry[1]), str(entry[0])),
                             reverse=True,
                         )[:6]
@@ -433,11 +456,16 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: bool = True,
         prioritize_failure_hotspots: bool = True,
         target_container_roles: Optional[list[str]] = None,
+        preferred_wave_actions: Optional[list[str]] = None,
+        preferred_traversal_paths: Optional[list[str]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_apps = self._dedupe_strings([str(item).strip() for item in app_names if str(item).strip()])
         if not clean_apps:
             return {"status": "error", "message": "at least one app is required to create a learning campaign"}
+        requested_preferred_wave_actions = self._dedupe_strings(
+            [str(item).strip().lower() for item in (preferred_wave_actions or []) if str(item).strip()]
+        )[:8]
         with self._lock:
             stale_after_hours_value = self._coerce_float(
                 stale_after_hours,
@@ -467,7 +495,10 @@ class DesktopAppMemorySupervisor:
             preferred_wave_actions, adaptive_preferred_wave_actions = self._adaptive_preferred_wave_actions_from_summary(
                 target_summary
             )
-            recommended_traversal_paths = self._dedupe_strings(
+            if requested_preferred_wave_actions:
+                preferred_wave_actions = requested_preferred_wave_actions[:]
+                adaptive_preferred_wave_actions = False
+            summary_recommended_traversal_paths = self._dedupe_strings(
                 [
                     str(item.get("value", "") or "").strip().lower()
                     for item in target_summary.get("top_recommended_traversal_paths", [])
@@ -476,6 +507,17 @@ class DesktopAppMemorySupervisor:
                     and str(item.get("value", "") or "").strip()
                 ]
             )[:8]
+            explicit_preferred_traversal_paths = self._dedupe_strings(
+                [str(item).strip().lower() for item in (preferred_traversal_paths or []) if str(item).strip()]
+            )[:8]
+            effective_preferred_traversal_paths = (
+                explicit_preferred_traversal_paths[:]
+                if explicit_preferred_traversal_paths
+                else summary_recommended_traversal_paths[:]
+            )
+            adaptive_preferred_traversal_paths = bool(
+                effective_preferred_traversal_paths and not explicit_preferred_traversal_paths
+            )
             effective_max_surface_waves, adaptive_surface_wave_depth = self._adaptive_campaign_wave_depth(
                 self._coerce_int(max_surface_waves, minimum=1, maximum=8, default=3),
                 target_container_roles=effective_target_container_roles,
@@ -520,7 +562,9 @@ class DesktopAppMemorySupervisor:
                 "adaptive_target_container_roles": adaptive_target_container_roles,
                 "preferred_wave_actions": preferred_wave_actions[:8],
                 "adaptive_preferred_wave_actions": adaptive_preferred_wave_actions,
-                "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "preferred_traversal_paths": effective_preferred_traversal_paths[:8],
+                "adaptive_preferred_traversal_paths": adaptive_preferred_traversal_paths,
+                "recommended_traversal_paths": summary_recommended_traversal_paths[:8],
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
                     "top_container_roles": [
@@ -670,6 +714,25 @@ class DesktopAppMemorySupervisor:
                     ],
                 ]
             )[:8]
+            explicit_preferred_traversal_paths = self._dedupe_strings(
+                [
+                    str(item).strip().lower()
+                    for item in campaign.get("preferred_traversal_paths", [])
+                    if isinstance(campaign.get("preferred_traversal_paths", []), list) and str(item).strip()
+                ]
+            )[:8]
+            effective_preferred_traversal_paths = (
+                explicit_preferred_traversal_paths[:]
+                if explicit_preferred_traversal_paths and not bool(campaign.get("adaptive_preferred_traversal_paths", False))
+                else recommended_traversal_paths[:]
+            )
+            adaptive_preferred_traversal_paths = bool(
+                effective_preferred_traversal_paths
+                and (
+                    bool(campaign.get("adaptive_preferred_traversal_paths", False))
+                    or not explicit_preferred_traversal_paths
+                )
+            )
             effective_max_surface_waves, adaptive_surface_wave_depth = self._adaptive_campaign_wave_depth(
                 self._coerce_int(campaign.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
                 target_container_roles=effective_target_container_roles,
@@ -692,6 +755,7 @@ class DesktopAppMemorySupervisor:
                 prefer_unknown_apps=bool(campaign.get("prefer_unknown_apps", True)),
                 target_container_roles=effective_target_container_roles[:8],
                 preferred_wave_actions=effective_preferred_wave_actions[:8],
+                preferred_traversal_paths=effective_preferred_traversal_paths[:8],
                 revalidate_known_controls=bool(campaign.get("revalidate_known_controls", True)),
                 prefer_failure_memory=bool(campaign.get("prioritize_failure_hotspots", True)),
                 source=str(source or "manual").strip().lower() or "manual",
@@ -779,9 +843,27 @@ class DesktopAppMemorySupervisor:
                 "adaptive_target_container_roles": adaptive_target_container_roles,
                 "preferred_wave_actions": effective_preferred_wave_actions[:8],
                 "adaptive_preferred_wave_actions": adaptive_preferred_wave_actions,
+                "preferred_traversal_paths": effective_preferred_traversal_paths[:8],
+                "adaptive_preferred_traversal_paths": adaptive_preferred_traversal_paths,
                 "recommended_traversal_paths": recommended_traversal_paths[:8],
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
+                "preferred_path_hits": self._coerce_int(
+                    dict(result.get("wave_summary", {})).get("preferred_path_hits", 0)
+                    if isinstance(result.get("wave_summary", {}), dict)
+                    else 0,
+                    minimum=0,
+                    maximum=1_000_000,
+                    default=0,
+                ),
+                "traversal_path_execution_count": self._coerce_int(
+                    dict(result.get("wave_summary", {})).get("traversal_path_execution_count", 0)
+                    if isinstance(result.get("wave_summary", {}), dict)
+                    else 0,
+                    minimum=0,
+                    maximum=1_000_000,
+                    default=0,
+                ),
                 "traversed_container_roles": self._dedupe_strings(
                     [
                         str(item).strip().lower()
@@ -811,6 +893,18 @@ class DesktopAppMemorySupervisor:
                     )
                     if self._normalize_name(key)
                 },
+                "executed_traversal_paths": self._dedupe_strings(
+                    [
+                        str(item).strip().lower()
+                        for item in (
+                            dict(result.get("wave_summary", {})).get("executed_traversal_paths", [])
+                            if isinstance(result.get("wave_summary", {}), dict)
+                            and isinstance(dict(result.get("wave_summary", {})).get("executed_traversal_paths", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ]
+                )[:8],
                 "selection_strategy": str(
                     reseed_summary.get("selection_strategy", "campaign_pending")
                     if isinstance(reseed_summary, dict) and reseed_summary
@@ -859,6 +953,21 @@ class DesktopAppMemorySupervisor:
                 ]
             )[:8]
             campaign["adaptive_preferred_wave_actions"] = adaptive_preferred_wave_actions
+            campaign["preferred_traversal_paths"] = self._dedupe_strings(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in campaign.get("preferred_traversal_paths", [])
+                        if isinstance(campaign.get("preferred_traversal_paths", []), list) and str(item).strip()
+                    ],
+                    *[
+                        str(item).strip().lower()
+                        for item in cycle_record.get("preferred_traversal_paths", [])
+                        if isinstance(cycle_record.get("preferred_traversal_paths", []), list) and str(item).strip()
+                    ],
+                ]
+            )[:8]
+            campaign["adaptive_preferred_traversal_paths"] = adaptive_preferred_traversal_paths
             campaign["recommended_traversal_paths"] = self._dedupe_strings(
                 [
                     *[
@@ -899,6 +1008,22 @@ class DesktopAppMemorySupervisor:
                     ],
                 ]
             )[:8]
+            campaign["executed_traversal_paths"] = self._dedupe_strings(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in campaign.get("executed_traversal_paths", [])
+                        if isinstance(campaign.get("executed_traversal_paths", []), list) and str(item).strip()
+                    ],
+                    *[
+                        str(item).strip().lower()
+                        for item in cycle_record.get("executed_traversal_paths", [])
+                        if isinstance(cycle_record.get("executed_traversal_paths", []), list) and str(item).strip()
+                    ],
+                ]
+            )[:8]
+            campaign["preferred_path_hits"] = self._coerce_int(campaign.get("preferred_path_hits", 0), minimum=0, maximum=1_000_000, default=0) + self._coerce_int(cycle_record.get("preferred_path_hits", 0), minimum=0, maximum=1_000_000, default=0)
+            campaign["traversal_path_execution_count"] = self._coerce_int(campaign.get("traversal_path_execution_count", 0), minimum=0, maximum=1_000_000, default=0) + self._coerce_int(cycle_record.get("traversal_path_execution_count", 0), minimum=0, maximum=1_000_000, default=0)
             merged_role_attempt_counts = (
                 dict(campaign.get("role_attempt_counts", {}))
                 if isinstance(campaign.get("role_attempt_counts", {}), dict)
@@ -1012,6 +1137,8 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: Optional[bool] = None,
         prioritize_failure_hotspots: Optional[bool] = None,
         target_container_roles: Optional[list[str]] = None,
+        preferred_wave_actions: Optional[list[str]] = None,
+        preferred_traversal_paths: Optional[list[str]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -1066,6 +1193,14 @@ class DesktopAppMemorySupervisor:
                 self._config["target_container_roles"] = self._dedupe_strings(
                     [str(item).strip().lower() for item in target_container_roles if str(item).strip()]
                 )[:8]
+            if preferred_wave_actions is not None:
+                self._config["preferred_wave_actions"] = self._dedupe_strings(
+                    [str(item).strip().lower() for item in preferred_wave_actions if str(item).strip()]
+                )[:8]
+            if preferred_traversal_paths is not None:
+                self._config["preferred_traversal_paths"] = self._dedupe_strings(
+                    [str(item).strip().lower() for item in preferred_traversal_paths if str(item).strip()]
+                )[:8]
             self._runtime["last_config_source"] = str(source or "manual").strip().lower() or "manual"
             self._runtime["updated_at"] = _utc_now_iso()
             self._persist_locked()
@@ -1097,6 +1232,8 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: Optional[bool] = None,
         prioritize_failure_hotspots: Optional[bool] = None,
         target_container_roles: Optional[list[str]] = None,
+        preferred_wave_actions: Optional[list[str]] = None,
+        preferred_traversal_paths: Optional[list[str]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         with self._lock:
@@ -1123,6 +1260,8 @@ class DesktopAppMemorySupervisor:
                 revalidate_known_controls=revalidate_known_controls,
                 prioritize_failure_hotspots=prioritize_failure_hotspots,
                 target_container_roles=target_container_roles,
+                preferred_wave_actions=preferred_wave_actions,
+                preferred_traversal_paths=preferred_traversal_paths,
             )
         self._wakeup.set()
         return payload
@@ -1168,6 +1307,8 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: Optional[bool] = None,
         prioritize_failure_hotspots: Optional[bool] = None,
         target_container_roles: Optional[list[str]] = None,
+        preferred_wave_actions: Optional[list[str]] = None,
+        preferred_traversal_paths: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         callback = self._execute_callback
         if callback is None:
@@ -1278,6 +1419,40 @@ class DesktopAppMemorySupervisor:
                 if str(item).strip()
             ]
         )[:8]
+        preferred_wave_actions_value = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in (
+                    preferred_wave_actions
+                    if preferred_wave_actions is not None
+                    else self._config.get("preferred_wave_actions", [])
+                )
+                if str(item).strip()
+            ]
+        )[:8]
+        preferred_traversal_paths_value = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in (
+                    preferred_traversal_paths
+                    if preferred_traversal_paths is not None
+                    else self._config.get("preferred_traversal_paths", [])
+                )
+                if str(item).strip()
+            ]
+        )[:8]
+        explicit_target_roles = bool(
+            target_container_roles is not None
+            or (
+                target_container_roles is None
+                and isinstance(self._config.get("target_container_roles", []), list)
+                and any(str(item).strip() for item in self._config.get("target_container_roles", []))
+            )
+        )
+        adaptive_target_container_roles_value = False
+        adaptive_preferred_wave_actions_value = False
+        effective_max_surface_waves_value = max_surface_waves_value
+        adaptive_surface_wave_depth_value = False
 
         selection_summary: Dict[str, Any] = {}
         if not app_names_value and continuous_learning_value:
@@ -1308,6 +1483,28 @@ class DesktopAppMemorySupervisor:
                         and str(item.get("value", "") or "").strip()
                     ]
                 )[:4] if isinstance(selection_summary, dict) else []
+                adaptive_target_container_roles_value = bool(target_container_roles_value)
+            if not preferred_wave_actions_value:
+                preferred_wave_actions_value, adaptive_preferred_wave_actions_value = (
+                    self._adaptive_preferred_wave_actions_from_summary(selection_summary)
+                )
+            if not preferred_traversal_paths_value:
+                preferred_traversal_paths_value = self._dedupe_strings(
+                    [
+                        str(item.get("value", "") or "").strip().lower()
+                        for item in selection_summary.get("top_recommended_traversal_paths", [])
+                        if isinstance(selection_summary.get("top_recommended_traversal_paths", []), list)
+                        and isinstance(item, dict)
+                        and str(item.get("value", "") or "").strip()
+                    ]
+                )[:8] if isinstance(selection_summary, dict) else []
+            if follow_surface_waves_value:
+                effective_max_surface_waves_value, adaptive_surface_wave_depth_value = self._adaptive_campaign_wave_depth(
+                    max_surface_waves_value,
+                    target_container_roles=target_container_roles_value,
+                    summary=selection_summary,
+                    explicit_roles=explicit_target_roles,
+                )
 
         started_at = time.time()
         started_iso = _iso_from_ts(started_at)
@@ -1328,11 +1525,13 @@ class DesktopAppMemorySupervisor:
                 probe_controls=probe_controls_value,
                 max_probe_controls=max_probe_controls_value,
                 follow_surface_waves=follow_surface_waves_value,
-                max_surface_waves=max_surface_waves_value,
+                max_surface_waves=effective_max_surface_waves_value,
                 allow_risky_probes=allow_risky_probes_value,
                 skip_known_apps=skip_known_apps_value,
                 prefer_unknown_apps=prefer_unknown_apps_value,
                 target_container_roles=target_container_roles_value,
+                preferred_wave_actions=preferred_wave_actions_value,
+                preferred_traversal_paths=preferred_traversal_paths_value,
                 revalidate_known_controls=revalidate_known_controls_value,
                 prefer_failure_memory=prioritize_failure_hotspots_value,
                 source=str(source or "manual").strip().lower() or "manual",
@@ -1373,17 +1572,12 @@ class DesktopAppMemorySupervisor:
             "revalidate_known_controls": revalidate_known_controls_value,
             "prioritize_failure_hotspots": prioritize_failure_hotspots_value,
             "target_container_roles": target_container_roles_value[:8],
-            "adaptive_target_container_roles": bool(
-                not (
-                    target_container_roles is not None
-                    or (
-                        target_container_roles is None
-                        and isinstance(self._config.get("target_container_roles", []), list)
-                        and any(str(item).strip() for item in self._config.get("target_container_roles", []))
-                    )
-                )
-                and bool(target_container_roles_value)
-            ),
+            "preferred_wave_actions": preferred_wave_actions_value[:8],
+            "adaptive_preferred_wave_actions": adaptive_preferred_wave_actions_value,
+            "preferred_traversal_paths": preferred_traversal_paths_value[:8],
+            "adaptive_target_container_roles": adaptive_target_container_roles_value,
+            "effective_max_surface_waves": effective_max_surface_waves_value,
+            "adaptive_surface_wave_depth": adaptive_surface_wave_depth_value,
             "skipped_app_count": self._coerce_int(result.get("skipped_app_count", 0), minimum=0, maximum=1_000_000, default=0),
             "wave_attempt_count": self._wave_summary_metric(
                 dict(result.get("wave_summary", {})) if isinstance(result.get("wave_summary", {}), dict) else {},
@@ -1399,6 +1593,22 @@ class DesktopAppMemorySupervisor:
                 dict(result.get("wave_summary", {})) if isinstance(result.get("wave_summary", {}), dict) else {},
                 primary_key="known_surface_total",
                 fallback_key="known_surface_count",
+            ),
+            "preferred_path_hits": self._coerce_int(
+                dict(result.get("wave_summary", {})).get("preferred_path_hits", 0)
+                if isinstance(result.get("wave_summary", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            ),
+            "traversal_path_execution_count": self._coerce_int(
+                dict(result.get("wave_summary", {})).get("traversal_path_execution_count", 0)
+                if isinstance(result.get("wave_summary", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
             ),
             "traversed_container_roles": self._dedupe_strings(
                 [
@@ -1427,8 +1637,17 @@ class DesktopAppMemorySupervisor:
                     and isinstance(dict(result.get("wave_summary", {})).get("role_learned_counts", {}), dict)
                     else []
                 )
-                if self._normalize_name(key)
-            },
+                    if self._normalize_name(key)
+                },
+            "executed_traversal_paths": self._dedupe_strings(
+                [
+                    str(item).strip().lower()
+                    for item in dict(result.get("wave_summary", {})).get("executed_traversal_paths", [])
+                    if isinstance(result.get("wave_summary", {}), dict)
+                    and isinstance(dict(result.get("wave_summary", {})).get("executed_traversal_paths", []), list)
+                    and str(item).strip()
+                ]
+            )[:8],
             "selection_strategy": str(
                 selection_summary.get("selection_strategy", "explicit_targets" if app_names_value else "catalog_batch")
                 or "catalog_batch"
@@ -1480,6 +1699,11 @@ class DesktopAppMemorySupervisor:
             "wave_attempt_count": history_record["wave_attempt_count"],
             "learned_surface_count": history_record["learned_surface_count"],
             "known_surface_count": history_record["known_surface_count"],
+            "preferred_wave_actions": history_record["preferred_wave_actions"],
+            "effective_max_surface_waves": history_record["effective_max_surface_waves"],
+            "adaptive_surface_wave_depth": history_record["adaptive_surface_wave_depth"],
+            "preferred_path_hits": history_record["preferred_path_hits"],
+            "traversal_path_execution_count": history_record["traversal_path_execution_count"],
         }
         self._runtime["next_due_at_ts"] = finished_at + self._coerce_float(self._config.get("interval_s", 300.0), minimum=10.0, maximum=3600.0, default=300.0)
         self._runtime["next_due_at"] = _iso_from_ts(self._runtime["next_due_at_ts"])
@@ -1525,6 +1749,16 @@ class DesktopAppMemorySupervisor:
                 str(item).strip().lower()
                 for item in self._config.get("target_container_roles", [])
                 if isinstance(self._config.get("target_container_roles", []), list) and str(item).strip()
+            ][:8],
+            "preferred_wave_actions": [
+                str(item).strip().lower()
+                for item in self._config.get("preferred_wave_actions", [])
+                if isinstance(self._config.get("preferred_wave_actions", []), list) and str(item).strip()
+            ][:8],
+            "preferred_traversal_paths": [
+                str(item).strip().lower()
+                for item in self._config.get("preferred_traversal_paths", [])
+                if isinstance(self._config.get("preferred_traversal_paths", []), list) and str(item).strip()
             ][:8],
             "last_tick_at": str(self._runtime.get("last_tick_at", "") or ""),
             "last_success_at": str(self._runtime.get("last_success_at", "") or ""),
@@ -1595,6 +1829,20 @@ class DesktopAppMemorySupervisor:
                     if isinstance(config.get("target_container_roles", self._config["target_container_roles"]), list) and str(item).strip()
                 ]
             )[:8],
+            "preferred_wave_actions": self._dedupe_strings(
+                [
+                    str(item).strip().lower()
+                    for item in config.get("preferred_wave_actions", self._config["preferred_wave_actions"])
+                    if isinstance(config.get("preferred_wave_actions", self._config["preferred_wave_actions"]), list) and str(item).strip()
+                ]
+            )[:8],
+            "preferred_traversal_paths": self._dedupe_strings(
+                [
+                    str(item).strip().lower()
+                    for item in config.get("preferred_traversal_paths", self._config["preferred_traversal_paths"])
+                    if isinstance(config.get("preferred_traversal_paths", self._config["preferred_traversal_paths"]), list) and str(item).strip()
+                ]
+            )[:8],
         })
         self._runtime.update({
             "last_tick_at": str(runtime.get("last_tick_at", "") or ""),
@@ -1649,6 +1897,8 @@ class DesktopAppMemorySupervisor:
         revalidate_known_controls: bool,
         prioritize_failure_hotspots: bool,
         target_container_roles: list[str],
+        preferred_wave_actions: list[str],
+        preferred_traversal_paths: list[str],
     ) -> Dict[str, Any]:
         return {
             "enabled": bool(enabled),
@@ -1675,6 +1925,16 @@ class DesktopAppMemorySupervisor:
             "target_container_roles": [
                 str(item).strip().lower()
                 for item in target_container_roles
+                if str(item).strip()
+            ][:8],
+            "preferred_wave_actions": [
+                str(item).strip().lower()
+                for item in preferred_wave_actions
+                if str(item).strip()
+            ][:8],
+            "preferred_traversal_paths": [
+                str(item).strip().lower()
+                for item in preferred_traversal_paths
                 if str(item).strip()
             ][:8],
         }
@@ -1846,11 +2106,15 @@ class DesktopAppMemorySupervisor:
         campaign["adaptive_surface_wave_depth"] = bool(campaign.get("adaptive_surface_wave_depth", False))
         campaign["adaptive_target_container_roles"] = bool(campaign.get("adaptive_target_container_roles", False))
         campaign["adaptive_preferred_wave_actions"] = bool(campaign.get("adaptive_preferred_wave_actions", False))
+        campaign["adaptive_preferred_traversal_paths"] = bool(campaign.get("adaptive_preferred_traversal_paths", False))
         campaign["target_container_roles"] = self._dedupe_strings(
             [str(item).strip().lower() for item in campaign.get("target_container_roles", []) if isinstance(campaign.get("target_container_roles", []), list) and str(item).strip()]
         )[:8]
         campaign["preferred_wave_actions"] = self._dedupe_strings(
             [str(item).strip().lower() for item in campaign.get("preferred_wave_actions", []) if isinstance(campaign.get("preferred_wave_actions", []), list) and str(item).strip()]
+        )[:8]
+        campaign["preferred_traversal_paths"] = self._dedupe_strings(
+            [str(item).strip().lower() for item in campaign.get("preferred_traversal_paths", []) if isinstance(campaign.get("preferred_traversal_paths", []), list) and str(item).strip()]
         )[:8]
         campaign["recommended_traversal_paths"] = self._dedupe_strings(
             [str(item).strip().lower() for item in campaign.get("recommended_traversal_paths", []) if isinstance(campaign.get("recommended_traversal_paths", []), list) and str(item).strip()]
@@ -1860,6 +2124,13 @@ class DesktopAppMemorySupervisor:
                 str(item).strip().lower()
                 for item in campaign.get("traversed_container_roles", [])
                 if isinstance(campaign.get("traversed_container_roles", []), list) and str(item).strip()
+            ]
+        )[:8]
+        campaign["executed_traversal_paths"] = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in campaign.get("executed_traversal_paths", [])
+                if isinstance(campaign.get("executed_traversal_paths", []), list) and str(item).strip()
             ]
         )[:8]
         campaign["role_attempt_counts"] = {
@@ -1880,6 +2151,8 @@ class DesktopAppMemorySupervisor:
             )
             if self._normalize_name(key)
         }
+        campaign["preferred_path_hits"] = self._coerce_int(campaign.get("preferred_path_hits", 0), minimum=0, maximum=1_000_000, default=0)
+        campaign["traversal_path_execution_count"] = self._coerce_int(campaign.get("traversal_path_execution_count", 0), minimum=0, maximum=1_000_000, default=0)
         campaign["unknown_target_count"] = self._coerce_int(campaign.get("unknown_target_count", 0), minimum=0, maximum=1_000_000, default=0)
         campaign["stale_target_count"] = self._coerce_int(campaign.get("stale_target_count", 0), minimum=0, maximum=1_000_000, default=0)
         campaign["attention_target_count"] = self._coerce_int(campaign.get("attention_target_count", 0), minimum=0, maximum=1_000_000, default=0)
@@ -2126,6 +2399,16 @@ class DesktopAppMemorySupervisor:
                 dict(item)
                 for item in target_summary.get("top_revalidation_reason_codes", [])
                 if isinstance(target_summary.get("top_revalidation_reason_codes", []), list) and isinstance(item, dict)
+            ][:8],
+            "top_preferred_wave_actions": [
+                dict(item)
+                for item in target_summary.get("top_preferred_wave_actions", [])
+                if isinstance(target_summary.get("top_preferred_wave_actions", []), list) and isinstance(item, dict)
+            ][:6],
+            "top_recommended_traversal_paths": [
+                dict(item)
+                for item in target_summary.get("top_recommended_traversal_paths", [])
+                if isinstance(target_summary.get("top_recommended_traversal_paths", []), list) and isinstance(item, dict)
             ][:8],
         }
 

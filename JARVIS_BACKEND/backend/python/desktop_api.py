@@ -8298,6 +8298,7 @@ class DesktopBackendService:
         prefer_unknown_apps: bool = True,
         target_container_roles: Optional[List[str]] = None,
         preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "manual",
@@ -8327,6 +8328,7 @@ class DesktopBackendService:
                 prefer_unknown_apps=prefer_unknown_apps,
                 target_container_roles=target_container_roles,
                 preferred_wave_actions=preferred_wave_actions,
+                preferred_traversal_paths=preferred_traversal_paths,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
                 source=source,
@@ -8375,6 +8377,8 @@ class DesktopBackendService:
         revalidate_known_controls: bool = True,
         prioritize_failure_hotspots: bool = True,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         supervisor = getattr(self, "desktop_app_memory_supervisor", None)
@@ -8420,6 +8424,8 @@ class DesktopBackendService:
             revalidate_known_controls=revalidate_known_controls,
             prioritize_failure_hotspots=prioritize_failure_hotspots,
             target_container_roles=target_container_roles,
+            preferred_wave_actions=preferred_wave_actions,
+            preferred_traversal_paths=preferred_traversal_paths,
             source=source,
         )
         payload["app_memory"] = _to_jsonable(
@@ -8515,6 +8521,8 @@ class DesktopBackendService:
         revalidate_known_controls: Optional[bool] = None,
         prioritize_failure_hotspots: Optional[bool] = None,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8544,6 +8552,8 @@ class DesktopBackendService:
             revalidate_known_controls=revalidate_known_controls,
             prioritize_failure_hotspots=prioritize_failure_hotspots,
             target_container_roles=target_container_roles,
+            preferred_wave_actions=preferred_wave_actions,
+            preferred_traversal_paths=preferred_traversal_paths,
             source=source,
         )
         return self.desktop_app_memory_supervisor_status(history_limit=history_response_limit)
@@ -8572,6 +8582,8 @@ class DesktopBackendService:
         revalidate_known_controls: Optional[bool] = None,
         prioritize_failure_hotspots: Optional[bool] = None,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         source: str = "manual",
         history_response_limit: int = 6,
     ) -> Dict[str, Any]:
@@ -8600,6 +8612,8 @@ class DesktopBackendService:
             revalidate_known_controls=revalidate_known_controls,
             prioritize_failure_hotspots=prioritize_failure_hotspots,
             target_container_roles=target_container_roles,
+            preferred_wave_actions=preferred_wave_actions,
+            preferred_traversal_paths=preferred_traversal_paths,
             source=source,
         )
         payload["supervisor"] = _to_jsonable(
@@ -9397,6 +9411,7 @@ class DesktopBackendService:
         prefer_unknown_apps: bool = True,
         target_container_roles: Optional[List[str]] = None,
         preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "daemon",
@@ -9421,6 +9436,7 @@ class DesktopBackendService:
             prefer_unknown_apps=prefer_unknown_apps,
             target_container_roles=target_container_roles,
             preferred_wave_actions=preferred_wave_actions,
+            preferred_traversal_paths=preferred_traversal_paths,
             revalidate_known_controls=revalidate_known_controls,
             prefer_failure_memory=prefer_failure_memory,
             source=source,
@@ -45943,6 +45959,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if isinstance(body.get("preferred_wave_actions", []), list)
                         else None
                     ),
+                    preferred_traversal_paths=(
+                        [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_traversal_paths", []), list)
+                        else None
+                    ),
                     revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
                     prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
                     source=str(body.get("source", "manual") or "manual").strip(),
@@ -45985,6 +46006,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if isinstance(body.get("target_container_roles", []), list)
                         else None
                     ),
+                    preferred_wave_actions=(
+                        [str(item).strip() for item in body.get("preferred_wave_actions", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_wave_actions", []), list)
+                        else None
+                    ),
+                    preferred_traversal_paths=(
+                        [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_traversal_paths", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -46021,6 +46052,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if isinstance(body.get("target_container_roles", []), list)
                         else None
                     ),
+                    preferred_wave_actions=(
+                        [str(item).strip() for item in body.get("preferred_wave_actions", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_wave_actions", []), list)
+                        else None
+                    ),
+                    preferred_traversal_paths=(
+                        [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_traversal_paths", []), list)
+                        else None
+                    ),
                     source=str(body.get("source", "manual") or "manual").strip(),
                     history_response_limit=self._parse_int(body.get("history_response_limit", 6), 6, minimum=1, maximum=32),
                 )
@@ -46055,6 +46096,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     target_container_roles=(
                         [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
                         if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
+                    preferred_wave_actions=(
+                        [str(item).strip() for item in body.get("preferred_wave_actions", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_wave_actions", []), list)
+                        else None
+                    ),
+                    preferred_traversal_paths=(
+                        [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_traversal_paths", []), list)
                         else None
                     ),
                     source=str(body.get("source", "manual") or "manual").strip(),

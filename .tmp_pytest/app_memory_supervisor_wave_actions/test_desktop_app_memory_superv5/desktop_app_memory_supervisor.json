@@ -1,0 +1,161 @@
+{
+  "values": {
+    "desktop_app_memory_supervisor": {
+      "config": {
+        "enabled": false,
+        "interval_s": 300.0,
+        "max_apps": 2,
+        "per_app_limit": 24,
+        "history_limit": 8,
+        "query": "",
+        "category": "",
+        "ensure_app_launch": true,
+        "probe_controls": true,
+        "max_probe_controls": 4,
+        "follow_surface_waves": true,
+        "max_surface_waves": 3,
+        "allow_risky_probes": false,
+        "skip_known_apps": true,
+        "prefer_unknown_apps": true,
+        "continuous_learning": true,
+        "revisit_stale_apps": true,
+        "stale_after_hours": 72.0,
+        "revisit_failed_apps": true,
+        "revalidate_known_controls": true,
+        "prioritize_failure_hotspots": true,
+        "target_container_roles": [],
+        "preferred_wave_actions": [],
+        "preferred_traversal_paths": []
+      },
+      "runtime": {
+        "inflight": false,
+        "last_tick_at": "2026-03-22T03:32:54.724612+00:00",
+        "last_success_at": "2026-03-22T03:32:54.724612+00:00",
+        "last_error_at": "",
+        "last_duration_ms": 2.88,
+        "last_result_status": "success",
+        "last_result_message": "supervisor targeted stale apps",
+        "last_trigger_source": "daemon",
+        "last_trigger_at": "2026-03-22T03:32:54.721732+00:00",
+        "last_config_source": "",
+        "next_due_at": "2026-03-22T03:37:54.724612+00:00",
+        "next_due_at_ts": 1774150674.724612,
+        "run_count": 1,
+        "manual_trigger_count": 0,
+        "auto_trigger_count": 1,
+        "consecutive_error_count": 0,
+        "last_summary": {
+          "surveyed_app_count": 2,
+          "success_count": 2,
+          "partial_count": 0,
+          "error_count": 0,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 2,
+          "learned_surface_count": 2,
+          "known_surface_count": 0,
+          "preferred_wave_actions": [],
+          "effective_max_surface_waves": 5,
+          "adaptive_surface_wave_depth": true,
+          "preferred_path_hits": 0,
+          "traversal_path_execution_count": 0
+        },
+        "updated_at": "2026-03-22T03:32:54.724859+00:00"
+      },
+      "history": [
+        {
+          "started_at": "2026-03-22T03:32:54.721732+00:00",
+          "completed_at": "2026-03-22T03:32:54.724612+00:00",
+          "duration_ms": 2.88,
+          "source": "daemon",
+          "status": "success",
+          "message": "supervisor targeted stale apps",
+          "surveyed_app_count": 2,
+          "success_count": 2,
+          "partial_count": 0,
+          "error_count": 0,
+          "query": "",
+          "category": "",
+          "app_names": [
+            "notepad",
+            "calculator"
+          ],
+          "max_apps": 2,
+          "ensure_app_launch": true,
+          "probe_controls": true,
+          "max_probe_controls": 4,
+          "follow_surface_waves": true,
+          "max_surface_waves": 3,
+          "allow_risky_probes": false,
+          "skip_known_apps": false,
+          "prefer_unknown_apps": true,
+          "continuous_learning": true,
+          "revisit_stale_apps": true,
+          "stale_after_hours": 72.0,
+          "revisit_failed_apps": true,
+          "revalidate_known_controls": true,
+          "prioritize_failure_hotspots": true,
+          "target_container_roles": [],
+          "preferred_wave_actions": [],
+          "adaptive_preferred_wave_actions": false,
+          "preferred_traversal_paths": [],
+          "adaptive_target_container_roles": false,
+          "effective_max_surface_waves": 5,
+          "adaptive_surface_wave_depth": true,
+          "skipped_app_count": 0,
+          "wave_attempt_count": 2,
+          "learned_surface_count": 2,
+          "known_surface_count": 0,
+          "preferred_path_hits": 0,
+          "traversal_path_execution_count": 0,
+          "traversed_container_roles": [],
+          "role_attempt_counts": {},
+          "role_learned_counts": {},
+          "executed_traversal_paths": [],
+          "selection_strategy": "stale_memory_revisit",
+          "stale_candidate_count": 2,
+          "attention_candidate_count": 1,
+          "failure_candidate_count": 1,
+          "revalidation_candidate_count": 0,
+          "unknown_candidate_count": 0,
+          "revisit_app_count": 2,
+          "selection_summary": {
+            "selection_strategy": "stale_memory_revisit",
+            "selected_apps": [
+              "notepad",
+              "calculator"
+            ],
+            "ordered_apps": [
+              "notepad",
+              "calculator"
+            ],
+            "revalidation_count": 0,
+            "stale_count": 2,
+            "attention_count": 1,
+            "failure_memory_count": 1,
+            "unknown_count": 0,
+            "revisit_app_count": 2,
+            "top_revalidation_container_roles": [],
+            "top_revalidation_reason_codes": [],
+            "top_preferred_wave_actions": [],
+            "top_recommended_traversal_paths": []
+          },
+          "failed_apps": [],
+          "skipped_apps": []
+        }
+      ],
+      "campaigns": {}
+    }
+  },
+  "__localstore_meta__": {
+    "version": 2,
+    "entries": {
+      "desktop_app_memory_supervisor": {
+        "version": 2,
+        "updated_at": 1774150374.7249582,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774150374.724972
+  }
+}
