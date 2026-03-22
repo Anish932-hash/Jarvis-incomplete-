@@ -13451,6 +13451,8 @@ class FakeDesktopService:
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
         target_container_roles: list[str] | None = None,
+        preferred_wave_actions: list[str] | None = None,
+        preferred_traversal_paths: list[str] | None = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
@@ -13537,6 +13539,16 @@ class FakeDesktopService:
             },
         }
         self.desktop_app_memory_items.insert(0, entry)
+        effective_preferred_wave_actions = [
+            str(item).strip().lower()
+            for item in (preferred_wave_actions or ["command", "focus_sidebar"])
+            if str(item).strip()
+        ][:6]
+        effective_traversal_paths = [
+            str(item).strip().lower()
+            for item in (preferred_traversal_paths or target_container_roles or ["menu", "dialog", "sidebar"])
+            if str(item).strip()
+        ][:6]
         return {
             "status": "success",
             "message": "Learned app memory recorded from the surveyed surface.",
@@ -13582,6 +13594,8 @@ class FakeDesktopService:
                         if str(item).strip()
                     ][:4],
                 },
+                "preferred_action_hits": len(effective_preferred_wave_actions) if follow_surface_waves else 0,
+                "preferred_path_hits": len(effective_traversal_paths) if follow_surface_waves else 0,
                 "stop_reason": "completed" if follow_surface_waves else "disabled",
             },
             "surface_hint": {
@@ -13623,6 +13637,8 @@ class FakeDesktopService:
                     if str(item).strip()
                 ][:4],
                 "adaptive_container_roles": not bool(target_container_roles),
+                "preferred_wave_actions": effective_preferred_wave_actions,
+                "recommended_traversal_paths": effective_traversal_paths,
                 "recommended_wave_container_roles": [
                     str(item).strip().lower()
                     for item in (target_container_roles or ["menu", "dialog"])
@@ -13655,6 +13671,7 @@ class FakeDesktopService:
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
         target_container_roles: list[str] | None = None,
+        preferred_wave_actions: list[str] | None = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "manual",
@@ -13679,6 +13696,8 @@ class FakeDesktopService:
         role_attempt_counts: dict[str, int] = {}
         role_learned_counts: dict[str, int] = {}
         recommended_container_roles: list[str] = []
+        recommended_traversal_paths: list[str] = []
+        preferred_wave_action_counts: dict[str, int] = {}
         for app_name in candidates[: max(1, int(max_apps))]:
             if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
                 skipped_apps.append(
@@ -13698,6 +13717,7 @@ class FakeDesktopService:
                 max_surface_waves=max_surface_waves,
                 allow_risky_probes=allow_risky_probes,
                 target_container_roles=target_container_roles,
+                preferred_wave_actions=preferred_wave_actions,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
             )
@@ -13742,6 +13762,22 @@ class FakeDesktopService:
                 clean_role = str(role).strip().lower()
                 if clean_role and clean_role not in recommended_container_roles:
                     recommended_container_roles.append(clean_role)
+            for path_name in (
+                payload_targeting.get("recommended_traversal_paths", [])
+                if isinstance(payload_targeting.get("recommended_traversal_paths", []), list)
+                else []
+            ):
+                clean_path = str(path_name).strip().lower()
+                if clean_path and clean_path not in recommended_traversal_paths:
+                    recommended_traversal_paths.append(clean_path)
+            for action_name in (
+                payload_targeting.get("preferred_wave_actions", [])
+                if isinstance(payload_targeting.get("preferred_wave_actions", []), list)
+                else []
+            ):
+                clean_action = str(action_name).strip().lower()
+                if clean_action:
+                    preferred_wave_action_counts[clean_action] = int(preferred_wave_action_counts.get(clean_action, 0) or 0) + 1
             items.append(
                 {
                     "app_name": app_name,
@@ -13787,6 +13823,19 @@ class FakeDesktopService:
                 "role_attempt_counts": role_attempt_counts,
                 "role_learned_counts": role_learned_counts,
                 "recommended_container_roles": recommended_container_roles[:8],
+                "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "preferred_wave_actions": [
+                    {"action": str(key), "count": int(value)}
+                    for key, value in sorted(preferred_wave_action_counts.items(), key=lambda entry: (-int(entry[1]), str(entry[0])))[:8]
+                ],
+            },
+            "targeting": {
+                "preferred_wave_actions": [
+                    str(key)
+                    for key, _value in sorted(preferred_wave_action_counts.items(), key=lambda entry: (-int(entry[1]), str(entry[0])))[:8]
+                ],
+                "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "recommended_wave_container_roles": recommended_container_roles[:8],
             },
             "app_memory": self.desktop_app_memory_status(app_name=query or "", profile_id="", category=""),
         }
@@ -14136,6 +14185,14 @@ class FakeDesktopService:
                 "adaptive_wave_depth_total": sum(
                     1 for row in rows if bool(row.get("adaptive_surface_wave_depth", False))
                 ),
+                "top_preferred_wave_actions": [
+                    {"value": "command", "count": sum(1 for row in rows if "command" in [str(item).strip().lower() for item in row.get("preferred_wave_actions", []) if isinstance(row.get("preferred_wave_actions", []), list)])},
+                    {"value": "focus_sidebar", "count": sum(1 for row in rows if "focus_sidebar" in [str(item).strip().lower() for item in row.get("preferred_wave_actions", []) if isinstance(row.get("preferred_wave_actions", []), list)])},
+                ],
+                "top_recommended_traversal_paths": [
+                    {"value": "dialog", "count": sum(1 for row in rows if "dialog" in [str(item).strip().lower() for item in row.get("recommended_traversal_paths", []) if isinstance(row.get("recommended_traversal_paths", []), list)])},
+                    {"value": "menu", "count": sum(1 for row in rows if "menu" in [str(item).strip().lower() for item in row.get("recommended_traversal_paths", []) if isinstance(row.get("recommended_traversal_paths", []), list)])},
+                ],
                 "top_target_container_roles": [
                     {"value": "dialog", "count": sum(1 for row in rows if "dialog" in [str(item).strip().lower() for item in row.get("target_container_roles", []) if isinstance(row.get("target_container_roles", []), list)])},
                     {"value": "menu", "count": sum(1 for row in rows if "menu" in [str(item).strip().lower() for item in row.get("target_container_roles", []) if isinstance(row.get("target_container_roles", []), list)])},
@@ -14206,6 +14263,9 @@ class FakeDesktopService:
                 if str(item).strip()
             ] or ["dialog", "menu"],
             "adaptive_target_container_roles": not bool(target_container_roles),
+            "preferred_wave_actions": ["command", "focus_sidebar"],
+            "adaptive_preferred_wave_actions": True,
+            "recommended_traversal_paths": ["dialog", "menu", "sidebar"],
             "revalidation_focus_summary": {
                 "top_container_roles": [
                     {"value": "dialog", "count": 3},
@@ -14214,6 +14274,14 @@ class FakeDesktopService:
                 "top_reason_codes": [
                     {"value": "verification_needed", "count": 2},
                     {"value": "failure_hotspot", "count": 1},
+                ],
+                "top_preferred_wave_actions": [
+                    {"value": "command", "count": 2},
+                    {"value": "focus_sidebar", "count": 1},
+                ],
+                "top_recommended_traversal_paths": [
+                    {"value": "dialog", "count": 3},
+                    {"value": "menu", "count": 2},
                 ],
             },
             "latest_cycle_status": "",
@@ -14257,6 +14325,11 @@ class FakeDesktopService:
                 for item in match.get("target_container_roles", [])
                 if isinstance(match.get("target_container_roles", []), list) and str(item).strip()
             ],
+            preferred_wave_actions=[
+                str(item).strip().lower()
+                for item in match.get("preferred_wave_actions", [])
+                if isinstance(match.get("preferred_wave_actions", []), list) and str(item).strip()
+            ],
             revalidate_known_controls=bool(match.get("revalidate_known_controls", True)),
             prefer_failure_memory=bool(match.get("prioritize_failure_hotspots", True)),
             source=source,
@@ -14285,6 +14358,16 @@ class FakeDesktopService:
             for item in dict(batch.get("wave_summary", {})).get("traversed_container_roles", [])
             if isinstance(dict(batch.get("wave_summary", {})).get("traversed_container_roles", []), list) and str(item).strip()
         ]
+        match["preferred_wave_actions"] = [
+            str(item).strip().lower()
+            for item in dict(batch.get("targeting", {})).get("preferred_wave_actions", [])
+            if isinstance(dict(batch.get("targeting", {})).get("preferred_wave_actions", []), list) and str(item).strip()
+        ]
+        match["recommended_traversal_paths"] = [
+            str(item).strip().lower()
+            for item in dict(batch.get("targeting", {})).get("recommended_traversal_paths", [])
+            if isinstance(dict(batch.get("targeting", {})).get("recommended_traversal_paths", []), list) and str(item).strip()
+        ]
         match["role_learned_counts"] = (
             dict(dict(batch.get("wave_summary", {})).get("role_learned_counts", {}))
             if isinstance(dict(batch.get("wave_summary", {})).get("role_learned_counts", {}), dict)
@@ -14294,6 +14377,7 @@ class FakeDesktopService:
         match["latest_cycle_message"] = str(batch.get("message", "") or "")
         match["run_count"] = int(match.get("run_count", 0) or 0) + 1
         match["adaptive_target_container_roles"] = bool(match.get("adaptive_target_container_roles", False))
+        match["adaptive_preferred_wave_actions"] = bool(match.get("adaptive_preferred_wave_actions", False))
         match["adaptive_surface_wave_depth"] = bool(match.get("adaptive_surface_wave_depth", False))
         match["status"] = "completed" if not match.get("pending_apps", []) else "active"
         match["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -22368,6 +22452,8 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert int(dict(survey.get("wave_report", {})).get("learned_surface_count", 0) or 0) == 2
     assert len(dict(survey.get("wave_report", {})).get("traversed_container_roles", [])) >= 1
     assert len(dict(survey.get("targeting", {})).get("recommended_wave_container_roles", [])) >= 1
+    assert len(dict(survey.get("targeting", {})).get("preferred_wave_actions", [])) >= 1
+    assert len(dict(survey.get("targeting", {})).get("recommended_traversal_paths", [])) >= 1
     assert survey["app_memory"]["status"] == "success"
 
     status, cleared = request_json(
@@ -22403,6 +22489,9 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert int(dict(batch.get("wave_summary", {})).get("wave_attempt_total", 0) or 0) >= 2
     assert len(dict(batch.get("wave_summary", {})).get("traversed_container_roles", [])) >= 1
     assert len(dict(batch.get("wave_summary", {})).get("recommended_container_roles", [])) >= 1
+    assert len(dict(batch.get("wave_summary", {})).get("preferred_wave_actions", [])) >= 1
+    assert len(dict(batch.get("wave_summary", {})).get("recommended_traversal_paths", [])) >= 1
+    assert len(dict(batch.get("targeting", {})).get("preferred_wave_actions", [])) >= 1
 
     status, configured = request_json(
         "POST",
@@ -22514,8 +22603,11 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert created["campaign"]["revisit_failed_apps"] is True
     assert created["campaign"]["adaptive_target_container_roles"] is True
     assert created["campaign"]["adaptive_surface_wave_depth"] is True
+    assert created["campaign"]["adaptive_preferred_wave_actions"] is True
     assert created["campaign"]["effective_max_surface_waves"] >= created["campaign"]["max_surface_waves"]
     assert created["campaign"]["revalidation_focus_summary"]["top_container_roles"][0]["value"] == "dialog"
+    assert len(created["campaign"]["preferred_wave_actions"]) >= 1
+    assert len(created["campaign"]["recommended_traversal_paths"]) >= 1
 
     status, listed = request_json(
         "GET",
@@ -22527,6 +22619,7 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert listed["summary"]["adaptive_target_role_total"] >= 1
     assert listed["summary"]["adaptive_wave_depth_total"] >= 1
     assert listed["summary"]["top_target_container_roles"][0]["value"] == "dialog"
+    assert listed["summary"]["top_preferred_wave_actions"][0]["value"] == "command"
 
     status, executed = request_json(
         "POST",
@@ -22540,6 +22633,8 @@ def test_desktop_app_memory_campaign_routes(api_server: tuple[str, FakeDesktopSe
     assert int(executed.get("campaign", {}).get("wave_attempt_count", 0) or 0) >= 0
     assert executed["campaign"]["adaptive_target_container_roles"] is True
     assert executed["campaign"]["effective_max_surface_waves"] >= executed["campaign"]["max_surface_waves"]
+    assert len(executed["campaign"]["preferred_wave_actions"]) >= 1
+    assert len(executed["campaign"]["recommended_traversal_paths"]) >= 1
     assert len(executed["result"]["wave_summary"]["traversed_container_roles"]) >= 1
 
 

@@ -20145,6 +20145,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 : ' adaptive'}
                                             </p>
                                             <p className="mt-1 text-[10px] text-muted-foreground">
+                                              preferred actions:
+                                              {Array.isArray(desktopLatestAppMemoryCampaign.preferred_wave_actions) &&
+                                              desktopLatestAppMemoryCampaign.preferred_wave_actions.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaign.preferred_wave_actions
+                                                    .slice(0, 4)
+                                                    .map((item) => String(item))
+                                                    .join(' • ')}`
+                                                : ' adaptive'}
+                                              {' • '}paths:
+                                              {Array.isArray(desktopLatestAppMemoryCampaign.recommended_traversal_paths) &&
+                                              desktopLatestAppMemoryCampaign.recommended_traversal_paths.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaign.recommended_traversal_paths
+                                                    .slice(0, 4)
+                                                    .map((item) => String(item))
+                                                    .join(' • ')}`
+                                                : ' adaptive'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
                                               focus:
                                               {Array.isArray(asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_container_roles) &&
                                               (asObjectRecord(desktopLatestAppMemoryCampaign.revalidation_focus_summary).top_container_roles as unknown[]).length > 0
@@ -20212,6 +20230,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {' • '}roles:
                                                         {Array.isArray(campaign.target_container_roles) && campaign.target_container_roles.length > 0
                                                           ? ` ${campaign.target_container_roles.slice(0, 3).map((item) => String(item)).join(' • ')}`
+                                                          : ' adaptive'}
+                                                      </p>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        preferred:
+                                                        {Array.isArray(campaign.preferred_wave_actions) && campaign.preferred_wave_actions.length > 0
+                                                          ? ` ${campaign.preferred_wave_actions.slice(0, 3).map((item) => String(item)).join(' • ')}`
+                                                          : ' adaptive'}
+                                                        {' • '}paths:
+                                                        {Array.isArray(campaign.recommended_traversal_paths) && campaign.recommended_traversal_paths.length > 0
+                                                          ? ` ${campaign.recommended_traversal_paths.slice(0, 3).map((item) => String(item)).join(' • ')}`
                                                           : ' adaptive'}
                                                       </p>
                                                       <p className="mt-1 text-[10px] text-muted-foreground">

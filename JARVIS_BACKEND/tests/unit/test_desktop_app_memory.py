@@ -417,6 +417,8 @@ def test_desktop_app_memory_surface_hint_recommends_container_roles_from_wave_me
 
     assert hint["known"] is True
     assert "tab" in hint["recommended_wave_container_roles"]
+    assert "tab" in hint["recommended_traversal_paths"]
+    assert "sidebar" in hint["recommended_traversal_paths"]
     assert "tab" in dict(hint.get("wave_strategy_summary", {})).get("recommended_container_roles", [])
 
 
@@ -548,6 +550,27 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
                 },
             ],
         },
+        wave_report={
+            "attempted_count": 1,
+            "learned_surface_count": 1,
+            "known_surface_count": 0,
+            "items": [
+                {
+                    "action": "command",
+                    "title": "Command Palette",
+                    "container_role": "dialog",
+                    "recommended_followups": ["traverse_menu", "focus_sidebar"],
+                    "surface_fingerprint": "notepad|command|surface",
+                    "pre_surface_fingerprint": "notepad|dialog|surface",
+                    "post_surface_fingerprint": "notepad|command|surface",
+                }
+            ],
+            "traversed_container_roles": ["dialog"],
+            "role_attempt_counts": {"dialog": 1},
+            "role_learned_counts": {"dialog": 1},
+            "strategy_profile": {"recommended_container_roles": ["dialog", "menu"]},
+            "recursive_depth_limit": 4,
+        },
     )
 
     router = DesktopActionRouter(
@@ -581,11 +604,18 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
 
     assert payload["status"] == "success"
     assert captured[-1]["app_name"] == "notepad"
-    assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
+    assert captured[-1]["target_container_roles"][:2] == ["dialog", "menu"]
+    assert "sidebar" in captured[-1]["target_container_roles"]
+    assert captured[-1]["preferred_wave_actions"] == ["command"]
     assert int(captured[-1]["max_surface_waves"] or 0) > 2
     assert payload["wave_summary"]["adaptive_targeted_app_count"] == 1
     assert payload["wave_summary"]["adaptive_wave_depth_app_count"] == 1
-    assert payload["items"][0]["targeting"]["target_container_roles"] == ["dialog", "menu"]
+    assert payload["items"][0]["targeting"]["target_container_roles"][:2] == ["dialog", "menu"]
+    assert "sidebar" in payload["items"][0]["targeting"]["target_container_roles"]
+    assert payload["items"][0]["targeting"]["preferred_wave_actions"] == ["command"]
+    recommended_paths = payload["items"][0]["targeting"]["recommended_traversal_paths"]
+    assert recommended_paths[:2] == ["dialog", "menu"]
+    assert "sidebar" in recommended_paths
 
 
 def test_desktop_action_router_batch_skips_known_healthy_apps() -> None:

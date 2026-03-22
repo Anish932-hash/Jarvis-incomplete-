@@ -202,6 +202,14 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
                     "staleness": {"age_hours": 12.0, "stale_after_hours": 72.0, "stale": False},
                     "learning_health": {"status": "degraded"},
                     "failure_memory_summary": {"entry_count": 2},
+                    "wave_strategy_summary": {
+                        "recommended_actions": ["open_command_palette", "focus_sidebar"],
+                        "recommended_container_roles": ["dialog", "menu"],
+                        "top_followup_roles": [{"value": "tree", "count": 2}],
+                    },
+                    "safe_traversal_summary": {
+                        "recommended_paths": ["menu", "dialog", "tree"],
+                    },
                     "revalidation_summary": {
                         "target_count": 5,
                         "overdue_count": 1,
@@ -232,15 +240,22 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert created["campaign"]["adaptive_target_container_roles"] is True
         assert int(created["campaign"]["effective_max_surface_waves"] or 0) > 2
         assert created["campaign"]["adaptive_surface_wave_depth"] is True
+        assert created["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert created["campaign"]["adaptive_preferred_wave_actions"] is True
+        assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["recommended_traversal_paths"]))
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
 
         assert executed["status"] == "success"
         assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
+        assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert int(captured[-1]["max_surface_waves"] or 0) > 2
         assert executed["campaign"]["adaptive_target_container_roles"] is True
         assert executed["campaign"]["adaptive_surface_wave_depth"] is True
+        assert executed["campaign"]["adaptive_preferred_wave_actions"] is True
+        assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["recommended_traversal_paths"]))
         assert executed["campaign"]["traversed_container_roles"] == ["dialog", "menu"]
         assert int(dict(executed["campaign"].get("role_learned_counts", {})).get("dialog", 0) or 0) >= 1
         assert executed["campaign"]["revalidation_focus_summary"]["top_container_roles"][0]["value"] == "dialog"
@@ -251,6 +266,12 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         }
         assert int(top_traversed_roles.get("dialog", 0) or 0) >= 1
         assert int(top_traversed_roles.get("menu", 0) or 0) >= 1
+        top_preferred_actions = {
+            str(item.get("value")): int(item.get("count", 0) or 0)
+            for item in list(executed["campaigns"]["summary"].get("top_preferred_wave_actions", []))
+            if isinstance(item, dict)
+        }
+        assert int(top_preferred_actions.get("open_command_palette", 0) or 0) >= 1
     finally:
         supervisor.stop()
 

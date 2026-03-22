@@ -8318,6 +8318,8 @@ class DesktopActionRouter:
         follow_surface_waves: bool = True,
         max_surface_waves: int = 3,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "manual",
@@ -8387,6 +8389,20 @@ class DesktopActionRouter:
                 if self._normalize_probe_text(item)
             ]
         )
+        normalized_preferred_wave_actions = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in (preferred_wave_actions or [])
+                if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+            ]
+        )[:8]
+        normalized_preferred_traversal_paths = self._dedupe_strings(
+            [
+                self._normalize_probe_text(item)
+                for item in (preferred_traversal_paths or [])
+                if self._normalize_probe_text(item)
+            ]
+        )[:8]
         revalidation_payload = self._app_memory.revalidation_targets(
             app_name=clean_app_name,
             profile_id=str(app_profile.get("profile_id", "") or "").strip(),
@@ -8412,9 +8428,32 @@ class DesktopActionRouter:
                         else []
                     )
                     if isinstance(item, dict) and self._normalize_probe_text(item.get("value", ""))
-                ]
+                ] + normalized_preferred_traversal_paths
             )[:4]
         adaptive_container_roles = bool(effective_target_container_roles and not normalized_target_container_roles)
+        effective_preferred_traversal_paths = self._dedupe_strings(
+            [
+                *normalized_preferred_traversal_paths,
+                *[
+                    self._normalize_probe_text(item)
+                    for item in surface_hint.get("recommended_traversal_paths", [])
+                    if isinstance(surface_hint.get("recommended_traversal_paths", []), list)
+                    and self._normalize_probe_text(item)
+                ],
+                *effective_target_container_roles,
+            ]
+        )[:8]
+        effective_preferred_wave_actions = self._dedupe_strings(
+            [
+                *normalized_preferred_wave_actions,
+                *[
+                    str(item).strip().lower()
+                    for item in surface_hint.get("recommended_wave_actions", [])
+                    if isinstance(surface_hint.get("recommended_wave_actions", []), list)
+                    and str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+                ],
+            ]
+        )[:8]
         failure_memory_summary = (
             dict(surface_hint.get("failure_memory_summary", {}))
             if isinstance(surface_hint.get("failure_memory_summary", {}), dict)
@@ -8465,6 +8504,8 @@ class DesktopActionRouter:
                 source=clean_source,
                 max_surface_waves=max_surface_waves,
                 target_container_roles=effective_target_container_roles,
+                preferred_wave_actions=effective_preferred_wave_actions,
+                preferred_traversal_paths=effective_preferred_traversal_paths,
                 revalidation_targets=revalidation_targets,
                 prefer_failure_memory=prefer_failure_memory,
             )
@@ -8562,6 +8603,14 @@ class DesktopActionRouter:
                 message_parts.append(
                     f"Adaptive wave memory now favors {', '.join(adaptive_actions[:4])} on similar surfaces."
                 )
+            preferred_action_hits = int(wave_report.get("preferred_action_hits", 0) or 0)
+            preferred_path_hits = int(wave_report.get("preferred_path_hits", 0) or 0)
+            if preferred_action_hits or preferred_path_hits:
+                message_parts.append(
+                    f"Campaign planning reused {preferred_action_hits} learned wave action"
+                    f"{'s' if preferred_action_hits != 1 else ''} and matched {preferred_path_hits} planned traversal path"
+                    f"{'s' if preferred_path_hits != 1 else ''}."
+                )
         if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
             message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
         if revalidation_targets:
@@ -8574,6 +8623,10 @@ class DesktopActionRouter:
                 f"{'Revalidation memory automatically focused' if adaptive_container_roles else 'Traversal focus was narrowed to'} "
                 f"{', '.join(effective_target_container_roles[:5])} container role"
                 f"{'s' if len(effective_target_container_roles[:5]) != 1 else ''}."
+            )
+        if effective_preferred_wave_actions:
+            message_parts.append(
+                f"Installed-app learning plans biased wave traversal toward {', '.join(effective_preferred_wave_actions[:4])}."
             )
         if isinstance(exploration_plan, dict) and exploration_plan:
             branch_action_count = int(exploration_plan.get("branch_action_count", 0) or 0)
@@ -8595,6 +8648,8 @@ class DesktopActionRouter:
             "targeting": {
                 "target_container_roles": effective_target_container_roles[:8],
                 "adaptive_container_roles": adaptive_container_roles,
+                "preferred_wave_actions": effective_preferred_wave_actions[:8],
+                "recommended_traversal_paths": effective_preferred_traversal_paths[:8],
                 "recommended_wave_container_roles": [
                     self._normalize_probe_text(item)
                     for item in (
@@ -8632,6 +8687,7 @@ class DesktopActionRouter:
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "batch",
@@ -8670,6 +8726,8 @@ class DesktopActionRouter:
         adaptive_wave_depth_app_count = 0
         traversed_container_roles: List[str] = []
         recommended_wave_container_roles: List[str] = []
+        recommended_traversal_paths: List[str] = []
+        preferred_wave_action_counts: Dict[str, int] = {}
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -8683,6 +8741,7 @@ class DesktopActionRouter:
                 profile_id=str(profile.get("profile_id", "") or "").strip(),
                 category=str(profile.get("category", "") or "").strip(),
                 requested_target_container_roles=target_container_roles,
+                requested_preferred_wave_actions=preferred_wave_actions,
                 requested_max_surface_waves=max_surface_waves,
                 revalidate_known_controls=revalidate_known_controls,
             )
@@ -8708,6 +8767,16 @@ class DesktopActionRouter:
                         for item in adaptive_targeting.get("target_container_roles", [])
                         if isinstance(adaptive_targeting.get("target_container_roles", []), list) and str(item).strip()
                     ] if isinstance(adaptive_targeting, dict) else target_container_roles,
+                    preferred_wave_actions=[
+                        str(item).strip()
+                        for item in adaptive_targeting.get("preferred_wave_actions", [])
+                        if isinstance(adaptive_targeting.get("preferred_wave_actions", []), list) and str(item).strip()
+                    ] if isinstance(adaptive_targeting, dict) else preferred_wave_actions,
+                    preferred_traversal_paths=[
+                        str(item).strip()
+                        for item in adaptive_targeting.get("recommended_traversal_paths", [])
+                        if isinstance(adaptive_targeting.get("recommended_traversal_paths", []), list) and str(item).strip()
+                    ] if isinstance(adaptive_targeting, dict) else None,
                     revalidate_known_controls=revalidate_known_controls,
                     prefer_failure_memory=prefer_failure_memory,
                     source=clean_source,
@@ -8772,6 +8841,29 @@ class DesktopActionRouter:
                     ],
                 ]
             )
+            recommended_traversal_paths = self._dedupe_strings(
+                [
+                    *recommended_traversal_paths,
+                    *[
+                        self._normalize_probe_text(item)
+                        for item in survey_targeting.get("recommended_traversal_paths", [])
+                        if isinstance(survey_targeting.get("recommended_traversal_paths", []), list)
+                        and self._normalize_probe_text(item)
+                    ],
+                ]
+            )
+            for item in (
+                survey_targeting.get("preferred_wave_actions", [])
+                if isinstance(survey_targeting.get("preferred_wave_actions", []), list)
+                else []
+            ):
+                clean_action = str(item).strip().lower()
+                if not clean_action:
+                    continue
+                preferred_wave_action_counts[clean_action] = max(
+                    0,
+                    int(preferred_wave_action_counts.get(clean_action, 0) or 0),
+                ) + 1
             if bool(adaptive_targeting.get("adaptive_target_container_roles", False)):
                 adaptive_targeted_app_count += 1
             if bool(adaptive_targeting.get("adaptive_surface_wave_depth", False)):
@@ -8841,6 +8933,19 @@ class DesktopActionRouter:
                 f"{message} Recursive safe traversal covered "
                 f"{', '.join(traversed_container_roles[:5])} across the surveyed app set."
             )
+        if preferred_wave_action_counts or recommended_traversal_paths:
+            top_preferred_wave_actions = [
+                str(key)
+                for key, _value in sorted(
+                    preferred_wave_action_counts.items(),
+                    key=lambda entry: (-int(entry[1]), str(entry[0])),
+                )[:4]
+            ]
+            message = (
+                f"{message} Installed-app campaigns reused "
+                f"{', '.join(top_preferred_wave_actions) or 'adaptive wave actions'}"
+                f" and prioritized {', '.join(recommended_traversal_paths[:4]) or 'learned traversal paths'}."
+            )
         return {
             "status": overall_status,
             "message": message,
@@ -8871,6 +8976,14 @@ class DesktopActionRouter:
                 "role_attempt_counts": {str(key): int(value) for key, value in sorted(role_attempt_counts.items())},
                 "role_learned_counts": {str(key): int(value) for key, value in sorted(role_learned_counts.items())},
                 "recommended_container_roles": recommended_wave_container_roles[:8],
+                "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "preferred_wave_actions": [
+                    {"action": str(key), "count": int(value)}
+                    for key, value in sorted(
+                        preferred_wave_action_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0])),
+                    )[:8]
+                ],
             },
             "targeting": {
                 "target_container_roles": self._dedupe_strings(
@@ -8885,6 +8998,14 @@ class DesktopActionRouter:
                 "adaptive_targeted_app_count": adaptive_targeted_app_count,
                 "adaptive_wave_depth_app_count": adaptive_wave_depth_app_count,
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
+                "recommended_traversal_paths": recommended_traversal_paths[:8],
+                "preferred_wave_actions": [
+                    str(key)
+                    for key, _value in sorted(
+                        preferred_wave_action_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0])),
+                    )[:8]
+                ],
             },
             "app_memory": app_memory,
         }
@@ -8896,6 +9017,7 @@ class DesktopActionRouter:
         profile_id: str,
         category: str,
         requested_target_container_roles: Optional[List[str]],
+        requested_preferred_wave_actions: Optional[List[str]],
         requested_max_surface_waves: int,
         revalidate_known_controls: bool,
     ) -> Dict[str, Any]:
@@ -8906,14 +9028,70 @@ class DesktopActionRouter:
                 if self._normalize_probe_text(item)
             ]
         )
+        explicit_preferred_wave_actions = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in (requested_preferred_wave_actions or [])
+                if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+            ]
+        )[:8]
         base_max_surface_waves = max(1, min(int(requested_max_surface_waves or 3), 8))
+        surface_hint = self._app_memory.surface_hint(
+            app_name=str(app_name or "").strip(),
+            profile_id=str(profile_id or "").strip(),
+            surface_fingerprint="",
+        )
+        surface_hint_known = bool(surface_hint.get("known", False)) if isinstance(surface_hint, dict) else False
+        if (not surface_hint_known) and str(app_name or "").strip() and str(profile_id or "").strip():
+            fallback_surface_hint = self._app_memory.surface_hint(
+                app_name=str(app_name or "").strip(),
+                profile_id="",
+                surface_fingerprint="",
+            )
+            if isinstance(fallback_surface_hint, dict):
+                fallback_known = bool(fallback_surface_hint.get("known", False))
+                fallback_wave_actions = (
+                    fallback_surface_hint.get("recommended_wave_actions", [])
+                    if isinstance(fallback_surface_hint.get("recommended_wave_actions", []), list)
+                    else []
+                )
+                fallback_traversal_paths = (
+                    fallback_surface_hint.get("recommended_traversal_paths", [])
+                    if isinstance(fallback_surface_hint.get("recommended_traversal_paths", []), list)
+                    else []
+                )
+                if fallback_known or fallback_wave_actions or fallback_traversal_paths:
+                    surface_hint = fallback_surface_hint
+        hint_recommended_wave_actions = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in surface_hint.get("recommended_wave_actions", [])
+                if isinstance(surface_hint.get("recommended_wave_actions", []), list)
+                and str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+            ]
+        )[:8]
+        hint_recommended_traversal_paths = self._dedupe_strings(
+            [
+                self._normalize_probe_text(item)
+                for item in surface_hint.get("recommended_traversal_paths", [])
+                if isinstance(surface_hint.get("recommended_traversal_paths", []), list)
+                and self._normalize_probe_text(item)
+            ]
+        )[:8]
         if not revalidate_known_controls:
             return {
                 "target_container_roles": explicit_roles,
                 "adaptive_target_container_roles": False,
                 "max_surface_waves": base_max_surface_waves,
                 "adaptive_surface_wave_depth": False,
+                "preferred_wave_actions": self._dedupe_strings([*explicit_preferred_wave_actions, *hint_recommended_wave_actions])[:8],
+                "recommended_traversal_paths": self._dedupe_strings([*explicit_roles, *hint_recommended_traversal_paths])[:8],
                 "revalidation_summary": {"target_count": 0, "failure_hotspot_count": 0, "overdue_count": 0},
+                "surface_hint_summary": {
+                    "known": bool(surface_hint.get("known", False)),
+                    "recommended_wave_actions": hint_recommended_wave_actions[:8],
+                    "recommended_traversal_paths": hint_recommended_traversal_paths[:8],
+                },
             }
         clean_app_name = str(app_name or "").strip()
         clean_profile_id = str(profile_id or "").strip()
@@ -8951,9 +9129,31 @@ class DesktopActionRouter:
                     if isinstance(revalidation_summary.get("top_container_roles", []), list)
                     and isinstance(item, dict)
                     and self._normalize_probe_text(item.get("value", ""))
-                ]
+                ] + hint_recommended_traversal_paths
             )[:4]
             adaptive_target_container_roles = bool(effective_roles)
+        recommended_traversal_paths = self._dedupe_strings(
+            [
+                *effective_roles,
+                *hint_recommended_traversal_paths,
+                *[
+                    self._normalize_probe_text(item.get("value", ""))
+                    for item in (
+                        surface_hint.get("wave_strategy_summary", {}).get("top_followup_roles", [])
+                        if isinstance(surface_hint.get("wave_strategy_summary", {}), dict)
+                        and isinstance(surface_hint.get("wave_strategy_summary", {}).get("top_followup_roles", []), list)
+                        else []
+                    )
+                    if isinstance(item, dict) and self._normalize_probe_text(item.get("value", ""))
+                ],
+            ]
+        )[:8]
+        preferred_wave_actions = self._dedupe_strings(
+            [
+                *explicit_preferred_wave_actions,
+                *hint_recommended_wave_actions,
+            ]
+        )[:8]
         role_set = {str(item).strip().lower() for item in effective_roles if str(item).strip()}
         target_count = max(0, int(revalidation_summary.get("target_count", 0) or 0))
         failure_hotspot_count = max(0, int(revalidation_summary.get("failure_hotspot_count", 0) or 0))
@@ -8971,6 +9171,10 @@ class DesktopActionRouter:
             depth_bonus = max(depth_bonus, 2)
         if overdue_count >= 2:
             depth_bonus = max(depth_bonus, 1)
+        if len(recommended_traversal_paths) >= 3:
+            depth_bonus = max(depth_bonus, 2)
+        if preferred_wave_actions:
+            depth_bonus = max(depth_bonus, 1)
         effective_max_surface_waves = max(base_max_surface_waves, min(8, base_max_surface_waves + depth_bonus))
         adaptive_surface_wave_depth = bool(effective_max_surface_waves > base_max_surface_waves and not requested_target_container_roles)
         return {
@@ -8978,7 +9182,14 @@ class DesktopActionRouter:
             "adaptive_target_container_roles": adaptive_target_container_roles,
             "max_surface_waves": effective_max_surface_waves,
             "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
+            "preferred_wave_actions": preferred_wave_actions[:8],
+            "recommended_traversal_paths": recommended_traversal_paths[:8],
             "revalidation_summary": revalidation_summary,
+            "surface_hint_summary": {
+                "known": bool(surface_hint.get("known", False)),
+                "recommended_wave_actions": hint_recommended_wave_actions[:8],
+                "recommended_traversal_paths": hint_recommended_traversal_paths[:8],
+            },
         }
 
     def _app_memory_wave_candidates(
@@ -9404,6 +9615,8 @@ class DesktopActionRouter:
         source: str,
         max_surface_waves: int,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         revalidation_targets: Optional[List[Dict[str, Any]]] = None,
         prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
@@ -9423,6 +9636,20 @@ class DesktopActionRouter:
         seen_fingerprints = {initial_surface_fingerprint} if initial_surface_fingerprint else set()
         attempted_keys: set[str] = set()
         preferred_actions: List[str] = []
+        explicit_preferred_actions = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in (preferred_wave_actions or [])
+                if str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+            ]
+        )[:8]
+        preferred_path_roles = self._dedupe_strings(
+            [
+                self._normalize_probe_text(item)
+                for item in (preferred_traversal_paths or [])
+                if self._normalize_probe_text(item)
+            ]
+        )[:8]
         traversed_container_roles: List[str] = []
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
@@ -9430,12 +9657,16 @@ class DesktopActionRouter:
         skipped: List[Dict[str, Any]] = []
         known_surface_count = 0
         stabilized_wave_count = 0
+        preferred_action_hits = 0
+        preferred_path_hits = 0
         clean_source = str(source or "manual").strip().lower() or "manual"
         wave_source = clean_source if "wave" in clean_source else f"{clean_source}_wave"
         strategy_profile: Dict[str, Any] = {
             "known_surface": False,
             "recommended_actions": [],
             "recommended_container_roles": [],
+            "preferred_wave_actions": explicit_preferred_actions[:6],
+            "recommended_traversal_paths": preferred_path_roles[:6],
             "top_actions": [],
         }
         while len(items) < bounded_waves:
@@ -9465,6 +9696,23 @@ class DesktopActionRouter:
                     for item in current_surface_hint.get("discouraged_wave_actions", [])
                     if str(item).strip()
                 ][:8] if isinstance(current_surface_hint, dict) else [],
+                "preferred_wave_actions": self._dedupe_strings(
+                    [
+                        *explicit_preferred_actions,
+                        *adaptive_actions,
+                    ]
+                )[:6],
+                "recommended_traversal_paths": self._dedupe_strings(
+                    [
+                        *preferred_path_roles,
+                        *[
+                            self._normalize_probe_text(item)
+                            for item in current_surface_hint.get("recommended_traversal_paths", [])
+                            if isinstance(current_surface_hint.get("recommended_traversal_paths", []), list)
+                            and self._normalize_probe_text(item)
+                        ],
+                    ]
+                )[:6] if isinstance(current_surface_hint, dict) else preferred_path_roles[:6],
                 "top_actions": [
                     dict(item)
                     for item in current_surface_hint.get("wave_strategies", [])
@@ -9473,7 +9721,7 @@ class DesktopActionRouter:
             }
             candidates = self._app_memory_wave_candidates(
                 snapshot=current_snapshot,
-                preferred_actions=self._dedupe_strings([*preferred_actions, *adaptive_actions]),
+                preferred_actions=self._dedupe_strings([*explicit_preferred_actions, *preferred_actions, *adaptive_actions]),
                 discouraged_actions=list(strategy_profile.get("discouraged_actions", [])),
                 target_container_roles=self._dedupe_strings(
                     [
@@ -9485,6 +9733,11 @@ class DesktopActionRouter:
                         *[
                             self._normalize_probe_text(item)
                             for item in strategy_profile.get("recommended_container_roles", [])
+                            if self._normalize_probe_text(item)
+                        ],
+                        *[
+                            self._normalize_probe_text(item)
+                            for item in strategy_profile.get("recommended_traversal_paths", [])
                             if self._normalize_probe_text(item)
                         ],
                     ]
@@ -9502,6 +9755,8 @@ class DesktopActionRouter:
                     "learned_surface_count": len(items),
                     "known_surface_count": known_surface_count,
                     "stabilized_count": stabilized_wave_count,
+                    "preferred_action_hits": preferred_action_hits,
+                    "preferred_path_hits": preferred_path_hits,
                     "items": items,
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
@@ -9583,6 +9838,10 @@ class DesktopActionRouter:
                 if candidate_container_role:
                     role_learned_counts[candidate_container_role] = max(0, int(role_learned_counts.get(candidate_container_role, 0) or 0)) + 1
                     traversed_container_roles = self._dedupe_strings([*traversed_container_roles, candidate_container_role])
+                    if candidate_container_role in preferred_path_roles:
+                        preferred_path_hits += 1
+                if action_name in explicit_preferred_actions:
+                    preferred_action_hits += 1
                 wave_exploration_plan: Dict[str, Any] = {}
                 if include_exploration:
                     wave_exploration_plan = self._surface_exploration_from_snapshot(
@@ -9727,6 +9986,8 @@ class DesktopActionRouter:
                     "learned_surface_count": len(items),
                     "known_surface_count": known_surface_count,
                     "stabilized_count": stabilized_wave_count,
+                    "preferred_action_hits": preferred_action_hits,
+                    "preferred_path_hits": preferred_path_hits,
                     "items": items,
                     "skipped": skipped,
                     "strategy_profile": strategy_profile,
@@ -9753,6 +10014,8 @@ class DesktopActionRouter:
             "learned_surface_count": len(items),
             "known_surface_count": known_surface_count,
             "stabilized_count": stabilized_wave_count,
+            "preferred_action_hits": preferred_action_hits,
+            "preferred_path_hits": preferred_path_hits,
             "items": items,
             "skipped": skipped,
             "strategy_profile": strategy_profile,

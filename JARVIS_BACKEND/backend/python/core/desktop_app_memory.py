@@ -1057,14 +1057,7 @@ class DesktopAppMemory:
         container_role = self._normalize_text(row.get("container_role", ""))
         if container_role:
             current["container_role"] = container_role
-        followup_roles = self._dedupe_strings(
-            [
-                self._normalize_text(str(item or "").strip()[len("traverse_"):])
-                for item in recommended_followups
-                if str(item or "").strip().lower().startswith("traverse_")
-                and self._normalize_text(str(item or "").strip()[len("traverse_"):])
-            ]
-        )
+        followup_roles = self._followup_roles_from_actions(recommended_followups)
         current["recommended_container_roles"] = self._merge_recent_strings(
             current.get("recommended_container_roles", []),
             [container_role, *followup_roles],
@@ -2671,6 +2664,34 @@ class DesktopAppMemory:
         return rows[: max(1, int(limit or 1))]
 
     @classmethod
+    def _followup_roles_from_actions(cls, actions: List[str] | None) -> List[str]:
+        role_hints = {
+            "menu": "menu",
+            "sidebar": "sidebar",
+            "tree": "tree",
+            "table": "table",
+            "dialog": "dialog",
+            "ribbon": "ribbon",
+            "toolbar": "toolbar",
+            "tab": "tab",
+            "tabs": "tab",
+            "list": "list",
+        }
+        roles: List[str] = []
+        for raw_action in actions or []:
+            clean_action = cls._normalize_text(raw_action)
+            if not clean_action:
+                continue
+            for prefix in ("traverse_", "focus_", "open_"):
+                if clean_action.startswith(prefix):
+                    clean_action = clean_action[len(prefix):]
+                    break
+            mapped = role_hints.get(clean_action, clean_action)
+            if mapped in role_hints.values():
+                roles.append(mapped)
+        return cls._dedupe_strings(roles)
+
+    @classmethod
     def _wave_strategy_summary(cls, row: Dict[str, Any]) -> Dict[str, Any]:
         strategies = cls._top_wave_strategies(row.get("wave_strategies", {}), limit=8)
         recommended_actions = [
@@ -2921,11 +2942,39 @@ class DesktopAppMemory:
             wave_strategy_summary = self._wave_strategy_summary(matched_row)
             failure_memory_summary = self._failure_memory_summary(matched_row)
             revalidation_summary = self._revalidation_summary(matched_row)
+            safe_traversal_summary = (
+                dict(matched_row.get("last_safe_traversal_summary", {}))
+                if isinstance(matched_row.get("last_safe_traversal_summary", {}), dict)
+                else {}
+            )
             surface_revalidation_targets = self._entry_revalidation_targets(
                 matched_row,
                 limit=6,
                 surface_fingerprint=clean_surface_fingerprint,
             ) if clean_surface_fingerprint else revalidation_summary.get("top_targets", [])
+            recommended_traversal_paths = self._dedupe_strings(
+                [
+                    *[
+                        self._normalize_text(item)
+                        for item in safe_traversal_summary.get("recommended_paths", [])
+                        if isinstance(safe_traversal_summary.get("recommended_paths", []), list)
+                        and self._normalize_text(item)
+                    ],
+                    *[
+                        self._normalize_text(item)
+                        for item in wave_strategy_summary.get("recommended_container_roles", [])
+                        if isinstance(wave_strategy_summary.get("recommended_container_roles", []), list)
+                        and self._normalize_text(item)
+                    ],
+                    *[
+                        self._normalize_text(item.get("value", ""))
+                        for item in wave_strategy_summary.get("top_followup_roles", [])
+                        if isinstance(wave_strategy_summary.get("top_followup_roles", []), list)
+                        and isinstance(item, dict)
+                        and self._normalize_text(item.get("value", ""))
+                    ],
+                ]
+            )[:8]
             return {
                 "status": "success",
                 "known": bool(matched_node),
@@ -2937,6 +2986,7 @@ class DesktopAppMemory:
                 "wave_strategy_summary": wave_strategy_summary,
                 "recommended_wave_actions": wave_strategy_summary.get("recommended_actions", []),
                 "recommended_wave_container_roles": wave_strategy_summary.get("recommended_container_roles", []),
+                "recommended_traversal_paths": recommended_traversal_paths,
                 "menu_commands": self._top_count_rows(matched_row.get("menu_command_counts", {}), limit=6, label_field="label"),
                 "toolbar_actions": self._top_count_rows(matched_row.get("toolbar_action_counts", {}), limit=6, label_field="label"),
                 "ribbon_actions": self._top_count_rows(matched_row.get("ribbon_action_counts", {}), limit=6, label_field="label"),
@@ -2962,11 +3012,7 @@ class DesktopAppMemory:
                     if isinstance(matched_row.get("last_native_learning_signals", {}), dict)
                     else {}
                 ),
-                "safe_traversal_summary": (
-                    dict(matched_row.get("last_safe_traversal_summary", {}))
-                    if isinstance(matched_row.get("last_safe_traversal_summary", {}), dict)
-                    else {}
-                ),
+                "safe_traversal_summary": safe_traversal_summary,
                 "verification_state": (
                     dict(matched_row.get("last_verification_summary", {}))
                     if isinstance(matched_row.get("last_verification_summary", {}), dict)
@@ -3016,6 +3062,7 @@ class DesktopAppMemory:
             },
             "recommended_wave_actions": [],
             "recommended_wave_container_roles": [],
+            "recommended_traversal_paths": [],
             "menu_commands": [],
             "toolbar_actions": [],
             "ribbon_actions": [],

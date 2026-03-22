@@ -8240,6 +8240,8 @@ class DesktopBackendService:
         allow_risky_probes: bool = False,
         include_ocr_targets: bool = True,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
     ) -> Dict[str, Any]:
@@ -8264,6 +8266,8 @@ class DesktopBackendService:
                 allow_risky_probes=allow_risky_probes,
                 include_ocr_targets=include_ocr_targets,
                 target_container_roles=target_container_roles,
+                preferred_wave_actions=preferred_wave_actions,
+                preferred_traversal_paths=preferred_traversal_paths,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
             )
@@ -8293,6 +8297,7 @@ class DesktopBackendService:
         skip_known_apps: bool = True,
         prefer_unknown_apps: bool = True,
         target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         source: str = "manual",
@@ -8321,6 +8326,7 @@ class DesktopBackendService:
                 skip_known_apps=skip_known_apps,
                 prefer_unknown_apps=prefer_unknown_apps,
                 target_container_roles=target_container_roles,
+                preferred_wave_actions=preferred_wave_actions,
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
                 source=source,
@@ -9384,7 +9390,15 @@ class DesktopBackendService:
         ensure_app_launch: bool = True,
         probe_controls: bool = True,
         max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int = 3,
         allow_risky_probes: bool = False,
+        skip_known_apps: bool = True,
+        prefer_unknown_apps: bool = True,
+        target_container_roles: Optional[List[str]] = None,
+        preferred_wave_actions: Optional[List[str]] = None,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
         source: str = "daemon",
     ) -> Dict[str, Any]:
         payload = self.survey_desktop_app_memory_batch(
@@ -9399,8 +9413,16 @@ class DesktopBackendService:
             include_exploration=True,
             probe_controls=probe_controls,
             max_probe_controls=max_probe_controls,
+            follow_surface_waves=follow_surface_waves,
+            max_surface_waves=max_surface_waves,
             allow_risky_probes=allow_risky_probes,
             include_ocr_targets=True,
+            skip_known_apps=skip_known_apps,
+            prefer_unknown_apps=prefer_unknown_apps,
+            target_container_roles=target_container_roles,
+            preferred_wave_actions=preferred_wave_actions,
+            revalidate_known_controls=revalidate_known_controls,
+            prefer_failure_memory=prefer_failure_memory,
             source=source,
         )
         return _to_jsonable(payload)
@@ -45872,6 +45894,16 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         if isinstance(body.get("target_container_roles", []), list)
                         else None
                     ),
+                    preferred_wave_actions=(
+                        [str(item).strip() for item in body.get("preferred_wave_actions", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_wave_actions", []), list)
+                        else None
+                    ),
+                    preferred_traversal_paths=(
+                        [str(item).strip() for item in body.get("preferred_traversal_paths", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_traversal_paths", []), list)
+                        else None
+                    ),
                     revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
                     prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
                 )
@@ -45904,6 +45936,11 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     target_container_roles=(
                         [str(item).strip() for item in body.get("target_container_roles", []) if str(item).strip()]
                         if isinstance(body.get("target_container_roles", []), list)
+                        else None
+                    ),
+                    preferred_wave_actions=(
+                        [str(item).strip() for item in body.get("preferred_wave_actions", []) if str(item).strip()]
+                        if isinstance(body.get("preferred_wave_actions", []), list)
                         else None
                     ),
                     revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
