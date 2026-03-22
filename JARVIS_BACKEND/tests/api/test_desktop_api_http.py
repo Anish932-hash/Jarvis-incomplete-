@@ -36,6 +36,7 @@ class FakeDesktopService:
         self.machine_onboarding_history_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_plan_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_campaign_calls: list[Dict[str, Any]] = []
+        self.machine_prepare_app_control_calls: list[Dict[str, Any]] = []
         self.machine_task_preference_calls: list[Dict[str, Any]] = []
         self.app_launcher_inventory_calls: list[Dict[str, Any]] = []
         self.app_launcher_memory_calls: list[Dict[str, Any]] = []
@@ -13446,13 +13447,20 @@ class FakeDesktopService:
             "refresh_apps": bool(refresh_apps),
             "refresh_provider_credentials": bool(refresh_provider_credentials),
             "verify_providers": bool(verify_providers),
-            "readiness": {"status": "success", "score": 72},
+            "readiness": {"status": "success", "score": 72, "overall_status": "strong"},
             "applications": {
+                "inventory_count": 2,
+                "path_ready_count": 2,
+                "frequent_count": 1,
+                "running_count": 1,
+                "remembered_target_count": 1,
                 "inventory": {"status": "success", "total": 2, "path_ready_count": 2},
                 "launch_memory": {"status": "success", "total": 1},
                 "task_focus": [{"task": "reasoning", "score": 12.0}],
             },
             "models": {
+                "inventory_count": 1,
+                "recommended_count": 1,
                 "task_preferences": {
                     "status": "success",
                     "count": 1,
@@ -13461,11 +13469,13 @@ class FakeDesktopService:
                 "recommended_models": [{"task": "reasoning", "provider": "local", "model_name": "qwen3-14b"}],
             },
             "providers": {
+                "summary": {"provider_count": 1, "verified_count": 0, "invalid_count": 1},
                 "snapshot": {"providers": {"huggingface": {"present": False, "required_by_manifest": True}}},
                 "verifications": {"huggingface": {"status": "error", "verified": False}},
             },
             "recommendations": [{"code": "configure_huggingface_token", "severity": "high"}],
             "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
+            "change_detection": {"changed": False, "areas": [], "requires_revalidation": False},
         }
 
     def desktop_machine_onboarding_plan(
@@ -13830,6 +13840,128 @@ class FakeDesktopService:
                 if auto_run
                 else {}
             ),
+        }
+
+    def desktop_machine_prepare_app_control(
+        self,
+        *,
+        task: str = "",
+        app_name: str = "",
+        app_query: str = "",
+        query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 160,
+        refresh_apps: bool = False,
+        ensure_app_launch: bool = True,
+        survey_limit: int = 28,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: int | None = None,
+        allow_risky_probes: bool = False,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
+        source: str = "machine_prepare",
+    ) -> Dict[str, Any]:
+        effective_app_name = app_name or app_query or "Google Chrome"
+        call = {
+            "task": task,
+            "app_name": app_name,
+            "app_query": app_query,
+            "query": query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "ensure_app_launch": bool(ensure_app_launch),
+            "survey_limit": int(survey_limit),
+            "include_observation": bool(include_observation),
+            "include_elements": bool(include_elements),
+            "include_workflow_probes": bool(include_workflow_probes),
+            "include_exploration": bool(include_exploration),
+            "probe_controls": bool(probe_controls),
+            "max_probe_controls": int(max_probe_controls),
+            "follow_surface_waves": bool(follow_surface_waves),
+            "max_surface_waves": None if max_surface_waves is None else int(max_surface_waves),
+            "allow_risky_probes": bool(allow_risky_probes),
+            "revalidate_known_controls": bool(revalidate_known_controls),
+            "prefer_failure_memory": bool(prefer_failure_memory),
+            "source": source,
+        }
+        self.machine_prepare_app_control_calls.append(call)
+        return {
+            "status": "success",
+            "requested_app": effective_app_name,
+            "effective_app_name": effective_app_name,
+            "task": task,
+            "profile": self.desktop_machine_profile(
+                task=task,
+                app_query=effective_app_name,
+                app_category=app_category,
+                app_limit=app_limit,
+                model_limit=model_limit,
+                refresh_apps=refresh_apps,
+                refresh_provider_credentials=False,
+                verify_providers=False,
+                source=f"{source}_profile",
+            ),
+            "plan": self.desktop_machine_app_learning_plan(
+                task=task,
+                app_query=effective_app_name,
+                app_category=app_category,
+                app_limit=app_limit,
+                refresh_apps=False,
+                max_targets=4,
+            ),
+            "selected_target": {
+                "app_name": effective_app_name,
+                "target_container_roles": ["menu", "dialog"],
+                "preferred_wave_actions": ["command", "open_dialog"],
+                "preferred_traversal_paths": ["menu", "dialog"],
+                "recommended_queries": [query or "settings"],
+                "recommended_max_surface_waves": max_surface_waves or 4,
+            },
+            "resolved_target": {
+                "status": "success",
+                "requested_app": effective_app_name,
+                "display_name": effective_app_name,
+                "resolution": "launch_memory",
+                "launch_strategy": "remembered_launch",
+                "launch_confidence": 0.98,
+                "memory_hit": True,
+            },
+            "launch": {
+                "status": "success" if ensure_app_launch else "skipped",
+                "requested_app": effective_app_name,
+                "launch_method": "already_running_attach",
+                "attach_only": True,
+            },
+            "survey": {
+                "status": "success",
+                "query": query or "settings",
+                "probe_report": {"attempted_count": 2, "successful_count": 2},
+                "memory_entry": {
+                    "discovered_control_count": 6,
+                    "known_surface_count": 2,
+                    "metrics": {"wave_attempt_count": 4, "known_surface_count": 2},
+                },
+            },
+            "app_memory": {"status": "success", "count": 1, "items": [{"app_name": effective_app_name}]},
+            "launch_memory": {"status": "success", "count": 1, "items": [{"requested_app": effective_app_name}]},
+            "summary": {
+                "app_name": effective_app_name,
+                "launch_method": "already_running_attach",
+                "launch_resolution": "launch_memory",
+                "wave_attempt_count": 4,
+                "discovered_control_count": 6,
+                "probe_success_count": 2,
+            },
+            "message": "Prepared app control.",
         }
 
     def desktop_app_launcher_inventory(
@@ -23187,6 +23319,26 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert launched["status"] == "success"
     assert launched["launch_method"] == "launch_memory"
     assert service.app_launcher_launch_calls[-1]["app_name"] == "chrome"
+
+    status, prepared = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/app-control-prepare",
+        payload={
+            "task": "reasoning",
+            "app_name": "chrome",
+            "survey_query": "settings",
+            "refresh_apps": True,
+            "ensure_app_launch": True,
+            "survey_limit": 18,
+            "max_surface_waves": 5,
+        },
+    )
+    assert status == 200
+    assert prepared["status"] == "success"
+    assert prepared["effective_app_name"] == "chrome"
+    assert prepared["summary"]["wave_attempt_count"] == 4
+    assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
+    assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
 
 
 def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple[str, FakeDesktopService]) -> None:

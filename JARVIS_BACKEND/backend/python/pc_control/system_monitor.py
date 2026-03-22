@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import importlib.util
 import json
 import os
 import platform
@@ -76,6 +78,10 @@ class SystemMonitor:
         gpus = self._gpu_info()
         disks = self._storage_inventory()
         runtimes = self._runtime_inventory()
+        permissions = self._permissions_info()
+        virtualization = self._virtualization_info(cpu_info=cpu_info)
+        dependencies = self._dependency_audit(runtimes=runtimes)
+        shell = self._shell_info()
         boot_time = ""
         try:
             boot_time = datetime.fromtimestamp(psutil.boot_time(), tz=timezone.utc).isoformat()
@@ -111,6 +117,10 @@ class SystemMonitor:
             "gpu_count": len(gpus),
             "gpus": gpus,
             "runtimes": runtimes,
+            "permissions": permissions,
+            "virtualization": virtualization,
+            "dependencies": dependencies,
+            "shell": shell,
             "python": {
                 "version": platform.python_version(),
                 "executable": sys.executable,
@@ -146,7 +156,7 @@ class SystemMonitor:
         }
         payload = self._run_powershell_json(
             "$cpu = Get-CimInstance Win32_Processor | "
-            "Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed; "
+            "Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed, VirtualizationFirmwareEnabled, VMMonitorModeExtensions, SecondLevelAddressTranslationExtensions; "
             "$cpu | ConvertTo-Json -Compress -Depth 4"
         )
         if isinstance(payload, list):
@@ -159,6 +169,9 @@ class SystemMonitor:
             "physical_cores": int(payload.get("NumberOfCores", fallback["physical_cores"]) or fallback["physical_cores"]),
             "logical_cores": int(payload.get("NumberOfLogicalProcessors", fallback["logical_cores"]) or fallback["logical_cores"]),
             "max_clock_mhz": int(payload.get("MaxClockSpeed", 0) or 0),
+            "virtualization_firmware_enabled": bool(payload.get("VirtualizationFirmwareEnabled", False)),
+            "vm_monitor_mode_extensions": bool(payload.get("VMMonitorModeExtensions", False)),
+            "slat_enabled": bool(payload.get("SecondLevelAddressTranslationExtensions", False)),
         }
 
     def _windows_info(self) -> Dict[str, Any]:
@@ -253,15 +266,25 @@ class SystemMonitor:
             "python": self._command_runtime(["python", "--version"]),
             "py": self._command_runtime(["py", "--version"]),
             "pip": self._command_runtime(["pip", "--version"]),
+            "uv": self._command_runtime(["uv", "--version"]),
+            "cython": self._command_runtime(["cython", "--version"]),
+            "cythonize": self._command_runtime(["cythonize", "--version"]),
             "node": self._command_runtime(["node", "--version"]),
             "npm": self._command_runtime(["npm", "--version"]),
             "pnpm": self._command_runtime(["pnpm", "--version"]),
             "rustc": self._command_runtime(["rustc", "--version"]),
             "cargo": self._command_runtime(["cargo", "--version"]),
+            "cl": self._command_runtime(["cl"]),
+            "cmake": self._command_runtime(["cmake", "--version"]),
+            "ninja": self._command_runtime(["ninja", "--version"]),
+            "msbuild": self._command_runtime(["msbuild", "-version"]),
             "git": self._command_runtime(["git", "--version"]),
+            "git_lfs": self._command_runtime(["git-lfs", "--version"]),
             "huggingface_cli": self._command_runtime(["huggingface-cli", "--version"]),
             "hf": self._command_runtime(["hf", "--version"]),
             "ollama": self._command_runtime(["ollama", "--version"]),
+            "tesseract": self._command_runtime(["tesseract", "--version"]),
+            "ffmpeg": self._command_runtime(["ffmpeg", "-version"]),
             "powershell": self._command_runtime(["powershell", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]),
             "pwsh": self._command_runtime(["pwsh", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]),
         }
@@ -269,6 +292,102 @@ class SystemMonitor:
             1 for value in runtimes.values() if isinstance(value, dict) and bool(value.get("available", False))
         )
         return runtimes
+
+    def _permissions_info(self) -> Dict[str, Any]:
+        is_admin = False
+        try:
+            is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
+        except Exception:
+            is_admin = False
+        cwd = Path.cwd()
+        temp_dir = Path(os.environ.get("TEMP", "")) if os.environ.get("TEMP") else None
+        return {
+            "is_admin": is_admin,
+            "username": os.environ.get("USERNAME", "") or os.environ.get("USER", ""),
+            "cwd": str(cwd),
+            "cwd_writable": os.access(str(cwd), os.W_OK),
+            "temp_dir": str(temp_dir) if temp_dir else "",
+            "temp_writable": os.access(str(temp_dir), os.W_OK) if temp_dir else False,
+            "venv_active": bool(getattr(sys, "base_prefix", sys.prefix) != sys.prefix),
+        }
+
+    def _virtualization_info(self, *, cpu_info: Dict[str, Any]) -> Dict[str, Any]:
+        wsl_status = self._command_runtime(["wsl", "--status"])
+        return {
+            "virtualization_firmware_enabled": bool(cpu_info.get("virtualization_firmware_enabled", False)),
+            "vm_monitor_mode_extensions": bool(cpu_info.get("vm_monitor_mode_extensions", False)),
+            "slat_enabled": bool(cpu_info.get("slat_enabled", False)),
+            "wsl_available": bool(wsl_status.get("available", False)),
+            "wsl_status": str(wsl_status.get("version", "") or wsl_status.get("raw", "") or "").strip(),
+        }
+
+    def _dependency_audit(self, *, runtimes: Dict[str, Any]) -> Dict[str, Any]:
+        python_packages = {
+            "cython": importlib.util.find_spec("Cython") is not None,
+            "pytesseract": importlib.util.find_spec("pytesseract") is not None,
+            "easyocr": importlib.util.find_spec("easyocr") is not None,
+            "cv2": importlib.util.find_spec("cv2") is not None,
+            "pil": importlib.util.find_spec("PIL") is not None,
+        }
+        python_ready = bool(asdict := runtimes.get("python", {})) and bool(
+            isinstance(asdict, dict) and asdict.get("available", False)
+        )
+        rust_ready = bool(isinstance(runtimes.get("rustc", {}), dict) and runtimes.get("rustc", {}).get("available", False)) and bool(
+            isinstance(runtimes.get("cargo", {}), dict) and runtimes.get("cargo", {}).get("available", False)
+        )
+        native_build_ready = any(
+            bool(isinstance(runtimes.get(name, {}), dict) and runtimes.get(name, {}).get("available", False))
+            for name in ("cl", "cmake", "ninja", "msbuild")
+        )
+        ocr_ready = bool(
+            (isinstance(runtimes.get("tesseract", {}), dict) and runtimes.get("tesseract", {}).get("available", False))
+            or python_packages["pytesseract"]
+            or python_packages["easyocr"]
+        )
+        vision_ready = bool(python_packages["cv2"] or python_packages["pil"])
+        missing = [
+            name
+            for name, ready in {
+                "python_runtime": python_ready,
+                "rust_toolchain": rust_ready,
+                "native_build_toolchain": native_build_ready,
+                "ocr_runtime": ocr_ready,
+                "vision_runtime": vision_ready,
+                "cython": bool(
+                    python_packages["cython"]
+                    or (isinstance(runtimes.get("cython", {}), dict) and runtimes.get("cython", {}).get("available", False))
+                ),
+            }.items()
+            if not ready
+        ]
+        return {
+            "python_packages": python_packages,
+            "python_ready": python_ready,
+            "rust_ready": rust_ready,
+            "native_build_ready": native_build_ready,
+            "ocr_ready": ocr_ready,
+            "vision_ready": vision_ready,
+            "missing": missing,
+            "ready_count": 6 - len(missing),
+            "total_checks": 6,
+        }
+
+    def _shell_info(self) -> Dict[str, Any]:
+        powershell_runtime = self._command_runtime(
+            ["powershell", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]
+        )
+        pwsh_runtime = self._command_runtime(
+            ["pwsh", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]
+        )
+        return {
+            "comspec": os.environ.get("ComSpec", ""),
+            "current_shell": os.environ.get("SHELL", "") or os.environ.get("ComSpec", ""),
+            "terminal_program": os.environ.get("TERM_PROGRAM", "") or os.environ.get("WT_SESSION", ""),
+            "powershell_available": bool(powershell_runtime.get("available", False)),
+            "powershell_version": str(powershell_runtime.get("version", "") or "").strip(),
+            "pwsh_available": bool(pwsh_runtime.get("available", False)),
+            "pwsh_version": str(pwsh_runtime.get("version", "") or "").strip(),
+        }
 
     def _command_runtime(self, command: List[str]) -> Dict[str, Any]:
         executable = str(command[0] or "").strip() if command else ""

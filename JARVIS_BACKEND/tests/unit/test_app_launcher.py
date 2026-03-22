@@ -135,6 +135,7 @@ def test_app_launcher_resolves_start_menu_shortcut_for_user_installed_app(monkey
     monkeypatch.setattr(shutil, "which", lambda value: None)
     monkeypatch.setattr(launcher, "_load_start_apps", lambda: [])
     monkeypatch.setattr(launcher, "_load_start_menu_shortcuts", lambda: [{"name": "Claude", "path": str(shortcut)}])
+    monkeypatch.setattr(launcher, "_load_running_processes", lambda: [])
     monkeypatch.setattr(launcher, "_load_uninstall_entries", lambda: [])
     monkeypatch.setattr(launcher, "_search_common_paths", lambda exe_name: None)
 
@@ -210,8 +211,10 @@ def test_app_launcher_reuses_launch_memory_and_exposes_it_in_inventory(monkeypat
     monkeypatch.setattr(shutil, "which", lambda value: None)
     monkeypatch.setattr(launcher, "_load_start_apps", lambda: [])
     monkeypatch.setattr(launcher, "_load_start_menu_shortcuts", lambda: [])
+    monkeypatch.setattr(launcher, "_load_startup_shortcuts", lambda: [])
     monkeypatch.setattr(launcher, "_load_uninstall_entries", lambda: [])
     monkeypatch.setattr(launcher, "_load_app_paths_entries", lambda: [])
+    monkeypatch.setattr(launcher, "_load_running_processes", lambda: [])
     monkeypatch.setattr(launcher, "_search_common_paths", lambda exe_name: None)
     monkeypatch.setattr(launcher, "_usage_summary", lambda: [])
 
@@ -237,3 +240,81 @@ def test_app_launcher_reuses_launch_memory_and_exposes_it_in_inventory(monkeypat
     assert inventory["total"] >= 1
     assert "launch_memory" in inventory["items"][0]["sources"]
     assert inventory["items"][0]["path"] == chrome_path
+
+
+def test_app_launcher_prefers_running_process_and_attaches_without_relaunch(monkeypatch, tmp_path: Path) -> None:
+    launcher = AppLauncher(
+        profile_registry=_StubRegistry(
+            {
+                "status": "success",
+                "name": "Visual Studio Code",
+                "canonical_name": "visual studio code",
+                "category": "developer_tool",
+                "aliases": ["visual studio code", "code", "vscode"],
+                "exe_hints": ["code.exe"],
+                "package_ids": ["Microsoft.VisualStudioCode"],
+                "window_title_hints": ["visual studio code", "code"],
+            }
+        )
+    )
+    launcher._memory_store = LocalStore(str(tmp_path / "app_launcher_memory.json"))
+
+    monkeypatch.setattr(launcher, "_query_app_path", lambda exe_name: None)
+    monkeypatch.setattr(shutil, "which", lambda value: None)
+    monkeypatch.setattr(launcher, "_load_start_apps", lambda: [])
+    monkeypatch.setattr(launcher, "_load_start_menu_shortcuts", lambda: [])
+    monkeypatch.setattr(launcher, "_load_uninstall_entries", lambda: [])
+    monkeypatch.setattr(launcher, "_search_common_paths", lambda exe_name: None)
+    monkeypatch.setattr(
+        launcher,
+        "_load_running_processes",
+        lambda: [{"name": "Code", "path": r"C:\Users\thecy\AppData\Local\Programs\Microsoft VS Code\Code.exe"}],
+    )
+
+    target = launcher.resolve_launch_target("code")
+    assert target["status"] == "success"
+    assert target["kind"] == "running_process"
+    assert target["launch_strategy"] == "attach_running_window"
+    assert float(target["launch_confidence"]) >= 0.95
+
+    launched = launcher.launch("code")
+    assert launched["status"] == "success"
+    assert launched["attach_only"] is True
+    assert launched["launch_method"] == "already_running_attach"
+
+
+def test_app_launcher_inventory_includes_startup_entries_and_strategy_metadata(monkeypatch, tmp_path: Path) -> None:
+    launcher = AppLauncher(
+        profile_registry=_StubRegistry(
+            {
+                "status": "success",
+                "name": "Claude",
+                "canonical_name": "claude",
+                "category": "ai_companion",
+                "aliases": ["claude"],
+                "exe_hints": ["claude.exe"],
+                "package_ids": ["Claude"],
+                "window_title_hints": ["claude"],
+            }
+        )
+    )
+    launcher._memory_store = LocalStore(str(tmp_path / "app_launcher_memory.json"))
+
+    startup_shortcut = tmp_path / "Claude Startup.lnk"
+    startup_shortcut.write_text("shortcut", encoding="utf-8")
+
+    monkeypatch.setattr(launcher, "_load_app_paths_entries", lambda: [])
+    monkeypatch.setattr(launcher, "_load_start_apps", lambda: [])
+    monkeypatch.setattr(launcher, "_load_start_menu_shortcuts", lambda: [])
+    monkeypatch.setattr(launcher, "_load_startup_shortcuts", lambda: [{"name": "Claude", "path": str(startup_shortcut)}])
+    monkeypatch.setattr(launcher, "_load_uninstall_entries", lambda: [])
+    monkeypatch.setattr(launcher, "_load_running_processes", lambda: [])
+    monkeypatch.setattr(launcher, "_usage_summary", lambda: [])
+
+    inventory = launcher.inventory_snapshot(query="claude")
+    assert inventory["status"] == "success"
+    assert inventory["startup_entry_count"] == 1
+    assert inventory["count"] == 1
+    assert inventory["items"][0]["startup_entry"] is True
+    assert inventory["items"][0]["launch_strategy"] == "startup_shortcut"
+    assert float(inventory["items"][0]["launch_confidence"]) >= 0.9

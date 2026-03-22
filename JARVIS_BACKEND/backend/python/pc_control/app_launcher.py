@@ -45,6 +45,10 @@ class AppLauncher:
         os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs"),
         os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs"),
     ]
+    STARTUP_DIRS = [
+        os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
+        os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
+    ]
     APP_PATHS_KEYS: Tuple[Tuple[int, str], ...] = (
         (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\App Paths"),
         (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\App Paths"),
@@ -73,6 +77,7 @@ class AppLauncher:
         self._profile_registry = profile_registry or DesktopAppProfileRegistry()
         self._start_apps_cache: Optional[List[Dict[str, str]]] = None
         self._shortcut_cache: Optional[List[Dict[str, str]]] = None
+        self._startup_shortcut_cache: Optional[List[Dict[str, str]]] = None
         self._uninstall_cache: Optional[List[Dict[str, str]]] = None
         self._app_paths_cache: Optional[List[Dict[str, str]]] = None
         self._user_assist_cache: Optional[List[Dict[str, Any]]] = None
@@ -116,6 +121,11 @@ class AppLauncher:
         memory_target = self._resolve_memory_target(requested, profile, candidate_terms)
         if memory_target:
             return memory_target
+
+        running_target = self._resolve_running_process_target(requested, profile, candidate_terms, exe_candidates)
+        if running_target:
+            self._remember_target(requested=requested, profile=profile, target=running_target, candidate_terms=candidate_terms)
+            return running_target
 
         path_target = self._resolve_path_target(requested, profile, candidate_terms, exe_candidates)
         if path_target:
@@ -185,6 +195,13 @@ class AppLauncher:
             result["launch_method"] = str(target.get("resolution", kind) or kind)
             self._remember_launched_target(result)
             return result
+        if kind == "running_process":
+            result = dict(target)
+            result["status"] = "success"
+            result["launch_method"] = "already_running_attach"
+            result["attach_only"] = True
+            self._remember_launched_target(result)
+            return result
         if kind == "apps_folder":
             app_id = str(target.get("app_id", "") or "").strip()
             if not app_id:
@@ -250,6 +267,7 @@ class AppLauncher:
     def invalidate_catalog_cache(self) -> Dict[str, Any]:
         self._start_apps_cache = None
         self._shortcut_cache = None
+        self._startup_shortcut_cache = None
         self._uninstall_cache = None
         self._app_paths_cache = None
         self._user_assist_cache = None
@@ -259,6 +277,7 @@ class AppLauncher:
             "cleared": [
                 "start_apps",
                 "start_menu_shortcuts",
+                "startup_shortcuts",
                 "uninstall_entries",
                 "app_paths",
                 "user_assist",
@@ -319,6 +338,8 @@ class AppLauncher:
             combined["display_name"] = (
                 str(combined.get("display_name", "") or combined.get("name", "") or combined.get("requested_app", "")).strip()
             )
+            combined["launch_strategy"] = self._launch_strategy_name(combined)
+            combined["launch_confidence"] = self._launch_confidence(combined)
             merged[dedupe_key] = combined
 
         for row in self._load_app_paths_entries():
@@ -345,6 +366,18 @@ class AppLauncher:
                     "source": "start_menu_shortcut",
                 }
             )
+        for row in self._load_startup_shortcuts():
+            _merge_row(
+                {
+                    "name": str(row.get("name", "") or "").strip(),
+                    "display_name": str(row.get("name", "") or "").strip(),
+                    "path": str(row.get("path", "") or "").strip(),
+                    "kind": "shortcut",
+                    "resolution": "startup_shortcut",
+                    "source": "startup_shortcut",
+                    "startup_entry": True,
+                }
+            )
         for row in self._load_uninstall_entries():
             _merge_row(
                 {
@@ -362,6 +395,18 @@ class AppLauncher:
             memory_row["source"] = "launch_memory"
             memory_row["resolution"] = str(memory_row.get("resolution", "") or "launch_memory").strip() or "launch_memory"
             _merge_row(memory_row)
+        for row in self._load_running_processes():
+            _merge_row(
+                {
+                    "name": str(row.get("name", "") or "").strip(),
+                    "display_name": str(row.get("name", "") or "").strip(),
+                    "path": str(row.get("path", "") or "").strip(),
+                    "kind": "running_process",
+                    "resolution": "running_process",
+                    "source": "running_process",
+                    "running": True,
+                }
+            )
 
         rows = list(merged.values())
         if clean_query:
@@ -397,6 +442,8 @@ class AppLauncher:
                 for row in rows
                 if bool((row.get("usage", {}) if isinstance(row.get("usage", {}), dict) else {}).get("running", False))
             ),
+            "startup_entry_count": sum(1 for row in rows if bool(row.get("startup_entry", False))),
+            "remembered_target_count": sum(1 for row in rows if "launch_memory" in list(row.get("sources", []))),
             "items": rows[:bounded],
         }
 
@@ -735,6 +782,20 @@ class AppLauncher:
         self._shortcut_cache = rows
         return list(self._shortcut_cache)
 
+    def _load_startup_shortcuts(self) -> List[Dict[str, str]]:
+        if self._startup_shortcut_cache is not None:
+            return list(self._startup_shortcut_cache)
+        rows: List[Dict[str, str]] = []
+        for base in self.STARTUP_DIRS:
+            path_obj = Path(base)
+            if not path_obj.exists():
+                continue
+            for pattern in ("*.lnk", "*.url", "*.appref-ms"):
+                for item in path_obj.rglob(pattern):
+                    rows.append({"name": item.stem, "path": str(item)})
+        self._startup_shortcut_cache = rows
+        return list(self._startup_shortcut_cache)
+
     def _load_uninstall_entries(self) -> List[Dict[str, str]]:
         if self._uninstall_cache is not None:
             return list(self._uninstall_cache)
@@ -904,6 +965,46 @@ class AppLauncher:
             payload["profile"] = self._profile_summary(profile)
             return payload
         return None
+
+    def _resolve_running_process_target(
+        self,
+        requested: str,
+        profile: Dict[str, Any],
+        candidate_terms: Sequence[str],
+        exe_candidates: Sequence[str],
+    ) -> Optional[Dict[str, Any]]:
+        best_entry: Dict[str, Any] = {}
+        best_score = 0.0
+        best_term = ""
+        exe_set = {self._normalize_text(value) for value in exe_candidates if str(value).strip()}
+        for entry in self._load_running_processes():
+            score, term = self._score_named_entry(
+                candidate_terms,
+                str(entry.get("name", "") or "").strip(),
+                str(entry.get("path", "") or "").strip(),
+            )
+            path_name = self._normalize_text(Path(str(entry.get("path", "") or "")).name)
+            if exe_set and path_name in exe_set:
+                score += 0.08
+            if score <= best_score:
+                continue
+            best_score = score
+            best_term = term
+            best_entry = dict(entry)
+        if not best_entry or best_score < 0.84:
+            return None
+        return self._target_payload(
+            kind="running_process",
+            requested_app=requested,
+            path=str(best_entry.get("path", "") or "").strip(),
+            display_name=str(best_entry.get("name", "") or "").strip(),
+            resolution="running_process",
+            profile=profile,
+            matched_term=best_term,
+            match_score=round(best_score, 6),
+            running=True,
+            attach_only=True,
+        )
 
     def _usage_summary(self) -> List[Dict[str, Any]]:
         launch_rows = self._launch_memory_rows()
@@ -1160,11 +1261,56 @@ class AppLauncher:
         kind = str(target.get("kind", "") or "").strip().lower()
         if kind in {"path", "shortcut"}:
             return bool(str(target.get("path", "") or "").strip()) and Path(str(target.get("path", "") or "").strip()).exists()
+        if kind == "running_process":
+            return bool(str(target.get("path", "") or "").strip()) or bool(str(target.get("display_name", "") or "").strip())
         if kind == "apps_folder":
             return bool(str(target.get("app_id", "") or "").strip())
         if kind == "shell_uri":
             return bool(str(target.get("uri", "") or "").strip())
         return False
+
+    @staticmethod
+    def _launch_strategy_name(row: Dict[str, Any]) -> str:
+        kind = str(row.get("kind", "") or "").strip().lower()
+        resolution = str(row.get("resolution", "") or "").strip().lower()
+        if kind == "running_process" or resolution == "running_process":
+            return "attach_running_window"
+        if resolution == "launch_memory":
+            return "remembered_launch"
+        if resolution == "startup_shortcut":
+            return "startup_shortcut"
+        if resolution == "start_menu_shortcut":
+            return "start_menu_shortcut"
+        if kind == "apps_folder":
+            return "apps_folder"
+        if kind == "shell_uri":
+            return "shell_uri"
+        if kind == "shortcut":
+            return "shortcut_launch"
+        if resolution == "app_paths_registry":
+            return "registry_launch"
+        if resolution == "uninstall_registry":
+            return "install_location_launch"
+        return "direct_path_launch" if kind == "path" else "unknown"
+
+    @staticmethod
+    def _launch_confidence(row: Dict[str, Any]) -> float:
+        resolution = str(row.get("resolution", "") or "").strip().lower()
+        if resolution == "launch_memory":
+            return 0.98
+        if resolution == "running_process":
+            return 0.96
+        if resolution == "app_paths_registry":
+            return 0.95
+        if resolution in {"start_menu_shortcut", "startup_shortcut"}:
+            return 0.9
+        if resolution == "uninstall_registry":
+            return 0.84
+        if resolution == "common_path_scan":
+            return 0.76
+        if resolution == "known_shell_uri":
+            return 0.88
+        return 0.8
 
     def _inventory_key(self, row: Dict[str, Any]) -> str:
         path = str(row.get("path", "") or "").strip()
@@ -1201,6 +1347,8 @@ class AppLauncher:
             "profile": AppLauncher._profile_summary(profile),
         }
         payload.update(extra)
+        payload.setdefault("launch_strategy", AppLauncher._launch_strategy_name(payload))
+        payload.setdefault("launch_confidence", AppLauncher._launch_confidence(payload))
         return payload
 
     @staticmethod

@@ -108,6 +108,7 @@ import {
   type DesktopMissionRecord,
   type DesktopMissionSnapshotResponse,
   type DesktopMachineAppLearningPlanResponse,
+  type DesktopMachineAppControlPrepareResponse,
   type DesktopMachineOnboardingHistoryResponse,
   type DesktopMachineOnboardingLaunchResponse,
   type DesktopMachineOnboardingPlanResponse,
@@ -1198,6 +1199,8 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
     useState<DesktopMachineOnboardingPlanResponse | null>(null);
   const [desktopMachineOnboardingLaunchState, setDesktopMachineOnboardingLaunchState] =
     useState<DesktopMachineOnboardingLaunchResponse | null>(null);
+  const [desktopMachinePrepareState, setDesktopMachinePrepareState] =
+    useState<DesktopMachineAppControlPrepareResponse | null>(null);
   const [desktopMachineOnboardingHistoryState, setDesktopMachineOnboardingHistoryState] =
     useState<DesktopMachineOnboardingHistoryResponse | null>(null);
   const [desktopAppLauncherInventoryState, setDesktopAppLauncherInventoryState] =
@@ -1212,6 +1215,7 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopMachineAppLearningPlanBusy, setDesktopMachineAppLearningPlanBusy] = useState(false);
   const [desktopMachineOnboardingPlanBusy, setDesktopMachineOnboardingPlanBusy] = useState(false);
   const [desktopMachineOnboardingLaunchBusy, setDesktopMachineOnboardingLaunchBusy] = useState(false);
+  const [desktopMachinePrepareBusy, setDesktopMachinePrepareBusy] = useState(false);
   const [desktopMachineOnboardingHistoryBusy, setDesktopMachineOnboardingHistoryBusy] = useState(false);
   const [desktopAppLauncherInventoryBusy, setDesktopAppLauncherInventoryBusy] = useState(false);
   const [desktopAppLauncherMemoryBusy, setDesktopAppLauncherMemoryBusy] = useState(false);
@@ -2481,9 +2485,28 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineProfile.readiness),
     [desktopMachineProfile]
   );
+  const desktopMachineChangeDetection = useMemo(
+    () => asObjectRecord(desktopMachineProfile.change_detection),
+    [desktopMachineProfile]
+  );
+  const desktopMachineChangeAreas = useMemo(
+    () =>
+      Array.isArray(desktopMachineChangeDetection.areas)
+        ? desktopMachineChangeDetection.areas.map((item) => String(item))
+        : [],
+    [desktopMachineChangeDetection]
+  );
   const desktopMachineOnboardingPlan = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlanState),
     [desktopMachineOnboardingPlanState]
+  );
+  const desktopMachinePrepare = useMemo(
+    () => asObjectRecord(desktopMachinePrepareState),
+    [desktopMachinePrepareState]
+  );
+  const desktopMachinePrepareSummary = useMemo(
+    () => asObjectRecord(desktopMachinePrepare.summary),
+    [desktopMachinePrepare]
   );
   const desktopMachineOnboardingSummary = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlan.summary),
@@ -14082,6 +14105,94 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }
   }, [desktopCoworkerQuery, desktopMachineEffectiveAppQuery, refreshDesktopAppLauncherMemory, toast]);
 
+  const prepareDesktopMachineAppTarget = useCallback(async () => {
+    const appName = desktopMachineEffectiveAppQuery || desktopCoworkerQuery.trim();
+    if (!appName) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing App Target',
+        description: 'Provide an app name in the desktop app field before asking JARVIS to prepare control memory for it.',
+      });
+      return null;
+    }
+    setDesktopMachinePrepareBusy(true);
+    try {
+      const payload = await backendClient.prepareDesktopMachineAppControl({
+        task: desktopMachineEffectiveTask || undefined,
+        app_name: appName,
+        app_category: desktopMachineCategoryFilter.trim() || undefined,
+        app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+        model_limit: 48,
+        refresh_apps: true,
+        ensure_app_launch: true,
+        survey_query: desktopCoworkerQuery.trim() || desktopMachineEffectiveTask || 'settings',
+        survey_limit: 28,
+        probe_controls: true,
+        max_probe_controls: 4,
+        follow_surface_waves: true,
+        max_surface_waves: 5,
+        allow_risky_probes: false,
+        revalidate_known_controls: true,
+        prefer_failure_memory: true,
+        source: 'operator_panel',
+      });
+      setDesktopMachinePrepareState(payload);
+      if (isObjectRecord(payload.profile)) {
+        setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+      }
+      if (isObjectRecord(payload.plan)) {
+        setDesktopMachineAppLearningPlanState(payload.plan as DesktopMachineAppLearningPlanResponse);
+      }
+      if (isObjectRecord(payload.resolved_target)) {
+        setDesktopAppLauncherResolveState(payload.resolved_target as DesktopAppLauncherResolveResponse);
+      }
+      if (isObjectRecord(payload.launch)) {
+        setDesktopAppLauncherLaunchState(payload.launch as DesktopAppLauncherLaunchResponse);
+      }
+      if (isObjectRecord(payload.launch_memory)) {
+        setDesktopAppLauncherMemoryState(payload.launch_memory as DesktopAppLauncherInventoryResponse);
+      } else {
+        void refreshDesktopAppLauncherMemory({ quiet: true });
+      }
+      if (isObjectRecord(payload.app_memory)) {
+        setDesktopAppMemoryState(payload.app_memory as DesktopAppMemoryResponse);
+      } else {
+        void backendClient
+          .desktopAppMemory({
+            app_name: appName,
+            limit: 24,
+          })
+          .then((response) => {
+            setDesktopAppMemoryState(response);
+          })
+          .catch(() => undefined);
+      }
+      toast({
+        title: 'App Control Prepared',
+        description:
+          String(payload.message ?? '').trim() ||
+          `${String(payload.effective_app_name ?? appName)} is now resolved, attached or launched, and surveyed with the current machine-guided strategy.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Control Preparation Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMachinePrepareBusy(false);
+    }
+  }, [
+    desktopCoworkerQuery,
+    desktopMachineCategoryFilter,
+    desktopMachineEffectiveAppQuery,
+    desktopMachineEffectiveTask,
+    refreshDesktopAppLauncherMemory,
+    toast,
+  ]);
+
   const createDesktopMachineLearningCampaign = useCallback(async () => {
     setDesktopMachineAppLearningPlanBusy(true);
     try {
@@ -20278,6 +20389,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             launchers:{Number(desktopAppLauncherInventoryState.count ?? 0)}
                                           </Badge>
                                         ) : null}
+                                        {desktopMachinePrepareState ? (
+                                          <Badge variant="outline">
+                                            prepared:{String(desktopMachinePrepareState.status ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
                                         {desktopMachineOnboardingLaunchState ? (
                                           <Badge variant="secondary">
                                             last run:{String(desktopMachineOnboardingLaunchState.status ?? 'ready')}
@@ -20483,17 +20599,30 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         )}
                                         Launch App
                                       </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void prepareDesktopMachineAppTarget()}
+                                        disabled={desktopMachinePrepareBusy}
+                                      >
+                                        {desktopMachinePrepareBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="h-4 w-4" />
+                                        )}
+                                        Prepare App
+                                      </Button>
                                     </div>
-                                    <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                                    <div className="mt-3 grid gap-3 xl:grid-cols-4">
                                       <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
                                         <p className="font-semibold uppercase tracking-wider text-primary/80">Machine Snapshot</p>
                                         <p className="mt-2">
                                           apps:{Number(desktopMachineApplications.inventory_count ?? 0)}
-                                          {' • '}frequent:{Number(desktopMachineApplications.frequent_count ?? 0)}
+                                          {' • '}ready:{Number(desktopMachineApplications.path_ready_count ?? 0)}
                                           {' • '}running:{Number(desktopMachineApplications.running_count ?? 0)}
                                         </p>
                                         <p className="mt-1">
-                                          providers:{Number(asObjectRecord(desktopMachineProviders.snapshot).provider_count ?? 0)}
+                                          providers:{Number(asObjectRecord(desktopMachineProviders.summary).provider_count ?? 0)}
                                           {' • '}verified:{Number(asObjectRecord(desktopMachineProviders.summary).verified_count ?? 0)}
                                           {' • '}invalid:{Number(asObjectRecord(desktopMachineProviders.summary).invalid_count ?? 0)}
                                         </p>
@@ -20502,6 +20631,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}recommended:{Array.isArray(desktopMachineModels.recommended_models) ? desktopMachineModels.recommended_models.length : 0}
                                           {' • '}ready:{String(desktopMachineReadiness.overall_status ?? 'unknown')}
                                         </p>
+                                        <p className="mt-1">
+                                          remembered launches:{Number(desktopMachineApplications.remembered_target_count ?? 0)}
+                                          {' • '}revalidate:{String(Boolean(desktopMachineChangeDetection.requires_revalidation))}
+                                        </p>
                                         {Array.isArray(desktopMachineProfile.recommendations) && desktopMachineProfile.recommendations.length > 0 ? (
                                           <p className="mt-1">
                                             recommendations:{' '}
@@ -20509,6 +20642,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .slice(0, 3)
                                               .map((item) => String(asObjectRecord(item).title ?? asObjectRecord(item).message ?? 'action'))
                                               .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineChangeAreas.length > 0 ? (
+                                          <p className="mt-1">
+                                            changed:{' '}
+                                            {desktopMachineChangeAreas.slice(0, 4).join(' • ')}
                                           </p>
                                         ) : null}
                                         <p className="mt-1">
@@ -20560,6 +20699,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}ready:{Number(desktopAppLauncherInventory.path_ready_count ?? 0)}
                                           {' • '}memory:{Number(desktopAppLauncherMemory.count ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          startup:{Number(desktopAppLauncherInventory.startup_entry_count ?? 0)}
+                                          {' • '}remembered:{Number(desktopAppLauncherInventory.remembered_target_count ?? 0)}
+                                          {' • '}running:{Number(desktopAppLauncherInventory.running_count ?? 0)}
+                                        </p>
                                         {desktopAppLauncherInventoryRows.length > 0 ? (
                                           <p className="mt-1">
                                             apps:{' '}
@@ -20591,6 +20735,33 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}method:{String(desktopAppLauncherLaunchState.launch_method ?? desktopAppLauncherLaunchState.resolution ?? 'n/a')}
                                           </p>
                                         ) : null}
+                                      </div>
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Prepared Control</p>
+                                        <p className="mt-2">
+                                          app:{String(desktopMachinePrepare.effective_app_name ?? desktopMachinePrepare.requested_app ?? 'n/a')}
+                                          {' • '}launch:{String(desktopMachinePrepareSummary.launch_method ?? 'n/a')}
+                                        </p>
+                                        <p className="mt-1">
+                                          controls:{Number(desktopMachinePrepareSummary.discovered_control_count ?? 0)}
+                                          {' • '}surfaces:{Number(desktopMachinePrepareSummary.known_surface_count ?? 0)}
+                                          {' • '}waves:{Number(desktopMachinePrepareSummary.wave_attempt_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
+                                          probes:{Number(desktopMachinePrepareSummary.probe_success_count ?? 0)}
+                                          {' / '}
+                                          {Number(desktopMachinePrepareSummary.probe_attempt_count ?? 0)}
+                                          {' • '}memory:{Number(desktopMachinePrepareSummary.memory_record_count ?? 0)}
+                                        </p>
+                                        {desktopMachinePrepareState ? (
+                                          <p className="mt-1 text-primary/80">
+                                            {String(desktopMachinePrepare.message ?? desktopMachinePrepare.status ?? 'n/a')}
+                                          </p>
+                                        ) : (
+                                          <p className="mt-1">
+                                            Prepare App resolves the target, launches or attaches, and runs a machine-guided safe survey to deepen app memory automatically.
+                                          </p>
+                                        )}
                                       </div>
                                     </div>
                                     {desktopMachineOnboardingHistoryRows.length > 0 ? (

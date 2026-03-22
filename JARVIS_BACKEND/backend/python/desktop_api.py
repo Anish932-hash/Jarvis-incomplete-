@@ -8783,8 +8783,280 @@ class DesktopBackendService:
                     campaign_id=campaign_id,
                     max_apps=int(max_apps or campaign_defaults.get("max_apps", 4) or 4),
                     source=source,
-                )
+        )
         return _to_jsonable(result)
+
+    def _desktop_machine_select_learning_target(
+        self,
+        *,
+        plan: Dict[str, Any],
+        requested_app_name: str,
+        resolved_target: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        targets = plan.get("targets", []) if isinstance(plan.get("targets", []), list) else []
+        if not targets:
+            return {}
+        resolved_profile = (
+            (resolved_target or {}).get("profile", {})
+            if isinstance((resolved_target or {}).get("profile", {}), dict)
+            else {}
+        )
+        requested_names = self._machine_dedupe(
+            [
+                requested_app_name,
+                str((resolved_target or {}).get("requested_app", "") or "").strip(),
+                str((resolved_target or {}).get("display_name", "") or "").strip(),
+                str((resolved_target or {}).get("canonical_name", "") or "").strip(),
+                str(resolved_profile.get("name", "") or "").strip(),
+                str(resolved_profile.get("canonical_name", "") or "").strip(),
+            ]
+        )
+        normalized_requests = {self._machine_text(item) for item in requested_names if self._machine_text(item)}
+        if normalized_requests:
+            for row in targets:
+                if not isinstance(row, dict):
+                    continue
+                app_name = self._machine_text(row.get("app_name", ""))
+                if app_name and app_name in normalized_requests:
+                    return dict(row)
+            for row in targets:
+                if not isinstance(row, dict):
+                    continue
+                app_name = self._machine_text(row.get("app_name", ""))
+                if app_name and any(app_name in value or value in app_name for value in normalized_requests if value):
+                    return dict(row)
+        first_row = next((dict(row) for row in targets if isinstance(row, dict)), {})
+        return first_row
+
+    @staticmethod
+    def _desktop_machine_prepare_summary(
+        *,
+        effective_app_name: str,
+        selected_target: Dict[str, Any],
+        resolved: Dict[str, Any],
+        launched: Dict[str, Any],
+        survey: Dict[str, Any],
+        memory_snapshot: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        memory_entry = survey.get("memory_entry", {}) if isinstance(survey.get("memory_entry", {}), dict) else {}
+        metrics = memory_entry.get("metrics", {}) if isinstance(memory_entry.get("metrics", {}), dict) else {}
+        probe_report = survey.get("probe_report", {}) if isinstance(survey.get("probe_report", {}), dict) else {}
+        return {
+            "app_name": effective_app_name,
+            "launch_resolution": str(resolved.get("resolution", "") or resolved.get("kind", "") or "").strip(),
+            "launch_method": str(launched.get("launch_method", "") or launched.get("resolution", "") or "").strip(),
+            "attach_only": bool(launched.get("attach_only", False)),
+            "path_ready": bool(resolved.get("path") or resolved.get("app_id") or resolved.get("uri")),
+            "survey_status": str(survey.get("status", "") or "").strip().lower(),
+            "survey_query": str(survey.get("query", "") or "").strip(),
+            "recommended_max_surface_waves": int(
+                selected_target.get("recommended_max_surface_waves", 0) or 0
+            ),
+            "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
+            "known_surface_count": int(memory_entry.get("known_surface_count", 0) or metrics.get("known_surface_count", 0) or 0),
+            "wave_attempt_count": int(metrics.get("wave_attempt_count", 0) or 0),
+            "probe_attempt_count": int(probe_report.get("attempted_count", 0) or 0),
+            "probe_success_count": int(probe_report.get("successful_count", 0) or 0),
+            "memory_record_count": int(memory_snapshot.get("count", 0) or memory_snapshot.get("total", 0) or 0),
+        }
+
+    def desktop_machine_prepare_app_control(
+        self,
+        *,
+        task: str = "",
+        app_name: str = "",
+        app_query: str = "",
+        query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 160,
+        refresh_apps: bool = False,
+        ensure_app_launch: bool = True,
+        survey_limit: int = 28,
+        include_observation: bool = True,
+        include_elements: bool = True,
+        include_workflow_probes: bool = True,
+        include_exploration: bool = True,
+        probe_controls: bool = True,
+        max_probe_controls: int = 4,
+        follow_surface_waves: bool = True,
+        max_surface_waves: Optional[int] = None,
+        allow_risky_probes: bool = False,
+        revalidate_known_controls: bool = True,
+        prefer_failure_memory: bool = True,
+        source: str = "machine_prepare",
+    ) -> Dict[str, Any]:
+        requested_app_name = str(app_name or app_query or "").strip()
+        if not requested_app_name:
+            return {"status": "error", "message": "app_name is required"}
+        clean_task = str(task or "").strip().lower()
+        clean_category = str(app_category or "").strip()
+        clean_query = str(query or "").strip()
+        profile = self.desktop_machine_profile(
+            task=clean_task,
+            app_query=requested_app_name,
+            app_category=clean_category,
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=False,
+            verify_providers=False,
+            source=f"{source}_profile",
+        )
+        if not isinstance(profile, dict) or profile.get("status") != "success":
+            return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine profile"}
+        plan_payload = self.desktop_machine_app_learning_plan(
+            task=clean_task,
+            app_query=requested_app_name,
+            app_category=clean_category,
+            app_limit=app_limit,
+            refresh_apps=False,
+            max_targets=8,
+        )
+        if not isinstance(plan_payload, dict) or plan_payload.get("status") != "success":
+            return plan_payload if isinstance(plan_payload, dict) else {"status": "error", "message": "unable to build machine app learning plan"}
+        plan = plan_payload.get("plan", {}) if isinstance(plan_payload.get("plan", {}), dict) else {}
+        campaign_defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+
+        resolved = self.desktop_app_launcher_resolve(app_name=requested_app_name)
+        if not isinstance(resolved, dict) or resolved.get("status") != "success":
+            return {
+                "status": "error",
+                "message": str((resolved or {}).get("message", "") or "Unable to resolve app launch target.").strip(),
+                "requested_app": requested_app_name,
+                "profile": profile,
+                "plan": plan_payload,
+                "resolved_target": resolved if isinstance(resolved, dict) else {},
+            }
+
+        selected_target = self._desktop_machine_select_learning_target(
+            plan=plan,
+            requested_app_name=requested_app_name,
+            resolved_target=resolved,
+        )
+        effective_app_name = str(
+            selected_target.get("app_name", "")
+            or resolved.get("display_name", "")
+            or resolved.get("requested_app", "")
+            or requested_app_name
+        ).strip()
+        if not effective_app_name:
+            effective_app_name = requested_app_name
+
+        launch_result: Dict[str, Any]
+        if ensure_app_launch:
+            launch_result = self.desktop_app_launcher_launch(app_name=effective_app_name)
+        else:
+            launch_result = {
+                "status": "skipped",
+                "requested_app": effective_app_name,
+                "message": "Launch step skipped by caller.",
+            }
+
+        target_container_roles = [
+            str(item).strip()
+            for item in (
+                selected_target.get("target_container_roles", [])
+                if isinstance(selected_target.get("target_container_roles", []), list)
+                else campaign_defaults.get("target_container_roles", [])
+            )
+            if str(item).strip()
+        ]
+        preferred_wave_actions = [
+            str(item).strip()
+            for item in (
+                selected_target.get("preferred_wave_actions", [])
+                if isinstance(selected_target.get("preferred_wave_actions", []), list)
+                else campaign_defaults.get("preferred_wave_actions", [])
+            )
+            if str(item).strip()
+        ]
+        preferred_traversal_paths = [
+            str(item).strip()
+            for item in (
+                selected_target.get("preferred_traversal_paths", [])
+                if isinstance(selected_target.get("preferred_traversal_paths", []), list)
+                else campaign_defaults.get("preferred_traversal_paths", [])
+            )
+            if str(item).strip()
+        ]
+        recommended_queries = [
+            str(item).strip()
+            for item in (
+                selected_target.get("recommended_queries", [])
+                if isinstance(selected_target.get("recommended_queries", []), list)
+                else campaign_defaults.get("recommended_queries", [])
+            )
+            if str(item).strip()
+        ]
+        effective_query = clean_query or (recommended_queries[0] if recommended_queries else "")
+        survey_result = self.survey_desktop_app_memory(
+            app_name=effective_app_name,
+            query=effective_query,
+            limit=max(4, min(int(survey_limit or 28), 80)),
+            ensure_app_launch=ensure_app_launch,
+            include_observation=include_observation,
+            include_elements=include_elements,
+            include_workflow_probes=include_workflow_probes,
+            include_exploration=include_exploration,
+            probe_controls=probe_controls,
+            max_probe_controls=max(1, min(int(max_probe_controls or 4), 12)),
+            follow_surface_waves=follow_surface_waves,
+            max_surface_waves=max(
+                1,
+                min(
+                    int(
+                        max_surface_waves
+                        if max_surface_waves is not None
+                        else selected_target.get(
+                            "recommended_max_surface_waves",
+                            campaign_defaults.get("max_surface_waves", 3),
+                        )
+                    ),
+                    8,
+                ),
+            ),
+            allow_risky_probes=allow_risky_probes,
+            include_ocr_targets=True,
+            target_container_roles=target_container_roles or None,
+            preferred_wave_actions=preferred_wave_actions or None,
+            preferred_traversal_paths=preferred_traversal_paths or None,
+            revalidate_known_controls=revalidate_known_controls,
+            prefer_failure_memory=prefer_failure_memory,
+        )
+        memory_snapshot = self.desktop_app_memory_status(app_name=effective_app_name, limit=24)
+        launch_memory = self.desktop_app_launcher_memory(query=effective_app_name, limit=12)
+        summary = self._desktop_machine_prepare_summary(
+            effective_app_name=effective_app_name,
+            selected_target=selected_target,
+            resolved=resolved if isinstance(resolved, dict) else {},
+            launched=launch_result if isinstance(launch_result, dict) else {},
+            survey=survey_result if isinstance(survey_result, dict) else {},
+            memory_snapshot=memory_snapshot if isinstance(memory_snapshot, dict) else {},
+        )
+        overall_status = "success"
+        if isinstance(survey_result, dict) and survey_result.get("status") == "error":
+            overall_status = "partial" if isinstance(launch_result, dict) and str(launch_result.get("status", "")).strip().lower() == "success" else "error"
+        elif isinstance(launch_result, dict) and str(launch_result.get("status", "")).strip().lower() == "error":
+            overall_status = "partial"
+        return _to_jsonable(
+            {
+                "status": overall_status,
+                "requested_app": requested_app_name,
+                "effective_app_name": effective_app_name,
+                "task": clean_task,
+                "profile": profile,
+                "plan": plan_payload,
+                "selected_target": selected_target,
+                "resolved_target": resolved,
+                "launch": launch_result,
+                "survey": survey_result,
+                "app_memory": memory_snapshot,
+                "launch_memory": launch_memory,
+                "summary": summary,
+                "message": "Prepared the app for control by resolving, launching or attaching, and running a safe machine-guided survey.",
+            }
+        )
 
     def _desktop_machine_onboarding_provider_actions(
         self,
@@ -47385,6 +47657,37 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     source=str(body.get("source", "machine_profile") or "machine_profile").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/app-control-prepare":
+                payload = self.server.service.desktop_machine_prepare_app_control(
+                    task=str(body.get("task", "") or "").strip(),
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                    app_query=str(body.get("app_query", body.get("query", "")) or "").strip(),
+                    query=str(body.get("survey_query", body.get("query", "")) or "").strip(),
+                    app_category=str(body.get("app_category", body.get("category", "")) or "").strip(),
+                    app_limit=self._parse_int(body.get("app_limit", 320), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(body.get("model_limit", 160), 160, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(body.get("refresh_apps", False), default=False),
+                    ensure_app_launch=self._parse_bool(body.get("ensure_app_launch", True), default=True),
+                    survey_limit=self._parse_int(body.get("survey_limit", 28), 28, minimum=4, maximum=80),
+                    include_observation=self._parse_bool(body.get("include_observation", True), default=True),
+                    include_elements=self._parse_bool(body.get("include_elements", True), default=True),
+                    include_workflow_probes=self._parse_bool(body.get("include_workflow_probes", True), default=True),
+                    include_exploration=self._parse_bool(body.get("include_exploration", True), default=True),
+                    probe_controls=self._parse_bool(body.get("probe_controls", True), default=True),
+                    max_probe_controls=self._parse_int(body.get("max_probe_controls", 4), 4, minimum=1, maximum=12),
+                    follow_surface_waves=self._parse_bool(body.get("follow_surface_waves", True), default=True),
+                    max_surface_waves=(
+                        self._parse_int(body.get("max_surface_waves", 3), 3, minimum=1, maximum=8)
+                        if "max_surface_waves" in body
+                        else None
+                    ),
+                    allow_risky_probes=self._parse_bool(body.get("allow_risky_probes", False), default=False),
+                    revalidate_known_controls=self._parse_bool(body.get("revalidate_known_controls", True), default=True),
+                    prefer_failure_memory=self._parse_bool(body.get("prefer_failure_memory", True), default=True),
+                    source=str(body.get("source", "machine_prepare") or "machine_prepare").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
             if path == "/runtime/desktop-app-launcher/resolve":
                 payload = self.server.service.desktop_app_launcher_resolve(
