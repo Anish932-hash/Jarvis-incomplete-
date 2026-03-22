@@ -13542,6 +13542,55 @@ class FakeDesktopService:
                     "needs_huggingface": True,
                 },
                 "preflight": {"status": "success", "summary": {"launchable_count": 1}},
+                "mission": {
+                    "status": "success",
+                    "actions": [
+                        {
+                            "id": "verify_provider:huggingface",
+                            "kind": "verify_provider_credentials",
+                            "title": "Verify Hugging Face repository access",
+                            "status": "ready",
+                            "auto_runnable": True,
+                            "provider": "huggingface",
+                            "recommended_next_action": "verify_provider_credentials",
+                        }
+                    ],
+                },
+                "execution_plan": {
+                    "status": "success",
+                    "selected_action_ids": ["verify_provider:huggingface"],
+                    "selected_action_count": 1,
+                    "auto_ready_count": 1,
+                    "manual_followup_count": 0,
+                    "blocked_followup_count": 0,
+                    "deferred_count": 0,
+                    "resume_ready": False,
+                    "can_auto_resume_now": False,
+                    "continue_followup_actions_recommended": True,
+                    "resume_trigger": "",
+                    "resume_hint": "",
+                    "resume_blockers": [],
+                    "next_action": {
+                        "id": "verify_provider:huggingface",
+                        "kind": "verify_provider_credentials",
+                        "status": "ready",
+                        "title": "Verify Hugging Face repository access",
+                    },
+                },
+            },
+            "profile_setup_actions": [
+                {
+                    "setup_action_code": "configure_huggingface_token",
+                    "code": "configure_huggingface_token",
+                    "title": "Configure Hugging Face token",
+                    "severity": "high",
+                    "status": "attention",
+                }
+            ],
+            "profile_setup_action_summary": {
+                "count": 1,
+                "severity_counts": {"high": 1},
+                "top_codes": {"configure_huggingface_token": 1},
             },
             "launch_seed_plan": {
                 "status": "success",
@@ -13564,6 +13613,8 @@ class FakeDesktopService:
                         "auto_prepare_allowed": True,
                         "prepare_priority_band": "high",
                         "blocker_codes": [],
+                        "related_setup_action_codes": [],
+                        "related_setup_action_count": 0,
                     },
                     {
                         "app_name": "Visual Studio Code",
@@ -13574,6 +13625,8 @@ class FakeDesktopService:
                         "auto_prepare_allowed": True,
                         "prepare_priority_band": "medium",
                         "blocker_codes": ["provider_missing_huggingface"],
+                        "related_setup_action_codes": ["configure_huggingface_token"],
+                        "related_setup_action_count": 1,
                     },
                 ],
                 "summary": {
@@ -13582,6 +13635,7 @@ class FakeDesktopService:
                     "degraded_count": 1,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
                     "top_blocker_codes": {"provider_missing_huggingface": 1},
+                    "related_setup_action_code_counts": {"configure_huggingface_token": 1},
                 },
                 "defaults": {
                     "auto_prepare_app_controls": True,
@@ -13596,9 +13650,134 @@ class FakeDesktopService:
                 refresh_apps=refresh_apps,
                 max_targets=max_targets,
             ),
+            "task_preference_plan": {
+                "status": "success",
+                "count": 1,
+                "source": "recommended",
+                "items": [
+                    {
+                        "task": "reasoning",
+                        "provider": "local",
+                        "model_name": "qwen3-14b",
+                        "execution_backend": "llama_cpp",
+                    }
+                ],
+            },
+            "execution_queue": [
+                {
+                    "id": "provider:huggingface",
+                    "stage": "provider",
+                    "kind": "configure_provider_credentials",
+                    "status": "manual_input_required",
+                    "title": "Configure huggingface credentials",
+                    "provider": "huggingface",
+                    "auto_runnable": False,
+                    "required": True,
+                },
+                {
+                    "id": "task_preference:reasoning",
+                    "stage": "task_preferences",
+                    "kind": "apply_task_preference",
+                    "status": "ready",
+                    "title": "Apply reasoning task preference",
+                    "task": "reasoning",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+                {
+                    "id": "model:reasoning-qwen3.5-9b",
+                    "stage": "model",
+                    "kind": "install_model_item",
+                    "status": "ready",
+                    "title": "Install model reasoning-qwen3.5-9b",
+                    "item_key": "reasoning-qwen3.5-9b",
+                    "auto_runnable": True,
+                    "required": True,
+                },
+                {
+                    "id": "setup_action:verify_provider:huggingface",
+                    "stage": "setup_action",
+                    "kind": "verify_provider_credentials",
+                    "status": "ready",
+                    "title": "Verify Hugging Face repository access",
+                    "provider": "huggingface",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "verify_provider:huggingface",
+                },
+                {
+                    "id": "launch_seed:google chrome",
+                    "stage": "launch_seed",
+                    "kind": "seed_launch_memory",
+                    "status": "ready",
+                    "title": "Seed launcher memory for Google Chrome",
+                    "app_name": "Google Chrome",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+                {
+                    "id": "app_prepare:visual studio code",
+                    "stage": "app_prepare",
+                    "kind": "prepare_app_control",
+                    "status": "attention",
+                    "title": "Prepare Visual Studio Code for control",
+                    "app_name": "Visual Studio Code",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+            ],
+            "execution_queue_summary": {
+                "count": 6,
+                "auto_runnable_count": 5,
+                "ready_count": 4,
+                "success_count": 0,
+                "manual_count": 2,
+                "blocked_count": 0,
+                "error_count": 0,
+                "setup_action_count": 1,
+                "setup_action_auto_runnable_count": 1,
+                "setup_action_success_count": 0,
+                "setup_action_manual_count": 0,
+                "setup_action_blocked_count": 0,
+                "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                "stage_counts": {
+                    "app_prepare": 1,
+                    "launch_seed": 1,
+                    "model": 1,
+                    "provider": 1,
+                    "setup_action": 1,
+                    "task_preferences": 1,
+                },
+            },
+            "next_actions": [
+                {
+                    "id": "provider:huggingface",
+                    "stage": "provider",
+                    "kind": "configure_provider_credentials",
+                    "status": "manual_input_required",
+                    "title": "Configure huggingface credentials",
+                    "target": "huggingface",
+                },
+                {
+                    "id": "model:reasoning-qwen3.5-9b",
+                    "stage": "model",
+                    "kind": "install_model_item",
+                    "status": "ready",
+                    "title": "Install model reasoning-qwen3.5-9b",
+                    "target": "reasoning-qwen3.5-9b",
+                },
+            ],
             "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
             "summary": {
+                "profile_setup_action_count": 1,
+                "task_preference_count": 1,
                 "selected_model_count": 1,
+                "setup_execution_selected_action_count": 1,
+                "setup_execution_auto_ready_count": 1,
+                "setup_execution_manual_followup_count": 0,
+                "setup_execution_blocked_followup_count": 0,
+                "setup_execution_resume_ready": False,
+                "setup_execution_continue_recommended": True,
                 "launch_seed_count": 2,
                 "app_learning_target_count": 2,
                 "app_learning_auto_target_count": 2,
@@ -13609,6 +13788,18 @@ class FakeDesktopService:
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
                 "app_control_prepare_degraded_count": 1,
+                "execution_action_count": 6,
+                "execution_auto_runnable_count": 5,
+                "execution_ready_count": 4,
+                "execution_manual_count": 2,
+                "execution_blocked_count": 0,
+                "execution_error_count": 0,
+                "setup_action_count": 1,
+                "setup_action_auto_runnable_count": 1,
+                "setup_action_success_count": 0,
+                "setup_action_manual_count": 0,
+                "setup_action_blocked_count": 0,
+                "top_setup_action_codes": {"verify_provider:huggingface": 1},
             },
             "message": "Built onboarding plan.",
         }
@@ -13637,12 +13828,106 @@ class FakeDesktopService:
                     "status": "success",
                     "task": "reasoning",
                     "source": "machine_onboarding",
+                    "summary": {
+                        "profile_setup_action_count": 1,
+                        "selected_model_count": 1,
+                        "launch_seed_count": 2,
+                        "app_learning_target_count": 2,
+                        "app_learning_strategy_profile": "hybrid_guided_explore",
+                        "app_learning_setup_aligned_count": 2,
+                        "app_learning_setup_boosted_count": 1,
+                        "app_learning_setup_constrained_count": 0,
+                        "prepared_app_count": 2,
+                        "prepared_blocked_count": 0,
+                        "prepared_degraded_count": 1,
+                        "prepared_setup_aligned_count": 2,
+                        "prepared_setup_boosted_count": 1,
+                        "prepared_setup_constrained_count": 0,
+                        "execution_action_count": 6,
+                        "execution_success_count": 4,
+                        "execution_manual_count": 1,
+                        "execution_blocked_count": 0,
+                        "execution_error_count": 0,
+                        "setup_action_count": 1,
+                        "setup_action_auto_runnable_count": 1,
+                        "setup_action_success_count": 1,
+                        "setup_action_manual_count": 0,
+                        "setup_action_blocked_count": 0,
+                        "setup_execution_selected_action_count": 1,
+                        "setup_execution_continued_action_count": 1,
+                        "setup_execution_remaining_ready_count": 0,
+                        "setup_execution_resume_ready": False,
+                    },
+                    "execution_queue_summary": {
+                        "count": 6,
+                        "success_count": 4,
+                        "manual_count": 1,
+                        "blocked_count": 0,
+                        "error_count": 0,
+                        "setup_action_count": 1,
+                        "setup_action_success_count": 1,
+                        "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                    },
+                    "next_actions": [
+                        {
+                            "title": "Configure huggingface credentials",
+                            "status": "manual_input_required",
+                            "target": "huggingface",
+                        }
+                    ],
                 }
             ],
             "latest_run": {
                 "status": "success",
                 "task": "reasoning",
                 "source": "machine_onboarding",
+                "summary": {
+                    "profile_setup_action_count": 1,
+                    "selected_model_count": 1,
+                    "setup_execution_selected_action_count": 1,
+                    "setup_execution_continued_action_count": 1,
+                    "setup_execution_remaining_ready_count": 0,
+                    "setup_execution_resume_ready": False,
+                    "launch_seed_count": 2,
+                    "app_learning_target_count": 2,
+                    "app_learning_strategy_profile": "hybrid_guided_explore",
+                    "app_learning_setup_aligned_count": 2,
+                    "app_learning_setup_boosted_count": 1,
+                    "app_learning_setup_constrained_count": 0,
+                    "prepared_app_count": 2,
+                    "prepared_blocked_count": 0,
+                    "prepared_degraded_count": 1,
+                    "prepared_setup_aligned_count": 2,
+                    "prepared_setup_boosted_count": 1,
+                    "prepared_setup_constrained_count": 0,
+                    "execution_action_count": 6,
+                    "execution_success_count": 4,
+                    "execution_manual_count": 1,
+                    "execution_blocked_count": 0,
+                    "execution_error_count": 0,
+                    "setup_action_count": 1,
+                    "setup_action_auto_runnable_count": 1,
+                    "setup_action_success_count": 1,
+                    "setup_action_manual_count": 0,
+                    "setup_action_blocked_count": 0,
+                },
+                "execution_queue_summary": {
+                    "count": 6,
+                    "success_count": 4,
+                    "manual_count": 1,
+                    "blocked_count": 0,
+                    "error_count": 0,
+                    "setup_action_count": 1,
+                    "setup_action_success_count": 1,
+                    "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                },
+                "next_actions": [
+                    {
+                        "title": "Configure huggingface credentials",
+                        "status": "manual_input_required",
+                        "target": "huggingface",
+                    }
+                ],
             },
             "summary": {
                 "status_counts": {"success": 1},
@@ -13650,6 +13935,27 @@ class FakeDesktopService:
                 "prepared_app_total": 2,
                 "prepared_blocked_total": 0,
                 "prepared_degraded_total": 1,
+                "execution_action_total": 6,
+                "execution_success_total": 4,
+                "execution_manual_total": 1,
+                "execution_blocked_total": 0,
+                "execution_error_total": 0,
+                "setup_action_total": 1,
+                "setup_action_auto_runnable_total": 1,
+                "setup_action_success_total": 1,
+                "setup_action_manual_total": 0,
+                "setup_action_blocked_total": 0,
+                "profile_setup_action_total": 1,
+                "setup_execution_selected_action_total": 1,
+                "setup_execution_continued_action_total": 1,
+                "setup_execution_remaining_ready_total": 0,
+                "setup_execution_resume_ready_total": 0,
+                "app_learning_setup_aligned_total": 2,
+                "app_learning_setup_boosted_total": 1,
+                "app_learning_setup_constrained_total": 0,
+                "prepared_setup_aligned_total": 2,
+                "prepared_setup_boosted_total": 1,
+                "prepared_setup_constrained_total": 0,
             },
         }
 
@@ -13732,9 +14038,50 @@ class FakeDesktopService:
             ),
             "provider_updates": {"status": "success", "count": len(dict(provider_credentials or {})), "items": [{"provider": "huggingface", "status": "success"}]},
             "task_preference_update": {"status": "success", "count": 1},
+            "task_preference_plan": {
+                "status": "success",
+                "count": 1,
+                "source": "recommended",
+                "items": [{"task": "reasoning", "provider": "local", "model_name": "qwen3-14b"}],
+            },
+            "profile_setup_actions": [
+                {
+                    "setup_action_code": "configure_huggingface_token",
+                    "code": "configure_huggingface_token",
+                    "title": "Configure Hugging Face token",
+                    "severity": "high",
+                    "status": "attention",
+                }
+            ],
+            "profile_setup_action_summary": {
+                "count": 1,
+                "severity_counts": {"high": 1},
+                "top_codes": {"configure_huggingface_token": 1},
+            },
             "workspace_scaffold": {"status": "success"},
             "launch_seed": {"status": "success", "count": 2},
-            "model_install": {"status": "success", "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])},
+            "model_install": {
+                "status": "success",
+                "execution_mode": "mission",
+                "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]),
+                "selected_action_ids": ["verify_provider:huggingface"],
+                "selected_action_count": 1,
+                "continued_action_ids": ["launch_setup_install:auto"],
+                "continued_action_count": 1,
+                "remaining_ready_action_ids": [],
+                "remaining_ready_action_count": 0,
+                "resume_ready": False,
+                "continue_followup_actions_requested": True,
+                "continue_followup_actions_status": "success",
+                "continuation": {
+                    "status": "success",
+                    "waves_executed": 1,
+                    "stop_reason": "exhausted_ready_followup_actions",
+                    "continued_action_ids": ["launch_setup_install:auto"],
+                    "final_ready_action_ids": [],
+                },
+                "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]),
+            },
             "app_learning_campaign": {
                 "status": "success",
                 "run": {"status": "success"} if auto_run_app_learning_campaign else {},
@@ -13743,6 +14090,14 @@ class FakeDesktopService:
                     "auto_learn_count": 2,
                     "blocked_count": 0,
                     "degraded_count": 1,
+                    "setup_execution_mode": "mission",
+                    "setup_execution_selected_action_count": 1,
+                    "setup_execution_continued_action_count": 1,
+                    "setup_execution_remaining_ready_count": 0,
+                    "setup_execution_resume_ready": False,
+                    "setup_aligned_app_count": 2,
+                    "setup_boosted_app_count": 1,
+                    "setup_constrained_app_count": 0,
                 },
             },
             "app_control_prepare": {
@@ -13754,6 +14109,7 @@ class FakeDesktopService:
                         "effective_app_name": "Google Chrome",
                         "execution_mode": "hybrid_ready",
                         "readiness_status": "ready",
+                        "related_setup_action_codes": [],
                         "summary": {"wave_attempt_count": 4, "discovered_control_count": 6, "execution_mode": "hybrid_ready", "readiness_status": "ready"},
                     },
                     {
@@ -13762,12 +14118,20 @@ class FakeDesktopService:
                         "execution_mode": "degraded",
                         "readiness_status": "degraded",
                         "blocker_codes": ["provider_missing_huggingface"],
+                        "related_setup_action_codes": ["configure_huggingface_token"],
                         "summary": {
                             "wave_attempt_count": 5,
                             "discovered_control_count": 7,
                             "execution_mode": "degraded",
                             "readiness_status": "degraded",
                             "blocker_count": 1,
+                            "related_setup_action_codes": ["configure_huggingface_token"],
+                            "related_setup_action_count": 1,
+                            "setup_execution_mode": "mission",
+                            "setup_execution_selected_action_count": 1,
+                            "setup_execution_continued_action_count": 1,
+                            "setup_execution_remaining_ready_count": 0,
+                            "setup_execution_resume_ready": False,
                         },
                     },
                 ] if auto_prepare_app_controls else [],
@@ -13776,19 +14140,137 @@ class FakeDesktopService:
                     "blocked_count": 0,
                     "degraded_count": 1 if auto_prepare_app_controls else 0,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1} if auto_prepare_app_controls else {},
+                    "related_setup_action_code_counts": {"configure_huggingface_token": 1} if auto_prepare_app_controls else {},
+                    "setup_aligned_app_count": 2 if auto_prepare_app_controls else 0,
+                    "setup_boosted_app_count": 1 if auto_prepare_app_controls else 0,
+                    "setup_constrained_app_count": 0,
                 },
             },
+            "execution_queue": [
+                {
+                    "id": "provider:huggingface",
+                    "stage": "provider",
+                    "kind": "configure_provider_credentials",
+                    "status": "success",
+                    "title": "Configure huggingface credentials",
+                    "provider": "huggingface",
+                    "auto_runnable": False,
+                    "required": True,
+                },
+                {
+                    "id": "task_preference:reasoning",
+                    "stage": "task_preferences",
+                    "kind": "apply_task_preference",
+                    "status": "success",
+                    "title": "Apply reasoning task preference",
+                    "task": "reasoning",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+                {
+                    "id": "model:reasoning-qwen3.5-9b",
+                    "stage": "model",
+                    "kind": "install_model_item",
+                    "status": "success",
+                    "title": "Install model reasoning-qwen3.5-9b",
+                    "item_key": "reasoning-qwen3.5-9b",
+                    "auto_runnable": True,
+                    "required": True,
+                },
+                {
+                    "id": "setup_action:verify_provider:huggingface",
+                    "stage": "setup_action",
+                    "kind": "verify_provider_credentials",
+                    "status": "success",
+                    "title": "Verify Hugging Face repository access",
+                    "provider": "huggingface",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "verify_provider:huggingface",
+                },
+                {
+                    "id": "launch_seed:google chrome",
+                    "stage": "launch_seed",
+                    "kind": "seed_launch_memory",
+                    "status": "success",
+                    "title": "Seed launcher memory for Google Chrome",
+                    "app_name": "Google Chrome",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+                {
+                    "id": "app_prepare:visual studio code",
+                    "stage": "app_prepare",
+                    "kind": "prepare_app_control",
+                    "status": "success",
+                    "title": "Prepare Visual Studio Code for control",
+                    "app_name": "Visual Studio Code",
+                    "auto_runnable": True,
+                    "required": False,
+                },
+            ],
+            "execution_queue_summary": {
+                "count": 6,
+                "auto_runnable_count": 5,
+                "ready_count": 0,
+                "success_count": 6,
+                "manual_count": 0,
+                "blocked_count": 0,
+                "error_count": 0,
+                "setup_action_count": 1,
+                "setup_action_auto_runnable_count": 1,
+                "setup_action_success_count": 1,
+                "setup_action_manual_count": 0,
+                "setup_action_blocked_count": 0,
+                "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                "stage_counts": {
+                    "app_prepare": 1,
+                    "launch_seed": 1,
+                    "model": 1,
+                    "provider": 1,
+                    "setup_action": 1,
+                    "task_preferences": 1,
+                },
+            },
+            "next_actions": [],
             "final_profile": {"status": "success", "machine_id": "machine-demo-01"},
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
+                "profile_setup_action_count": 1,
+                "task_preference_count": 1,
                 "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])),
+                "setup_execution_mode": "mission",
+                "setup_execution_selected_action_count": 1,
+                "setup_execution_continued_action_count": 1,
+                "setup_execution_remaining_ready_count": 0,
+                "setup_execution_resume_ready": False,
+                "setup_execution_continue_status": "success",
                 "app_learning_strategy_profile": "hybrid_guided_explore",
                 "app_learning_auto_target_count": 2,
                 "app_learning_blocked_count": 0,
                 "app_learning_degraded_count": 1,
+                "app_learning_setup_aligned_count": 2,
+                "app_learning_setup_boosted_count": 1,
+                "app_learning_setup_constrained_count": 0,
                 "prepared_app_count": 2 if auto_prepare_app_controls else 0,
                 "prepared_blocked_count": 0,
                 "prepared_degraded_count": 1 if auto_prepare_app_controls else 0,
+                "prepared_setup_aligned_count": 2 if auto_prepare_app_controls else 0,
+                "prepared_setup_boosted_count": 1 if auto_prepare_app_controls else 0,
+                "prepared_setup_constrained_count": 0,
+                "execution_action_count": 6,
+                "execution_auto_runnable_count": 5,
+                "execution_ready_count": 0,
+                "execution_success_count": 6,
+                "execution_manual_count": 0,
+                "execution_blocked_count": 0,
+                "execution_error_count": 0,
+                "setup_action_count": 1,
+                "setup_action_auto_runnable_count": 1,
+                "setup_action_success_count": 1,
+                "setup_action_manual_count": 0,
+                "setup_action_blocked_count": 0,
+                "top_setup_action_codes": {"verify_provider:huggingface": 1},
             },
             "history": self.desktop_machine_onboarding_history(limit=8),
             "message": "Completed onboarding run.",
@@ -13874,6 +14356,14 @@ class FakeDesktopService:
                     "auto_learn_count": 2,
                     "blocked_count": 0,
                     "degraded_count": 1,
+                    "setup_execution_mode": "mission",
+                    "setup_execution_selected_action_count": 1,
+                    "setup_execution_continued_action_count": 1,
+                    "setup_execution_remaining_ready_count": 0,
+                    "setup_execution_resume_ready": False,
+                    "setup_aligned_app_count": 2,
+                    "setup_boosted_app_count": 1,
+                    "setup_constrained_app_count": 0,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
                     "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
@@ -13907,6 +14397,12 @@ class FakeDesktopService:
                             "runtime_band_preference": "hybrid",
                             "preferred_probe_mode": "local_vision_assist",
                         },
+                        "setup_execution_mode": "mission",
+                        "setup_execution_selected_action_count": 1,
+                        "setup_execution_continued_action_count": 1,
+                        "setup_execution_remaining_ready_count": 0,
+                        "setup_execution_resume_ready": False,
+                        "setup_execution_policy": "mission_followthrough",
                     },
                     {
                         "app_name": "Visual Studio Code",
@@ -13933,6 +14429,12 @@ class FakeDesktopService:
                             "runtime_band_preference": "accessibility",
                             "preferred_probe_mode": "accessibility_first",
                         },
+                        "setup_execution_mode": "mission",
+                        "setup_execution_selected_action_count": 1,
+                        "setup_execution_continued_action_count": 1,
+                        "setup_execution_remaining_ready_count": 0,
+                        "setup_execution_resume_ready": False,
+                        "setup_execution_policy": "unchanged",
                     },
                 ],
                 "campaign_defaults": {
@@ -13946,6 +14448,14 @@ class FakeDesktopService:
                     "auto_learn_count": 2,
                     "blocked_count": 0,
                     "degraded_count": 1,
+                    "setup_execution_mode": "mission",
+                    "setup_execution_selected_action_count": 1,
+                    "setup_execution_continued_action_count": 1,
+                    "setup_execution_remaining_ready_count": 0,
+                    "setup_execution_resume_ready": False,
+                    "setup_aligned_app_count": 2,
+                    "setup_boosted_app_count": 1,
+                    "setup_constrained_app_count": 0,
                     "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
                     "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
@@ -13969,6 +14479,12 @@ class FakeDesktopService:
                                 "runtime_band_preference": "hybrid",
                                 "preferred_probe_mode": "local_vision_assist",
                             },
+                            "setup_execution_mode": "mission",
+                            "setup_execution_selected_action_count": 1,
+                            "setup_execution_continued_action_count": 1,
+                            "setup_execution_remaining_ready_count": 0,
+                            "setup_execution_resume_ready": False,
+                            "setup_execution_policy": "mission_followthrough",
                         },
                         {
                             "app_name": "Visual Studio Code",
@@ -13985,6 +14501,12 @@ class FakeDesktopService:
                                 "runtime_band_preference": "accessibility",
                                 "preferred_probe_mode": "accessibility_first",
                             },
+                            "setup_execution_mode": "mission",
+                            "setup_execution_selected_action_count": 1,
+                            "setup_execution_continued_action_count": 1,
+                            "setup_execution_remaining_ready_count": 0,
+                            "setup_execution_resume_ready": False,
+                            "setup_execution_policy": "unchanged",
                         },
                     ],
                 },
@@ -14040,6 +14562,14 @@ class FakeDesktopService:
                 "auto_learn_count": 2,
                 "blocked_count": 0,
                 "degraded_count": 1,
+                "setup_execution_mode": "mission",
+                "setup_execution_selected_action_count": 1,
+                "setup_execution_continued_action_count": 1,
+                "setup_execution_remaining_ready_count": 0,
+                "setup_execution_resume_ready": False,
+                "setup_aligned_app_count": 2,
+                "setup_boosted_app_count": 1,
+                "setup_constrained_app_count": 0,
             },
             "run": (
                 {
@@ -14139,6 +14669,8 @@ class FakeDesktopService:
                 "prepare_priority_band": "high",
                 "required_tasks": ["reasoning", "vision"],
                 "blocker_codes": [],
+                "related_setup_action_codes": ["configure_huggingface_token", "install_local_vision_model"],
+                "related_setup_action_count": 2,
                 "expected_route_profile": "local_vision_assist",
                 "expected_model_preference": "hybrid_runtime",
                 "expected_provider_source": "local_runtime_plus_ocr",
@@ -14207,6 +14739,8 @@ class FakeDesktopService:
                 "preferred_verification_mode": "before_after_delta",
                 "preferred_native_recovery_mode": "focus_related_window_chain",
                 "required_tasks": ["reasoning", "vision"],
+                "related_setup_action_codes": ["configure_huggingface_token", "install_local_vision_model"],
+                "related_setup_action_count": 2,
                 "wave_attempt_count": 4,
                 "discovered_control_count": 6,
                 "probe_success_count": 2,
@@ -23777,6 +24311,7 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["actual_route_profile"] == "local_vision_assist"
     assert prepared["summary"]["actual_model_preference"] == "hybrid_runtime"
     assert prepared["summary"]["route_alignment_status"] == "matched"
+    assert prepared["summary"]["related_setup_action_count"] == 2
     assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
@@ -23833,11 +24368,27 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["status"] == "success"
     assert plan["provider_actions"]["summary"]["missing_count"] == 1
     assert plan["model_setup"]["selection"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert plan["model_setup"]["execution_plan"]["selected_action_count"] == 1
     assert plan["app_control_prepare_plan"]["count"] == 2
     assert plan["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert plan["summary"]["app_learning_degraded_count"] == 1
+    assert plan["summary"]["setup_execution_selected_action_count"] == 1
+    assert plan["summary"]["setup_execution_continue_recommended"] is True
     assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
     assert plan["summary"]["app_control_prepare_degraded_count"] == 1
+    assert plan["app_learning_plan"]["plan"]["summary"]["setup_aligned_app_count"] == 2
+    assert plan["app_learning_plan"]["plan"]["summary"]["setup_boosted_app_count"] == 1
+    assert plan["app_learning_plan"]["plan"]["summary"]["setup_constrained_app_count"] == 0
+    assert plan["task_preference_plan"]["count"] == 1
+    assert plan["profile_setup_action_summary"]["count"] == 1
+    assert plan["app_control_prepare_plan"]["summary"]["related_setup_action_code_counts"]["configure_huggingface_token"] == 1
+    assert len(plan["execution_queue"]) == 6
+    assert plan["execution_queue_summary"]["manual_count"] == 2
+    assert plan["execution_queue_summary"]["setup_action_count"] == 1
+    assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 1
+    assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
+    assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 1
+    assert plan["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
 
     status, launched = request_json(
@@ -23863,12 +24414,31 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["status"] == "success"
     assert launched["provider_updates"]["count"] == 1
     assert launched["model_install"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert launched["model_install"]["execution_mode"] == "mission"
+    assert launched["model_install"]["selected_action_count"] == 1
+    assert launched["model_install"]["continued_action_count"] == 1
     assert launched["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert launched["summary"]["app_learning_degraded_count"] == 1
+    assert launched["summary"]["app_learning_setup_aligned_count"] == 2
+    assert launched["summary"]["app_learning_setup_boosted_count"] == 1
+    assert launched["summary"]["app_learning_setup_constrained_count"] == 0
+    assert launched["summary"]["setup_execution_mode"] == "mission"
+    assert launched["summary"]["setup_execution_selected_action_count"] == 1
+    assert launched["summary"]["setup_execution_continued_action_count"] == 1
     assert launched["app_control_prepare"]["count"] == 2
     assert launched["summary"]["prepared_app_count"] == 2
     assert launched["summary"]["prepared_degraded_count"] == 1
+    assert launched["summary"]["prepared_setup_aligned_count"] == 2
+    assert launched["summary"]["prepared_setup_boosted_count"] == 1
+    assert launched["summary"]["prepared_setup_constrained_count"] == 0
     assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
+    assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
+    assert launched["task_preference_plan"]["count"] == 1
+    assert launched["execution_queue_summary"]["success_count"] == 6
+    assert launched["execution_queue_summary"]["setup_action_success_count"] == 1
+    assert launched["summary"]["execution_action_count"] == 6
+    assert launched["summary"]["execution_success_count"] == 6
+    assert launched["summary"]["setup_action_count"] == 1
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
     assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
 
@@ -23880,6 +24450,20 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["status"] == "success"
     assert history["latest_run"]["task"] == "reasoning"
     assert history["summary"]["prepared_degraded_total"] == 1
+    assert history["summary"]["execution_action_total"] == 6
+    assert history["summary"]["setup_execution_selected_action_total"] == 1
+    assert history["summary"]["setup_execution_continued_action_total"] == 1
+    assert history["summary"]["app_learning_setup_aligned_total"] == 2
+    assert history["summary"]["app_learning_setup_boosted_total"] == 1
+    assert history["summary"]["app_learning_setup_constrained_total"] == 0
+    assert history["summary"]["prepared_setup_aligned_total"] == 2
+    assert history["summary"]["prepared_setup_boosted_total"] == 1
+    assert history["summary"]["prepared_setup_constrained_total"] == 0
+    assert history["summary"]["setup_action_total"] == 1
+    assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
+    assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
+    assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1
+    assert history["latest_run"]["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 
 

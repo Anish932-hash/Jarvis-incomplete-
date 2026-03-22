@@ -8717,30 +8717,192 @@ class DesktopBackendService:
             "plan": plan,
         }
 
-    def create_desktop_machine_app_learning_campaign(
+    def _desktop_machine_apply_setup_execution_to_learning_plan(
         self,
         *,
-        task: str = "",
-        app_query: str = "",
+        app_learning_plan: Dict[str, Any],
+        setup_execution: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        plan = dict(app_learning_plan) if isinstance(app_learning_plan, dict) else {}
+        execution_payload = dict(setup_execution) if isinstance(setup_execution, dict) else {}
+        execution_mode = str(execution_payload.get("execution_mode", "") or "").strip().lower()
+        selected_action_count = max(0, int(execution_payload.get("selected_action_count", 0) or 0))
+        continued_action_count = max(0, int(execution_payload.get("continued_action_count", 0) or 0))
+        remaining_ready_action_count = max(0, int(execution_payload.get("remaining_ready_action_count", 0) or 0))
+        resume_ready = bool(execution_payload.get("resume_ready", False))
+        continue_status = str(
+            execution_payload.get("continue_followup_actions_status", "") or ""
+        ).strip().lower()
+        if not execution_mode and selected_action_count <= 0 and continued_action_count <= 0:
+            return plan
+        targets = [
+            dict(item)
+            for item in plan.get("targets", [])
+            if isinstance(plan.get("targets", []), list) and isinstance(item, dict)
+        ]
+        boosted_app_count = 0
+        constrained_app_count = 0
+        setup_aligned_app_count = 0
+        updated_targets: List[Dict[str, Any]] = []
+        for row in targets:
+            item = dict(row)
+            readiness_status = str(item.get("readiness_status", "") or "").strip().lower() or "unknown"
+            execution_band = str(item.get("execution_mode", "") or "").strip().lower() or "unknown"
+            setup_policy = "unchanged"
+            if execution_mode == "mission" and selected_action_count > 0 and execution_band in {"local_ready", "hybrid_ready"}:
+                item["effective_per_app_limit"] = max(
+                    int(item.get("effective_per_app_limit", 24) or 24),
+                    min(56, int(item.get("effective_per_app_limit", 24) or 24) + 6),
+                )
+                item["effective_max_surface_waves"] = max(
+                    int(item.get("effective_max_surface_waves", 3) or 3),
+                    min(8, int(item.get("effective_max_surface_waves", 3) or 3) + 1),
+                )
+                item["effective_max_probe_controls"] = max(
+                    int(item.get("effective_max_probe_controls", 3) or 3),
+                    min(10, int(item.get("effective_max_probe_controls", 3) or 3) + 1),
+                )
+                setup_policy = (
+                    "mission_followthrough"
+                    if continued_action_count > 0
+                    else "mission_boosted"
+                )
+                boosted_app_count += 1
+                setup_aligned_app_count += 1
+            elif execution_mode == "mission" and (resume_ready or remaining_ready_action_count > 0) and readiness_status in {
+                "degraded",
+                "blocked",
+            }:
+                item["effective_per_app_limit"] = max(
+                    12,
+                    min(int(item.get("effective_per_app_limit", 24) or 24), 20),
+                )
+                item["effective_max_surface_waves"] = max(
+                    2,
+                    min(int(item.get("effective_max_surface_waves", 3) or 3), 3),
+                )
+                item["effective_max_probe_controls"] = max(
+                    2,
+                    min(int(item.get("effective_max_probe_controls", 3) or 3), 3),
+                )
+                setup_policy = "resume_pending_constrained"
+                constrained_app_count += 1
+                setup_aligned_app_count += 1
+            elif execution_mode == "direct_install_launch" and execution_band in {"local_ready", "hybrid_ready"}:
+                setup_policy = "install_launch_ready"
+                setup_aligned_app_count += 1
+            item["setup_execution_mode"] = execution_mode
+            item["setup_execution_selected_action_count"] = selected_action_count
+            item["setup_execution_continued_action_count"] = continued_action_count
+            item["setup_execution_remaining_ready_count"] = remaining_ready_action_count
+            item["setup_execution_resume_ready"] = bool(resume_ready)
+            item["setup_execution_continue_status"] = continue_status
+            item["setup_execution_policy"] = setup_policy
+            updated_targets.append(item)
+        if updated_targets:
+            plan["targets"] = updated_targets
+            plan["count"] = len(updated_targets)
+        summary = dict(plan.get("summary", {})) if isinstance(plan.get("summary", {}), dict) else {}
+        summary.update(
+            {
+                "setup_execution_mode": execution_mode,
+                "setup_execution_selected_action_count": selected_action_count,
+                "setup_execution_continued_action_count": continued_action_count,
+                "setup_execution_remaining_ready_count": remaining_ready_action_count,
+                "setup_execution_resume_ready": bool(resume_ready),
+                "setup_execution_continue_status": continue_status,
+                "setup_aligned_app_count": setup_aligned_app_count,
+                "setup_boosted_app_count": boosted_app_count,
+                "setup_constrained_app_count": constrained_app_count,
+            }
+        )
+        plan["summary"] = summary
+        defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+        adaptive_profiles = [
+            dict(item)
+            for item in defaults.get("adaptive_app_profiles", [])
+            if isinstance(defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+        ]
+        if adaptive_profiles:
+            profile_updates = {
+                self._machine_text(item.get("app_name", "")): dict(item)
+                for item in updated_targets
+                if self._machine_text(item.get("app_name", ""))
+            }
+            new_profiles: List[Dict[str, Any]] = []
+            for row in adaptive_profiles:
+                clean_name = self._machine_text(row.get("app_name", ""))
+                updated = profile_updates.get(clean_name, {})
+                merged = dict(row)
+                if updated:
+                    for key in (
+                        "effective_per_app_limit",
+                        "effective_max_surface_waves",
+                        "effective_max_probe_controls",
+                        "setup_execution_mode",
+                        "setup_execution_selected_action_count",
+                        "setup_execution_continued_action_count",
+                        "setup_execution_remaining_ready_count",
+                        "setup_execution_resume_ready",
+                        "setup_execution_continue_status",
+                        "setup_execution_policy",
+                    ):
+                        if key in updated:
+                            merged[key] = updated.get(key)
+                new_profiles.append(merged)
+            defaults["adaptive_app_profiles"] = new_profiles
+        defaults.update(
+            {
+                "setup_execution_mode": execution_mode,
+                "setup_execution_selected_action_count": selected_action_count,
+                "setup_execution_continued_action_count": continued_action_count,
+                "setup_execution_remaining_ready_count": remaining_ready_action_count,
+                "setup_execution_resume_ready": bool(resume_ready),
+                "setup_execution_continue_status": continue_status,
+                "setup_aligned_app_count": setup_aligned_app_count,
+                "setup_boosted_app_count": boosted_app_count,
+                "setup_constrained_app_count": constrained_app_count,
+            }
+        )
+        if boosted_app_count > 0:
+            defaults["per_app_limit"] = max(
+                int(defaults.get("per_app_limit", 24) or 24),
+                min(56, int(defaults.get("per_app_limit", 24) or 24) + 4),
+            )
+            defaults["max_surface_waves"] = max(
+                int(defaults.get("max_surface_waves", 3) or 3),
+                min(8, int(defaults.get("max_surface_waves", 3) or 3) + 1),
+            )
+            defaults["max_probe_controls"] = max(
+                int(defaults.get("max_probe_controls", 3) or 3),
+                min(10, int(defaults.get("max_probe_controls", 3) or 3) + 1),
+            )
+        elif constrained_app_count > 0 and boosted_app_count <= 0:
+            defaults["per_app_limit"] = max(
+                12,
+                min(int(defaults.get("per_app_limit", 24) or 24), 20),
+            )
+            defaults["max_surface_waves"] = max(
+                2,
+                min(int(defaults.get("max_surface_waves", 3) or 3), 3),
+            )
+            defaults["max_probe_controls"] = max(
+                2,
+                min(int(defaults.get("max_probe_controls", 3) or 3), 3),
+            )
+        plan["campaign_defaults"] = defaults
+        return plan
+
+    def _desktop_machine_create_app_learning_campaign_from_plan(
+        self,
+        *,
+        plan_payload: Dict[str, Any],
         app_category: str = "",
-        app_limit: int = 320,
-        refresh_apps: bool = False,
-        max_targets: int = 8,
         label: str = "",
         max_apps: Optional[int] = None,
         auto_run: bool = False,
         source: str = "machine_profile",
     ) -> Dict[str, Any]:
-        plan_payload = self.desktop_machine_app_learning_plan(
-            task=task,
-            app_query=app_query,
-            app_category=app_category,
-            app_limit=app_limit,
-            refresh_apps=refresh_apps,
-            max_targets=max_targets,
-        )
-        if not isinstance(plan_payload, dict) or plan_payload.get("status") != "success":
-            return plan_payload if isinstance(plan_payload, dict) else {"status": "error", "message": "unable to build machine app learning plan"}
         plan = plan_payload.get("plan", {}) if isinstance(plan_payload.get("plan", {}), dict) else {}
         campaign_defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
         app_names = [
@@ -8817,6 +8979,22 @@ class DesktopBackendService:
                     for item in campaign_defaults.get("adaptive_app_profiles", [])
                     if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
                 ][:8],
+                "setup_execution_mode": str(campaign_defaults.get("setup_execution_mode", "") or "").strip().lower(),
+                "setup_execution_selected_action_count": int(
+                    campaign_defaults.get("setup_execution_selected_action_count", 0) or 0
+                ),
+                "setup_execution_continued_action_count": int(
+                    campaign_defaults.get("setup_execution_continued_action_count", 0) or 0
+                ),
+                "setup_execution_remaining_ready_count": int(
+                    campaign_defaults.get("setup_execution_remaining_ready_count", 0) or 0
+                ),
+                "setup_execution_resume_ready": bool(
+                    campaign_defaults.get("setup_execution_resume_ready", False)
+                ),
+                "setup_aligned_app_count": int(campaign_defaults.get("setup_aligned_app_count", 0) or 0),
+                "setup_boosted_app_count": int(campaign_defaults.get("setup_boosted_app_count", 0) or 0),
+                "setup_constrained_app_count": int(campaign_defaults.get("setup_constrained_app_count", 0) or 0),
             },
         }
         created_campaign = (
@@ -8831,8 +9009,41 @@ class DesktopBackendService:
                     campaign_id=campaign_id,
                     max_apps=int(max_apps or campaign_defaults.get("max_apps", 4) or 4),
                     source=source,
-        )
+                )
         return _to_jsonable(result)
+
+    def create_desktop_machine_app_learning_campaign(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        refresh_apps: bool = False,
+        max_targets: int = 8,
+        label: str = "",
+        max_apps: Optional[int] = None,
+        auto_run: bool = False,
+        source: str = "machine_profile",
+    ) -> Dict[str, Any]:
+        plan_payload = self.desktop_machine_app_learning_plan(
+            task=task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            refresh_apps=refresh_apps,
+            max_targets=max_targets,
+        )
+        if not isinstance(plan_payload, dict) or plan_payload.get("status") != "success":
+            return plan_payload if isinstance(plan_payload, dict) else {"status": "error", "message": "unable to build machine app learning plan"}
+        return self._desktop_machine_create_app_learning_campaign_from_plan(
+            plan_payload=plan_payload,
+            app_category=app_category,
+            label=label,
+            max_apps=max_apps,
+            auto_run=auto_run,
+            source=source,
+        )
 
     def _desktop_machine_select_learning_target(
         self,
@@ -8979,6 +9190,12 @@ class DesktopBackendService:
                 for item in selected_target.get("required_tasks", [])
                 if isinstance(selected_target.get("required_tasks", []), list) and str(item).strip()
             ],
+            "related_setup_action_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("related_setup_action_codes", [])
+                if isinstance(selected_target.get("related_setup_action_codes", []), list) and str(item).strip()
+            ],
+            "related_setup_action_count": int(selected_target.get("related_setup_action_count", 0) or 0),
             "blocker_codes": [
                 str(item).strip().lower()
                 for item in selected_target.get("blocker_codes", [])
@@ -9237,6 +9454,9 @@ class DesktopBackendService:
                 "required_tasks": list(selected_target.get("required_tasks", []))
                 if isinstance(selected_target.get("required_tasks", []), list)
                 else [],
+                "related_setup_action_codes": list(selected_target.get("related_setup_action_codes", []))
+                if isinstance(selected_target.get("related_setup_action_codes", []), list)
+                else [],
                 "local_ready_tasks": list(selected_target.get("local_ready_tasks", []))
                 if isinstance(selected_target.get("local_ready_tasks", []), list)
                 else [],
@@ -9286,6 +9506,10 @@ class DesktopBackendService:
                     "required_tasks": list(selected_target.get("required_tasks", []))
                     if isinstance(selected_target.get("required_tasks", []), list)
                     else [],
+                    "related_setup_action_codes": list(selected_target.get("related_setup_action_codes", []))
+                    if isinstance(selected_target.get("related_setup_action_codes", []), list)
+                    else [],
+                    "related_setup_action_count": int(selected_target.get("related_setup_action_count", 0) or 0),
                     "blocker_codes": list(selected_target.get("blocker_codes", []))
                     if isinstance(selected_target.get("blocker_codes", []), list)
                     else [],
@@ -9562,6 +9786,989 @@ class DesktopBackendService:
             },
         }
 
+    def _desktop_machine_task_preference_plan(
+        self,
+        *,
+        profile: Dict[str, Any],
+        task_preferences: Optional[Dict[str, Any]] = None,
+        apply_recommended_task_preferences: bool = True,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        plan_source = "skipped"
+        if isinstance(task_preferences, dict) and task_preferences:
+            payload = dict(task_preferences)
+            plan_source = "manual_input"
+        elif bool(apply_recommended_task_preferences):
+            models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
+            existing_by_task = (
+                models.get("task_preferences", {}).get("by_task", {})
+                if isinstance(models.get("task_preferences", {}), dict)
+                and isinstance(models.get("task_preferences", {}).get("by_task", {}), dict)
+                else {}
+            )
+            recommended_models = models.get("recommended_models", []) if isinstance(models.get("recommended_models", []), list) else []
+            for row in recommended_models:
+                if not isinstance(row, dict):
+                    continue
+                task_name = self._machine_text(row.get("task", ""))
+                if not task_name or task_name in existing_by_task:
+                    continue
+                payload[task_name] = {
+                    "provider": str(row.get("provider", "") or "").strip().lower(),
+                    "model_name": str(row.get("model_name", "") or "").strip(),
+                    "execution_backend": str(row.get("execution_backend", "") or "").strip().lower(),
+                    "model_path": str(row.get("model_path", "") or "").strip(),
+                    "source": "machine_onboarding_recommendation",
+                }
+            if payload:
+                plan_source = "recommended"
+        items: List[Dict[str, Any]] = []
+        for task_name, row in sorted(payload.items(), key=lambda entry: str(entry[0] or "")):
+            if not isinstance(row, dict):
+                continue
+            items.append(
+                {
+                    "task": str(task_name or "").strip().lower(),
+                    "provider": str(row.get("provider", "") or "").strip().lower(),
+                    "model_name": str(row.get("model_name", "") or "").strip(),
+                    "execution_backend": str(row.get("execution_backend", "") or "").strip().lower(),
+                    "model_path": str(row.get("model_path", "") or "").strip(),
+                    "source": str(row.get("source", "") or plan_source).strip().lower(),
+                }
+            )
+        return {
+            "status": "success",
+            "source": plan_source,
+            "count": len(items),
+            "items": items,
+            "preferences": payload,
+        }
+
+    def _desktop_machine_onboarding_execution_queue_summary(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        status_counts: Dict[str, int] = {}
+        stage_counts: Dict[str, int] = {}
+        auto_runnable_count = 0
+        ready_count = 0
+        success_count = 0
+        manual_count = 0
+        blocked_count = 0
+        error_count = 0
+        setup_action_count = 0
+        setup_action_auto_runnable_count = 0
+        setup_action_success_count = 0
+        setup_action_manual_count = 0
+        setup_action_blocked_count = 0
+        setup_action_code_counts: Dict[str, int] = {}
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            status_name = str(row.get("status", "") or "unknown").strip().lower() or "unknown"
+            stage_name = str(row.get("stage", "") or "unknown").strip().lower() or "unknown"
+            status_counts[status_name] = int(status_counts.get(status_name, 0) or 0) + 1
+            stage_counts[stage_name] = int(stage_counts.get(stage_name, 0) or 0) + 1
+            if bool(row.get("auto_runnable", False)):
+                auto_runnable_count += 1
+            if status_name in {"ready", "planned"}:
+                ready_count += 1
+            elif status_name in {"success", "partial", "completed"}:
+                success_count += 1
+            elif status_name in {"manual", "manual_input_required", "attention", "needs_attention"}:
+                manual_count += 1
+            elif status_name == "blocked":
+                blocked_count += 1
+            elif status_name in {"error", "failed"}:
+                error_count += 1
+            if stage_name == "setup_action":
+                setup_action_count += 1
+                if bool(row.get("auto_runnable", False)):
+                    setup_action_auto_runnable_count += 1
+                if status_name in {"success", "partial", "completed"}:
+                    setup_action_success_count += 1
+                elif status_name in {"manual", "manual_input_required", "attention", "needs_attention"}:
+                    setup_action_manual_count += 1
+                elif status_name == "blocked":
+                    setup_action_blocked_count += 1
+                setup_action_code = self._machine_text(
+                    row.get("setup_action_code", "") or row.get("id", "") or row.get("kind", "")
+                )
+                if setup_action_code:
+                    setup_action_code_counts[setup_action_code] = int(
+                        setup_action_code_counts.get(setup_action_code, 0) or 0
+                    ) + 1
+        return {
+            "count": len(items),
+            "auto_runnable_count": auto_runnable_count,
+            "ready_count": ready_count,
+            "success_count": success_count,
+            "manual_count": manual_count,
+            "blocked_count": blocked_count,
+            "error_count": error_count,
+            "setup_action_count": setup_action_count,
+            "setup_action_auto_runnable_count": setup_action_auto_runnable_count,
+            "setup_action_success_count": setup_action_success_count,
+            "setup_action_manual_count": setup_action_manual_count,
+            "setup_action_blocked_count": setup_action_blocked_count,
+            "status_counts": {
+                str(key): int(value)
+                for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+            },
+            "stage_counts": {
+                str(key): int(value)
+                for key, value in sorted(stage_counts.items(), key=lambda entry: entry[0])
+            },
+            "setup_action_code_counts": {
+                str(key): int(value)
+                for key, value in sorted(setup_action_code_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+            },
+        }
+
+    def _desktop_machine_profile_setup_actions(
+        self,
+        *,
+        profile: Dict[str, Any],
+        limit: int = 12,
+    ) -> List[Dict[str, Any]]:
+        rows = [
+            dict(item)
+            for item in profile.get("setup_actions", [])
+            if isinstance(profile.get("setup_actions", []), list) and isinstance(item, dict)
+        ]
+        items: List[Dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        for row in rows:
+            setup_action_code = self._machine_text(row.get("code", "") or row.get("id", ""))
+            if not setup_action_code or setup_action_code in seen_codes:
+                continue
+            seen_codes.add(setup_action_code)
+            severity = self._machine_text(row.get("severity", "") or row.get("priority", ""))
+            status_name = "planned"
+            if setup_action_code.startswith(("configure_", "refresh_")):
+                status_name = "attention"
+            elif severity in {"critical", "high"}:
+                status_name = "blocked"
+            elif severity in {"medium", "moderate"}:
+                status_name = "attention"
+            title = (
+                str(row.get("title", "") or "").strip()
+                or str(row.get("message", "") or "").strip()
+                or setup_action_code.replace("_", " ")
+            )
+            items.append(
+                {
+                    "setup_action_code": setup_action_code,
+                    "code": setup_action_code,
+                    "title": title,
+                    "message": str(row.get("message", "") or "").strip(),
+                    "severity": severity or "info",
+                    "status": status_name,
+                    "required": bool(severity in {"critical", "high"}),
+                    "auto_runnable": False,
+                    "source": "machine_profile",
+                }
+            )
+            if len(items) >= max(1, min(int(limit or 12), 48)):
+                break
+        return items
+
+    def _desktop_machine_profile_setup_action_summary(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        severity_counts: Dict[str, int] = {}
+        code_counts: Dict[str, int] = {}
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            severity = self._machine_text(row.get("severity", "") or "info") or "info"
+            severity_counts[severity] = int(severity_counts.get(severity, 0) or 0) + 1
+            setup_action_code = self._machine_text(
+                row.get("setup_action_code", "") or row.get("code", "") or row.get("id", "")
+            )
+            if setup_action_code:
+                code_counts[setup_action_code] = int(code_counts.get(setup_action_code, 0) or 0) + 1
+        return {
+            "count": len(items),
+            "severity_counts": {
+                str(key): int(value)
+                for key, value in sorted(severity_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_codes": {
+                str(key): int(value)
+                for key, value in sorted(code_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+            },
+        }
+
+    def _desktop_machine_model_setup_actions(
+        self,
+        *,
+        mission_payload: Dict[str, Any],
+        selected_item_keys: Optional[List[str]] = None,
+        limit: int = 12,
+    ) -> List[Dict[str, Any]]:
+        selected_key_set = {
+            self._machine_text(item)
+            for item in (selected_item_keys or [])
+            if self._machine_text(item)
+        }
+        items: List[Dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        action_rows = mission_payload.get("actions", []) if isinstance(mission_payload.get("actions", []), list) else []
+        for row in action_rows:
+            if not isinstance(row, dict):
+                continue
+            setup_action_code = self._machine_text(row.get("id", "") or row.get("kind", ""))
+            if not setup_action_code or setup_action_code in seen_codes:
+                continue
+            item_keys = [
+                str(item).strip()
+                for item in row.get("item_keys", [])
+                if isinstance(row.get("item_keys", []), list) and str(item).strip()
+            ]
+            action_item_key_set = {self._machine_text(item) for item in item_keys if self._machine_text(item)}
+            if selected_key_set and action_item_key_set and not bool(action_item_key_set & selected_key_set):
+                continue
+            seen_codes.add(setup_action_code)
+            items.append(
+                {
+                    "id": str(row.get("id", "") or setup_action_code).strip(),
+                    "setup_action_code": setup_action_code,
+                    "kind": self._machine_text(row.get("kind", "")) or "setup_action",
+                    "title": str(row.get("title", "") or row.get("recommended_next_action", "") or setup_action_code).strip(),
+                    "status": self._machine_text(row.get("status", "")) or "planned",
+                    "auto_runnable": bool(row.get("auto_runnable", False)),
+                    "required": bool(row.get("required", False)),
+                    "provider": self._machine_text(row.get("provider", "")),
+                    "task": self._machine_text(row.get("task", row.get("primary_task", ""))),
+                    "item_keys": item_keys,
+                    "recommended_next_action": self._machine_text(row.get("recommended_next_action", "")),
+                    "source": "model_setup_mission",
+                }
+            )
+            if len(items) >= max(1, min(int(limit or 12), 48)):
+                break
+        return items
+
+    def _desktop_machine_model_setup_execution_plan(
+        self,
+        *,
+        mission_payload: Dict[str, Any],
+        model_selection: Dict[str, Any],
+        selected_item_keys: Optional[List[str]] = None,
+        workspace_scaffold_enabled: bool = True,
+        limit: int = 12,
+    ) -> Dict[str, Any]:
+        action_rows = self._desktop_machine_model_setup_actions(
+            mission_payload=mission_payload if isinstance(mission_payload, dict) else {},
+            selected_item_keys=selected_item_keys,
+            limit=max(1, min(int(limit or 12), 48)),
+        )
+        selected_rows: List[Dict[str, Any]] = []
+        manual_rows: List[Dict[str, Any]] = []
+        blocked_rows: List[Dict[str, Any]] = []
+        deferred_rows: List[Dict[str, Any]] = []
+        selected_action_ids: List[str] = []
+        for row in action_rows:
+            if not isinstance(row, dict):
+                continue
+            action_id = self._machine_text(row.get("id", "") or row.get("setup_action_code", ""))
+            if not action_id:
+                continue
+            action_kind = self._machine_text(row.get("kind", "")) or "setup_action"
+            status_name = self._machine_text(row.get("status", "")) or "planned"
+            auto_runnable = bool(row.get("auto_runnable", False))
+            selection_reason = ""
+            if action_kind == "scaffold_workspace" and bool(workspace_scaffold_enabled):
+                auto_runnable = False
+                selection_reason = "handled_by_workspace_stage"
+            item_payload = {
+                "id": str(row.get("id", "") or action_id).strip(),
+                "setup_action_code": self._machine_text(
+                    row.get("setup_action_code", "") or row.get("id", "") or row.get("kind", "")
+                ),
+                "kind": action_kind,
+                "title": str(row.get("title", "") or action_id).strip(),
+                "status": status_name,
+                "auto_runnable": bool(auto_runnable),
+                "required": bool(row.get("required", False)),
+                "provider": self._machine_text(row.get("provider", "")),
+                "task": self._machine_text(row.get("task", "")),
+                "item_keys": list(row.get("item_keys", [])) if isinstance(row.get("item_keys", []), list) else [],
+                "recommended_next_action": self._machine_text(row.get("recommended_next_action", "")),
+                "selection_reason": selection_reason,
+            }
+            if bool(auto_runnable) and status_name in {"ready", "planned"}:
+                selected_rows.append(item_payload)
+                selected_action_ids.append(action_id)
+            elif status_name in {"manual", "manual_input_required", "attention", "needs_attention"}:
+                manual_rows.append(item_payload)
+            elif status_name == "blocked":
+                blocked_rows.append(item_payload)
+            else:
+                deferred_rows.append(item_payload)
+        selected_key_rows = [
+            dict(item)
+            for item in model_selection.get("selected_items", [])
+            if isinstance(model_selection.get("selected_items", []), list) and isinstance(item, dict)
+        ]
+        resume_advice = (
+            dict(mission_payload.get("resume_advice", {}))
+            if isinstance(mission_payload.get("resume_advice", {}), dict)
+            else {}
+        )
+        next_rows = selected_rows or manual_rows or blocked_rows or deferred_rows
+        next_action = dict(next_rows[0]) if next_rows else {}
+        return {
+            "status": "success",
+            "selected_action_ids": selected_action_ids,
+            "selected_action_count": len(selected_action_ids),
+            "selected_actions": selected_rows,
+            "auto_ready_count": len(selected_rows),
+            "manual_followup_count": len(manual_rows),
+            "blocked_followup_count": len(blocked_rows),
+            "deferred_count": len(deferred_rows),
+            "manual_followups": manual_rows[:8],
+            "blocked_followups": blocked_rows[:8],
+            "deferred_followups": deferred_rows[:8],
+            "resume_ready": bool(
+                resume_advice.get("resume_ready", False)
+                or resume_advice.get("can_resume_now", False)
+                or resume_advice.get("can_auto_resume_now", False)
+            ),
+            "can_auto_resume_now": bool(resume_advice.get("can_auto_resume_now", False)),
+            "continue_followup_actions_recommended": bool(selected_action_ids)
+            or bool(resume_advice.get("can_auto_resume_now", False)),
+            "resume_trigger": self._machine_text(resume_advice.get("resume_trigger", "")),
+            "resume_hint": str(
+                resume_advice.get("recovery_hint", "") or resume_advice.get("message", "") or ""
+            ).strip(),
+            "resume_blockers": list(resume_advice.get("resume_blockers", []))
+            if isinstance(resume_advice.get("resume_blockers", []), list)
+            else [],
+            "next_action": next_action,
+            "selected_item_count": len(
+                [
+                    item
+                    for item in (
+                        selected_item_keys
+                        if selected_item_keys is not None
+                        else model_selection.get("selected_item_keys", [])
+                    )
+                    if str(item).strip()
+                ]
+            ),
+            "selected_model_count": len(selected_key_rows),
+        }
+
+    def _desktop_machine_execute_model_setup_plan(
+        self,
+        *,
+        mission_payload: Dict[str, Any],
+        selected_action_ids: Optional[List[str]] = None,
+        dry_run: bool = False,
+        continue_on_error: bool = True,
+        limit: int = 200,
+        continue_followup_actions: bool = True,
+        max_followup_waves: int = 3,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        clean_action_ids = [
+            str(item).strip().lower()
+            for item in (selected_action_ids or [])
+            if str(item).strip()
+        ]
+        if not clean_action_ids:
+            return {
+                "status": "skipped",
+                "execution_mode": "mission",
+                "selected_action_ids": [],
+                "selected_action_count": 0,
+                "continued_action_ids": [],
+                "continued_action_count": 0,
+                "continue_followup_actions_requested": bool(continue_followup_actions),
+                "continue_followup_actions_status": "skipped",
+                "continuation": {
+                    "status": "skipped",
+                    "enabled": bool(continue_followup_actions),
+                    "waves_executed": 0,
+                    "continued_action_ids": [],
+                    "final_ready_action_ids": [],
+                    "stop_reason": "no_selected_actions",
+                    "wave_summaries": [],
+                },
+                "remaining_ready_action_ids": [],
+                "remaining_ready_action_count": 0,
+                "resume_ready": False,
+                "message": "No auto-runnable model setup actions were selected for onboarding execution.",
+            }
+        payload = self._execute_model_setup_mission_actions(
+            mission_payload=mission_payload if isinstance(mission_payload, dict) else {},
+            selected_action_ids=clean_action_ids,
+            dry_run=bool(dry_run),
+            continue_on_error=bool(continue_on_error),
+            limit=max(1, min(int(limit or 200), 2000)),
+            source=str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+        )
+        payload = dict(payload) if isinstance(payload, dict) else {}
+        payload["execution_mode"] = "mission"
+        payload["selected_action_ids"] = clean_action_ids
+        payload["selected_action_count"] = len(clean_action_ids)
+        payload["continued_action_ids"] = []
+        payload["continued_action_count"] = 0
+        payload["continue_followup_actions_requested"] = bool(continue_followup_actions)
+        payload["continue_followup_actions_status"] = "skipped"
+        payload["executed_action_ids"] = clean_action_ids
+        payload["continuation"] = {
+            "status": "skipped",
+            "enabled": bool(continue_followup_actions),
+            "waves_executed": 0,
+            "continued_action_ids": [],
+            "final_ready_action_ids": [],
+            "stop_reason": "followup_not_requested" if not bool(continue_followup_actions) else "no_followup_attempt",
+            "wave_summaries": [],
+        }
+        if payload.get("status") == "error":
+            payload["message"] = str(payload.get("message", "") or "Model setup mission execution failed.").strip()
+            return payload
+        if bool(continue_followup_actions):
+            continuation_payload = self._cascade_model_setup_followup_actions(
+                mission_payload=payload.get("updated_mission", {})
+                if isinstance(payload.get("updated_mission", {}), dict)
+                else {},
+                dry_run=bool(dry_run),
+                continue_on_error=bool(continue_on_error),
+                limit=max(1, min(int(limit or 200), 2000)),
+                max_waves=max(0, min(int(max_followup_waves or 3), 8)),
+                exclude_action_ids=clean_action_ids,
+                source=f"{str(source or 'machine_onboarding').strip().lower() or 'machine_onboarding'}_followup",
+            )
+            continuation_payload = (
+                dict(continuation_payload) if isinstance(continuation_payload, dict) else {}
+            )
+            final_followup_payload = (
+                continuation_payload.get("final_payload", {})
+                if isinstance(continuation_payload.get("final_payload", {}), dict)
+                else {}
+            )
+            if isinstance(continuation_payload.get("items", []), list):
+                payload["items"] = list(payload.get("items", [])) + list(continuation_payload.get("items", []))
+            payload["executed_count"] = max(0, int(payload.get("executed_count", 0) or 0)) + max(
+                0,
+                int(continuation_payload.get("executed_count", 0) or 0),
+            )
+            payload["skipped_count"] = max(0, int(payload.get("skipped_count", 0) or 0)) + max(
+                0,
+                int(continuation_payload.get("skipped_count", 0) or 0),
+            )
+            payload["error_count"] = max(0, int(payload.get("error_count", 0) or 0)) + max(
+                0,
+                int(continuation_payload.get("error_count", 0) or 0),
+            )
+            payload["continued_action_ids"] = [
+                str(item).strip().lower()
+                for item in continuation_payload.get("continued_action_ids", [])
+                if str(item).strip()
+            ] if isinstance(continuation_payload.get("continued_action_ids", []), list) else []
+            payload["continued_action_count"] = len(payload.get("continued_action_ids", []))
+            payload["executed_action_ids"] = list(
+                dict.fromkeys([*clean_action_ids, *payload.get("continued_action_ids", [])])
+            )
+            payload["continue_followup_actions_status"] = str(
+                continuation_payload.get("status", "") or "skipped"
+            ).strip().lower() or "skipped"
+            payload["continuation"] = _to_jsonable(continuation_payload)
+            for followup_key in (
+                "mission",
+                "updated_mission",
+                "workspace",
+                "setup_plan",
+                "mission_record",
+                "mission_history",
+                "resume_advice",
+            ):
+                if isinstance(final_followup_payload.get(followup_key, {}), dict):
+                    payload[followup_key] = _to_jsonable(final_followup_payload.get(followup_key, {}))
+        resume_advice = self._build_model_setup_resume_advice(
+            current_mission=payload.get("updated_mission", {})
+            if isinstance(payload.get("updated_mission", {}), dict)
+            else {},
+            resolved_mission=payload.get("resolved_mission", {})
+            if isinstance(payload.get("resolved_mission", {}), dict) and payload.get("resolved_mission", {})
+            else payload.get("mission_record", {})
+            if isinstance(payload.get("mission_record", {}), dict)
+            else {},
+        )
+        payload["resume_advice"] = _to_jsonable(resume_advice)
+        remaining_ready_action_ids = (
+            list(payload.get("continuation", {}).get("final_ready_action_ids", []))
+            if isinstance(payload.get("continuation", {}), dict)
+            and isinstance(payload.get("continuation", {}).get("final_ready_action_ids", []), list)
+            else list(resume_advice.get("selected_action_ids", []))
+            if isinstance(resume_advice.get("selected_action_ids", []), list)
+            else []
+        )
+        payload["remaining_ready_action_ids"] = [
+            str(item).strip().lower() for item in remaining_ready_action_ids if str(item).strip()
+        ]
+        payload["remaining_ready_action_count"] = len(payload["remaining_ready_action_ids"])
+        payload["resume_ready"] = bool(
+            resume_advice.get("resume_ready", False)
+            or resume_advice.get("can_resume_now", False)
+            or resume_advice.get("can_auto_resume_now", False)
+            or payload["remaining_ready_action_count"] > 0
+        )
+        if not str(payload.get("message", "") or "").strip():
+            payload["message"] = (
+                f"Executed {len(clean_action_ids)} selected model setup action"
+                f"{'' if len(clean_action_ids) == 1 else 's'}"
+                + (
+                    f" and continued {payload['continued_action_count']} follow-up action"
+                    f"{'' if payload['continued_action_count'] == 1 else 's'}."
+                    if int(payload.get("continued_action_count", 0) or 0) > 0
+                    else "."
+                )
+            )
+        return payload
+
+    def _desktop_machine_onboarding_next_actions(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+        limit: int = 6,
+    ) -> List[Dict[str, Any]]:
+        priority_rank = {
+            "manual": 0,
+            "manual_input_required": 0,
+            "blocked": 1,
+            "attention": 2,
+            "needs_attention": 2,
+            "ready": 3,
+            "planned": 4,
+            "partial": 5,
+            "success": 6,
+            "skipped": 7,
+        }
+        selected: List[Dict[str, Any]] = []
+        ordered = sorted(
+            [dict(item) for item in items if isinstance(item, dict)],
+            key=lambda row: (
+                priority_rank.get(str(row.get("status", "") or "").strip().lower(), 9),
+                0 if bool(row.get("required", False)) else 1,
+                0 if bool(row.get("auto_runnable", False)) else 1,
+                str(row.get("title", "") or row.get("kind", "")).strip().lower(),
+            ),
+        )
+        for row in ordered:
+            status_name = str(row.get("status", "") or "").strip().lower()
+            if status_name in {"success", "skipped"}:
+                continue
+            selected.append(
+                {
+                    "id": str(row.get("id", "") or "").strip(),
+                    "stage": str(row.get("stage", "") or "").strip().lower(),
+                    "kind": str(row.get("kind", "") or "").strip().lower(),
+                    "status": status_name or "unknown",
+                    "title": str(row.get("title", "") or row.get("kind", "") or "action").strip(),
+                    "auto_runnable": bool(row.get("auto_runnable", False)),
+                    "required": bool(row.get("required", False)),
+                    "target": str(
+                        row.get("provider", "")
+                        or row.get("task", "")
+                        or row.get("app_name", "")
+                        or row.get("item_key", "")
+                        or row.get("setup_action_code", "")
+                        or row.get("recommended_next_action", "")
+                        or ""
+                    ).strip(),
+                }
+            )
+            if len(selected) >= max(1, min(int(limit or 6), 12)):
+                break
+        return selected
+
+    def _desktop_machine_onboarding_execution_queue(
+        self,
+        *,
+        provider_actions: Dict[str, Any],
+        task_preference_plan: Dict[str, Any],
+        model_selection: Dict[str, Any],
+        model_setup_mission: Optional[Dict[str, Any]] = None,
+        launch_seed_plan: Dict[str, Any],
+        app_learning_plan: Dict[str, Any],
+        app_control_prepare_plan: Dict[str, Any],
+        effective_item_keys: Optional[List[str]] = None,
+        workspace_scaffold_enabled: bool = True,
+        seed_launch_memory: bool = True,
+        auto_launch_model_setup: bool = True,
+        auto_create_app_learning_campaign: bool = True,
+        auto_run_app_learning_campaign: bool = True,
+        auto_prepare_app_controls: bool = True,
+        provider_updates: Optional[Dict[str, Any]] = None,
+        task_preference_update: Optional[Dict[str, Any]] = None,
+        workspace_scaffold: Optional[Dict[str, Any]] = None,
+        launch_seed_results: Optional[Dict[str, Any]] = None,
+        model_install_result: Optional[Dict[str, Any]] = None,
+        app_learning_result: Optional[Dict[str, Any]] = None,
+        app_control_prepare_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        items: List[Dict[str, Any]] = []
+        provider_rows = [
+            dict(item)
+            for item in provider_actions.get("items", [])
+            if isinstance(provider_actions.get("items", []), list) and isinstance(item, dict)
+        ]
+        provider_result_map = {
+            self._machine_text(item.get("provider", "")): dict(item)
+            for item in (provider_updates or {}).get("items", [])
+            if isinstance((provider_updates or {}).get("items", []), list)
+            and isinstance(item, dict)
+            and self._machine_text(item.get("provider", ""))
+        }
+        for row in provider_rows:
+            provider_name = self._machine_text(row.get("provider", ""))
+            if not provider_name:
+                continue
+            state_name = str(row.get("state", "") or "").strip().lower()
+            status_name = "ready"
+            if state_name == "needs_input":
+                status_name = "manual_input_required"
+            elif state_name == "needs_attention":
+                status_name = "attention"
+            provider_result = provider_result_map.get(provider_name, {})
+            if provider_result:
+                status_name = str(provider_result.get("status", "") or status_name).strip().lower() or status_name
+            items.append(
+                {
+                    "id": f"provider:{provider_name}",
+                    "stage": "provider",
+                    "kind": "configure_provider_credentials",
+                    "status": status_name,
+                    "title": f"Configure {provider_name} credentials",
+                    "provider": provider_name,
+                    "required": bool(row.get("required", False)),
+                    "auto_runnable": False,
+                    "needs_attention": state_name == "needs_attention",
+                    "needs_input": state_name == "needs_input",
+                }
+            )
+
+        task_preference_items = [
+            dict(item)
+            for item in task_preference_plan.get("items", [])
+            if isinstance(task_preference_plan.get("items", []), list) and isinstance(item, dict)
+        ]
+        task_preference_status = str((task_preference_update or {}).get("status", "") or "").strip().lower()
+        for row in task_preference_items:
+            task_name = self._machine_text(row.get("task", ""))
+            if not task_name:
+                continue
+            items.append(
+                {
+                    "id": f"task_preference:{task_name}",
+                    "stage": "task_preferences",
+                    "kind": "apply_task_preference",
+                    "status": task_preference_status or "ready",
+                    "title": f"Apply {task_name} task preference",
+                    "task": task_name,
+                    "provider": self._machine_text(row.get("provider", "")),
+                    "required": False,
+                    "auto_runnable": True,
+                }
+            )
+
+        workspace_status = str((workspace_scaffold or {}).get("status", "") or "").strip().lower()
+        items.append(
+            {
+                "id": "workspace_scaffold",
+                "stage": "workspace",
+                "kind": "workspace_scaffold",
+                "status": workspace_status or ("ready" if workspace_scaffold_enabled else "skipped"),
+                "title": "Prepare model workspace scaffold",
+                "required": False,
+                "auto_runnable": bool(workspace_scaffold_enabled),
+            }
+        )
+
+        setup_action_rows = self._desktop_machine_model_setup_actions(
+            mission_payload=model_setup_mission if isinstance(model_setup_mission, dict) else {},
+            selected_item_keys=(
+                [
+                    str(item).strip()
+                    for item in (
+                        effective_item_keys
+                        if effective_item_keys is not None
+                        else model_selection.get("selected_item_keys", [])
+                    )
+                    if str(item).strip()
+                ]
+            ),
+            limit=12,
+        )
+        setup_action_result_map: Dict[str, Dict[str, Any]] = {}
+        for execution_item in (
+            list((model_install_result or {}).get("items", []))
+            if isinstance((model_install_result or {}).get("items", []), list)
+            else []
+        ) + (
+            list((model_install_result or {}).get("continuation", {}).get("items", []))
+            if isinstance((model_install_result or {}).get("continuation", {}), dict)
+            and isinstance((model_install_result or {}).get("continuation", {}).get("items", []), list)
+            else []
+        ):
+            if not isinstance(execution_item, dict):
+                continue
+            execution_action_id = self._machine_text(
+                execution_item.get("action_id", "") or execution_item.get("id", "")
+            )
+            if not execution_action_id:
+                continue
+            setup_action_result_map[execution_action_id] = dict(execution_item)
+        executed_setup_action_ids = {
+            self._machine_text(item)
+            for item in (model_install_result or {}).get("executed_action_ids", [])
+            if isinstance((model_install_result or {}).get("executed_action_ids", []), list)
+            and self._machine_text(item)
+        }
+        continued_setup_action_ids = {
+            self._machine_text(item)
+            for item in (model_install_result or {}).get("continued_action_ids", [])
+            if isinstance((model_install_result or {}).get("continued_action_ids", []), list)
+            and self._machine_text(item)
+        }
+        for row in setup_action_rows:
+            setup_action_code = self._machine_text(
+                row.get("setup_action_code", "") or row.get("id", "") or row.get("kind", "")
+            )
+            action_kind = self._machine_text(row.get("kind", "")) or "setup_action"
+            status_name = self._machine_text(row.get("status", "")) or "planned"
+            auto_runnable = bool(row.get("auto_runnable", False))
+            action_id = self._machine_text(row.get("id", "") or setup_action_code)
+            provider_name = self._machine_text(row.get("provider", ""))
+            provider_result = provider_result_map.get(provider_name, {}) if provider_name else {}
+            provider_result_status = self._machine_text(provider_result.get("status", "")) if provider_result else ""
+            action_result = setup_action_result_map.get(action_id, {})
+            action_result_status = self._machine_text(action_result.get("status", "")) if action_result else ""
+            if action_kind == "scaffold_workspace":
+                status_name = workspace_status or ("ready" if workspace_scaffold_enabled else "skipped")
+                auto_runnable = bool(workspace_scaffold_enabled and auto_runnable)
+            elif action_kind in {"launch_setup_install", "launch_manual_pipeline"}:
+                status_name = (
+                    self._machine_text((model_install_result or {}).get("status", ""))
+                    or (status_name if bool(auto_launch_model_setup) else "planned")
+                )
+                auto_runnable = bool(auto_launch_model_setup and auto_runnable)
+            elif action_kind in {
+                "configure_provider_credentials",
+                "verify_provider_credentials",
+                "review_provider_access",
+            } and provider_result_status:
+                status_name = "success" if provider_result_status in {"success", "partial", "completed"} else provider_result_status
+            if action_result_status:
+                status_name = (
+                    "success"
+                    if action_result_status in {"success", "partial", "completed"}
+                    else action_result_status
+                )
+            items.append(
+                {
+                    "id": str(row.get("id", "") or setup_action_code).strip(),
+                    "stage": "setup_action",
+                    "kind": action_kind,
+                    "status": status_name,
+                    "title": str(row.get("title", "") or setup_action_code or "setup action").strip(),
+                    "provider": provider_name,
+                    "task": self._machine_text(row.get("task", "")),
+                    "item_key": (
+                        str(row.get("item_keys", [])[0]).strip()
+                        if isinstance(row.get("item_keys", []), list) and row.get("item_keys", [])
+                        else ""
+                    ),
+                    "item_keys": list(row.get("item_keys", []))
+                    if isinstance(row.get("item_keys", []), list)
+                    else [],
+                    "required": bool(row.get("required", False)),
+                    "auto_runnable": bool(auto_runnable),
+                    "setup_action_code": setup_action_code,
+                    "recommended_next_action": self._machine_text(row.get("recommended_next_action", "")),
+                    "source": str(row.get("source", "") or "model_setup_mission").strip().lower(),
+                    "executed": bool(action_id and action_id in executed_setup_action_ids),
+                    "continued": bool(action_id and action_id in continued_setup_action_ids),
+                }
+            )
+
+        selected_item_rows = {
+            str(item.get("key", "") or "").strip().lower(): dict(item)
+            for item in model_selection.get("selected_items", [])
+            if isinstance(model_selection.get("selected_items", []), list)
+            and isinstance(item, dict)
+            and str(item.get("key", "") or "").strip()
+        }
+        blocked_item_rows = {
+            str(item.get("key", "") or "").strip().lower(): dict(item)
+            for item in model_selection.get("blocked_items", [])
+            if isinstance(model_selection.get("blocked_items", []), list)
+            and isinstance(item, dict)
+            and str(item.get("key", "") or "").strip()
+        }
+        model_status = str((model_install_result or {}).get("status", "") or "").strip().lower()
+        selected_keys = [
+            str(item).strip()
+            for item in (
+                effective_item_keys
+                if effective_item_keys is not None
+                else model_selection.get("selected_item_keys", [])
+            )
+            if str(item).strip()
+        ]
+        for item_key in selected_keys:
+            clean_key = str(item_key or "").strip().lower()
+            row = selected_item_rows.get(clean_key, {})
+            items.append(
+                {
+                    "id": f"model:{clean_key}",
+                    "stage": "model",
+                    "kind": "install_model_item",
+                    "status": model_status or ("ready" if auto_launch_model_setup else "planned"),
+                    "title": f"Install model {clean_key}",
+                    "item_key": clean_key,
+                    "task": self._machine_text(row.get("task", "")),
+                    "required": True,
+                    "auto_runnable": bool(auto_launch_model_setup),
+                    "source_kind": self._machine_text(row.get("source_kind", "")),
+                }
+            )
+        for clean_key, row in list(blocked_item_rows.items())[:4]:
+            items.append(
+                {
+                    "id": f"model_blocked:{clean_key}",
+                    "stage": "model",
+                    "kind": "install_model_item",
+                    "status": "attention",
+                    "title": f"Review model setup for {clean_key}",
+                    "item_key": clean_key,
+                    "task": self._machine_text(row.get("task", "")),
+                    "required": False,
+                    "auto_runnable": False,
+                    "source_kind": self._machine_text(row.get("source_kind", "")),
+                }
+            )
+
+        launch_result_map = {
+            self._machine_text(item.get("requested_app", "") or item.get("display_name", "") or item.get("app_name", "")): dict(item)
+            for item in (launch_seed_results or {}).get("items", [])
+            if isinstance((launch_seed_results or {}).get("items", []), list) and isinstance(item, dict)
+        }
+        for row in [
+            dict(item)
+            for item in launch_seed_plan.get("items", [])
+            if isinstance(launch_seed_plan.get("items", []), list) and isinstance(item, dict)
+        ]:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            launch_result = launch_result_map.get(self._machine_text(app_name), {})
+            items.append(
+                {
+                    "id": f"launch_seed:{self._machine_text(app_name)}",
+                    "stage": "launch_seed",
+                    "kind": "seed_launch_memory",
+                    "status": str(launch_result.get("status", "") or "").strip().lower()
+                    or ("ready" if seed_launch_memory else "skipped"),
+                    "title": f"Seed launcher memory for {app_name}",
+                    "app_name": app_name,
+                    "required": False,
+                    "auto_runnable": bool(seed_launch_memory),
+                    "memory_present": bool(row.get("memory_present", False)),
+                }
+            )
+
+        app_learning_status = str((app_learning_result or {}).get("status", "") or "").strip().lower()
+        app_learning_run = (
+            (app_learning_result or {}).get("run", {})
+            if isinstance((app_learning_result or {}).get("run", {}), dict)
+            else {}
+        )
+        items.append(
+            {
+                "id": "app_learning:create",
+                "stage": "app_learning",
+                "kind": "create_app_learning_campaign",
+                "status": app_learning_status or ("ready" if auto_create_app_learning_campaign else "skipped"),
+                "title": "Create installed-app learning campaign",
+                "required": False,
+                "auto_runnable": bool(auto_create_app_learning_campaign),
+                "strategy_profile": str(
+                    app_learning_plan.get("plan", {}).get("campaign_defaults", {}).get("strategy_profile", "")
+                    if isinstance(app_learning_plan.get("plan", {}), dict)
+                    and isinstance(app_learning_plan.get("plan", {}).get("campaign_defaults", {}), dict)
+                    else ""
+                ).strip().lower(),
+            }
+        )
+        items.append(
+            {
+                "id": "app_learning:run",
+                "stage": "app_learning",
+                "kind": "run_app_learning_campaign",
+                "status": str(app_learning_run.get("status", "") or "").strip().lower()
+                or ("ready" if auto_create_app_learning_campaign and auto_run_app_learning_campaign else "skipped"),
+                "title": "Run installed-app learning campaign",
+                "required": False,
+                "auto_runnable": bool(auto_create_app_learning_campaign and auto_run_app_learning_campaign),
+            }
+        )
+
+        prepared_result_map = {
+            self._machine_text(item.get("effective_app_name", "") or item.get("requested_app", "")): dict(item)
+            for item in (app_control_prepare_result or {}).get("items", [])
+            if isinstance((app_control_prepare_result or {}).get("items", []), list) and isinstance(item, dict)
+        }
+        for row in [
+            dict(item)
+            for item in app_control_prepare_plan.get("items", [])
+            if isinstance(app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
+        ]:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            prepared_result = prepared_result_map.get(self._machine_text(app_name), {})
+            base_status = "ready"
+            if not bool(row.get("auto_prepare_allowed", True)):
+                base_status = "blocked"
+            elif str(row.get("readiness_status", "") or "").strip().lower() == "degraded":
+                base_status = "attention"
+            items.append(
+                {
+                    "id": f"app_prepare:{self._machine_text(app_name)}",
+                    "stage": "app_prepare",
+                    "kind": "prepare_app_control",
+                    "status": str(prepared_result.get("status", "") or "").strip().lower()
+                    or (base_status if auto_prepare_app_controls else "skipped"),
+                    "title": f"Prepare {app_name} for control",
+                    "app_name": app_name,
+                    "required": False,
+                    "auto_runnable": bool(auto_prepare_app_controls and row.get("auto_prepare_allowed", True)),
+                    "execution_mode": str(row.get("execution_mode", "") or "").strip().lower(),
+                    "readiness_status": str(row.get("readiness_status", "") or "").strip().lower(),
+                    "prepare_priority_band": str(row.get("prepare_priority_band", "") or "").strip().lower(),
+                    "expected_route_profile": str(row.get("expected_route_profile", "") or "").strip().lower(),
+                }
+            )
+
+        summary = self._desktop_machine_onboarding_execution_queue_summary(items=items)
+        next_actions = self._desktop_machine_onboarding_next_actions(items=items)
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+            "summary": summary,
+            "next_actions": next_actions,
+        }
+
     def _desktop_machine_provider_action_items(
         self,
         *,
@@ -9662,6 +10869,75 @@ class DesktopBackendService:
         if not tasks:
             tasks.append("reasoning")
         return self._machine_dedupe(tasks, limit=5)
+
+    @staticmethod
+    def _desktop_machine_task_setup_action_hints(task_name: str) -> List[str]:
+        clean_task = str(task_name or "").strip().lower()
+        hints = {
+            "reasoning": [
+                "install_first_local_models",
+                "install_local_reasoning_model",
+                "assign_task_model_preferences",
+            ],
+            "vision": [
+                "install_local_vision_model",
+                "install_ocr_runtime",
+                "install_vision_runtime",
+                "assign_task_model_preferences",
+            ],
+            "tts": ["assign_task_model_preferences"],
+            "stt": ["assign_task_model_preferences"],
+        }
+        return list(hints.get(clean_task, []))
+
+    def _desktop_machine_related_setup_action_codes(
+        self,
+        *,
+        profile: Dict[str, Any],
+        blocker_codes: List[str],
+        required_tasks: List[str],
+        missing_provider_names: List[str],
+        attention_provider_names: List[str],
+    ) -> List[str]:
+        available_codes = {
+            self._machine_text(item.get("setup_action_code", "") or item.get("code", "") or item.get("id", ""))
+            for item in self._desktop_machine_profile_setup_actions(profile=profile, limit=24)
+            if isinstance(item, dict)
+            and self._machine_text(item.get("setup_action_code", "") or item.get("code", "") or item.get("id", ""))
+        }
+        candidates: List[str] = []
+        if "path_unconfirmed" in blocker_codes:
+            candidates.extend(["run_app_discovery", "seed_launch_memory"])
+        if missing_provider_names:
+            candidates.append("configure_required_providers")
+        if attention_provider_names:
+            candidates.append("configure_required_providers")
+        if "huggingface" in missing_provider_names:
+            candidates.append("configure_huggingface_token")
+        if "huggingface" in attention_provider_names:
+            candidates.extend(["refresh_huggingface_credential", "configure_huggingface_token"])
+        for blocker_code in blocker_codes:
+            clean_code = self._machine_text(blocker_code)
+            if clean_code.startswith("model_setup_blocked_"):
+                candidates.extend(
+                    self._desktop_machine_task_setup_action_hints(
+                        clean_code.removeprefix("model_setup_blocked_")
+                    )
+                )
+            elif clean_code.startswith("limited_") and clean_code.endswith("_coverage"):
+                candidates.extend(
+                    self._desktop_machine_task_setup_action_hints(
+                        clean_code[len("limited_") : -len("_coverage")]
+                    )
+                )
+        for task_name in required_tasks:
+            candidates.extend(self._desktop_machine_task_setup_action_hints(task_name))
+        deduped = self._machine_dedupe(candidates, limit=12)
+        if available_codes:
+            filtered = [code for code in deduped if self._machine_text(code) in available_codes]
+            if filtered:
+                return filtered[:8]
+        return deduped[:8]
 
     def _desktop_machine_prepare_readiness_annotation(
         self,
@@ -9870,6 +11146,13 @@ class DesktopBackendService:
             ],
             limit=6,
         )
+        related_setup_action_codes = self._desktop_machine_related_setup_action_codes(
+            profile=profile,
+            blocker_codes=blocker_codes,
+            required_tasks=required_tasks,
+            missing_provider_names=missing_provider_names,
+            attention_provider_names=attention_provider_names,
+        )
         return {
             "required_tasks": required_tasks,
             "local_ready_tasks": local_ready_tasks,
@@ -9890,6 +11173,8 @@ class DesktopBackendService:
             "prepare_priority_score": round(priority_score, 3),
             "prepare_priority_band": priority_band,
             "prepare_priority_reasons": priority_reasons,
+            "related_setup_action_codes": related_setup_action_codes,
+            "related_setup_action_count": len(related_setup_action_codes),
         }
 
     def _desktop_machine_app_control_prepare_plan(
@@ -10014,6 +11299,7 @@ class DesktopBackendService:
         items = annotated_items[:bounded]
         execution_mode_counts: Dict[str, int] = {}
         top_blocker_codes: Dict[str, int] = {}
+        related_setup_action_code_counts: Dict[str, int] = {}
         expected_route_profile_counts: Dict[str, int] = {}
         expected_model_preference_counts: Dict[str, int] = {}
         expected_provider_source_counts: Dict[str, int] = {}
@@ -10024,6 +11310,12 @@ class DesktopBackendService:
                 clean_code = str(blocker_code or "").strip().lower()
                 if clean_code:
                     top_blocker_codes[clean_code] = int(top_blocker_codes.get(clean_code, 0) or 0) + 1
+            for setup_action_code in item.get("related_setup_action_codes", []):
+                clean_code = str(setup_action_code or "").strip().lower()
+                if clean_code:
+                    related_setup_action_code_counts[clean_code] = int(
+                        related_setup_action_code_counts.get(clean_code, 0) or 0
+                    ) + 1
             expected_route_profile = str(item.get("expected_route_profile", "") or "").strip().lower()
             if expected_route_profile:
                 expected_route_profile_counts[expected_route_profile] = int(
@@ -10069,6 +11361,13 @@ class DesktopBackendService:
                 "top_blocker_codes": {
                     str(key): int(value)
                     for key, value in sorted(top_blocker_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
+                },
+                "related_setup_action_code_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        related_setup_action_code_counts.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:8]
                 },
             },
             "defaults": {
@@ -10719,10 +12018,33 @@ class DesktopBackendService:
             profile=profile,
             model_selection=model_selection if isinstance(model_selection, dict) else {},
         )
+        task_preference_plan = self._desktop_machine_task_preference_plan(
+            profile=profile,
+            task_preferences=None,
+            apply_recommended_task_preferences=True,
+        )
+        profile_setup_actions = self._desktop_machine_profile_setup_actions(
+            profile=profile,
+            limit=12,
+        )
+        profile_setup_action_summary = self._desktop_machine_profile_setup_action_summary(
+            items=profile_setup_actions,
+        )
         launch_seed_plan = self._desktop_machine_launch_seed_plan(
             profile=profile,
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             max_apps=min(8, max_targets),
+        )
+        model_setup_mission = self.model_setup_mission(
+            refresh_provider_credentials=False,
+            limit=max(8, min(int(model_limit or 200), 2000)),
+        )
+        model_setup_execution_plan = self._desktop_machine_model_setup_execution_plan(
+            mission_payload=model_setup_mission if isinstance(model_setup_mission, dict) else {},
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+            selected_item_keys=selected_item_keys,
+            workspace_scaffold_enabled=True,
+            limit=12,
         )
         app_control_prepare_plan = self._desktop_machine_app_control_prepare_plan(
             profile=profile,
@@ -10757,6 +12079,32 @@ class DesktopBackendService:
             if isinstance(app_learning_plan.get("plan", {}), dict)
             else 0
         )
+        execution_queue = self._desktop_machine_onboarding_execution_queue(
+            provider_actions=provider_actions if isinstance(provider_actions, dict) else {},
+            task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+            model_setup_mission=model_setup_mission if isinstance(model_setup_mission, dict) else None,
+            launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+            app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+            app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
+            effective_item_keys=selected_item_keys,
+            workspace_scaffold_enabled=True,
+            seed_launch_memory=True,
+            auto_launch_model_setup=True,
+            auto_create_app_learning_campaign=True,
+            auto_run_app_learning_campaign=True,
+            auto_prepare_app_controls=True,
+        )
+        execution_queue_summary = (
+            dict(execution_queue.get("summary", {}))
+            if isinstance(execution_queue.get("summary", {}), dict)
+            else {}
+        )
+        next_actions = (
+            list(execution_queue.get("next_actions", []))
+            if isinstance(execution_queue.get("next_actions", []), list)
+            else []
+        )
         steps = [
             {
                 "id": "provider_credentials",
@@ -10788,6 +12136,36 @@ class DesktopBackendService:
                 "auto_runnable": bool(selected_item_keys),
                 "required": bool(selected_item_keys),
                 "count": len(selected_item_keys),
+            },
+            {
+                "id": "model_setup_execution",
+                "kind": "model_setup_execution",
+                "status": "skipped"
+                if int(model_setup_execution_plan.get("selected_action_count", 0) or 0) <= 0
+                and int(model_setup_execution_plan.get("manual_followup_count", 0) or 0) <= 0
+                and int(model_setup_execution_plan.get("blocked_followup_count", 0) or 0) <= 0
+                else "attention"
+                if int(model_setup_execution_plan.get("manual_followup_count", 0) or 0) > 0
+                or int(model_setup_execution_plan.get("blocked_followup_count", 0) or 0) > 0
+                else "ready",
+                "title": "Execute resumable setup mission actions for recommended models",
+                "auto_runnable": bool(model_setup_execution_plan.get("selected_action_count", 0)),
+                "required": bool(model_setup_execution_plan.get("selected_action_count", 0)),
+                "count": int(model_setup_execution_plan.get("selected_action_count", 0) or 0),
+            },
+            {
+                "id": "setup_followups",
+                "kind": "setup_actions",
+                "status": "skipped"
+                if int(execution_queue_summary.get("setup_action_count", 0) or 0) <= 0
+                else "attention"
+                if int(execution_queue_summary.get("setup_action_manual_count", 0) or 0) > 0
+                or int(execution_queue_summary.get("setup_action_blocked_count", 0) or 0) > 0
+                else "ready",
+                "title": "Track concrete model and provider setup follow-up actions",
+                "auto_runnable": bool(execution_queue_summary.get("setup_action_auto_runnable_count", 0)),
+                "required": int(execution_queue_summary.get("setup_action_count", 0) or 0) > 0,
+                "count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
             },
             {
                 "id": "app_learning",
@@ -10827,15 +12205,45 @@ class DesktopBackendService:
                     "plan": setup_plan,
                     "selection": model_selection,
                     "preflight": preflight,
+                    "mission": model_setup_mission,
+                    "execution_plan": model_setup_execution_plan,
                 },
+                "profile_setup_actions": profile_setup_actions,
+                "profile_setup_action_summary": profile_setup_action_summary,
+                "task_preference_plan": task_preference_plan,
                 "launch_seed_plan": launch_seed_plan,
                 "app_control_prepare_plan": app_control_prepare_plan,
                 "app_learning_plan": app_learning_plan,
+                "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
+                "execution_queue_summary": execution_queue_summary,
+                "next_actions": next_actions,
                 "steps": steps,
                 "summary": {
                     "provider_missing_count": int(dict(provider_actions.get("summary", {})).get("missing_count", 0) or 0),
                     "provider_attention_count": int(dict(provider_actions.get("summary", {})).get("attention_count", 0) or 0),
+                    "profile_setup_action_count": int(profile_setup_action_summary.get("count", 0) or 0),
+                    "task_preference_count": int(task_preference_plan.get("count", 0) or 0)
+                    if isinstance(task_preference_plan, dict)
+                    else 0,
                     "selected_model_count": len(selected_item_keys),
+                    "setup_execution_selected_action_count": int(
+                        model_setup_execution_plan.get("selected_action_count", 0) or 0
+                    ),
+                    "setup_execution_auto_ready_count": int(
+                        model_setup_execution_plan.get("auto_ready_count", 0) or 0
+                    ),
+                    "setup_execution_manual_followup_count": int(
+                        model_setup_execution_plan.get("manual_followup_count", 0) or 0
+                    ),
+                    "setup_execution_blocked_followup_count": int(
+                        model_setup_execution_plan.get("blocked_followup_count", 0) or 0
+                    ),
+                    "setup_execution_resume_ready": bool(
+                        model_setup_execution_plan.get("resume_ready", False)
+                    ),
+                    "setup_execution_continue_recommended": bool(
+                        model_setup_execution_plan.get("continue_followup_actions_recommended", False)
+                    ),
                     "launch_seed_count": int(launch_seed_plan.get("count", 0) or 0),
                     "app_learning_target_count": app_learning_target_count,
                     "app_learning_auto_target_count": int(learning_plan_summary.get("auto_learn_count", 0) or 0),
@@ -10846,8 +12254,26 @@ class DesktopBackendService:
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
+                    "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
+                    "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),
+                    "execution_ready_count": int(execution_queue_summary.get("ready_count", 0) or 0),
+                    "execution_manual_count": int(execution_queue_summary.get("manual_count", 0) or 0),
+                    "execution_blocked_count": int(execution_queue_summary.get("blocked_count", 0) or 0),
+                    "execution_error_count": int(execution_queue_summary.get("error_count", 0) or 0),
+                    "setup_action_count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
+                    "setup_action_auto_runnable_count": int(
+                        execution_queue_summary.get("setup_action_auto_runnable_count", 0) or 0
+                    ),
+                    "setup_action_success_count": int(execution_queue_summary.get("setup_action_success_count", 0) or 0),
+                    "setup_action_manual_count": int(execution_queue_summary.get("setup_action_manual_count", 0) or 0),
+                    "setup_action_blocked_count": int(execution_queue_summary.get("setup_action_blocked_count", 0) or 0),
+                    "top_setup_action_codes": dict(
+                        execution_queue_summary.get("setup_action_code_counts", {})
+                    )
+                    if isinstance(execution_queue_summary.get("setup_action_code_counts", {}), dict)
+                    else {},
                 },
-                "message": "Built a machine onboarding plan with provider validation, adaptive local-model setup, launch-memory seeding, readiness-aware app-learning targets, and auto-prepare app-control targets.",
+                "message": "Built a machine onboarding plan with tracked machine setup advice, resumable setup-mission execution planning, launcher seeding, readiness-aware app-learning, and automatic app-control preparation.",
             }
         )
 
@@ -10920,9 +12346,31 @@ class DesktopBackendService:
         if not isinstance(plan, dict) or plan.get("status") != "success":
             return plan if isinstance(plan, dict) else {"status": "error", "message": "unable to build machine onboarding plan"}
         profile = dict(plan.get("profile", {})) if isinstance(plan.get("profile", {}), dict) else {}
+        profile_setup_actions = [
+            dict(item)
+            for item in plan.get("profile_setup_actions", [])
+            if isinstance(plan.get("profile_setup_actions", []), list) and isinstance(item, dict)
+        ]
+        profile_setup_action_summary = (
+            dict(plan.get("profile_setup_action_summary", {}))
+            if isinstance(plan.get("profile_setup_action_summary", {}), dict)
+            else self._desktop_machine_profile_setup_action_summary(items=profile_setup_actions)
+        )
         onboarding_provider_inputs = self._normalize_onboarding_provider_inputs(provider_credentials)
         model_setup = plan.get("model_setup", {}) if isinstance(plan.get("model_setup", {}), dict) else {}
         model_selection = model_setup.get("selection", {}) if isinstance(model_setup.get("selection", {}), dict) else {}
+        model_setup_mission = model_setup.get("mission", {}) if isinstance(model_setup.get("mission", {}), dict) else {}
+        model_setup_execution_plan = (
+            dict(model_setup.get("execution_plan", {}))
+            if isinstance(model_setup.get("execution_plan", {}), dict)
+            else self._desktop_machine_model_setup_execution_plan(
+                mission_payload=model_setup_mission,
+                model_selection=model_selection if isinstance(model_selection, dict) else {},
+                selected_item_keys=None,
+                workspace_scaffold_enabled=bool(scaffold_workspace),
+                limit=12,
+            )
+        )
         suggested_item_keys = [
             str(item).strip()
             for item in model_selection.get("selected_item_keys", [])
@@ -10930,6 +12378,14 @@ class DesktopBackendService:
         ]
         explicit_item_keys = [str(item).strip() for item in (selected_model_item_keys or []) if str(item).strip()]
         effective_item_keys = explicit_item_keys or suggested_item_keys
+        if not explicit_item_keys:
+            model_setup_execution_plan = self._desktop_machine_model_setup_execution_plan(
+                mission_payload=model_setup_mission,
+                model_selection=model_selection if isinstance(model_selection, dict) else {},
+                selected_item_keys=effective_item_keys,
+                workspace_scaffold_enabled=bool(scaffold_workspace),
+                limit=12,
+            )
         launch_seed_plan = plan.get("launch_seed_plan", {}) if isinstance(plan.get("launch_seed_plan", {}), dict) else {}
         launch_seed_items = [
             dict(item)
@@ -10963,32 +12419,27 @@ class DesktopBackendService:
             and isinstance(app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}), dict)
             else {}
         )
+        runtime_app_learning_plan_payload = dict(app_learning_plan_payload)
+        runtime_app_learning_plan_summary = dict(app_learning_plan_summary)
+        runtime_app_learning_campaign_defaults = dict(app_learning_campaign_defaults)
+        runtime_app_control_prepare_plan = dict(app_control_prepare_plan) if isinstance(app_control_prepare_plan, dict) else {}
+        runtime_prepare_plan_items = list(prepare_plan_items)
+        runtime_prepare_plan_summary = (
+            dict(runtime_app_control_prepare_plan.get("summary", {}))
+            if isinstance(runtime_app_control_prepare_plan.get("summary", {}), dict)
+            else dict(prepare_plan_summary)
+        )
 
-        task_preference_payload: Dict[str, Any] = {}
-        if isinstance(task_preferences, dict) and task_preferences:
-            task_preference_payload = dict(task_preferences)
-        elif bool(apply_recommended_task_preferences):
-            models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
-            existing_by_task = (
-                models.get("task_preferences", {}).get("by_task", {})
-                if isinstance(models.get("task_preferences", {}), dict)
-                and isinstance(models.get("task_preferences", {}).get("by_task", {}), dict)
-                else {}
-            )
-            recommended_models = models.get("recommended_models", []) if isinstance(models.get("recommended_models", []), list) else []
-            for row in recommended_models:
-                if not isinstance(row, dict):
-                    continue
-                task_name = self._machine_text(row.get("task", ""))
-                if not task_name or task_name in existing_by_task:
-                    continue
-                task_preference_payload[task_name] = {
-                    "provider": str(row.get("provider", "") or "").strip().lower(),
-                    "model_name": str(row.get("model_name", "") or "").strip(),
-                    "execution_backend": str(row.get("execution_backend", "") or "").strip().lower(),
-                    "model_path": str(row.get("model_path", "") or "").strip(),
-                    "source": "machine_onboarding_recommendation",
-                }
+        task_preference_plan = self._desktop_machine_task_preference_plan(
+            profile=profile,
+            task_preferences=task_preferences,
+            apply_recommended_task_preferences=bool(apply_recommended_task_preferences),
+        )
+        task_preference_payload = (
+            dict(task_preference_plan.get("preferences", {}))
+            if isinstance(task_preference_plan.get("preferences", {}), dict)
+            else {}
+        )
 
         provider_updates: Dict[str, Any] = {"status": "success", "count": 0, "items": []}
         task_preference_update: Dict[str, Any] = {}
@@ -10997,6 +12448,9 @@ class DesktopBackendService:
         model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
         app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
+        queue_model_setup_mission: Dict[str, Any] = (
+            dict(model_setup_mission) if isinstance(model_setup_mission, dict) else {}
+        )
 
         if not bool(dry_run):
             if task_preference_payload:
@@ -11052,31 +12506,93 @@ class DesktopBackendService:
                     "count": len(launch_items),
                     "items": launch_items,
                 }
-            if bool(auto_launch_model_setup) and effective_item_keys:
-                model_install_result = self.model_setup_install_launch(
-                    task=str(task or "").strip().lower(),
-                    item_keys=effective_item_keys,
-                    dry_run=False,
-                    include_present=False,
-                    limit=max(8, min(int(model_limit or 200), 2000)),
-                    refresh_remote=True,
-                )
+            if bool(auto_launch_model_setup):
+                selected_setup_action_ids = [
+                    str(item).strip()
+                    for item in model_setup_execution_plan.get("selected_action_ids", [])
+                    if isinstance(model_setup_execution_plan.get("selected_action_ids", []), list) and str(item).strip()
+                ]
+                if selected_setup_action_ids:
+                    model_install_result = self._desktop_machine_execute_model_setup_plan(
+                        mission_payload=model_setup_mission if isinstance(model_setup_mission, dict) else {},
+                        selected_action_ids=selected_setup_action_ids,
+                        dry_run=False,
+                        continue_on_error=True,
+                        limit=max(8, min(int(model_limit or 200), 2000)),
+                        continue_followup_actions=bool(
+                            model_setup_execution_plan.get("continue_followup_actions_recommended", True)
+                        ),
+                        max_followup_waves=3,
+                        source="machine_onboarding",
+                    )
+                elif effective_item_keys:
+                    model_install_result = self.model_setup_install_launch(
+                        task=str(task or "").strip().lower(),
+                        item_keys=effective_item_keys,
+                        dry_run=False,
+                        include_present=False,
+                        limit=max(8, min(int(model_limit or 200), 2000)),
+                        refresh_remote=True,
+                    )
+                    if isinstance(model_install_result, dict):
+                        model_install_result["execution_mode"] = "direct_install_launch"
+                        model_install_result["selected_action_ids"] = []
+                        model_install_result["selected_action_count"] = 0
+                        model_install_result["continued_action_ids"] = []
+                        model_install_result["continued_action_count"] = 0
+                        model_install_result["remaining_ready_action_ids"] = []
+                        model_install_result["remaining_ready_action_count"] = 0
+                        model_install_result["resume_ready"] = False
+                        model_install_result["continue_followup_actions_requested"] = False
+                        model_install_result["continue_followup_actions_status"] = "skipped"
+                if isinstance(model_install_result.get("updated_mission", {}), dict):
+                    queue_model_setup_mission = dict(model_install_result.get("updated_mission", {}))
+            runtime_app_learning_plan_payload = self._desktop_machine_apply_setup_execution_to_learning_plan(
+                app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
+                setup_execution=model_install_result if isinstance(model_install_result, dict) else {},
+            )
+            runtime_app_learning_plan_summary = (
+                dict(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}))
+                if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}), dict)
+                else {}
+            )
+            runtime_app_learning_campaign_defaults = (
+                dict(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}))
+                if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}), dict)
+                else {}
+            )
+            runtime_app_control_prepare_plan = self._desktop_machine_app_control_prepare_plan(
+                profile=profile if isinstance(profile, dict) else {},
+                app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
+                launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+                provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else None,
+                model_selection=model_selection if isinstance(model_selection, dict) else None,
+                max_apps=min(4, max_targets),
+            )
+            runtime_prepare_plan_items = [
+                dict(item)
+                for item in runtime_app_control_prepare_plan.get("items", [])
+                if isinstance(runtime_app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
+            ][: max(1, min(int(prepare_app_limit or 3), 12))]
+            runtime_prepare_plan_summary = (
+                dict(runtime_app_control_prepare_plan.get("summary", {}))
+                if isinstance(runtime_app_control_prepare_plan.get("summary", {}), dict)
+                else {}
+            )
             if bool(auto_create_app_learning_campaign):
-                app_learning_result = self.create_desktop_machine_app_learning_campaign(
-                    task=str(task or "").strip().lower(),
-                    app_query=app_query,
+                app_learning_result = self._desktop_machine_create_app_learning_campaign_from_plan(
+                    plan_payload=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
                     app_category=app_category,
-                    app_limit=app_limit,
-                    refresh_apps=False,
-                    max_targets=max_targets,
                     label=str(campaign_label or "Machine onboarding app learning").strip(),
                     max_apps=min(6, max_targets),
                     auto_run=bool(auto_run_app_learning_campaign),
                     source="machine_onboarding",
                 )
-            if bool(auto_prepare_app_controls) and prepare_plan_items:
+            if bool(auto_prepare_app_controls) and runtime_prepare_plan_items:
                 prepare_items = []
-                for item in prepare_plan_items:
+                for item in runtime_prepare_plan_items:
                     prepare_app_name = str(item.get("app_name", "") or "").strip()
                     if not prepare_app_name:
                         continue
@@ -11102,6 +12618,16 @@ class DesktopBackendService:
                                     "required_tasks": list(item.get("required_tasks", []))
                                     if isinstance(item.get("required_tasks", []), list)
                                     else [],
+                                    "related_setup_action_codes": list(item.get("related_setup_action_codes", []))
+                                    if isinstance(item.get("related_setup_action_codes", []), list)
+                                    else [],
+                                    "related_setup_action_count": int(item.get("related_setup_action_count", 0) or 0),
+                                    "setup_execution_mode": str(
+                                        model_install_result.get("execution_mode", "") or ""
+                                    ).strip().lower(),
+                                    "setup_execution_remaining_ready_count": int(
+                                        model_install_result.get("remaining_ready_action_count", 0) or 0
+                                    ),
                                 },
                                 "message": "Skipped automatic app-control preparation because provider/model readiness is currently blocked for this target.",
                             }
@@ -11147,6 +12673,32 @@ class DesktopBackendService:
                             if isinstance(item.get("required_tasks", []), list)
                             else []
                         )
+                        prepared_payload["related_setup_action_codes"] = (
+                            list(item.get("related_setup_action_codes", []))
+                            if isinstance(item.get("related_setup_action_codes", []), list)
+                            else []
+                        )
+                        prepared_payload["related_setup_action_count"] = int(
+                            item.get("related_setup_action_count", 0) or 0
+                        )
+                        prepared_payload["setup_execution_mode"] = str(
+                            model_install_result.get("execution_mode", "") or ""
+                        ).strip().lower()
+                        prepared_payload["setup_execution_selected_action_count"] = int(
+                            model_install_result.get("selected_action_count", 0) or 0
+                        )
+                        prepared_payload["setup_execution_continued_action_count"] = int(
+                            model_install_result.get("continued_action_count", 0) or 0
+                        )
+                        prepared_payload["setup_execution_remaining_ready_count"] = int(
+                            model_install_result.get("remaining_ready_action_count", 0) or 0
+                        )
+                        prepared_payload["setup_execution_resume_ready"] = bool(
+                            model_install_result.get("resume_ready", False)
+                        )
+                        prepared_payload["setup_execution_policy"] = str(
+                            item.get("setup_execution_policy", "") or ""
+                        ).strip().lower()
                         prepared_summary = (
                             dict(prepared_payload.get("summary", {}))
                             if isinstance(prepared_payload.get("summary", {}), dict)
@@ -11161,6 +12713,32 @@ class DesktopBackendService:
                             if isinstance(item.get("required_tasks", []), list)
                             else []
                         )
+                        prepared_summary["related_setup_action_codes"] = (
+                            list(item.get("related_setup_action_codes", []))
+                            if isinstance(item.get("related_setup_action_codes", []), list)
+                            else []
+                        )
+                        prepared_summary["related_setup_action_count"] = int(
+                            item.get("related_setup_action_count", 0) or 0
+                        )
+                        prepared_summary["setup_execution_mode"] = str(
+                            model_install_result.get("execution_mode", "") or ""
+                        ).strip().lower()
+                        prepared_summary["setup_execution_selected_action_count"] = int(
+                            model_install_result.get("selected_action_count", 0) or 0
+                        )
+                        prepared_summary["setup_execution_continued_action_count"] = int(
+                            model_install_result.get("continued_action_count", 0) or 0
+                        )
+                        prepared_summary["setup_execution_remaining_ready_count"] = int(
+                            model_install_result.get("remaining_ready_action_count", 0) or 0
+                        )
+                        prepared_summary["setup_execution_resume_ready"] = bool(
+                            model_install_result.get("resume_ready", False)
+                        )
+                        prepared_summary["setup_execution_policy"] = str(
+                            item.get("setup_execution_policy", "") or ""
+                        ).strip().lower()
                         prepared_payload["summary"] = prepared_summary
                     prepare_items.append(prepared_payload)
                 prepare_status_counts: Dict[str, int] = {}
@@ -11207,6 +12785,15 @@ class DesktopBackendService:
                             str(key): int(value)
                             for key, value in sorted(prepare_execution_mode_counts.items(), key=lambda entry: entry[0])
                         },
+                        "setup_aligned_app_count": int(
+                            runtime_prepare_plan_summary.get("setup_aligned_app_count", 0) or 0
+                        ),
+                        "setup_boosted_app_count": int(
+                            runtime_prepare_plan_summary.get("setup_boosted_app_count", 0) or 0
+                        ),
+                        "setup_constrained_app_count": int(
+                            runtime_prepare_plan_summary.get("setup_constrained_app_count", 0) or 0
+                        ),
                     },
                 }
         else:
@@ -11236,27 +12823,90 @@ class DesktopBackendService:
             model_install_result = {
                 "status": "planned" if auto_launch_model_setup and effective_item_keys else "skipped",
                 "selected_item_keys": effective_item_keys,
+                "execution_mode": "mission"
+                if auto_launch_model_setup and int(model_setup_execution_plan.get("selected_action_count", 0) or 0) > 0
+                else "direct_install_launch"
+                if auto_launch_model_setup and effective_item_keys
+                else "skipped",
+                "selected_action_ids": list(model_setup_execution_plan.get("selected_action_ids", []))
+                if isinstance(model_setup_execution_plan.get("selected_action_ids", []), list)
+                else [],
+                "selected_action_count": int(model_setup_execution_plan.get("selected_action_count", 0) or 0),
+                "continued_action_ids": [],
+                "continued_action_count": 0,
+                "remaining_ready_action_ids": [],
+                "remaining_ready_action_count": 0,
+                "resume_ready": bool(model_setup_execution_plan.get("resume_ready", False)),
+                "continue_followup_actions_requested": bool(
+                    model_setup_execution_plan.get("continue_followup_actions_recommended", False)
+                ),
+                "continue_followup_actions_status": "planned"
+                if auto_launch_model_setup and int(model_setup_execution_plan.get("selected_action_count", 0) or 0) > 0
+                else "skipped",
             }
             app_learning_result = {
                 "status": "planned" if auto_create_app_learning_campaign else "skipped",
                 "auto_run": bool(auto_run_app_learning_campaign),
             }
             app_control_prepare_result = {
-                "status": "planned" if auto_prepare_app_controls and prepare_plan_items else "skipped",
-                "count": len(prepare_plan_items) if auto_prepare_app_controls else 0,
-                "items": prepare_plan_items,
+                "status": "planned" if auto_prepare_app_controls and runtime_prepare_plan_items else "skipped",
+                "count": len(runtime_prepare_plan_items) if auto_prepare_app_controls else 0,
+                "items": runtime_prepare_plan_items,
                 "summary": {
                     "prepared_app_count": len(
-                        [item for item in prepare_plan_items if bool(item.get("auto_prepare_allowed", True))]
+                        [item for item in runtime_prepare_plan_items if bool(item.get("auto_prepare_allowed", True))]
                     ) if auto_prepare_app_controls else 0,
                     "blocked_count": len(
-                        [item for item in prepare_plan_items if not bool(item.get("auto_prepare_allowed", True))]
+                        [item for item in runtime_prepare_plan_items if not bool(item.get("auto_prepare_allowed", True))]
                     ) if auto_prepare_app_controls else 0,
                     "degraded_count": len(
-                        [item for item in prepare_plan_items if str(item.get("readiness_status", "") or "") == "degraded"]
+                        [item for item in runtime_prepare_plan_items if str(item.get("readiness_status", "") or "") == "degraded"]
                     ) if auto_prepare_app_controls else 0,
+                    "setup_aligned_app_count": int(
+                        runtime_prepare_plan_summary.get("setup_aligned_app_count", 0) or 0
+                    ),
+                    "setup_boosted_app_count": int(
+                        runtime_prepare_plan_summary.get("setup_boosted_app_count", 0) or 0
+                    ),
+                    "setup_constrained_app_count": int(
+                        runtime_prepare_plan_summary.get("setup_constrained_app_count", 0) or 0
+                    ),
                 },
             }
+
+        execution_queue = self._desktop_machine_onboarding_execution_queue(
+            provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else {},
+            task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+            model_setup_mission=queue_model_setup_mission if isinstance(queue_model_setup_mission, dict) else None,
+            launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+            app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
+            app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
+            effective_item_keys=effective_item_keys,
+            workspace_scaffold_enabled=bool(scaffold_workspace),
+            seed_launch_memory=bool(seed_launch_memory),
+            auto_launch_model_setup=bool(auto_launch_model_setup),
+            auto_create_app_learning_campaign=bool(auto_create_app_learning_campaign),
+            auto_run_app_learning_campaign=bool(auto_run_app_learning_campaign),
+            auto_prepare_app_controls=bool(auto_prepare_app_controls),
+            provider_updates=provider_updates if isinstance(provider_updates, dict) else None,
+            task_preference_update=task_preference_update if isinstance(task_preference_update, dict) else None,
+            workspace_scaffold=workspace_scaffold if isinstance(workspace_scaffold, dict) else None,
+            launch_seed_results=launch_seed_results if isinstance(launch_seed_results, dict) else None,
+            model_install_result=model_install_result if isinstance(model_install_result, dict) else None,
+            app_learning_result=app_learning_result if isinstance(app_learning_result, dict) else None,
+            app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
+        )
+        execution_queue_summary = (
+            dict(execution_queue.get("summary", {}))
+            if isinstance(execution_queue.get("summary", {}), dict)
+            else {}
+        )
+        next_actions = (
+            list(execution_queue.get("next_actions", []))
+            if isinstance(execution_queue.get("next_actions", []), list)
+            else []
+        )
 
         final_profile = self.desktop_machine_profile(
             task=str(task or "").strip().lower(),
@@ -11291,24 +12941,54 @@ class DesktopBackendService:
             "app_category": str(app_category or "").strip(),
             "dry_run": bool(dry_run),
             "plan": plan,
+            "profile_setup_actions": profile_setup_actions,
+            "profile_setup_action_summary": profile_setup_action_summary,
             "provider_updates": provider_updates,
             "task_preference_update": task_preference_update,
+            "task_preference_plan": task_preference_plan,
             "workspace_scaffold": workspace_scaffold,
             "launch_seed": launch_seed_results,
             "model_install": model_install_result,
             "app_learning_campaign": app_learning_result,
             "app_control_prepare": app_control_prepare_result,
+            "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
+            "execution_queue_summary": execution_queue_summary,
+            "next_actions": next_actions,
             "final_profile": final_profile,
             "summary": {
                 "provider_update_count": int(provider_updates.get("count", 0) or 0),
+                "profile_setup_action_count": int(profile_setup_action_summary.get("count", 0) or 0),
                 "task_preference_count": int(task_preference_update.get("count", 0) or 0),
                 "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
                 "selected_model_count": len(effective_item_keys),
+                "setup_execution_mode": str(model_install_result.get("execution_mode", "") or "").strip().lower(),
+                "setup_execution_selected_action_count": int(
+                    model_install_result.get("selected_action_count", 0) or 0
+                ),
+                "setup_execution_continued_action_count": int(
+                    model_install_result.get("continued_action_count", 0) or 0
+                ),
+                "setup_execution_remaining_ready_count": int(
+                    model_install_result.get("remaining_ready_action_count", 0) or 0
+                ),
+                "setup_execution_resume_ready": bool(model_install_result.get("resume_ready", False)),
+                "setup_execution_continue_status": str(
+                    model_install_result.get("continue_followup_actions_status", "") or ""
+                ).strip().lower(),
                 "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
-                "app_learning_strategy_profile": str(app_learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
-                "app_learning_auto_target_count": int(app_learning_plan_summary.get("auto_learn_count", 0) or 0),
-                "app_learning_blocked_count": int(app_learning_plan_summary.get("blocked_count", 0) or 0),
-                "app_learning_degraded_count": int(app_learning_plan_summary.get("degraded_count", 0) or 0),
+                "app_learning_strategy_profile": str(runtime_app_learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                "app_learning_auto_target_count": int(runtime_app_learning_plan_summary.get("auto_learn_count", 0) or 0),
+                "app_learning_blocked_count": int(runtime_app_learning_plan_summary.get("blocked_count", 0) or 0),
+                "app_learning_degraded_count": int(runtime_app_learning_plan_summary.get("degraded_count", 0) or 0),
+                "app_learning_setup_aligned_count": int(
+                    runtime_app_learning_plan_summary.get("setup_aligned_app_count", 0) or 0
+                ),
+                "app_learning_setup_boosted_count": int(
+                    runtime_app_learning_plan_summary.get("setup_boosted_app_count", 0) or 0
+                ),
+                "app_learning_setup_constrained_count": int(
+                    runtime_app_learning_plan_summary.get("setup_constrained_app_count", 0) or 0
+                ),
                 "prepared_app_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("prepared_app_count", app_control_prepare_result.get("count", 0))
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
@@ -11324,11 +13004,43 @@ class DesktopBackendService:
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else 0
                 ),
+                "prepared_setup_aligned_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("setup_aligned_app_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_setup_boosted_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("setup_boosted_app_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_setup_constrained_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("setup_constrained_app_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
+                "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),
+                "execution_ready_count": int(execution_queue_summary.get("ready_count", 0) or 0),
+                "execution_success_count": int(execution_queue_summary.get("success_count", 0) or 0),
+                "execution_manual_count": int(execution_queue_summary.get("manual_count", 0) or 0),
+                "execution_blocked_count": int(execution_queue_summary.get("blocked_count", 0) or 0),
+                "execution_error_count": int(execution_queue_summary.get("error_count", 0) or 0),
+                "setup_action_count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
+                "setup_action_auto_runnable_count": int(
+                    execution_queue_summary.get("setup_action_auto_runnable_count", 0) or 0
+                ),
+                "setup_action_success_count": int(execution_queue_summary.get("setup_action_success_count", 0) or 0),
+                "setup_action_manual_count": int(execution_queue_summary.get("setup_action_manual_count", 0) or 0),
+                "setup_action_blocked_count": int(execution_queue_summary.get("setup_action_blocked_count", 0) or 0),
+                "top_setup_action_codes": dict(execution_queue_summary.get("setup_action_code_counts", {}))
+                if isinstance(execution_queue_summary.get("setup_action_code_counts", {}), dict)
+                else {},
             },
             "message": (
-                "Prepared a machine onboarding run."
+                "Prepared a machine onboarding run with tracked machine setup advice, concrete setup follow-up actions, and app-control execution."
                 if bool(dry_run)
-                else "Completed a machine onboarding run with provider validation, adaptive model setup orchestration, launcher seeding, readiness-aware app-learning campaign setup, and automatic app-control preparation."
+                else "Completed a machine onboarding run with tracked machine setup advice, resumable provider/model mission execution, launcher seeding, readiness-aware app-learning campaign setup, and automatic app-control preparation."
             ),
         }
         recorded = manager.record_run(run_payload, source=source) if manager is not None else dict(run_payload)

@@ -2520,6 +2520,47 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineOnboardingPlan.summary),
     [desktopMachineOnboardingPlan]
   );
+  const desktopMachineOnboardingModelSetup = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.model_setup),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingModelSetupExecutionPlan = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingModelSetup.execution_plan),
+    [desktopMachineOnboardingModelSetup]
+  );
+  const desktopMachineOnboardingModelSetupNextAction = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingModelSetupExecutionPlan.next_action),
+    [desktopMachineOnboardingModelSetupExecutionPlan]
+  );
+  const desktopMachineOnboardingProfileSetupSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.profile_setup_action_summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingProfileSetupActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlan.profile_setup_actions)
+        ? desktopMachineOnboardingPlan.profile_setup_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingExecutionQueue = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlan.execution_queue)
+        ? desktopMachineOnboardingPlan.execution_queue.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingExecutionSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.execution_queue_summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingNextActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlan.next_actions)
+        ? desktopMachineOnboardingPlan.next_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingPlan]
+  );
   const desktopMachineAppControlPreparePlan = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlan.app_control_prepare_plan),
     [desktopMachineOnboardingPlan]
@@ -2553,6 +2594,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineAppControlPrepareSummary]
   );
+  const desktopMachineOnboardingProfileSetupTopCodes = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingProfileSetupSummary.top_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingProfileSetupSummary]
+  );
+  const desktopMachineOnboardingSetupActionCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingExecutionSummary.setup_action_code_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingExecutionSummary]
+  );
   const desktopMachineProviderActionSummary = useMemo(
     () => asObjectRecord(asObjectRecord(desktopMachineOnboardingPlan.provider_actions).summary),
     [desktopMachineOnboardingPlan]
@@ -2582,6 +2637,37 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineOnboardingLatestRun.summary),
     [desktopMachineOnboardingLatestRun]
   );
+  const desktopMachineOnboardingLatestExecutionSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingLatestRun.execution_queue_summary),
+    [desktopMachineOnboardingLatestRun]
+  );
+  const desktopMachineOnboardingLatestNextActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingLatestRun.next_actions)
+        ? desktopMachineOnboardingLatestRun.next_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingLatestRun]
+  );
+  const desktopMachineOnboardingLaunchQueueSummary = useMemo(
+    () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).execution_queue_summary),
+    [desktopMachineOnboardingLaunchState]
+  );
+  const desktopMachineOnboardingLaunchModelInstall = useMemo(
+    () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).model_install),
+    [desktopMachineOnboardingLaunchState]
+  );
+  const desktopMachinePrepareRelatedSetupActionCodes = useMemo(() => {
+    const summaryCodes = Array.isArray(desktopMachinePrepareSummary.related_setup_action_codes)
+      ? desktopMachinePrepareSummary.related_setup_action_codes
+      : [];
+    if (summaryCodes.length > 0) {
+      return summaryCodes.map((item) => String(item)).filter((item) => item.trim().length > 0);
+    }
+    const readinessCodes = Array.isArray(desktopMachinePrepareReadiness.related_setup_action_codes)
+      ? desktopMachinePrepareReadiness.related_setup_action_codes
+      : [];
+    return readinessCodes.map((item) => String(item)).filter((item) => item.trim().length > 0);
+  }, [desktopMachinePrepareReadiness, desktopMachinePrepareSummary]);
   const desktopMachineAppLearningPlan = useMemo(
     () => asObjectRecord(desktopMachineAppLearningPlanState),
     [desktopMachineAppLearningPlanState]
@@ -20802,6 +20888,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}learning degraded:{Number(desktopMachineOnboardingSummary.app_learning_degraded_count ?? 0)}
                                           {' • '}learning blocked:{Number(desktopMachineOnboardingSummary.app_learning_blocked_count ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          learn setup aligned:{Number(desktopMachineOnboardingSummary.app_learning_setup_aligned_count ?? 0)}
+                                          {' • '}boosted:{Number(desktopMachineOnboardingSummary.app_learning_setup_boosted_count ?? 0)}
+                                          {' • '}constrained:{Number(desktopMachineOnboardingSummary.app_learning_setup_constrained_count ?? 0)}
+                                        </p>
                                         {String(desktopMachineOnboardingSummary.app_learning_strategy_profile ?? '').trim() ? (
                                           <p className="mt-1">
                                             learning strategy:{String(desktopMachineOnboardingSummary.app_learning_strategy_profile).trim()}
@@ -20901,6 +20992,18 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}default prepare limit:{Number(desktopMachineAppControlPrepareDefaults.prepare_app_limit ?? 0)}
                                         </p>
                                         <p className="mt-1">
+                                          profile setup:{Number(
+                                            desktopMachineOnboardingSummary.profile_setup_action_count ??
+                                              desktopMachineOnboardingProfileSetupSummary.count ??
+                                              0
+                                          )}
+                                          {' • '}queued followups:{Number(
+                                            desktopMachineOnboardingSummary.setup_action_count ??
+                                              desktopMachineOnboardingExecutionSummary.setup_action_count ??
+                                              0
+                                          )}
+                                        </p>
+                                        <p className="mt-1">
                                           runnable:{Number(desktopMachineAppControlPrepareSummary.runnable_count ?? 0)}
                                           {' • '}degraded:{Number(desktopMachineAppControlPrepareSummary.degraded_count ?? 0)}
                                           {' • '}blocked:{Number(desktopMachineAppControlPrepareSummary.blocked_count ?? 0)}
@@ -20936,6 +21039,79 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {Number(desktopMachineOnboardingExecutionSummary.setup_action_count ?? 0) > 0 ? (
+                                          <p className="mt-1">
+                                            setup actions:{Number(desktopMachineOnboardingExecutionSummary.setup_action_count ?? 0)}
+                                            {' • '}auto:{Number(
+                                              desktopMachineOnboardingExecutionSummary.setup_action_auto_runnable_count ?? 0
+                                            )}
+                                            {' • '}manual:{Number(
+                                              desktopMachineOnboardingExecutionSummary.setup_action_manual_count ?? 0
+                                            )}
+                                            {' • '}blocked:{Number(
+                                              desktopMachineOnboardingExecutionSummary.setup_action_blocked_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingModelSetupExecutionPlan.selected_action_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingModelSetupExecutionPlan.manual_followup_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingModelSetupExecutionPlan.blocked_followup_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            setup plan:{Number(desktopMachineOnboardingModelSetupExecutionPlan.selected_action_count ?? 0)}
+                                            {' • '}manual:{Number(
+                                              desktopMachineOnboardingModelSetupExecutionPlan.manual_followup_count ?? 0
+                                            )}
+                                            {' • '}blocked:{Number(
+                                              desktopMachineOnboardingModelSetupExecutionPlan.blocked_followup_count ?? 0
+                                            )}
+                                            {' • '}deferred:{Number(
+                                              desktopMachineOnboardingModelSetupExecutionPlan.deferred_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {String(desktopMachineOnboardingModelSetupNextAction.title ?? '').trim() ? (
+                                          <p className="mt-1">
+                                            setup next:{String(
+                                              desktopMachineOnboardingModelSetupNextAction.title ??
+                                                desktopMachineOnboardingModelSetupNextAction.kind ??
+                                                'action'
+                                            )}
+                                            {' • '}resume:{String(
+                                              Boolean(desktopMachineOnboardingModelSetupExecutionPlan.resume_ready)
+                                            )}
+                                            {' • '}continue:{String(
+                                              Boolean(
+                                                desktopMachineOnboardingModelSetupExecutionPlan.continue_followup_actions_recommended
+                                              )
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingProfileSetupTopCodes.length > 0 ? (
+                                          <p className="mt-1">
+                                            profile setup codes:{' '}
+                                            {desktopMachineOnboardingProfileSetupTopCodes
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : desktopMachineOnboardingProfileSetupActions.length > 0 ? (
+                                          <p className="mt-1">
+                                            profile setup codes:{' '}
+                                            {desktopMachineOnboardingProfileSetupActions
+                                              .slice(0, 4)
+                                              .map((item) => String(item.setup_action_code ?? item.code ?? item.title ?? 'setup'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingSetupActionCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            queued setup codes:{' '}
+                                            {desktopMachineOnboardingSetupActionCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineOnboardingSteps.length > 0 ? (
                                           <p className="mt-1">
                                             steps:{' '}
@@ -20943,6 +21119,75 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .slice(0, 4)
                                               .map((item) => `${String(item.title ?? item.kind ?? 'step')}=${String(item.status ?? 'ready')}`)
                                               .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Number(desktopMachineOnboardingExecutionSummary.count ?? 0) > 0 ? (
+                                          <p className="mt-1">
+                                            queue:{Number(desktopMachineOnboardingExecutionSummary.count ?? 0)}
+                                            {' • '}auto:{Number(desktopMachineOnboardingExecutionSummary.auto_runnable_count ?? 0)}
+                                            {' • '}ready:{Number(desktopMachineOnboardingExecutionSummary.ready_count ?? 0)}
+                                            {' • '}manual:{Number(desktopMachineOnboardingExecutionSummary.manual_count ?? 0)}
+                                            {' • '}blocked:{Number(desktopMachineOnboardingExecutionSummary.blocked_count ?? 0)}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(asObjectRecord(desktopMachineOnboardingExecutionSummary.stage_counts)).length > 0 ? (
+                                          <p className="mt-1">
+                                            queue stages:{' '}
+                                            {Object.entries(asObjectRecord(desktopMachineOnboardingExecutionSummary.stage_counts))
+                                              .slice(0, 5)
+                                              .map(([key, value]) => `${key}:${Number(value ?? 0)}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingNextActions.length > 0 ? (
+                                          <p className="mt-1">
+                                            next:{' '}
+                                            {desktopMachineOnboardingNextActions
+                                              .slice(0, 4)
+                                              .map((item) => {
+                                                const title = String(item.title ?? item.kind ?? 'action').trim();
+                                                const status = String(item.status ?? '').trim();
+                                                const target = String(item.target ?? '').trim();
+                                                return `${title}${target ? `:${target}` : ''}${status ? `=${status}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingExecutionQueue.length > 0 ? (
+                                          <p className="mt-1">
+                                            queue items:{' '}
+                                            {desktopMachineOnboardingExecutionQueue
+                                              .slice(0, 4)
+                                              .map((item) => {
+                                                const stage = String(item.stage ?? '').trim();
+                                                const title = String(item.title ?? item.kind ?? 'action').trim();
+                                                const status = String(item.status ?? '').trim();
+                                                return `${stage ? `${stage}:` : ''}${title}${status ? `=${status}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Number(desktopMachineOnboardingLaunchQueueSummary.count ?? 0) > 0 ? (
+                                          <p className="mt-1 text-primary/80">
+                                            last queue:{Number(desktopMachineOnboardingLaunchQueueSummary.count ?? 0)}
+                                            {' • '}done:{Number(desktopMachineOnboardingLaunchQueueSummary.success_count ?? 0)}
+                                            {' • '}manual:{Number(desktopMachineOnboardingLaunchQueueSummary.manual_count ?? 0)}
+                                            {' • '}blocked:{Number(desktopMachineOnboardingLaunchQueueSummary.blocked_count ?? 0)}
+                                            {' • '}errors:{Number(desktopMachineOnboardingLaunchQueueSummary.error_count ?? 0)}
+                                          </p>
+                                        ) : null}
+                                        {String(desktopMachineOnboardingLaunchModelInstall.execution_mode ?? '').trim() ? (
+                                          <p className="mt-1 text-primary/80">
+                                            last setup:{String(desktopMachineOnboardingLaunchModelInstall.execution_mode ?? 'n/a')}
+                                            {' • '}selected:{Number(
+                                              desktopMachineOnboardingLaunchModelInstall.selected_action_count ?? 0
+                                            )}
+                                            {' • '}continued:{Number(
+                                              desktopMachineOnboardingLaunchModelInstall.continued_action_count ?? 0
+                                            )}
+                                            {' • '}remaining:{Number(
+                                              desktopMachineOnboardingLaunchModelInstall.remaining_ready_action_count ?? 0
+                                            )}
                                           </p>
                                         ) : null}
                                         {desktopMachineOnboardingLaunchState ? (
@@ -21095,6 +21340,35 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachinePrepareRelatedSetupActionCodes.length > 0 ? (
+                                          <p className="mt-1">
+                                            setup followups:{' '}
+                                            {desktopMachinePrepareRelatedSetupActionCodes.slice(0, 4).join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {String(desktopMachinePrepareSummary.setup_execution_mode ?? '').trim() ? (
+                                          <p className="mt-1">
+                                            setup exec:{String(desktopMachinePrepareSummary.setup_execution_mode ?? 'n/a')}
+                                            {' • '}selected:{Number(
+                                              desktopMachinePrepareSummary.setup_execution_selected_action_count ?? 0
+                                            )}
+                                            {' • '}continued:{Number(
+                                              desktopMachinePrepareSummary.setup_execution_continued_action_count ?? 0
+                                            )}
+                                            {' • '}remaining:{Number(
+                                              desktopMachinePrepareSummary.setup_execution_remaining_ready_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachinePrepareSummary.setup_aligned_app_count ?? 0) > 0 ||
+                                          Number(desktopMachinePrepareSummary.setup_boosted_app_count ?? 0) > 0 ||
+                                          Number(desktopMachinePrepareSummary.setup_constrained_app_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            setup aligned:{Number(desktopMachinePrepareSummary.setup_aligned_app_count ?? 0)}
+                                            {' • '}boosted:{Number(desktopMachinePrepareSummary.setup_boosted_app_count ?? 0)}
+                                            {' • '}constrained:{Number(desktopMachinePrepareSummary.setup_constrained_app_count ?? 0)}
+                                          </p>
+                                        ) : null}
                                         {desktopMachinePrepareState ? (
                                           <p className="mt-1 text-primary/80">
                                             {String(desktopMachinePrepare.message ?? desktopMachinePrepare.status ?? 'n/a')}
@@ -21125,10 +21399,90 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}learning degraded:{Number(desktopMachineOnboardingLatestSummary.app_learning_degraded_count ?? 0)}
                                         </p>
                                         <p className="mt-1">
+                                          learn setup aligned:{Number(desktopMachineOnboardingLatestSummary.app_learning_setup_aligned_count ?? 0)}
+                                          {' • '}boosted:{Number(desktopMachineOnboardingLatestSummary.app_learning_setup_boosted_count ?? 0)}
+                                          {' • '}constrained:{Number(desktopMachineOnboardingLatestSummary.app_learning_setup_constrained_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
                                           prepared:{Number(desktopMachineOnboardingLatestSummary.prepared_app_count ?? 0)}
                                           {' • '}blocked:{Number(desktopMachineOnboardingLatestSummary.prepared_blocked_count ?? 0)}
                                           {' • '}degraded:{Number(desktopMachineOnboardingLatestSummary.prepared_degraded_count ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          prepared setup aligned:{Number(desktopMachineOnboardingLatestSummary.prepared_setup_aligned_count ?? 0)}
+                                          {' • '}boosted:{Number(desktopMachineOnboardingLatestSummary.prepared_setup_boosted_count ?? 0)}
+                                          {' • '}constrained:{Number(desktopMachineOnboardingLatestSummary.prepared_setup_constrained_count ?? 0)}
+                                        </p>
+                                        {(Number(desktopMachineOnboardingLatestSummary.setup_action_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.profile_setup_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            setup:{Number(desktopMachineOnboardingLatestSummary.setup_action_count ?? 0)}
+                                            {' • '}profile:{Number(desktopMachineOnboardingLatestSummary.profile_setup_action_count ?? 0)}
+                                            {' • '}manual:{Number(desktopMachineOnboardingLatestSummary.setup_action_manual_count ?? 0)}
+                                            {' • '}blocked:{Number(desktopMachineOnboardingLatestSummary.setup_action_blocked_count ?? 0)}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingLatestSummary.setup_execution_selected_action_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.setup_execution_continued_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            setup exec:{Number(
+                                              desktopMachineOnboardingLatestSummary.setup_execution_selected_action_count ?? 0
+                                            )}
+                                            {' • '}continued:{Number(
+                                              desktopMachineOnboardingLatestSummary.setup_execution_continued_action_count ?? 0
+                                            )}
+                                            {' • '}remaining:{Number(
+                                              desktopMachineOnboardingLatestSummary.setup_execution_remaining_ready_count ?? 0
+                                            )}
+                                            {' • '}resume:{String(
+                                              Boolean(desktopMachineOnboardingLatestSummary.setup_execution_resume_ready)
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingLatestExecutionSummary.count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.execution_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            queue:{Number(
+                                              desktopMachineOnboardingLatestExecutionSummary.count ??
+                                                desktopMachineOnboardingLatestSummary.execution_action_count ??
+                                                0
+                                            )}
+                                            {' • '}done:{Number(
+                                              desktopMachineOnboardingLatestExecutionSummary.success_count ??
+                                                desktopMachineOnboardingLatestSummary.execution_success_count ??
+                                                0
+                                            )}
+                                            {' • '}manual:{Number(
+                                              desktopMachineOnboardingLatestExecutionSummary.manual_count ??
+                                                desktopMachineOnboardingLatestSummary.execution_manual_count ??
+                                                0
+                                            )}
+                                            {' • '}blocked:{Number(
+                                              desktopMachineOnboardingLatestExecutionSummary.blocked_count ??
+                                                desktopMachineOnboardingLatestSummary.execution_blocked_count ??
+                                                0
+                                            )}
+                                            {' • '}errors:{Number(
+                                              desktopMachineOnboardingLatestExecutionSummary.error_count ??
+                                                desktopMachineOnboardingLatestSummary.execution_error_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingLatestNextActions.length > 0 ? (
+                                          <p className="mt-1">
+                                            next:{' '}
+                                            {desktopMachineOnboardingLatestNextActions
+                                              .slice(0, 3)
+                                              .map((item) => {
+                                                const title = String(item.title ?? item.kind ?? 'action').trim();
+                                                const target = String(item.target ?? '').trim();
+                                                const status = String(item.status ?? '').trim();
+                                                return `${title}${target ? `:${target}` : ''}${status ? `=${status}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         <div className="mt-2 space-y-2">
                                           {desktopMachineOnboardingHistoryRows.slice(0, 3).map((item, index) => (
                                             <div
@@ -21145,6 +21499,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}prepared:{Number(asObjectRecord(item.summary).prepared_app_count ?? 0)}
                                                 {' • '}blocked:{Number(asObjectRecord(item.summary).prepared_blocked_count ?? 0)}
                                                 {' • '}degraded:{Number(asObjectRecord(item.summary).prepared_degraded_count ?? 0)}
+                                                {' • '}setup:{Number(asObjectRecord(item.summary).setup_action_count ?? 0)}
+                                                {' • '}setup exec:{Number(
+                                                  asObjectRecord(item.summary).setup_execution_selected_action_count ?? 0
+                                                )}
+                                                {' • '}continued:{Number(
+                                                  asObjectRecord(item.summary).setup_execution_continued_action_count ?? 0
+                                                )}
+                                                {' • '}queue:{Number(asObjectRecord(item.summary).execution_action_count ?? 0)}
+                                                {' • '}manual:{Number(asObjectRecord(item.summary).execution_manual_count ?? 0)}
+                                                {' • '}q-blocked:{Number(asObjectRecord(item.summary).execution_blocked_count ?? 0)}
                                               </p>
                                             </div>
                                           ))}

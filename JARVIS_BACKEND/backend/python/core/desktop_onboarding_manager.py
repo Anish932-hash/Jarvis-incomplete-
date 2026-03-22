@@ -50,6 +50,28 @@ class DesktopOnboardingManager:
         prepared_degraded_total = 0
         provider_update_total = 0
         launch_seed_total = 0
+        execution_action_total = 0
+        execution_ready_total = 0
+        execution_success_total = 0
+        execution_manual_total = 0
+        execution_blocked_total = 0
+        execution_error_total = 0
+        setup_action_total = 0
+        setup_action_auto_runnable_total = 0
+        setup_action_success_total = 0
+        setup_action_manual_total = 0
+        setup_action_blocked_total = 0
+        profile_setup_action_total = 0
+        setup_execution_selected_action_total = 0
+        setup_execution_continued_action_total = 0
+        setup_execution_remaining_ready_total = 0
+        setup_execution_resume_ready_total = 0
+        app_learning_setup_aligned_total = 0
+        app_learning_setup_boosted_total = 0
+        app_learning_setup_constrained_total = 0
+        prepared_setup_aligned_total = 0
+        prepared_setup_boosted_total = 0
+        prepared_setup_constrained_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
@@ -61,6 +83,29 @@ class DesktopOnboardingManager:
             prepared_degraded_total += int(summary.get("prepared_degraded_count", 0) or 0)
             provider_update_total += int(summary.get("provider_update_count", 0) or 0)
             launch_seed_total += int(summary.get("launch_seed_count", 0) or 0)
+            execution_action_total += int(summary.get("execution_action_count", 0) or 0)
+            execution_ready_total += int(summary.get("execution_ready_count", 0) or 0)
+            execution_success_total += int(summary.get("execution_success_count", 0) or 0)
+            execution_manual_total += int(summary.get("execution_manual_count", 0) or 0)
+            execution_blocked_total += int(summary.get("execution_blocked_count", 0) or 0)
+            execution_error_total += int(summary.get("execution_error_count", 0) or 0)
+            setup_action_total += int(summary.get("setup_action_count", 0) or 0)
+            setup_action_auto_runnable_total += int(summary.get("setup_action_auto_runnable_count", 0) or 0)
+            setup_action_success_total += int(summary.get("setup_action_success_count", 0) or 0)
+            setup_action_manual_total += int(summary.get("setup_action_manual_count", 0) or 0)
+            setup_action_blocked_total += int(summary.get("setup_action_blocked_count", 0) or 0)
+            profile_setup_action_total += int(summary.get("profile_setup_action_count", 0) or 0)
+            setup_execution_selected_action_total += int(summary.get("setup_execution_selected_action_count", 0) or 0)
+            setup_execution_continued_action_total += int(summary.get("setup_execution_continued_action_count", 0) or 0)
+            setup_execution_remaining_ready_total += int(summary.get("setup_execution_remaining_ready_count", 0) or 0)
+            if bool(summary.get("setup_execution_resume_ready", False)):
+                setup_execution_resume_ready_total += 1
+            app_learning_setup_aligned_total += int(summary.get("app_learning_setup_aligned_count", 0) or 0)
+            app_learning_setup_boosted_total += int(summary.get("app_learning_setup_boosted_count", 0) or 0)
+            app_learning_setup_constrained_total += int(summary.get("app_learning_setup_constrained_count", 0) or 0)
+            prepared_setup_aligned_total += int(summary.get("prepared_setup_aligned_count", 0) or 0)
+            prepared_setup_boosted_total += int(summary.get("prepared_setup_boosted_count", 0) or 0)
+            prepared_setup_constrained_total += int(summary.get("prepared_setup_constrained_count", 0) or 0)
         return {
             "status": "success",
             "count": len(limited),
@@ -86,6 +131,28 @@ class DesktopOnboardingManager:
                 "prepared_degraded_total": prepared_degraded_total,
                 "provider_update_total": provider_update_total,
                 "launch_seed_total": launch_seed_total,
+                "execution_action_total": execution_action_total,
+                "execution_ready_total": execution_ready_total,
+                "execution_success_total": execution_success_total,
+                "execution_manual_total": execution_manual_total,
+                "execution_blocked_total": execution_blocked_total,
+                "execution_error_total": execution_error_total,
+                "setup_action_total": setup_action_total,
+                "setup_action_auto_runnable_total": setup_action_auto_runnable_total,
+                "setup_action_success_total": setup_action_success_total,
+                "setup_action_manual_total": setup_action_manual_total,
+                "setup_action_blocked_total": setup_action_blocked_total,
+                "profile_setup_action_total": profile_setup_action_total,
+                "setup_execution_selected_action_total": setup_execution_selected_action_total,
+                "setup_execution_continued_action_total": setup_execution_continued_action_total,
+                "setup_execution_remaining_ready_total": setup_execution_remaining_ready_total,
+                "setup_execution_resume_ready_total": setup_execution_resume_ready_total,
+                "app_learning_setup_aligned_total": app_learning_setup_aligned_total,
+                "app_learning_setup_boosted_total": app_learning_setup_boosted_total,
+                "app_learning_setup_constrained_total": app_learning_setup_constrained_total,
+                "prepared_setup_aligned_total": prepared_setup_aligned_total,
+                "prepared_setup_boosted_total": prepared_setup_boosted_total,
+                "prepared_setup_constrained_total": prepared_setup_constrained_total,
             },
         }
 

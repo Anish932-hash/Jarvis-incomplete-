@@ -12,10 +12,32 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
             "task": "reasoning",
             "summary": {
                 "provider_update_count": 1,
+                "profile_setup_action_count": 2,
                 "launch_seed_count": 2,
                 "prepared_app_count": 3,
                 "prepared_blocked_count": 1,
                 "prepared_degraded_count": 2,
+                "execution_action_count": 7,
+                "execution_ready_count": 3,
+                "execution_success_count": 2,
+                "execution_manual_count": 1,
+                "execution_blocked_count": 1,
+                "execution_error_count": 0,
+                "setup_action_count": 3,
+                "setup_action_auto_runnable_count": 1,
+                "setup_action_success_count": 1,
+                "setup_action_manual_count": 1,
+                "setup_action_blocked_count": 1,
+                "setup_execution_selected_action_count": 2,
+                "setup_execution_continued_action_count": 1,
+                "setup_execution_remaining_ready_count": 1,
+                "setup_execution_resume_ready": True,
+                "app_learning_setup_aligned_count": 2,
+                "app_learning_setup_boosted_count": 1,
+                "app_learning_setup_constrained_count": 1,
+                "prepared_setup_aligned_count": 2,
+                "prepared_setup_boosted_count": 1,
+                "prepared_setup_constrained_count": 1,
             },
         },
         source="machine_onboarding",
@@ -39,3 +61,25 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["prepared_app_total"] == 3
     assert history["summary"]["prepared_blocked_total"] == 1
     assert history["summary"]["prepared_degraded_total"] == 2
+    assert history["summary"]["execution_action_total"] == 7
+    assert history["summary"]["execution_ready_total"] == 3
+    assert history["summary"]["execution_success_total"] == 2
+    assert history["summary"]["execution_manual_total"] == 1
+    assert history["summary"]["execution_blocked_total"] == 1
+    assert history["summary"]["execution_error_total"] == 0
+    assert history["summary"]["setup_action_total"] == 3
+    assert history["summary"]["setup_action_auto_runnable_total"] == 1
+    assert history["summary"]["setup_action_success_total"] == 1
+    assert history["summary"]["setup_action_manual_total"] == 1
+    assert history["summary"]["setup_action_blocked_total"] == 1
+    assert history["summary"]["profile_setup_action_total"] == 2
+    assert history["summary"]["setup_execution_selected_action_total"] == 2
+    assert history["summary"]["setup_execution_continued_action_total"] == 1
+    assert history["summary"]["setup_execution_remaining_ready_total"] == 1
+    assert history["summary"]["setup_execution_resume_ready_total"] == 1
+    assert history["summary"]["app_learning_setup_aligned_total"] == 2
+    assert history["summary"]["app_learning_setup_boosted_total"] == 1
+    assert history["summary"]["app_learning_setup_constrained_total"] == 1
+    assert history["summary"]["prepared_setup_aligned_total"] == 2
+    assert history["summary"]["prepared_setup_boosted_total"] == 1
+    assert history["summary"]["prepared_setup_constrained_total"] == 1
