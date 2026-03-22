@@ -31,6 +31,8 @@ class FakeDesktopService:
         self.provider_recovery_calls: list[Dict[str, Any]] = []
         self.model_setup_scope_calls: list[Dict[str, Any]] = []
         self.machine_profile_calls: list[Dict[str, Any]] = []
+        self.machine_app_learning_plan_calls: list[Dict[str, Any]] = []
+        self.machine_app_learning_campaign_calls: list[Dict[str, Any]] = []
         self.machine_task_preference_calls: list[Dict[str, Any]] = []
         self.app_launcher_inventory_calls: list[Dict[str, Any]] = []
         self.app_launcher_memory_calls: list[Dict[str, Any]] = []
@@ -13510,6 +13512,115 @@ class FakeDesktopService:
             "latest_snapshot": {"machine_id": "machine-demo-01"},
         }
 
+    def desktop_machine_app_learning_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        refresh_apps: bool = False,
+        max_targets: int = 8,
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "refresh_apps": bool(refresh_apps),
+            "max_targets": int(max_targets),
+        }
+        self.machine_app_learning_plan_calls.append(call)
+        return {
+            "status": "success",
+            "profile": {"status": "success", "machine_id": "machine-demo-01"},
+            "app_memory": {"status": "success", "total": 1},
+            "plan": {
+                "status": "success",
+                "count": 2,
+                "targets": [
+                    {
+                        "app_name": "Google Chrome",
+                        "category": "browser",
+                        "status": "unknown",
+                        "target_container_roles": ["tab", "menu", "dialog"],
+                        "preferred_wave_actions": ["command", "focus_sidebar"],
+                        "preferred_traversal_paths": ["tab", "menu", "dialog"],
+                    },
+                    {
+                        "app_name": "Visual Studio Code",
+                        "category": "developer_tool",
+                        "status": "attention",
+                        "target_container_roles": ["sidebar", "tree", "dialog"],
+                        "preferred_wave_actions": ["command", "focus_tree"],
+                        "preferred_traversal_paths": ["sidebar", "tree", "dialog"],
+                    },
+                ],
+                "campaign_defaults": {
+                    "app_names": ["Google Chrome", "Visual Studio Code"],
+                    "target_container_roles": ["tab", "menu", "dialog", "sidebar", "tree"],
+                    "preferred_wave_actions": ["command", "focus_sidebar", "focus_tree"],
+                    "preferred_traversal_paths": ["tab", "menu", "dialog", "sidebar", "tree"],
+                    "max_surface_waves": 5,
+                    "max_apps": 2,
+                },
+            },
+        }
+
+    def create_desktop_machine_app_learning_campaign(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        refresh_apps: bool = False,
+        max_targets: int = 8,
+        label: str = "",
+        max_apps: int | None = None,
+        auto_run: bool = False,
+        source: str = "machine_profile",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "refresh_apps": bool(refresh_apps),
+            "max_targets": int(max_targets),
+            "label": label,
+            "max_apps": max_apps,
+            "auto_run": bool(auto_run),
+            "source": source,
+        }
+        self.machine_app_learning_campaign_calls.append(call)
+        return {
+            "status": "success",
+            "plan": self.desktop_machine_app_learning_plan(
+                task=task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                refresh_apps=refresh_apps,
+                max_targets=max_targets,
+            ),
+            "campaign": {
+                "status": "success",
+                "campaign": {
+                    "campaign_id": "machine-campaign-01",
+                    "target_apps": ["Google Chrome", "Visual Studio Code"],
+                },
+            },
+            "run": (
+                {
+                    "status": "success",
+                    "campaign": {"campaign_id": "machine-campaign-01"},
+                }
+                if auto_run
+                else {}
+            ),
+        }
+
     def desktop_app_launcher_inventory(
         self,
         *,
@@ -22865,6 +22976,37 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert launched["status"] == "success"
     assert launched["launch_method"] == "launch_memory"
     assert service.app_launcher_launch_calls[-1]["app_name"] == "chrome"
+
+
+def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+
+    status, plan = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile/app-learning-plan?task=reasoning&query=chrome&max_targets=2&refresh_apps=1",
+    )
+    assert status == 200
+    assert plan["status"] == "success"
+    assert plan["plan"]["count"] == 2
+    assert plan["plan"]["campaign_defaults"]["app_names"][0] == "Google Chrome"
+    assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
+
+    status, campaign = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/app-learning-campaign",
+        payload={
+            "task": "reasoning",
+            "query": "chrome",
+            "max_targets": 2,
+            "auto_run": True,
+            "label": "Machine learning campaign",
+        },
+    )
+    assert status == 200
+    assert campaign["status"] == "success"
+    assert campaign["campaign"]["campaign"]["campaign_id"] == "machine-campaign-01"
+    assert campaign["run"]["status"] == "success"
+    assert service.machine_app_learning_campaign_calls[-1]["auto_run"] is True
 
 
 def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:

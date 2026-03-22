@@ -167,6 +167,78 @@ class DesktopBackendService:
         "resume_from_mission_id",
         "mission_id",
     )
+    _MACHINE_APP_ROLE_HINTS = {
+        "browser": {
+            "roles": ["tab", "toolbar", "menu", "dialog", "sidebar"],
+            "actions": ["command", "focus_sidebar", "focus_list", "traverse_menu"],
+            "paths": ["tab", "menu", "dialog", "sidebar"],
+            "waves": 4,
+            "queries": ["settings", "downloads", "history", "extensions"],
+        },
+        "developer_tool": {
+            "roles": ["sidebar", "tree", "dialog", "menu", "tab"],
+            "actions": ["command", "focus_sidebar", "focus_tree", "open_dialog"],
+            "paths": ["sidebar", "tree", "dialog", "menu"],
+            "waves": 5,
+            "queries": ["settings", "extensions", "command palette", "workspace"],
+        },
+        "ops_console": {
+            "roles": ["dialog", "tree", "menu", "tab"],
+            "actions": ["command", "focus_tree", "open_dialog", "traverse_menu"],
+            "paths": ["dialog", "tree", "menu"],
+            "waves": 4,
+            "queries": ["settings", "preferences", "cluster", "logs"],
+        },
+        "terminal": {
+            "roles": ["dialog", "menu", "tab"],
+            "actions": ["command", "open_dialog", "traverse_menu"],
+            "paths": ["dialog", "menu", "tab"],
+            "waves": 3,
+            "queries": ["settings", "profile", "terminal"],
+        },
+        "office": {
+            "roles": ["menu", "toolbar", "dialog", "sidebar", "tab"],
+            "actions": ["command", "traverse_menu", "open_dialog", "focus_sidebar"],
+            "paths": ["menu", "toolbar", "dialog", "tab"],
+            "waves": 4,
+            "queries": ["file", "insert", "settings", "review"],
+        },
+        "productivity": {
+            "roles": ["menu", "toolbar", "dialog", "sidebar", "tab"],
+            "actions": ["command", "traverse_menu", "focus_sidebar", "open_dialog"],
+            "paths": ["menu", "dialog", "sidebar", "tab"],
+            "waves": 4,
+            "queries": ["settings", "preferences", "search", "filter"],
+        },
+        "notes": {
+            "roles": ["menu", "sidebar", "dialog", "tab"],
+            "actions": ["command", "focus_sidebar", "open_dialog", "traverse_menu"],
+            "paths": ["sidebar", "menu", "dialog"],
+            "waves": 4,
+            "queries": ["notebook", "settings", "search", "organize"],
+        },
+        "media": {
+            "roles": ["toolbar", "dialog", "sidebar", "tab"],
+            "actions": ["command", "focus_sidebar", "open_dialog"],
+            "paths": ["toolbar", "dialog", "sidebar"],
+            "waves": 4,
+            "queries": ["export", "preferences", "workspace", "effects"],
+        },
+        "remote_support": {
+            "roles": ["dialog", "sidebar", "tab", "menu"],
+            "actions": ["command", "focus_sidebar", "open_dialog"],
+            "paths": ["dialog", "sidebar", "tab"],
+            "waves": 4,
+            "queries": ["session", "preferences", "display", "connection"],
+        },
+        "utility": {
+            "roles": ["dialog", "menu", "tab"],
+            "actions": ["command", "open_dialog", "traverse_menu"],
+            "paths": ["dialog", "menu", "tab"],
+            "waves": 3,
+            "queries": ["settings", "preferences", "advanced"],
+        },
+    }
 
     def __init__(self) -> None:
         self.log = Logger.get_logger("DesktopAPI")
@@ -8373,6 +8445,19 @@ class DesktopBackendService:
                 task_preferences=task_preferences if isinstance(task_preferences, dict) else {},
                 source=source,
             )
+            app_learning_plan = self._desktop_machine_app_learning_plan_payload(
+                app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
+                app_memory=self.desktop_app_memory_status(limit=256),
+                task_focus=(
+                    payload.get("applications", {}).get("task_focus", [])
+                    if isinstance(payload.get("applications", {}), dict)
+                    else []
+                ),
+                max_targets=8,
+            )
+            if isinstance(payload, dict):
+                payload["app_learning_plan"] = app_learning_plan
+                payload["app_control_development"] = app_learning_plan
             recorded = manager.record_snapshot(payload if isinstance(payload, dict) else {}, source=source)
             recorded["refresh_apps"] = bool(refresh_apps)
             recorded["refresh_provider_credentials"] = bool(refresh_provider_credentials)
@@ -8383,6 +8468,321 @@ class DesktopBackendService:
             return _to_jsonable(recorded)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    @staticmethod
+    def _machine_text(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _machine_dedupe(values: List[str], *, limit: int = 8) -> List[str]:
+        rows: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            clean = str(value or "").strip().lower()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            rows.append(clean)
+            if len(rows) >= max(1, int(limit or 8)):
+                break
+        return rows
+
+    def _desktop_machine_app_learning_defaults(
+        self,
+        *,
+        category: str,
+        task_focus_tasks: List[str],
+    ) -> Dict[str, Any]:
+        clean_category = self._machine_text(category)
+        defaults = dict(self._MACHINE_APP_ROLE_HINTS.get(clean_category, {}))
+        if not defaults:
+            defaults = {
+                "roles": ["menu", "dialog", "sidebar"],
+                "actions": ["command", "open_dialog", "traverse_menu"],
+                "paths": ["menu", "dialog", "sidebar"],
+                "waves": 3,
+                "queries": ["settings", "preferences", "help"],
+            }
+        if "vision" in task_focus_tasks and "dialog" not in defaults["roles"]:
+            defaults["roles"] = [*list(defaults.get("roles", [])), "dialog"]
+            defaults["paths"] = [*list(defaults.get("paths", [])), "dialog"]
+        return {
+            "target_container_roles": self._machine_dedupe(list(defaults.get("roles", [])), limit=6),
+            "preferred_wave_actions": self._machine_dedupe(list(defaults.get("actions", [])), limit=6),
+            "preferred_traversal_paths": self._machine_dedupe(list(defaults.get("paths", [])), limit=6),
+            "recommended_queries": self._machine_dedupe(list(defaults.get("queries", [])), limit=6),
+            "recommended_max_surface_waves": max(2, min(int(defaults.get("waves", 3) or 3), 6)),
+        }
+
+    def _desktop_machine_app_learning_plan_payload(
+        self,
+        *,
+        app_inventory: Dict[str, Any],
+        app_memory: Dict[str, Any],
+        task_focus: Any,
+        max_targets: int = 8,
+    ) -> Dict[str, Any]:
+        inventory_items = app_inventory.get("items", []) if isinstance(app_inventory.get("items", []), list) else []
+        memory_items = app_memory.get("items", []) if isinstance(app_memory.get("items", []), list) else []
+        bounded_targets = max(1, min(int(max_targets or 8), 24))
+        task_focus_tasks = [
+            self._machine_text(item.get("task", ""))
+            for item in task_focus
+            if isinstance(task_focus, list) and isinstance(item, dict) and self._machine_text(item.get("task", ""))
+        ]
+        memory_by_name: Dict[str, Dict[str, Any]] = {}
+        for row in memory_items:
+            if not isinstance(row, dict):
+                continue
+            keys = [
+                self._machine_text(row.get("app_name", "")),
+                self._machine_text(row.get("profile_name", "")),
+                self._machine_text(row.get("profile_id", "")),
+            ]
+            for key in [item for item in keys if item]:
+                memory_by_name.setdefault(key, dict(row))
+        targets: List[Dict[str, Any]] = []
+        for item in inventory_items:
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("path_ready", False)):
+                continue
+            display_name = str(item.get("display_name", "") or item.get("name", "") or "").strip()
+            if not display_name:
+                continue
+            category = str(item.get("category", "") or "").strip().lower()
+            memory_entry = (
+                memory_by_name.get(self._machine_text(display_name))
+                or memory_by_name.get(self._machine_text(item.get("canonical_name", "")))
+                or {}
+            )
+            metrics = dict(memory_entry.get("metrics", {})) if isinstance(memory_entry.get("metrics", {}), dict) else {}
+            survey_count = int(metrics.get("survey_count", 0) or 0)
+            discovered_control_count = int(memory_entry.get("discovered_control_count", 0) or 0)
+            plan_defaults = self._desktop_machine_app_learning_defaults(
+                category=category,
+                task_focus_tasks=task_focus_tasks,
+            )
+            status = "unknown"
+            if memory_entry:
+                status = "known"
+                if survey_count <= 1 or discovered_control_count < 4:
+                    status = "attention"
+            reason_codes = ["high_usage"]
+            if not memory_entry:
+                reason_codes.append("new_app")
+            elif status == "attention":
+                reason_codes.append("low_coverage")
+            targets.append(
+                {
+                    "app_name": display_name,
+                    "category": category,
+                    "usage_score": float(item.get("usage_score", 0.0) or 0.0),
+                    "status": status,
+                    "survey_count": survey_count,
+                    "discovered_control_count": discovered_control_count,
+                    "path": str(item.get("path", "") or "").strip(),
+                    "reason_codes": reason_codes,
+                    **plan_defaults,
+                }
+            )
+        targets.sort(
+            key=lambda row: (
+                0 if str(row.get("status", "") or "") != "known" else 1,
+                -float(row.get("usage_score", 0.0) or 0.0),
+                str(row.get("app_name", "") or "").lower(),
+            )
+        )
+        selected = targets[:bounded_targets]
+        selected_apps = [str(row.get("app_name", "") or "").strip() for row in selected if str(row.get("app_name", "") or "").strip()]
+        combined_roles: List[str] = []
+        combined_actions: List[str] = []
+        combined_paths: List[str] = []
+        combined_queries: List[str] = []
+        max_surface_waves = 3
+        for row in selected:
+            combined_roles.extend([str(item).strip().lower() for item in row.get("target_container_roles", []) if str(item).strip()])
+            combined_actions.extend([str(item).strip().lower() for item in row.get("preferred_wave_actions", []) if str(item).strip()])
+            combined_paths.extend([str(item).strip().lower() for item in row.get("preferred_traversal_paths", []) if str(item).strip()])
+            combined_queries.extend([str(item).strip().lower() for item in row.get("recommended_queries", []) if str(item).strip()])
+            max_surface_waves = max(max_surface_waves, int(row.get("recommended_max_surface_waves", 3) or 3))
+        unknown_count = len([row for row in selected if str(row.get("status", "") or "") == "unknown"])
+        attention_count = len([row for row in selected if str(row.get("status", "") or "") == "attention"])
+        known_count = len([row for row in selected if str(row.get("status", "") or "") == "known"])
+        return {
+            "status": "success",
+            "count": len(selected),
+            "targets": selected,
+            "summary": {
+                "unknown_count": unknown_count,
+                "attention_count": attention_count,
+                "known_count": known_count,
+                "inventory_total": int(app_inventory.get("total", 0) or 0),
+                "memory_total": int(app_memory.get("total", 0) or 0),
+            },
+            "campaign_defaults": {
+                "app_names": selected_apps,
+                "label": "machine app learning campaign",
+                "query": "",
+                "max_apps": max(1, min(len(selected_apps) or 1, 6)),
+                "per_app_limit": 28,
+                "ensure_app_launch": True,
+                "probe_controls": True,
+                "max_probe_controls": 4,
+                "follow_surface_waves": True,
+                "max_surface_waves": max(2, min(max_surface_waves, 6)),
+                "allow_risky_probes": False,
+                "skip_known_apps": False,
+                "prefer_unknown_apps": True,
+                "continuous_learning": True,
+                "revisit_stale_apps": True,
+                "stale_after_hours": 72.0,
+                "revisit_failed_apps": True,
+                "revalidate_known_controls": True,
+                "prioritize_failure_hotspots": True,
+                "target_container_roles": self._machine_dedupe(combined_roles, limit=6),
+                "preferred_wave_actions": self._machine_dedupe(combined_actions, limit=6),
+                "preferred_traversal_paths": self._machine_dedupe(combined_paths, limit=6),
+                "recommended_queries": self._machine_dedupe(combined_queries, limit=8),
+            },
+        }
+
+    def desktop_machine_app_learning_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        refresh_apps: bool = False,
+        max_targets: int = 8,
+    ) -> Dict[str, Any]:
+        profile = self.desktop_machine_profile(
+            task=task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            model_limit=160,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=False,
+            verify_providers=False,
+            source="machine_app_learning_plan",
+        )
+        if not isinstance(profile, dict) or profile.get("status") != "success":
+            return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine profile"}
+        app_memory = self.desktop_app_memory_status(limit=256)
+        plan = self._desktop_machine_app_learning_plan_payload(
+            app_inventory=(
+                dict(profile.get("applications", {}).get("inventory", {}))
+                if isinstance(profile.get("applications", {}), dict)
+                and isinstance(profile.get("applications", {}).get("inventory", {}), dict)
+                else {}
+            ),
+            app_memory=app_memory if isinstance(app_memory, dict) else {},
+            task_focus=(
+                profile.get("applications", {}).get("task_focus", [])
+                if isinstance(profile.get("applications", {}), dict)
+                else []
+            ),
+            max_targets=max_targets,
+        )
+        return {
+            "status": "success",
+            "profile": profile,
+            "app_memory": app_memory,
+            "plan": plan,
+        }
+
+    def create_desktop_machine_app_learning_campaign(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        refresh_apps: bool = False,
+        max_targets: int = 8,
+        label: str = "",
+        max_apps: Optional[int] = None,
+        auto_run: bool = False,
+        source: str = "machine_profile",
+    ) -> Dict[str, Any]:
+        plan_payload = self.desktop_machine_app_learning_plan(
+            task=task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            refresh_apps=refresh_apps,
+            max_targets=max_targets,
+        )
+        if not isinstance(plan_payload, dict) or plan_payload.get("status") != "success":
+            return plan_payload if isinstance(plan_payload, dict) else {"status": "error", "message": "unable to build machine app learning plan"}
+        plan = plan_payload.get("plan", {}) if isinstance(plan_payload.get("plan", {}), dict) else {}
+        campaign_defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+        app_names = [
+            str(item).strip()
+            for item in campaign_defaults.get("app_names", [])
+            if isinstance(campaign_defaults.get("app_names", []), list) and str(item).strip()
+        ]
+        if not app_names:
+            return {"status": "error", "message": "machine app learning plan has no campaign targets", "plan": plan_payload}
+        create_payload = self.create_desktop_app_memory_campaign(
+            query=str(campaign_defaults.get("query", "") or "").strip(),
+            category=app_category,
+            app_names=app_names,
+            label=str(label or campaign_defaults.get("label", "") or "machine app learning campaign").strip(),
+            max_apps=int(max_apps or campaign_defaults.get("max_apps", 4) or 4),
+            per_app_limit=int(campaign_defaults.get("per_app_limit", 28) or 28),
+            ensure_app_launch=bool(campaign_defaults.get("ensure_app_launch", True)),
+            probe_controls=bool(campaign_defaults.get("probe_controls", True)),
+            max_probe_controls=int(campaign_defaults.get("max_probe_controls", 4) or 4),
+            follow_surface_waves=bool(campaign_defaults.get("follow_surface_waves", True)),
+            max_surface_waves=int(campaign_defaults.get("max_surface_waves", 4) or 4),
+            allow_risky_probes=bool(campaign_defaults.get("allow_risky_probes", False)),
+            skip_known_apps=bool(campaign_defaults.get("skip_known_apps", False)),
+            prefer_unknown_apps=bool(campaign_defaults.get("prefer_unknown_apps", True)),
+            continuous_learning=bool(campaign_defaults.get("continuous_learning", True)),
+            revisit_stale_apps=bool(campaign_defaults.get("revisit_stale_apps", True)),
+            stale_after_hours=float(campaign_defaults.get("stale_after_hours", 72.0) or 72.0),
+            revisit_failed_apps=bool(campaign_defaults.get("revisit_failed_apps", True)),
+            revalidate_known_controls=bool(campaign_defaults.get("revalidate_known_controls", True)),
+            prioritize_failure_hotspots=bool(campaign_defaults.get("prioritize_failure_hotspots", True)),
+            target_container_roles=[
+                str(item).strip()
+                for item in campaign_defaults.get("target_container_roles", [])
+                if isinstance(campaign_defaults.get("target_container_roles", []), list) and str(item).strip()
+            ],
+            preferred_wave_actions=[
+                str(item).strip()
+                for item in campaign_defaults.get("preferred_wave_actions", [])
+                if isinstance(campaign_defaults.get("preferred_wave_actions", []), list) and str(item).strip()
+            ],
+            preferred_traversal_paths=[
+                str(item).strip()
+                for item in campaign_defaults.get("preferred_traversal_paths", [])
+                if isinstance(campaign_defaults.get("preferred_traversal_paths", []), list) and str(item).strip()
+            ],
+            source=source,
+        )
+        result: Dict[str, Any] = {
+            "status": str(create_payload.get("status", "error") or "error"),
+            "plan": plan_payload,
+            "campaign": create_payload,
+        }
+        created_campaign = (
+            dict(create_payload.get("campaign", {}))
+            if isinstance(create_payload, dict) and isinstance(create_payload.get("campaign", {}), dict)
+            else {}
+        )
+        if auto_run and created_campaign:
+            campaign_id = str(created_campaign.get("campaign_id", "") or "").strip()
+            if campaign_id:
+                result["run"] = self.run_desktop_app_memory_campaign(
+                    campaign_id=campaign_id,
+                    max_apps=int(max_apps or campaign_defaults.get("max_apps", 4) or 4),
+                    source=source,
+                )
+        return _to_jsonable(result)
 
     def update_desktop_machine_task_preferences(
         self,
@@ -43789,6 +44189,17 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-machine-profile/app-learning-plan":
+                payload = self.server.service.desktop_machine_app_learning_plan(
+                    task=str(query.get("task", [""])[0] or "").strip(),
+                    app_query=str(query.get("app_query", [""])[0] or query.get("query", [""])[0] or "").strip(),
+                    app_category=str(query.get("app_category", [""])[0] or query.get("category", [""])[0] or "").strip(),
+                    app_limit=self._parse_int(str(query.get("app_limit", ["320"])[0]), 320, minimum=1, maximum=5000),
+                    refresh_apps=self._parse_bool(str(query.get("refresh_apps", ["0"])[0]), default=False),
+                    max_targets=self._parse_int(str(query.get("max_targets", ["8"])[0]), 8, minimum=1, maximum=24),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/desktop-app-launcher/inventory":
                 payload = self.server.service.desktop_app_launcher_inventory(
                     query=str(query.get("query", [""])[0] or "").strip(),
@@ -46174,6 +46585,21 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     preferred_runtime=str(body.get("preferred_runtime", "") or "").strip(),
                     preferences=(dict(body.get("preferences", {})) if isinstance(body.get("preferences", {}), dict) else None),
                     source=str(body.get("source", "manual") or "manual").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/app-learning-campaign":
+                payload = self.server.service.create_desktop_machine_app_learning_campaign(
+                    task=str(body.get("task", "") or "").strip(),
+                    app_query=str(body.get("app_query", body.get("query", "")) or "").strip(),
+                    app_category=str(body.get("app_category", body.get("category", "")) or "").strip(),
+                    app_limit=self._parse_int(body.get("app_limit", 320), 320, minimum=1, maximum=5000),
+                    refresh_apps=self._parse_bool(body.get("refresh_apps", False), default=False),
+                    max_targets=self._parse_int(body.get("max_targets", 8), 8, minimum=1, maximum=24),
+                    label=str(body.get("label", "") or "").strip(),
+                    max_apps=(self._parse_int(body.get("max_apps", 4), 4, minimum=1, maximum=32) if "max_apps" in body else None),
+                    auto_run=self._parse_bool(body.get("auto_run", False), default=False),
+                    source=str(body.get("source", "machine_profile") or "machine_profile").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
