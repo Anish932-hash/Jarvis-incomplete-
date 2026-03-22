@@ -29,6 +29,7 @@ from backend.python.core.oauth_token_store import OAuthTokenStore
 from backend.python.core.provider_credentials import ProviderCredentialManager
 from backend.python.core.desktop_action_router import DesktopActionRouter
 from backend.python.core.desktop_app_memory_supervisor import DesktopAppMemorySupervisor
+from backend.python.core.desktop_machine_profile import DesktopMachineProfileManager
 from backend.python.core.desktop_governance_policy import DesktopGovernancePolicyManager
 from backend.python.core.desktop_governance_policy import desktop_governance_profile_catalog
 from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
@@ -63,6 +64,7 @@ from backend.python.inference.model_setup_preflight import build_model_setup_pre
 from backend.python.inference.model_setup_remote_metadata import ModelSetupRemoteMetadataProbe
 from backend.python.inference.model_setup_workspace import build_model_setup_workspace
 from backend.python.inference.model_setup_workspace import scaffold_model_setup_workspace
+from backend.python.pc_control.app_launcher import AppLauncher
 from backend.python.pc_control.system_monitor import SystemMonitor
 from backend.python.tools.system_tools import SystemTools
 from backend.python.utils.logger import Logger
@@ -453,6 +455,8 @@ class DesktopBackendService:
             resume_force=self._env_bool("JARVIS_DESKTOP_RECOVERY_DAEMON_FORCE_RESUME", False),
         )
         self.desktop_recovery_watchdog_memory = DesktopRecoveryWatchdogMemory()
+        self.app_launcher = AppLauncher()
+        self.desktop_machine_profile_manager = DesktopMachineProfileManager()
         self.model_registry = ModelRegistry(
             provider_credentials=self.provider_credentials,
             enforce_provider_keys=self._env_bool("JARVIS_MODEL_ENFORCE_PROVIDER_KEYS", False),
@@ -8183,6 +8187,236 @@ class DesktopBackendService:
         try:
             payload = router.app_profile_catalog(query=query, category=category, limit=limit)
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app profile payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def _machine_profile_provider_verifications(
+        self,
+        *,
+        provider_names: List[str],
+        task: str = "",
+        limit: int = 160,
+        verify: bool = False,
+        timeout_s: float = 8.0,
+    ) -> Dict[str, Any]:
+        verifier = getattr(self, "provider_verifier", None)
+        if verifier is None:
+            return {}
+        names = sorted({str(name or "").strip().lower() for name in provider_names if str(name or "").strip()})
+        latest = verifier.latest_map(names) if hasattr(verifier, "latest_map") else {}
+        rows = {str(name): dict(payload) for name, payload in latest.items()} if isinstance(latest, dict) else {}
+        if not verify:
+            return _to_jsonable(rows)
+        for provider_name in names:
+            try:
+                payload = self.verify_provider_credentials(
+                    provider=provider_name,
+                    task=task,
+                    limit=max(16, min(int(limit or 160), 200)),
+                    force_refresh=True,
+                    timeout_s=max(2.0, min(float(timeout_s), 20.0)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                rows[provider_name] = {
+                    "status": "error",
+                    "provider": provider_name,
+                    "verified": False,
+                    "message": str(exc),
+                }
+                continue
+            verification = payload.get("verification", payload) if isinstance(payload, dict) else {}
+            rows[provider_name] = dict(verification) if isinstance(verification, dict) else {"status": "error", "provider": provider_name}
+        return _to_jsonable(rows)
+
+    def desktop_app_launcher_inventory(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        limit: int = 320,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        launcher = getattr(self, "app_launcher", None)
+        if launcher is None:
+            return {"status": "unavailable", "message": "app launcher unavailable"}
+        try:
+            if bool(refresh) and hasattr(launcher, "invalidate_catalog_cache"):
+                launcher.invalidate_catalog_cache()
+            payload = launcher.inventory_snapshot(
+                limit=max(1, min(int(limit or 320), 5000)),
+                query=query,
+                category=category,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app launcher inventory payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_launcher_memory(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        launcher = getattr(self, "app_launcher", None)
+        if launcher is None:
+            return {"status": "unavailable", "message": "app launcher unavailable"}
+        try:
+            payload = launcher.launch_memory_snapshot(
+                limit=max(1, min(int(limit or 200), 2000)),
+                query=query,
+                category=category,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app launcher memory payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_launcher_resolve(self, *, app_name: str = "") -> Dict[str, Any]:
+        launcher = getattr(self, "app_launcher", None)
+        if launcher is None:
+            return {"status": "unavailable", "message": "app launcher unavailable"}
+        clean_name = str(app_name or "").strip()
+        if not clean_name:
+            return {"status": "error", "message": "app_name is required"}
+        try:
+            payload = launcher.resolve_launch_target(clean_name)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid launch target payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_launcher_launch(self, *, app_name: str = "") -> Dict[str, Any]:
+        launcher = getattr(self, "app_launcher", None)
+        if launcher is None:
+            return {"status": "unavailable", "message": "app launcher unavailable"}
+        clean_name = str(app_name or "").strip()
+        if not clean_name:
+            return {"status": "error", "message": "app_name is required"}
+        try:
+            payload = launcher.launch(clean_name)
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid launch payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_machine_profile(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = False,
+        refresh_provider_credentials: bool = False,
+        verify_providers: bool = False,
+        provider_timeout_s: float = 8.0,
+        source: str = "api",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_machine_profile_manager", None)
+        launcher = getattr(self, "app_launcher", None)
+        if manager is None or launcher is None:
+            return {"status": "unavailable", "message": "desktop machine profile dependencies unavailable"}
+        clean_task = str(task or "").strip().lower()
+        clean_query = str(app_query or "").strip()
+        clean_category = str(app_category or "").strip()
+        bounded_app_limit = max(1, min(int(app_limit or 320), 5000))
+        bounded_model_limit = max(8, min(int(model_limit or 200), 2000))
+        try:
+            if bool(refresh_apps) and hasattr(launcher, "invalidate_catalog_cache"):
+                launcher.invalidate_catalog_cache()
+            system_profile = self.monitor.machine_profile()
+            app_inventory = self.desktop_app_launcher_inventory(
+                query=clean_query,
+                category=clean_category,
+                limit=bounded_app_limit,
+                refresh=False,
+            )
+            launch_memory = self.desktop_app_launcher_memory(
+                query=clean_query,
+                category=clean_category,
+                limit=min(max(64, bounded_app_limit), 1024),
+            )
+            workspace = self.model_setup_workspace(
+                refresh_provider_credentials=bool(refresh_provider_credentials),
+                limit=bounded_model_limit,
+            )
+            local_models = self.model_local_inventory(
+                task=clean_task,
+                limit=bounded_model_limit,
+            )
+            manifest_payload = workspace.get("manifest", {}) if isinstance(workspace.get("manifest", {}), dict) else {}
+            provider_snapshot = self._provider_credentials_with_manifest_requirements(
+                manifest_payload=manifest_payload,
+                refresh=bool(refresh_provider_credentials),
+            )
+            provider_rows = provider_snapshot.get("providers", {}) if isinstance(provider_snapshot.get("providers", {}), dict) else {}
+            provider_names = [
+                str(name).strip().lower()
+                for name, row in provider_rows.items()
+                if isinstance(row, dict) and (bool(row.get("present", False)) or bool(row.get("required_by_manifest", False)))
+            ]
+            provider_verifications = self._machine_profile_provider_verifications(
+                provider_names=provider_names,
+                task=clean_task,
+                limit=bounded_model_limit,
+                verify=bool(verify_providers),
+                timeout_s=float(provider_timeout_s),
+            )
+            task_preferences = manager.task_model_preferences()
+            payload = manager.build_snapshot(
+                system_profile=system_profile if isinstance(system_profile, dict) else {},
+                app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
+                launch_memory=launch_memory if isinstance(launch_memory, dict) else {},
+                provider_snapshot=provider_snapshot if isinstance(provider_snapshot, dict) else {},
+                provider_verifications=provider_verifications if isinstance(provider_verifications, dict) else {},
+                local_models=local_models if isinstance(local_models, dict) else {},
+                model_setup_workspace=workspace if isinstance(workspace, dict) else {},
+                task_preferences=task_preferences if isinstance(task_preferences, dict) else {},
+                source=source,
+            )
+            recorded = manager.record_snapshot(payload if isinstance(payload, dict) else {}, source=source)
+            recorded["refresh_apps"] = bool(refresh_apps)
+            recorded["refresh_provider_credentials"] = bool(refresh_provider_credentials)
+            recorded["verify_providers"] = bool(verify_providers)
+            recorded["task"] = clean_task
+            recorded["app_query"] = clean_query
+            recorded["app_category"] = clean_category
+            return _to_jsonable(recorded)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def update_desktop_machine_task_preferences(
+        self,
+        *,
+        task: str = "",
+        provider: str = "",
+        model_name: str = "",
+        execution_backend: str = "",
+        model_path: str = "",
+        notes: str = "",
+        allow_remote: Optional[bool] = None,
+        preferred_runtime: str = "",
+        preferences: Optional[Dict[str, Any]] = None,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_machine_profile_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop machine profile manager unavailable"}
+        try:
+            payload = manager.update_task_preferences(
+                task=task,
+                provider=provider,
+                model_name=model_name,
+                execution_backend=execution_backend,
+                model_path=model_path,
+                notes=notes,
+                allow_remote=allow_remote,
+                preferred_runtime=preferred_runtime,
+                preferences=preferences,
+                source=source,
+            )
+            if isinstance(payload, dict):
+                payload["latest_snapshot"] = manager.latest_snapshot()
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid task preference payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -43532,6 +43766,46 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") not in {"error"} else 400, payload)
                 return
+            if path == "/runtime/desktop-machine-profile":
+                payload = self.server.service.desktop_machine_profile(
+                    task=str(query.get("task", [""])[0] or "").strip(),
+                    app_query=str(query.get("app_query", [""])[0] or query.get("query", [""])[0] or "").strip(),
+                    app_category=str(query.get("app_category", [""])[0] or query.get("category", [""])[0] or "").strip(),
+                    app_limit=self._parse_int(str(query.get("app_limit", ["320"])[0]), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(str(query.get("model_limit", ["200"])[0]), 200, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(str(query.get("refresh_apps", ["0"])[0]), default=False),
+                    refresh_provider_credentials=self._parse_bool(
+                        str(query.get("refresh_provider_credentials", ["0"])[0]),
+                        default=False,
+                    ),
+                    verify_providers=self._parse_bool(str(query.get("verify_providers", ["0"])[0]), default=False),
+                    provider_timeout_s=self._parse_float(
+                        str(query.get("provider_timeout_s", ["8.0"])[0]),
+                        8.0,
+                        minimum=2.0,
+                        maximum=20.0,
+                    ),
+                    source=str(query.get("source", ["api"])[0] or "api").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-launcher/inventory":
+                payload = self.server.service.desktop_app_launcher_inventory(
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    limit=self._parse_int(str(query.get("limit", ["320"])[0]), 320, minimum=1, maximum=5000),
+                    refresh=self._parse_bool(str(query.get("refresh", ["0"])[0]), default=False),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-launcher/memory":
+                payload = self.server.service.desktop_app_launcher_memory(
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    category=str(query.get("category", [""])[0] or "").strip(),
+                    limit=self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=2000),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/desktop-app-memory":
                 limit = self._parse_int(str(query.get("limit", ["200"])[0]), 200, minimum=1, maximum=5000)
                 payload = self.server.service.desktop_app_memory_status(
@@ -45885,6 +46159,33 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                     profile_id=str(body.get("profile_id", "") or "").strip(),
                     intent=str(body.get("intent", "") or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/task-preferences":
+                payload = self.server.service.update_desktop_machine_task_preferences(
+                    task=str(body.get("task", "") or "").strip(),
+                    provider=str(body.get("provider", "") or "").strip(),
+                    model_name=str(body.get("model_name", body.get("model", "")) or "").strip(),
+                    execution_backend=str(body.get("execution_backend", "") or "").strip(),
+                    model_path=str(body.get("model_path", "") or "").strip(),
+                    notes=str(body.get("notes", "") or "").strip(),
+                    allow_remote=(self._parse_bool(body.get("allow_remote"), default=False) if "allow_remote" in body else None),
+                    preferred_runtime=str(body.get("preferred_runtime", "") or "").strip(),
+                    preferences=(dict(body.get("preferences", {})) if isinstance(body.get("preferences", {}), dict) else None),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-launcher/resolve":
+                payload = self.server.service.desktop_app_launcher_resolve(
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-launcher/launch":
+                payload = self.server.service.desktop_app_launcher_launch(
+                    app_name=str(body.get("app_name", body.get("app", "")) or "").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return

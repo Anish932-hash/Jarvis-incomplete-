@@ -30,6 +30,12 @@ class FakeDesktopService:
         self.provider_verify_calls: list[Dict[str, Any]] = []
         self.provider_recovery_calls: list[Dict[str, Any]] = []
         self.model_setup_scope_calls: list[Dict[str, Any]] = []
+        self.machine_profile_calls: list[Dict[str, Any]] = []
+        self.machine_task_preference_calls: list[Dict[str, Any]] = []
+        self.app_launcher_inventory_calls: list[Dict[str, Any]] = []
+        self.app_launcher_memory_calls: list[Dict[str, Any]] = []
+        self.app_launcher_resolve_calls: list[Dict[str, Any]] = []
+        self.app_launcher_launch_calls: list[Dict[str, Any]] = []
         self.oauth_maintenance: Dict[str, Any] = {
             "status": "idle",
             "last_run_at": "",
@@ -13399,6 +13405,183 @@ class FakeDesktopService:
             },
         }
 
+    def desktop_machine_profile(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = False,
+        refresh_provider_credentials: bool = False,
+        verify_providers: bool = False,
+        provider_timeout_s: float = 8.0,
+        source: str = "api",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "refresh_provider_credentials": bool(refresh_provider_credentials),
+            "verify_providers": bool(verify_providers),
+            "provider_timeout_s": float(provider_timeout_s),
+            "source": source,
+        }
+        self.machine_profile_calls.append(call)
+        return {
+            "status": "success",
+            "machine_id": "machine-demo-01",
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "refresh_apps": bool(refresh_apps),
+            "refresh_provider_credentials": bool(refresh_provider_credentials),
+            "verify_providers": bool(verify_providers),
+            "readiness": {"status": "success", "score": 72},
+            "applications": {
+                "inventory": {"status": "success", "total": 2, "path_ready_count": 2},
+                "launch_memory": {"status": "success", "total": 1},
+                "task_focus": [{"task": "reasoning", "score": 12.0}],
+            },
+            "models": {
+                "task_preferences": {
+                    "status": "success",
+                    "count": 1,
+                    "items": [{"task": "reasoning", "provider": "local", "model_name": "qwen3-14b"}],
+                },
+                "recommended_models": [{"task": "reasoning", "provider": "local", "model_name": "qwen3-14b"}],
+            },
+            "providers": {
+                "snapshot": {"providers": {"huggingface": {"present": False, "required_by_manifest": True}}},
+                "verifications": {"huggingface": {"status": "error", "verified": False}},
+            },
+            "recommendations": [{"code": "configure_huggingface_token", "severity": "high"}],
+            "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
+        }
+
+    def update_desktop_machine_task_preferences(
+        self,
+        *,
+        task: str = "",
+        provider: str = "",
+        model_name: str = "",
+        execution_backend: str = "",
+        model_path: str = "",
+        notes: str = "",
+        allow_remote: bool | None = None,
+        preferred_runtime: str = "",
+        preferences: Dict[str, Any] | None = None,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "provider": provider,
+            "model_name": model_name,
+            "execution_backend": execution_backend,
+            "model_path": model_path,
+            "notes": notes,
+            "allow_remote": allow_remote,
+            "preferred_runtime": preferred_runtime,
+            "preferences": dict(preferences or {}),
+            "source": source,
+        }
+        self.machine_task_preference_calls.append(call)
+        items = []
+        if task:
+            items.append(
+                {
+                    "task": task,
+                    "provider": provider or "local",
+                    "model_name": model_name or "qwen3-14b",
+                    "execution_backend": execution_backend or "llama_cpp",
+                    "model_path": model_path,
+                    "notes": notes,
+                    "preferred_runtime": preferred_runtime,
+                }
+            )
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+            "latest_snapshot": {"machine_id": "machine-demo-01"},
+        }
+
+    def desktop_app_launcher_inventory(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        limit: int = 320,
+        refresh: bool = False,
+    ) -> Dict[str, Any]:
+        self.app_launcher_inventory_calls.append(
+            {"query": query, "category": category, "limit": int(limit), "refresh": bool(refresh)}
+        )
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "path_ready_count": 1,
+            "items": [
+                {
+                    "display_name": "Google Chrome",
+                    "category": "browser",
+                    "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    "path_ready": True,
+                    "sources": ["app_paths_registry", "launch_memory"],
+                }
+            ],
+        }
+
+    def desktop_app_launcher_memory(
+        self,
+        *,
+        query: str = "",
+        category: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        self.app_launcher_memory_calls.append(
+            {"query": query, "category": category, "limit": int(limit)}
+        )
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "items": [
+                {
+                    "display_name": "Google Chrome",
+                    "requested_app": "chrome",
+                    "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    "launch_count": 3,
+                }
+            ],
+        }
+
+    def desktop_app_launcher_resolve(self, *, app_name: str = "") -> Dict[str, Any]:
+        self.app_launcher_resolve_calls.append({"app_name": app_name})
+        return {
+            "status": "success",
+            "requested_app": app_name,
+            "kind": "path",
+            "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            "resolution": "launch_memory",
+            "memory_hit": True,
+        }
+
+    def desktop_app_launcher_launch(self, *, app_name: str = "") -> Dict[str, Any]:
+        self.app_launcher_launch_calls.append({"app_name": app_name})
+        return {
+            "status": "success",
+            "requested_app": app_name,
+            "kind": "path",
+            "path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            "launch_method": "launch_memory",
+        }
+
     def desktop_app_memory_status(
         self,
         *,
@@ -22613,6 +22796,75 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert status == 200
     assert cleared["status"] == "success"
     assert int(cleared.get("removed", 0) or 0) >= 1
+
+
+def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+
+    status, profile = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile?task=reasoning&app_query=chrome&refresh_apps=1&verify_providers=1",
+    )
+    assert status == 200
+    assert profile["status"] == "success"
+    assert profile["machine_id"] == "machine-demo-01"
+    assert profile["verify_providers"] is True
+    assert service.machine_profile_calls[-1]["refresh_apps"] is True
+    assert service.machine_profile_calls[-1]["task"] == "reasoning"
+
+    status, updated = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/task-preferences",
+        payload={
+            "task": "vision",
+            "provider": "local",
+            "model_name": "florence-2",
+            "execution_backend": "llama_cpp",
+            "preferred_runtime": "llama_cpp",
+            "allow_remote": False,
+        },
+    )
+    assert status == 200
+    assert updated["status"] == "success"
+    assert updated["items"][0]["task"] == "vision"
+    assert service.machine_task_preference_calls[-1]["model_name"] == "florence-2"
+
+    status, inventory = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-app-launcher/inventory?query=chrome&refresh=1",
+    )
+    assert status == 200
+    assert inventory["status"] == "success"
+    assert inventory["items"][0]["display_name"] == "Google Chrome"
+    assert service.app_launcher_inventory_calls[-1]["refresh"] is True
+
+    status, memory = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-app-launcher/memory?query=chrome",
+    )
+    assert status == 200
+    assert memory["status"] == "success"
+    assert memory["items"][0]["launch_count"] == 3
+
+    status, resolved = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-app-launcher/resolve",
+        payload={"app_name": "chrome"},
+    )
+    assert status == 200
+    assert resolved["status"] == "success"
+    assert resolved["memory_hit"] is True
+    assert service.app_launcher_resolve_calls[-1]["app_name"] == "chrome"
+
+    status, launched = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-app-launcher/launch",
+        payload={"app_name": "chrome"},
+    )
+    assert status == 200
+    assert launched["status"] == "success"
+    assert launched["launch_method"] == "launch_memory"
+    assert service.app_launcher_launch_calls[-1]["app_name"] == "chrome"
 
 
 def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:

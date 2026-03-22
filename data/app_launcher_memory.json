@@ -1,0 +1,232 @@
+{
+  "values": {
+    "targets": {
+      "calculator": {
+        "kind": "apps_folder",
+        "requested_app": "calculator",
+        "display_name": "Windows Calculator",
+        "app_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        "resolution": "start_apps",
+        "category": "utility",
+        "canonical_name": "windows calculator",
+        "profile_name": "Windows Calculator",
+        "aliases": [
+          "calculator",
+          "Windows Calculator",
+          "MSIX\\Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.409707+00:00",
+        "resolve_count": 1,
+        "launch_count": 1,
+        "last_resolved_at": "2026-03-22T06:19:59.409707+00:00",
+        "last_launched_at": "2026-03-22T06:19:59.412675+00:00"
+      },
+      "windows calculator": {
+        "kind": "apps_folder",
+        "requested_app": "calculator",
+        "display_name": "Windows Calculator",
+        "app_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        "resolution": "start_apps",
+        "category": "utility",
+        "canonical_name": "windows calculator",
+        "profile_name": "Windows Calculator",
+        "aliases": [
+          "calculator",
+          "Windows Calculator",
+          "MSIX\\Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.409707+00:00",
+        "resolve_count": 1,
+        "launch_count": 1,
+        "last_resolved_at": "2026-03-22T06:19:59.409707+00:00",
+        "last_launched_at": "2026-03-22T06:19:59.412675+00:00"
+      },
+      "msix microsoft windowscalculator 8wekyb3d8bbwe": {
+        "kind": "apps_folder",
+        "requested_app": "calculator",
+        "display_name": "Windows Calculator",
+        "app_id": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        "resolution": "start_apps",
+        "category": "utility",
+        "canonical_name": "windows calculator",
+        "profile_name": "Windows Calculator",
+        "aliases": [
+          "calculator",
+          "Windows Calculator",
+          "MSIX\\Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.409707+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.409707+00:00"
+      },
+      "chrome": {
+        "kind": "path",
+        "requested_app": "chrome",
+        "display_name": "chrome",
+        "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "resolution": "app_paths_registry",
+        "category": "browser",
+        "canonical_name": "google chrome",
+        "profile_name": "Google Chrome",
+        "aliases": [
+          "chrome",
+          "chrome.exe",
+          "Google Chrome",
+          "Google.Chrome.EXE"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.419435+00:00",
+        "resolve_count": 1,
+        "launch_count": 2,
+        "last_resolved_at": "2026-03-22T06:19:59.419435+00:00",
+        "last_launched_at": "2026-03-22T06:19:59.422332+00:00"
+      },
+      "chrome exe": {
+        "kind": "path",
+        "requested_app": "chrome",
+        "display_name": "chrome",
+        "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "resolution": "app_paths_registry",
+        "category": "browser",
+        "canonical_name": "google chrome",
+        "profile_name": "Google Chrome",
+        "aliases": [
+          "chrome",
+          "chrome.exe",
+          "Google Chrome",
+          "Google.Chrome.EXE"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.419435+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.419435+00:00"
+      },
+      "google chrome": {
+        "kind": "path",
+        "requested_app": "chrome",
+        "display_name": "chrome",
+        "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "resolution": "app_paths_registry",
+        "category": "browser",
+        "canonical_name": "google chrome",
+        "profile_name": "Google Chrome",
+        "aliases": [
+          "chrome",
+          "chrome.exe",
+          "Google Chrome",
+          "Google.Chrome.EXE"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.419435+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.419435+00:00"
+      },
+      "google chrome exe": {
+        "kind": "path",
+        "requested_app": "chrome",
+        "display_name": "chrome",
+        "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "resolution": "app_paths_registry",
+        "category": "browser",
+        "canonical_name": "google chrome",
+        "profile_name": "Google Chrome",
+        "aliases": [
+          "chrome",
+          "chrome.exe",
+          "Google Chrome",
+          "Google.Chrome.EXE"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.419435+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.419435+00:00"
+      },
+      "claude": {
+        "kind": "shortcut",
+        "requested_app": "claude",
+        "display_name": "Claude",
+        "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-571\\test_app_launcher_resolves_sta0\\Claude.lnk",
+        "resolution": "start_menu_shortcut",
+        "category": "ai_companion",
+        "canonical_name": "claude",
+        "profile_name": "Claude",
+        "aliases": [
+          "claude"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.597272+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.597272+00:00"
+      },
+      "docker": {
+        "kind": "path",
+        "requested_app": "docker",
+        "display_name": "Docker Desktop",
+        "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-571\\test_app_launcher_resolves_uni0\\Docker\\docker.exe",
+        "resolution": "uninstall_registry",
+        "category": "ops_console",
+        "canonical_name": "docker desktop",
+        "profile_name": "Docker Desktop",
+        "aliases": [
+          "docker",
+          "Docker Desktop",
+          "Docker.DockerDesktop"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.607884+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.607884+00:00"
+      },
+      "docker desktop": {
+        "kind": "path",
+        "requested_app": "docker",
+        "display_name": "Docker Desktop",
+        "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-571\\test_app_launcher_resolves_uni0\\Docker\\docker.exe",
+        "resolution": "uninstall_registry",
+        "category": "ops_console",
+        "canonical_name": "docker desktop",
+        "profile_name": "Docker Desktop",
+        "aliases": [
+          "docker",
+          "Docker Desktop",
+          "Docker.DockerDesktop"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.607884+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.607884+00:00"
+      },
+      "docker dockerdesktop": {
+        "kind": "path",
+        "requested_app": "docker",
+        "display_name": "Docker Desktop",
+        "path": "C:\\Users\\thecy\\AppData\\Local\\Temp\\pytest-of-thecy\\pytest-571\\test_app_launcher_resolves_uni0\\Docker\\docker.exe",
+        "resolution": "uninstall_registry",
+        "category": "ops_console",
+        "canonical_name": "docker desktop",
+        "profile_name": "Docker Desktop",
+        "aliases": [
+          "docker",
+          "Docker Desktop",
+          "Docker.DockerDesktop"
+        ],
+        "resolved_at": "2026-03-22T06:19:59.607884+00:00",
+        "resolve_count": 1,
+        "launch_count": 0,
+        "last_resolved_at": "2026-03-22T06:19:59.607884+00:00"
+      }
+    }
+  },
+  "__localstore_meta__": {
+    "version": 6,
+    "entries": {
+      "targets": {
+        "version": 6,
+        "updated_at": 1774160399.6079333,
+        "expires_at": null
+      }
+    },
+    "last_compacted_at": 0.0,
+    "updated_at": 1774160399.6079388
+  }
+}
