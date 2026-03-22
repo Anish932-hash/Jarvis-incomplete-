@@ -8457,6 +8457,13 @@ class DesktopBackendService:
                 ),
                 max_targets=8,
             )
+            app_learning_plan = self._desktop_machine_finalize_app_learning_plan(
+                profile=payload if isinstance(payload, dict) else {},
+                app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+                task=clean_task,
+                model_limit=bounded_model_limit,
+                max_targets=8,
+            )
             if isinstance(payload, dict):
                 payload["app_learning_plan"] = app_learning_plan
                 payload["app_control_development"] = app_learning_plan
@@ -8673,6 +8680,11 @@ class DesktopBackendService:
         if not isinstance(profile, dict) or profile.get("status") != "success":
             return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine profile"}
         app_memory = self.desktop_app_memory_status(limit=256)
+        embedded_plan = (
+            dict(profile.get("app_learning_plan", {}))
+            if isinstance(profile.get("app_learning_plan", {}), dict)
+            else {}
+        )
         plan = self._desktop_machine_app_learning_plan_payload(
             app_inventory=(
                 dict(profile.get("applications", {}).get("inventory", {}))
@@ -8688,6 +8700,16 @@ class DesktopBackendService:
             ),
             max_targets=max_targets,
         )
+        if embedded_plan and int(embedded_plan.get("count", 0) or 0) >= min(max_targets, 8):
+            plan = dict(embedded_plan)
+        else:
+            plan = self._desktop_machine_finalize_app_learning_plan(
+                profile=profile if isinstance(profile, dict) else {},
+                app_learning_plan=plan if isinstance(plan, dict) else {},
+                task=str(task or "").strip().lower(),
+                model_limit=160,
+                max_targets=max_targets,
+            )
         return {
             "status": "success",
             "profile": profile,
@@ -8770,6 +8792,27 @@ class DesktopBackendService:
             "status": str(create_payload.get("status", "error") or "error"),
             "plan": plan_payload,
             "campaign": create_payload,
+            "strategy": {
+                "profile": str(campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                "auto_learn_count": int(campaign_defaults.get("auto_learn_count", 0) or 0),
+                "blocked_count": int(campaign_defaults.get("blocked_count", 0) or 0),
+                "degraded_count": int(campaign_defaults.get("degraded_count", 0) or 0),
+                "execution_mode_counts": (
+                    dict(campaign_defaults.get("execution_mode_counts", {}))
+                    if isinstance(campaign_defaults.get("execution_mode_counts", {}), dict)
+                    else {}
+                ),
+                "learning_profile_counts": (
+                    dict(campaign_defaults.get("learning_profile_counts", {}))
+                    if isinstance(campaign_defaults.get("learning_profile_counts", {}), dict)
+                    else {}
+                ),
+                "adaptive_app_profiles": [
+                    dict(item)
+                    for item in campaign_defaults.get("adaptive_app_profiles", [])
+                    if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+                ][:8],
+            },
         }
         created_campaign = (
             dict(create_payload.get("campaign", {}))
@@ -8985,6 +9028,11 @@ class DesktopBackendService:
                 model_selection=model_selection if isinstance(model_selection, dict) else None,
             )
         )
+        selected_target.update(
+            self._desktop_machine_learning_strategy_for_target(
+                target_row=selected_target,
+            )
+        )
 
         launch_result: Dict[str, Any]
         if ensure_app_launch:
@@ -9036,14 +9084,36 @@ class DesktopBackendService:
         survey_result = self.survey_desktop_app_memory(
             app_name=effective_app_name,
             query=effective_query,
-            limit=max(4, min(int(survey_limit or 28), 80)),
+            limit=max(
+                4,
+                min(
+                    int(
+                        max(
+                            survey_limit or 28,
+                            int(selected_target.get("effective_per_app_limit", 0) or 0),
+                        )
+                    ),
+                    80,
+                ),
+            ),
             ensure_app_launch=ensure_app_launch,
             include_observation=include_observation,
             include_elements=include_elements,
             include_workflow_probes=include_workflow_probes,
             include_exploration=include_exploration,
             probe_controls=probe_controls,
-            max_probe_controls=max(1, min(int(max_probe_controls or 4), 12)),
+            max_probe_controls=max(
+                1,
+                min(
+                    int(
+                        max(
+                            max_probe_controls or 4,
+                            int(selected_target.get("effective_max_probe_controls", 0) or 0),
+                        )
+                    ),
+                    12,
+                ),
+            ),
             follow_surface_waves=follow_surface_waves,
             max_surface_waves=max(
                 1,
@@ -9052,8 +9122,11 @@ class DesktopBackendService:
                         max_surface_waves
                         if max_surface_waves is not None
                         else selected_target.get(
-                            "recommended_max_surface_waves",
-                            campaign_defaults.get("max_surface_waves", 3),
+                            "effective_max_surface_waves",
+                            selected_target.get(
+                                "recommended_max_surface_waves",
+                                campaign_defaults.get("max_surface_waves", 3),
+                            ),
                         )
                     ),
                     8,
@@ -9064,8 +9137,8 @@ class DesktopBackendService:
             target_container_roles=target_container_roles or None,
             preferred_wave_actions=preferred_wave_actions or None,
             preferred_traversal_paths=preferred_traversal_paths or None,
-            revalidate_known_controls=revalidate_known_controls,
-            prefer_failure_memory=prefer_failure_memory,
+            revalidate_known_controls=bool(selected_target.get("revalidate_known_controls", revalidate_known_controls)),
+            prefer_failure_memory=bool(selected_target.get("prefer_failure_memory", prefer_failure_memory)),
         )
         memory_snapshot = self.desktop_app_memory_status(app_name=effective_app_name, limit=24)
         launch_memory = self.desktop_app_launcher_memory(query=effective_app_name, limit=12)
@@ -9840,6 +9913,302 @@ class DesktopBackendService:
             },
         }
 
+    def _desktop_machine_learning_strategy_for_target(
+        self,
+        *,
+        target_row: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        execution_mode = str(target_row.get("execution_mode", "") or "").strip().lower() or "degraded"
+        readiness_status = str(target_row.get("readiness_status", "") or "").strip().lower() or "ready"
+        base_waves = max(1, min(int(target_row.get("recommended_max_surface_waves", 3) or 3), 8))
+        base_usage = float(target_row.get("usage_score", 0.0) or 0.0)
+        if readiness_status == "blocked":
+            return {
+                "learning_profile": "manual_dependency_setup",
+                "auto_learn_allowed": False,
+                "effective_per_app_limit": 12,
+                "effective_max_surface_waves": min(base_waves, 2),
+                "effective_max_probe_controls": 1,
+                "prefer_failure_memory": True,
+                "revalidate_known_controls": True,
+                "strategy_notes": "Dependency or readiness blockers should be resolved before running deeper autonomous learning.",
+            }
+        if execution_mode == "local_ready":
+            return {
+                "learning_profile": "deep_local_explore",
+                "auto_learn_allowed": True,
+                "effective_per_app_limit": 34 if base_usage >= 10.0 else 30,
+                "effective_max_surface_waves": min(8, max(base_waves + 1, 4)),
+                "effective_max_probe_controls": 5,
+                "prefer_failure_memory": True,
+                "revalidate_known_controls": True,
+                "strategy_notes": "Local runtime and model coverage are strong enough for deeper linked-surface exploration.",
+            }
+        if execution_mode == "hybrid_ready":
+            return {
+                "learning_profile": "hybrid_guided_explore",
+                "auto_learn_allowed": True,
+                "effective_per_app_limit": 30 if base_usage >= 8.0 else 26,
+                "effective_max_surface_waves": min(7, max(base_waves, 4)),
+                "effective_max_probe_controls": 4,
+                "prefer_failure_memory": True,
+                "revalidate_known_controls": True,
+                "strategy_notes": "Hybrid local plus model-assisted exploration can push deeper while still staying bounded.",
+            }
+        if execution_mode == "remote_assist":
+            return {
+                "learning_profile": "model_assisted_explore",
+                "auto_learn_allowed": True,
+                "effective_per_app_limit": 28,
+                "effective_max_surface_waves": min(6, max(base_waves, 4)),
+                "effective_max_probe_controls": 4,
+                "prefer_failure_memory": True,
+                "revalidate_known_controls": True,
+                "strategy_notes": "Model-assisted exploration is available, but local coverage is thinner, so depth stays moderated.",
+            }
+        return {
+            "learning_profile": "cautious_revalidate",
+            "auto_learn_allowed": True,
+            "effective_per_app_limit": 20,
+            "effective_max_surface_waves": min(4, max(2, base_waves - 1)),
+            "effective_max_probe_controls": 2,
+            "prefer_failure_memory": True,
+            "revalidate_known_controls": True,
+            "strategy_notes": "Learning should stay conservative and verification-heavy until coverage improves.",
+        }
+
+    def _desktop_machine_finalize_app_learning_plan(
+        self,
+        *,
+        profile: Dict[str, Any],
+        app_learning_plan: Dict[str, Any],
+        task: str = "",
+        model_limit: int = 160,
+        max_targets: int = 8,
+    ) -> Dict[str, Any]:
+        plan = dict(app_learning_plan) if isinstance(app_learning_plan, dict) else {}
+        target_rows = [
+            dict(item)
+            for item in plan.get("targets", [])
+            if isinstance(plan.get("targets", []), list) and isinstance(item, dict)
+        ]
+        if not target_rows:
+            return plan
+        clean_task = str(task or "").strip().lower()
+        setup_plan = self.model_setup_plan(
+            task=clean_task,
+            limit=max(8, min(int(model_limit or 160), 2000)),
+            include_present=False,
+        )
+        model_selection = self._desktop_machine_select_model_items(
+            profile=profile,
+            setup_plan=setup_plan if isinstance(setup_plan, dict) else {},
+            task=clean_task,
+            max_model_items=6,
+        )
+        provider_actions = self._desktop_machine_onboarding_provider_actions(
+            profile=profile,
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+        )
+        bounded_targets = max(1, min(int(max_targets or plan.get("count", 8) or 8), 24))
+        annotated_targets: List[Dict[str, Any]] = []
+        for row in target_rows:
+            item_payload = dict(row)
+            item_payload.update(
+                self._desktop_machine_prepare_readiness_annotation(
+                    profile=profile,
+                    target_row=item_payload,
+                    path=str(item_payload.get("path", "") or "").strip(),
+                    provider_actions=provider_actions if isinstance(provider_actions, dict) else None,
+                    model_selection=model_selection if isinstance(model_selection, dict) else None,
+                )
+            )
+            item_payload.update(
+                self._desktop_machine_learning_strategy_for_target(
+                    target_row=item_payload,
+                )
+            )
+            annotated_targets.append(item_payload)
+        profile_rank = {
+            "deep_local_explore": 0,
+            "hybrid_guided_explore": 1,
+            "model_assisted_explore": 2,
+            "cautious_revalidate": 3,
+            "manual_dependency_setup": 4,
+        }
+        annotated_targets.sort(
+            key=lambda row: (
+                0 if bool(row.get("auto_learn_allowed", False)) else 1,
+                profile_rank.get(str(row.get("learning_profile", "") or "").strip().lower(), 9),
+                0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
+                -float(row.get("prepare_priority_score", 0.0) or 0.0),
+                str(row.get("app_name", "") or "").strip().lower(),
+            ),
+        )
+        selected_targets = annotated_targets[:bounded_targets]
+        auto_targets = [dict(item) for item in selected_targets if bool(item.get("auto_learn_allowed", False))]
+        campaign_targets = auto_targets[:] if auto_targets else [dict(item) for item in selected_targets]
+        execution_mode_counts: Dict[str, int] = {}
+        learning_profile_counts: Dict[str, int] = {}
+        strategy_notes: List[str] = []
+        for item in selected_targets:
+            execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
+            learning_profile = str(item.get("learning_profile", "") or "unknown").strip().lower() or "unknown"
+            execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
+            learning_profile_counts[learning_profile] = int(learning_profile_counts.get(learning_profile, 0) or 0) + 1
+            note = str(item.get("strategy_notes", "") or "").strip()
+            if note:
+                strategy_notes.append(note)
+        if learning_profile_counts:
+            strategy_profile = max(
+                learning_profile_counts.items(),
+                key=lambda entry: (int(entry[1]), -profile_rank.get(str(entry[0]), 9), str(entry[0])),
+            )[0]
+        else:
+            strategy_profile = "balanced_learning"
+        combined_roles: List[str] = []
+        combined_actions: List[str] = []
+        combined_paths: List[str] = []
+        combined_queries: List[str] = []
+        per_app_limit = 24
+        max_surface_waves_value = 3
+        max_probe_controls_value = 3
+        for row in campaign_targets:
+            combined_roles.extend(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("target_container_roles", [])
+                    if isinstance(row.get("target_container_roles", []), list) and str(item).strip()
+                ]
+            )
+            combined_actions.extend(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("preferred_wave_actions", [])
+                    if isinstance(row.get("preferred_wave_actions", []), list) and str(item).strip()
+                ]
+            )
+            combined_paths.extend(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("preferred_traversal_paths", [])
+                    if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
+                ]
+            )
+            combined_queries.extend(
+                [
+                    str(item).strip()
+                    for item in row.get("recommended_queries", [])
+                    if isinstance(row.get("recommended_queries", []), list) and str(item).strip()
+                ]
+            )
+            per_app_limit = max(per_app_limit, int(row.get("effective_per_app_limit", 24) or 24))
+            max_surface_waves_value = max(max_surface_waves_value, int(row.get("effective_max_surface_waves", 3) or 3))
+            max_probe_controls_value = max(max_probe_controls_value, int(row.get("effective_max_probe_controls", 3) or 3))
+        blocked_app_names = [
+            str(item.get("app_name", "") or "").strip()
+            for item in selected_targets
+            if str(item.get("readiness_status", "") or "").strip().lower() == "blocked"
+            and str(item.get("app_name", "") or "").strip()
+        ]
+        degraded_app_names = [
+            str(item.get("app_name", "") or "").strip()
+            for item in selected_targets
+            if str(item.get("readiness_status", "") or "").strip().lower() == "degraded"
+            and str(item.get("app_name", "") or "").strip()
+        ]
+        plan["count"] = len(selected_targets)
+        plan["targets"] = selected_targets
+        existing_summary = dict(plan.get("summary", {})) if isinstance(plan.get("summary", {}), dict) else {}
+        existing_summary.update(
+            {
+                "auto_learn_count": len(auto_targets),
+                "blocked_count": len(blocked_app_names),
+                "degraded_count": len(degraded_app_names),
+                "execution_mode_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(execution_mode_counts.items(), key=lambda entry: entry[0])
+                },
+                "learning_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(learning_profile_counts.items(), key=lambda entry: entry[0])
+                },
+            }
+        )
+        plan["summary"] = existing_summary
+        existing_defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+        existing_defaults.update(
+            {
+                "app_names": [
+                    str(item.get("app_name", "") or "").strip()
+                    for item in campaign_targets
+                    if str(item.get("app_name", "") or "").strip()
+                ],
+                "label": str(existing_defaults.get("label", "") or "machine app learning campaign").strip() or "machine app learning campaign",
+                "query": (
+                    next((query for query in combined_queries if str(query).strip()), "")
+                    or str(existing_defaults.get("query", "") or "").strip()
+                ),
+                "max_apps": max(1, min(len(campaign_targets) or 1, 6)),
+                "per_app_limit": max(12, min(per_app_limit, 48)),
+                "ensure_app_launch": True,
+                "probe_controls": True,
+                "max_probe_controls": max(1, min(max_probe_controls_value, 8)),
+                "follow_surface_waves": True,
+                "max_surface_waves": max(2, min(max_surface_waves_value, 8)),
+                "allow_risky_probes": False,
+                "skip_known_apps": False,
+                "prefer_unknown_apps": True,
+                "continuous_learning": True,
+                "revisit_stale_apps": True,
+                "stale_after_hours": float(existing_defaults.get("stale_after_hours", 72.0) or 72.0),
+                "revisit_failed_apps": True,
+                "revalidate_known_controls": True,
+                "prioritize_failure_hotspots": True,
+                "target_container_roles": self._machine_dedupe(combined_roles, limit=8),
+                "preferred_wave_actions": self._machine_dedupe(combined_actions, limit=8),
+                "preferred_traversal_paths": self._machine_dedupe(combined_paths, limit=8),
+                "strategy_profile": strategy_profile,
+                "execution_mode_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(execution_mode_counts.items(), key=lambda entry: entry[0])
+                },
+                "learning_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(learning_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "auto_learn_count": len(auto_targets),
+                "blocked_count": len(blocked_app_names),
+                "degraded_count": len(degraded_app_names),
+                "adaptive_learning_notes": self._machine_dedupe(strategy_notes, limit=4),
+                "adaptive_app_profiles": [
+                    {
+                        "app_name": str(item.get("app_name", "") or "").strip(),
+                        "execution_mode": str(item.get("execution_mode", "") or "").strip().lower(),
+                        "readiness_status": str(item.get("readiness_status", "") or "").strip().lower(),
+                        "learning_profile": str(item.get("learning_profile", "") or "").strip().lower(),
+                        "auto_learn_allowed": bool(item.get("auto_learn_allowed", False)),
+                        "effective_per_app_limit": int(item.get("effective_per_app_limit", 0) or 0),
+                        "effective_max_surface_waves": int(item.get("effective_max_surface_waves", 0) or 0),
+                        "effective_max_probe_controls": int(item.get("effective_max_probe_controls", 0) or 0),
+                        "priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
+                        "blocker_codes": [
+                            str(code).strip().lower()
+                            for code in item.get("blocker_codes", [])
+                            if isinstance(item.get("blocker_codes", []), list) and str(code).strip()
+                        ],
+                    }
+                    for item in selected_targets[:8]
+                ],
+                "blocked_app_names": blocked_app_names[:8],
+                "degraded_app_names": degraded_app_names[:8],
+            }
+        )
+        plan["campaign_defaults"] = existing_defaults
+        plan["provider_actions"] = provider_actions
+        plan["model_selection"] = model_selection
+        return plan
+
     @staticmethod
     def _normalize_onboarding_provider_inputs(provider_credentials: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         rows: Dict[str, Dict[str, Any]] = {}
@@ -9952,6 +10321,21 @@ class DesktopBackendService:
             if isinstance(app_control_prepare_plan.get("summary", {}), dict)
             else {}
         )
+        learning_plan_payload = (
+            dict(app_learning_plan.get("plan", {}))
+            if isinstance(app_learning_plan.get("plan", {}), dict)
+            else {}
+        )
+        learning_plan_summary = (
+            dict(learning_plan_payload.get("summary", {}))
+            if isinstance(learning_plan_payload.get("summary", {}), dict)
+            else {}
+        )
+        learning_campaign_defaults = (
+            dict(learning_plan_payload.get("campaign_defaults", {}))
+            if isinstance(learning_plan_payload.get("campaign_defaults", {}), dict)
+            else {}
+        )
         app_learning_target_count = (
             int(app_learning_plan.get("plan", {}).get("count", 0) or 0)
             if isinstance(app_learning_plan.get("plan", {}), dict)
@@ -9992,7 +10376,12 @@ class DesktopBackendService:
             {
                 "id": "app_learning",
                 "kind": "app_learning_campaign",
-                "status": "ready" if app_learning_target_count > 0 else "skipped",
+                "status": "skipped"
+                if app_learning_target_count <= 0
+                else "attention"
+                if int(learning_plan_summary.get("blocked_count", 0) or 0) > 0
+                or int(learning_plan_summary.get("degraded_count", 0) or 0) > 0
+                else "ready",
                 "title": "Start installed-app learning campaign",
                 "auto_runnable": True,
                 "required": False,
@@ -10033,12 +10422,16 @@ class DesktopBackendService:
                     "selected_model_count": len(selected_item_keys),
                     "launch_seed_count": int(launch_seed_plan.get("count", 0) or 0),
                     "app_learning_target_count": app_learning_target_count,
+                    "app_learning_auto_target_count": int(learning_plan_summary.get("auto_learn_count", 0) or 0),
+                    "app_learning_blocked_count": int(learning_plan_summary.get("blocked_count", 0) or 0),
+                    "app_learning_degraded_count": int(learning_plan_summary.get("degraded_count", 0) or 0),
+                    "app_learning_strategy_profile": str(learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
                     "app_control_prepare_count": int(app_control_prepare_plan.get("count", 0) or 0),
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
                 },
-                "message": "Built a machine onboarding plan with provider validation, local-model setup, launch-memory seeding, app-learning targets, and auto-prepare app-control targets.",
+                "message": "Built a machine onboarding plan with provider validation, adaptive local-model setup, launch-memory seeding, readiness-aware app-learning targets, and auto-prepare app-control targets.",
             }
         )
 
@@ -10137,6 +10530,23 @@ class DesktopBackendService:
             for item in app_control_prepare_plan.get("items", [])
             if isinstance(app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
         ][: max(1, min(int(prepare_app_limit or 3), 12))]
+        app_learning_plan_payload = (
+            dict(plan.get("app_learning_plan", {}))
+            if isinstance(plan.get("app_learning_plan", {}), dict)
+            else {}
+        )
+        app_learning_plan_summary = (
+            dict(app_learning_plan_payload.get("plan", {}).get("summary", {}))
+            if isinstance(app_learning_plan_payload.get("plan", {}), dict)
+            and isinstance(app_learning_plan_payload.get("plan", {}).get("summary", {}), dict)
+            else {}
+        )
+        app_learning_campaign_defaults = (
+            dict(app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}))
+            if isinstance(app_learning_plan_payload.get("plan", {}), dict)
+            and isinstance(app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}), dict)
+            else {}
+        )
 
         task_preference_payload: Dict[str, Any] = {}
         if isinstance(task_preferences, dict) and task_preferences:
@@ -10297,12 +10707,14 @@ class DesktopBackendService:
                             include_workflow_probes=True,
                             include_exploration=True,
                             probe_controls=True,
-                            max_probe_controls=4,
+                            max_probe_controls=int(item.get("effective_max_probe_controls", 4) or 4),
                             follow_surface_waves=True,
-                            max_surface_waves=int(item.get("recommended_max_surface_waves", 4) or 4),
+                            max_surface_waves=int(
+                                item.get("effective_max_surface_waves", item.get("recommended_max_surface_waves", 4)) or 4
+                            ),
                             allow_risky_probes=False,
-                            revalidate_known_controls=True,
-                            prefer_failure_memory=True,
+                            revalidate_known_controls=bool(item.get("revalidate_known_controls", True)),
+                            prefer_failure_memory=bool(item.get("prefer_failure_memory", True)),
                             source="machine_onboarding",
                         )
                     if isinstance(prepared_payload, dict):
@@ -10477,6 +10889,10 @@ class DesktopBackendService:
                 "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
                 "selected_model_count": len(effective_item_keys),
                 "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
+                "app_learning_strategy_profile": str(app_learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                "app_learning_auto_target_count": int(app_learning_plan_summary.get("auto_learn_count", 0) or 0),
+                "app_learning_blocked_count": int(app_learning_plan_summary.get("blocked_count", 0) or 0),
+                "app_learning_degraded_count": int(app_learning_plan_summary.get("degraded_count", 0) or 0),
                 "prepared_app_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("prepared_app_count", app_control_prepare_result.get("count", 0))
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
@@ -10496,7 +10912,7 @@ class DesktopBackendService:
             "message": (
                 "Prepared a machine onboarding run."
                 if bool(dry_run)
-                else "Completed a machine onboarding run with provider validation, model setup orchestration, launcher seeding, app-learning campaign setup, and automatic app-control preparation."
+                else "Completed a machine onboarding run with provider validation, adaptive model setup orchestration, launcher seeding, readiness-aware app-learning campaign setup, and automatic app-control preparation."
             ),
         }
         recorded = manager.record_run(run_payload, source=source) if manager is not None else dict(run_payload)

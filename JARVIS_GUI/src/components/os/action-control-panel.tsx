@@ -2590,6 +2590,33 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineAppLearningPlanSummary.campaign_defaults),
     [desktopMachineAppLearningPlanSummary]
   );
+  const desktopMachineAppLearningSummary = useMemo(
+    () => asObjectRecord(desktopMachineAppLearningPlanSummary.summary),
+    [desktopMachineAppLearningPlanSummary]
+  );
+  const desktopMachineAppLearningAdaptiveProfiles = useMemo(
+    () =>
+      Array.isArray(desktopMachineAppLearningCampaignDefaults.adaptive_app_profiles)
+        ? desktopMachineAppLearningCampaignDefaults.adaptive_app_profiles.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopMachineAppLearningCampaignDefaults]
+  );
+  const desktopMachineAppLearningModeCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.execution_mode_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningProfileCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.learning_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
   const desktopMachineOnboardingSteps = useMemo(
     () =>
       Array.isArray(desktopMachineOnboardingPlanState?.steps)
@@ -13915,9 +13942,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         }
         if (!quiet) {
           const planSummary = asObjectRecord(payload.plan);
+          const learningSummary = asObjectRecord(planSummary.summary);
           toast({
             title: 'App Learning Plan Ready',
-            description: `${Number(planSummary.count ?? planSummary.target_count ?? 0)} installed-app learning target(s) are ready for the current machine context.`,
+            description:
+              `${Number(planSummary.count ?? planSummary.target_count ?? 0)} installed-app learning target(s) are ready for the current machine context, ` +
+              `${Number(learningSummary.auto_learn_count ?? 0)} auto-learn ready, ` +
+              `${Number(learningSummary.degraded_count ?? 0)} degraded.`,
           });
         }
         return payload;
@@ -13967,6 +13998,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
               `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ` +
               `${Number(summary.selected_model_count ?? 0)} model item(s), ` +
               `${Number(summary.app_learning_target_count ?? 0)} learning target(s), ` +
+              `${Number(summary.app_learning_degraded_count ?? 0)} degraded learning target(s), ` +
               `${Number(summary.app_control_prepare_count ?? 0)} app-control prepare target(s), ` +
               `${Number(summary.app_control_prepare_degraded_count ?? 0)} degraded.`,
           });
@@ -14390,7 +14422,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         title: 'Machine Onboarding Started',
         description:
           String(payload.message ?? '').trim() ||
-          `JARVIS started provider validation, model setup launch, launch-memory seeding, app-learning kickoff, and automatic app-control preparation across ${Number(asObjectRecord(payload.summary).prepared_app_count ?? 0)} prepared app(s).`,
+          `JARVIS started provider validation, adaptive app-learning kickoff, and automatic app-control preparation across ${Number(asObjectRecord(payload.summary).app_learning_auto_target_count ?? 0)} auto-learn target(s) and ${Number(asObjectRecord(payload.summary).prepared_app_count ?? 0)} prepared app(s).`,
       });
       return payload;
     } catch (error) {
@@ -20727,10 +20759,57 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}learning targets:{Number(desktopMachineOnboardingSummary.app_learning_target_count ?? 0)}
                                         </p>
                                         <p className="mt-1">
+                                          learning auto:{Number(desktopMachineOnboardingSummary.app_learning_auto_target_count ?? 0)}
+                                          {' • '}learning degraded:{Number(desktopMachineOnboardingSummary.app_learning_degraded_count ?? 0)}
+                                          {' • '}learning blocked:{Number(desktopMachineOnboardingSummary.app_learning_blocked_count ?? 0)}
+                                        </p>
+                                        {String(desktopMachineOnboardingSummary.app_learning_strategy_profile ?? '').trim() ? (
+                                          <p className="mt-1">
+                                            learning strategy:{String(desktopMachineOnboardingSummary.app_learning_strategy_profile).trim()}
+                                          </p>
+                                        ) : null}
+                                        <p className="mt-1">
                                           plan targets:{Number(desktopMachineAppLearningPlanSummary.count ?? desktopMachineAppLearningPlanSummary.target_count ?? 0)}
                                           {' • '}campaign max apps:{Number(desktopMachineAppLearningCampaignDefaults.max_apps ?? 0)}
                                           {' • '}waves:{Number(desktopMachineAppLearningCampaignDefaults.max_surface_waves ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          plan auto:{Number(desktopMachineAppLearningSummary.auto_learn_count ?? 0)}
+                                          {' • '}plan degraded:{Number(desktopMachineAppLearningSummary.degraded_count ?? 0)}
+                                          {' • '}plan blocked:{Number(desktopMachineAppLearningSummary.blocked_count ?? 0)}
+                                        </p>
+                                        {desktopMachineAppLearningModeCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            learning modes:{' '}
+                                            {desktopMachineAppLearningModeCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningProfileCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            learning profiles:{' '}
+                                            {desktopMachineAppLearningProfileCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningAdaptiveProfiles.length > 0 ? (
+                                          <p className="mt-1">
+                                            adaptive apps:{' '}
+                                            {desktopMachineAppLearningAdaptiveProfiles
+                                              .slice(0, 3)
+                                              .map((item) => {
+                                                const appName = String(item.app_name ?? 'app').trim();
+                                                const profileName = String(item.learning_profile ?? '').trim();
+                                                const mode = String(item.execution_mode ?? '').trim();
+                                                return `${appName}${profileName ? `:${profileName}` : ''}${mode ? `:${mode}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         <p className="mt-1">
                                           prepare targets:{Number(desktopMachineOnboardingSummary.app_control_prepare_count ?? 0)}
                                           {' • '}default prepare limit:{Number(desktopMachineAppControlPrepareDefaults.prepare_app_limit ?? 0)}
@@ -20904,6 +20983,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}source:{String(desktopMachineOnboardingLatestRun.source ?? 'n/a')}
                                         </p>
                                         <p className="mt-1">
+                                          learning strategy:{String(desktopMachineOnboardingLatestSummary.app_learning_strategy_profile ?? 'n/a')}
+                                          {' • '}learning auto:{Number(desktopMachineOnboardingLatestSummary.app_learning_auto_target_count ?? 0)}
+                                          {' • '}learning degraded:{Number(desktopMachineOnboardingLatestSummary.app_learning_degraded_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
                                           prepared:{Number(desktopMachineOnboardingLatestSummary.prepared_app_count ?? 0)}
                                           {' • '}blocked:{Number(desktopMachineOnboardingLatestSummary.prepared_blocked_count ?? 0)}
                                           {' • '}degraded:{Number(desktopMachineOnboardingLatestSummary.prepared_degraded_count ?? 0)}
@@ -20920,6 +21004,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}models:{Number(asObjectRecord(item.summary).selected_model_count ?? 0)}
                                                 {' • '}launch seeds:{Number(asObjectRecord(item.summary).launch_seed_count ?? 0)}
                                                 {' • '}targets:{Number(asObjectRecord(item.summary).app_learning_target_count ?? 0)}
+                                                {' • '}learn:{String(asObjectRecord(item.summary).app_learning_strategy_profile ?? 'n/a')}
                                                 {' • '}prepared:{Number(asObjectRecord(item.summary).prepared_app_count ?? 0)}
                                                 {' • '}blocked:{Number(asObjectRecord(item.summary).prepared_blocked_count ?? 0)}
                                                 {' • '}degraded:{Number(asObjectRecord(item.summary).prepared_degraded_count ?? 0)}

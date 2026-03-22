@@ -13601,6 +13601,10 @@ class FakeDesktopService:
                 "selected_model_count": 1,
                 "launch_seed_count": 2,
                 "app_learning_target_count": 2,
+                "app_learning_auto_target_count": 2,
+                "app_learning_blocked_count": 0,
+                "app_learning_degraded_count": 1,
+                "app_learning_strategy_profile": "hybrid_guided_explore",
                 "app_control_prepare_count": 2,
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
@@ -13731,7 +13735,16 @@ class FakeDesktopService:
             "workspace_scaffold": {"status": "success"},
             "launch_seed": {"status": "success", "count": 2},
             "model_install": {"status": "success", "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])},
-            "app_learning_campaign": {"status": "success", "run": {"status": "success"} if auto_run_app_learning_campaign else {}},
+            "app_learning_campaign": {
+                "status": "success",
+                "run": {"status": "success"} if auto_run_app_learning_campaign else {},
+                "strategy": {
+                    "profile": "hybrid_guided_explore",
+                    "auto_learn_count": 2,
+                    "blocked_count": 0,
+                    "degraded_count": 1,
+                },
+            },
             "app_control_prepare": {
                 "status": "success" if auto_prepare_app_controls else "skipped",
                 "count": 2 if auto_prepare_app_controls else 0,
@@ -13769,6 +13782,10 @@ class FakeDesktopService:
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
                 "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])),
+                "app_learning_strategy_profile": "hybrid_guided_explore",
+                "app_learning_auto_target_count": 2,
+                "app_learning_blocked_count": 0,
+                "app_learning_degraded_count": 1,
                 "prepared_app_count": 2 if auto_prepare_app_controls else 0,
                 "prepared_blocked_count": 0,
                 "prepared_degraded_count": 1 if auto_prepare_app_controls else 0,
@@ -13850,11 +13867,28 @@ class FakeDesktopService:
             "plan": {
                 "status": "success",
                 "count": 2,
+                "summary": {
+                    "unknown_count": 1,
+                    "attention_count": 1,
+                    "known_count": 0,
+                    "auto_learn_count": 2,
+                    "blocked_count": 0,
+                    "degraded_count": 1,
+                    "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
+                    "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
+                },
                 "targets": [
                     {
                         "app_name": "Google Chrome",
                         "category": "browser",
                         "status": "unknown",
+                        "execution_mode": "hybrid_ready",
+                        "readiness_status": "ready",
+                        "learning_profile": "hybrid_guided_explore",
+                        "auto_learn_allowed": True,
+                        "effective_per_app_limit": 30,
+                        "effective_max_surface_waves": 5,
+                        "effective_max_probe_controls": 4,
                         "target_container_roles": ["tab", "menu", "dialog"],
                         "preferred_wave_actions": ["command", "focus_sidebar"],
                         "preferred_traversal_paths": ["tab", "menu", "dialog"],
@@ -13863,6 +13897,14 @@ class FakeDesktopService:
                         "app_name": "Visual Studio Code",
                         "category": "developer_tool",
                         "status": "attention",
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "learning_profile": "cautious_revalidate",
+                        "auto_learn_allowed": True,
+                        "effective_per_app_limit": 20,
+                        "effective_max_surface_waves": 4,
+                        "effective_max_probe_controls": 2,
+                        "blocker_codes": ["provider_missing_huggingface"],
                         "target_container_roles": ["sidebar", "tree", "dialog"],
                         "preferred_wave_actions": ["command", "focus_tree"],
                         "preferred_traversal_paths": ["sidebar", "tree", "dialog"],
@@ -13875,6 +13917,26 @@ class FakeDesktopService:
                     "preferred_traversal_paths": ["tab", "menu", "dialog", "sidebar", "tree"],
                     "max_surface_waves": 5,
                     "max_apps": 2,
+                    "strategy_profile": "hybrid_guided_explore",
+                    "auto_learn_count": 2,
+                    "blocked_count": 0,
+                    "degraded_count": 1,
+                    "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
+                    "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
+                    "adaptive_app_profiles": [
+                        {
+                            "app_name": "Google Chrome",
+                            "learning_profile": "hybrid_guided_explore",
+                            "execution_mode": "hybrid_ready",
+                            "auto_learn_allowed": True,
+                        },
+                        {
+                            "app_name": "Visual Studio Code",
+                            "learning_profile": "cautious_revalidate",
+                            "execution_mode": "degraded",
+                            "auto_learn_allowed": True,
+                        },
+                    ],
                 },
             },
         }
@@ -13922,6 +13984,12 @@ class FakeDesktopService:
                     "campaign_id": "machine-campaign-01",
                     "target_apps": ["Google Chrome", "Visual Studio Code"],
                 },
+            },
+            "strategy": {
+                "profile": "hybrid_guided_explore",
+                "auto_learn_count": 2,
+                "blocked_count": 0,
+                "degraded_count": 1,
             },
             "run": (
                 {
@@ -23453,6 +23521,8 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["status"] == "success"
     assert plan["plan"]["count"] == 2
     assert plan["plan"]["campaign_defaults"]["app_names"][0] == "Google Chrome"
+    assert plan["plan"]["summary"]["degraded_count"] == 1
+    assert plan["plan"]["campaign_defaults"]["strategy_profile"] == "hybrid_guided_explore"
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
     status, campaign = request_json(
@@ -23469,6 +23539,7 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert status == 200
     assert campaign["status"] == "success"
     assert campaign["campaign"]["campaign"]["campaign_id"] == "machine-campaign-01"
+    assert campaign["strategy"]["profile"] == "hybrid_guided_explore"
     assert campaign["run"]["status"] == "success"
     assert service.machine_app_learning_campaign_calls[-1]["auto_run"] is True
 
@@ -23485,6 +23556,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["provider_actions"]["summary"]["missing_count"] == 1
     assert plan["model_setup"]["selection"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
     assert plan["app_control_prepare_plan"]["count"] == 2
+    assert plan["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
+    assert plan["summary"]["app_learning_degraded_count"] == 1
     assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
     assert plan["summary"]["app_control_prepare_degraded_count"] == 1
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
@@ -23512,6 +23585,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["status"] == "success"
     assert launched["provider_updates"]["count"] == 1
     assert launched["model_install"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert launched["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
+    assert launched["summary"]["app_learning_degraded_count"] == 1
     assert launched["app_control_prepare"]["count"] == 2
     assert launched["summary"]["prepared_app_count"] == 2
     assert launched["summary"]["prepared_degraded_count"] == 1
