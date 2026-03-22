@@ -72,6 +72,11 @@ class DesktopOnboardingManager:
         prepared_setup_aligned_total = 0
         prepared_setup_boosted_total = 0
         prepared_setup_constrained_total = 0
+        route_remediation_total = 0
+        route_remediation_blocked_total = 0
+        route_remediation_degraded_total = 0
+        route_remediation_setup_followup_total = 0
+        route_remediation_provider_blocked_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
@@ -106,6 +111,15 @@ class DesktopOnboardingManager:
             prepared_setup_aligned_total += int(summary.get("prepared_setup_aligned_count", 0) or 0)
             prepared_setup_boosted_total += int(summary.get("prepared_setup_boosted_count", 0) or 0)
             prepared_setup_constrained_total += int(summary.get("prepared_setup_constrained_count", 0) or 0)
+            route_remediation_total += int(summary.get("route_remediation_count", 0) or 0)
+            route_remediation_blocked_total += int(summary.get("route_remediation_blocked_count", 0) or 0)
+            route_remediation_degraded_total += int(summary.get("route_remediation_degraded_count", 0) or 0)
+            route_remediation_setup_followup_total += int(
+                summary.get("route_remediation_setup_followup_count", 0) or 0
+            )
+            route_remediation_provider_blocked_total += int(
+                summary.get("route_remediation_provider_blocked_count", 0) or 0
+            )
         return {
             "status": "success",
             "count": len(limited),
@@ -153,6 +167,11 @@ class DesktopOnboardingManager:
                 "prepared_setup_aligned_total": prepared_setup_aligned_total,
                 "prepared_setup_boosted_total": prepared_setup_boosted_total,
                 "prepared_setup_constrained_total": prepared_setup_constrained_total,
+                "route_remediation_total": route_remediation_total,
+                "route_remediation_blocked_total": route_remediation_blocked_total,
+                "route_remediation_degraded_total": route_remediation_degraded_total,
+                "route_remediation_setup_followup_total": route_remediation_setup_followup_total,
+                "route_remediation_provider_blocked_total": route_remediation_provider_blocked_total,
             },
         }
 

@@ -13650,6 +13650,53 @@ class FakeDesktopService:
                 refresh_apps=refresh_apps,
                 max_targets=max_targets,
             ),
+            "route_remediation": {
+                "status": "success",
+                "count": 1,
+                "items": [
+                    {
+                        "id": "route_remediation:visual studio code",
+                        "app_name": "Visual Studio Code",
+                        "route_resolution_status": "setup_constrained",
+                        "remediation_kind": "provider_setup",
+                        "priority_band": "high",
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "expected_route_profile": "api_vision_assist_native_stabilized",
+                        "provider_blocked": True,
+                        "setup_followup_required": True,
+                        "setup_followup_count": 1,
+                        "blocker_codes": ["provider_missing_huggingface"],
+                        "related_setup_action_codes": ["configure_huggingface_token"],
+                        "recommended_action_code": "configure_huggingface_token",
+                    }
+                ],
+                "next_actions": [
+                    {
+                        "id": "route_remediation:visual studio code",
+                        "stage": "route_remediation",
+                        "kind": "provider_setup",
+                        "status": "setup_constrained",
+                        "title": "Resolve Visual Studio Code route constraints",
+                        "target": "configure_huggingface_token",
+                    }
+                ],
+                "summary": {
+                    "blocked_app_count": 0,
+                    "degraded_app_count": 0,
+                    "fallback_app_count": 0,
+                    "setup_constrained_app_count": 1,
+                    "setup_waiting_app_count": 0,
+                    "setup_followup_app_count": 1,
+                    "provider_blocked_app_count": 1,
+                    "route_status_counts": {"setup_constrained": 1},
+                    "remediation_kind_counts": {"provider_setup": 1},
+                    "priority_band_counts": {"high": 1},
+                    "expected_route_profile_counts": {"api_vision_assist_native_stabilized": 1},
+                    "top_setup_action_codes": {"configure_huggingface_token": 1},
+                    "top_blocker_codes": {"provider_missing_huggingface": 1},
+                },
+            },
             "task_preference_plan": {
                 "status": "success",
                 "count": 1,
@@ -13788,6 +13835,12 @@ class FakeDesktopService:
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
                 "app_control_prepare_degraded_count": 1,
+                "route_remediation_count": 1,
+                "route_remediation_blocked_count": 0,
+                "route_remediation_degraded_count": 0,
+                "route_remediation_setup_followup_count": 1,
+                "route_remediation_provider_blocked_count": 1,
+                "top_route_remediation_kinds": {"provider_setup": 1},
                 "execution_action_count": 6,
                 "execution_auto_runnable_count": 5,
                 "execution_ready_count": 4,
@@ -13843,6 +13896,11 @@ class FakeDesktopService:
                         "prepared_setup_aligned_count": 2,
                         "prepared_setup_boosted_count": 1,
                         "prepared_setup_constrained_count": 0,
+                        "route_remediation_count": 1,
+                        "route_remediation_blocked_count": 0,
+                        "route_remediation_degraded_count": 0,
+                        "route_remediation_setup_followup_count": 1,
+                        "route_remediation_provider_blocked_count": 1,
                         "execution_action_count": 6,
                         "execution_success_count": 4,
                         "execution_manual_count": 1,
@@ -13881,9 +13939,9 @@ class FakeDesktopService:
                 "status": "success",
                 "task": "reasoning",
                 "source": "machine_onboarding",
-                "summary": {
-                    "profile_setup_action_count": 1,
-                    "selected_model_count": 1,
+                    "summary": {
+                        "profile_setup_action_count": 1,
+                        "selected_model_count": 1,
                     "setup_execution_selected_action_count": 1,
                     "setup_execution_continued_action_count": 1,
                     "setup_execution_remaining_ready_count": 0,
@@ -13897,11 +13955,16 @@ class FakeDesktopService:
                     "prepared_app_count": 2,
                     "prepared_blocked_count": 0,
                     "prepared_degraded_count": 1,
-                    "prepared_setup_aligned_count": 2,
-                    "prepared_setup_boosted_count": 1,
-                    "prepared_setup_constrained_count": 0,
-                    "execution_action_count": 6,
-                    "execution_success_count": 4,
+                        "prepared_setup_aligned_count": 2,
+                        "prepared_setup_boosted_count": 1,
+                        "prepared_setup_constrained_count": 0,
+                        "route_remediation_count": 1,
+                        "route_remediation_blocked_count": 0,
+                        "route_remediation_degraded_count": 0,
+                        "route_remediation_setup_followup_count": 1,
+                        "route_remediation_provider_blocked_count": 1,
+                        "execution_action_count": 6,
+                        "execution_success_count": 4,
                     "execution_manual_count": 1,
                     "execution_blocked_count": 0,
                     "execution_error_count": 0,
@@ -13956,6 +14019,11 @@ class FakeDesktopService:
                 "prepared_setup_aligned_total": 2,
                 "prepared_setup_boosted_total": 1,
                 "prepared_setup_constrained_total": 0,
+                "route_remediation_total": 1,
+                "route_remediation_blocked_total": 0,
+                "route_remediation_degraded_total": 0,
+                "route_remediation_setup_followup_total": 1,
+                "route_remediation_provider_blocked_total": 1,
             },
         }
 
@@ -14146,6 +14214,54 @@ class FakeDesktopService:
                     "setup_constrained_app_count": 0,
                 },
             },
+            "route_remediation": {
+                "status": "success",
+                "count": 1 if auto_prepare_app_controls else 0,
+                "items": [
+                    {
+                        "id": "route_remediation:visual studio code",
+                        "app_name": "Visual Studio Code",
+                        "route_resolution_status": "setup_constrained",
+                        "remediation_kind": "provider_setup",
+                        "priority_band": "high",
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "expected_route_profile": "api_vision_assist_native_stabilized",
+                        "actual_route_profile": "vision_first",
+                        "provider_blocked": True,
+                        "setup_followup_required": True,
+                        "setup_followup_count": 1,
+                        "blocker_codes": ["provider_missing_huggingface"],
+                        "related_setup_action_codes": ["configure_huggingface_token"],
+                        "recommended_action_code": "configure_huggingface_token",
+                    }
+                ] if auto_prepare_app_controls else [],
+                "next_actions": [
+                    {
+                        "id": "route_remediation:visual studio code",
+                        "stage": "route_remediation",
+                        "kind": "provider_setup",
+                        "status": "setup_constrained",
+                        "title": "Resolve Visual Studio Code route constraints",
+                        "target": "configure_huggingface_token",
+                    }
+                ] if auto_prepare_app_controls else [],
+                "summary": {
+                    "blocked_app_count": 0,
+                    "degraded_app_count": 0,
+                    "fallback_app_count": 0,
+                    "setup_constrained_app_count": 1 if auto_prepare_app_controls else 0,
+                    "setup_waiting_app_count": 0,
+                    "setup_followup_app_count": 1 if auto_prepare_app_controls else 0,
+                    "provider_blocked_app_count": 1 if auto_prepare_app_controls else 0,
+                    "route_status_counts": {"setup_constrained": 1} if auto_prepare_app_controls else {},
+                    "remediation_kind_counts": {"provider_setup": 1} if auto_prepare_app_controls else {},
+                    "priority_band_counts": {"high": 1} if auto_prepare_app_controls else {},
+                    "expected_route_profile_counts": {"api_vision_assist_native_stabilized": 1} if auto_prepare_app_controls else {},
+                    "top_setup_action_codes": {"configure_huggingface_token": 1} if auto_prepare_app_controls else {},
+                    "top_blocker_codes": {"provider_missing_huggingface": 1} if auto_prepare_app_controls else {},
+                },
+            },
             "execution_queue": [
                 {
                     "id": "provider:huggingface",
@@ -14258,6 +14374,12 @@ class FakeDesktopService:
                 "prepared_setup_aligned_count": 2 if auto_prepare_app_controls else 0,
                 "prepared_setup_boosted_count": 1 if auto_prepare_app_controls else 0,
                 "prepared_setup_constrained_count": 0,
+                "route_remediation_count": 1 if auto_prepare_app_controls else 0,
+                "route_remediation_blocked_count": 0,
+                "route_remediation_degraded_count": 0,
+                "route_remediation_setup_followup_count": 1 if auto_prepare_app_controls else 0,
+                "route_remediation_provider_blocked_count": 1 if auto_prepare_app_controls else 0,
+                "top_route_remediation_kinds": {"provider_setup": 1} if auto_prepare_app_controls else {},
                 "execution_action_count": 6,
                 "execution_auto_runnable_count": 5,
                 "execution_ready_count": 0,
@@ -24441,6 +24563,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["task_preference_plan"]["count"] == 1
     assert plan["profile_setup_action_summary"]["count"] == 1
     assert plan["app_control_prepare_plan"]["summary"]["related_setup_action_code_counts"]["configure_huggingface_token"] == 1
+    assert plan["route_remediation"]["count"] == 1
+    assert plan["route_remediation"]["summary"]["provider_blocked_app_count"] == 1
+    assert plan["summary"]["route_remediation_count"] == 1
+    assert plan["summary"]["route_remediation_setup_followup_count"] == 1
+    assert plan["summary"]["route_remediation_provider_blocked_count"] == 1
     assert len(plan["execution_queue"]) == 6
     assert plan["execution_queue_summary"]["manual_count"] == 2
     assert plan["execution_queue_summary"]["setup_action_count"] == 1
@@ -24490,6 +24617,10 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["prepared_setup_aligned_count"] == 2
     assert launched["summary"]["prepared_setup_boosted_count"] == 1
     assert launched["summary"]["prepared_setup_constrained_count"] == 0
+    assert launched["route_remediation"]["count"] == 1
+    assert launched["route_remediation"]["summary"]["setup_followup_app_count"] == 1
+    assert launched["summary"]["route_remediation_count"] == 1
+    assert launched["summary"]["route_remediation_provider_blocked_count"] == 1
     assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
     assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
     assert launched["task_preference_plan"]["count"] == 1
@@ -24518,10 +24649,14 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["prepared_setup_aligned_total"] == 2
     assert history["summary"]["prepared_setup_boosted_total"] == 1
     assert history["summary"]["prepared_setup_constrained_total"] == 0
+    assert history["summary"]["route_remediation_total"] == 1
+    assert history["summary"]["route_remediation_setup_followup_total"] == 1
+    assert history["summary"]["route_remediation_provider_blocked_total"] == 1
     assert history["summary"]["setup_action_total"] == 1
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1
+    assert history["latest_run"]["summary"]["route_remediation_count"] == 1
     assert history["latest_run"]["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 

@@ -10779,6 +10779,538 @@ class DesktopBackendService:
             "next_actions": next_actions,
         }
 
+    def _desktop_machine_route_remediation_plan(
+        self,
+        *,
+        app_learning_plan: Dict[str, Any],
+        app_control_prepare_plan: Dict[str, Any],
+        app_control_prepare_result: Optional[Dict[str, Any]] = None,
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit or 8), 24))
+        learning_plan = (
+            app_learning_plan.get("plan", {})
+            if isinstance(app_learning_plan.get("plan", {}), dict)
+            else {}
+        )
+        learning_targets = [
+            dict(item)
+            for item in learning_plan.get("targets", [])
+            if isinstance(learning_plan.get("targets", []), list) and isinstance(item, dict)
+        ]
+        prepare_items = [
+            dict(item)
+            for item in app_control_prepare_plan.get("items", [])
+            if isinstance(app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
+        ]
+        prepare_result_rows = [
+            dict(item)
+            for item in (app_control_prepare_result or {}).get("items", [])
+            if isinstance((app_control_prepare_result or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        prepare_result_map = {
+            self._machine_text(
+                row.get("effective_app_name", "") or row.get("requested_app", "") or row.get("app_name", "")
+            ): dict(row)
+            for row in prepare_result_rows
+            if self._machine_text(
+                row.get("effective_app_name", "") or row.get("requested_app", "") or row.get("app_name", "")
+            )
+        }
+        merged_rows: Dict[str, Dict[str, Any]] = {}
+
+        def ensure_row(app_name: str) -> Dict[str, Any]:
+            clean_name = str(app_name or "").strip()
+            app_key = self._machine_text(clean_name)
+            if not app_key:
+                return {}
+            row = merged_rows.get(app_key)
+            if row is None:
+                row = {
+                    "app_name": clean_name,
+                    "app_key": app_key,
+                    "category": "",
+                    "execution_mode": "",
+                    "readiness_status": "",
+                    "prepare_priority_band": "",
+                    "learning_profile": "",
+                    "runtime_band_preference": "",
+                    "expected_route_profile": "",
+                    "expected_model_preference": "",
+                    "expected_provider_source": "",
+                    "actual_route_profile": "",
+                    "actual_model_preference": "",
+                    "actual_provider_source": "",
+                    "route_alignment_status": "",
+                    "route_resolution_status": "",
+                    "required_tasks": [],
+                    "blocker_codes": [],
+                    "related_setup_action_codes": [],
+                    "route_selection_reason_codes": [],
+                    "memory_present": False,
+                    "provider_blocked": False,
+                    "setup_followup_required": False,
+                    "setup_followup_count": 0,
+                    "route_fallback_applied": False,
+                    "auto_prepare_allowed": True,
+                }
+                merged_rows[app_key] = row
+            return row
+
+        for row in learning_targets:
+            target = ensure_row(str(row.get("app_name", "") or ""))
+            if not target:
+                continue
+            target["category"] = str(row.get("category", "") or target.get("category", "")).strip().lower()
+            target["execution_mode"] = str(
+                row.get("execution_mode", "") or target.get("execution_mode", "")
+            ).strip().lower()
+            target["readiness_status"] = str(
+                row.get("readiness_status", "") or target.get("readiness_status", "")
+            ).strip().lower()
+            target["learning_profile"] = str(
+                row.get("learning_profile", "") or target.get("learning_profile", "")
+            ).strip().lower()
+            target["runtime_band_preference"] = str(
+                row.get("runtime_band_preference", "") or target.get("runtime_band_preference", "")
+            ).strip().lower()
+            target["expected_route_profile"] = str(
+                row.get("expected_route_profile", "") or target.get("expected_route_profile", "")
+            ).strip().lower()
+            target["expected_model_preference"] = str(
+                row.get("expected_model_preference", "") or target.get("expected_model_preference", "")
+            ).strip().lower()
+            target["expected_provider_source"] = str(
+                row.get("expected_provider_source", "") or target.get("expected_provider_source", "")
+            ).strip().lower()
+            target["required_tasks"] = self._machine_dedupe(
+                [
+                    *target.get("required_tasks", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("required_tasks", [])
+                        if isinstance(row.get("required_tasks", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            target["blocker_codes"] = self._machine_dedupe(
+                [
+                    *target.get("blocker_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("blocker_codes", [])
+                        if isinstance(row.get("blocker_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            target["related_setup_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("related_setup_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("related_setup_action_codes", [])
+                        if isinstance(row.get("related_setup_action_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            target["route_selection_reason_codes"] = self._machine_dedupe(
+                [
+                    *target.get("route_selection_reason_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("adaptive_runtime_strategy", {}).get("reason_codes", [])
+                        if isinstance(row.get("adaptive_runtime_strategy", {}), dict)
+                        and isinstance(row.get("adaptive_runtime_strategy", {}).get("reason_codes", []), list)
+                        and str(item).strip()
+                    ],
+                ],
+                limit=12,
+            )
+            if any(code.startswith("provider_") for code in target["blocker_codes"]):
+                target["provider_blocked"] = True
+            if target["related_setup_action_codes"]:
+                target["setup_followup_required"] = True
+                target["setup_followup_count"] = max(
+                    int(target.get("setup_followup_count", 0) or 0),
+                    len(target["related_setup_action_codes"]),
+                )
+
+        for row in prepare_items:
+            target = ensure_row(str(row.get("app_name", "") or ""))
+            if not target:
+                continue
+            for field_name in (
+                "category",
+                "execution_mode",
+                "readiness_status",
+                "prepare_priority_band",
+                "expected_route_profile",
+                "expected_model_preference",
+                "expected_provider_source",
+            ):
+                if str(row.get(field_name, "") or "").strip():
+                    target[field_name] = str(row.get(field_name, "") or "").strip().lower()
+            target["memory_present"] = bool(row.get("memory_present", target.get("memory_present", False)))
+            target["auto_prepare_allowed"] = bool(row.get("auto_prepare_allowed", target.get("auto_prepare_allowed", True)))
+            target["required_tasks"] = self._machine_dedupe(
+                [
+                    *target.get("required_tasks", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("required_tasks", [])
+                        if isinstance(row.get("required_tasks", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            target["blocker_codes"] = self._machine_dedupe(
+                [
+                    *target.get("blocker_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("blocker_codes", [])
+                        if isinstance(row.get("blocker_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            target["related_setup_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("related_setup_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("related_setup_action_codes", [])
+                        if isinstance(row.get("related_setup_action_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            if any(code.startswith("provider_") for code in target["blocker_codes"]):
+                target["provider_blocked"] = True
+            if target["related_setup_action_codes"]:
+                target["setup_followup_required"] = True
+                target["setup_followup_count"] = max(
+                    int(target.get("setup_followup_count", 0) or 0),
+                    int(row.get("related_setup_action_count", 0) or 0),
+                    len(target["related_setup_action_codes"]),
+                )
+
+        for row in prepare_result_rows:
+            target = ensure_row(
+                str(row.get("effective_app_name", "") or row.get("requested_app", "") or row.get("app_name", "") or "")
+            )
+            if not target:
+                continue
+            summary = row.get("summary", {}) if isinstance(row.get("summary", {}), dict) else {}
+            for field_name in (
+                "execution_mode",
+                "readiness_status",
+                "prepare_priority_band",
+                "actual_route_profile",
+                "actual_model_preference",
+                "actual_provider_source",
+                "expected_route_profile",
+                "route_alignment_status",
+                "route_resolution_status",
+            ):
+                raw_value = summary.get(field_name, row.get(field_name, ""))
+                if str(raw_value or "").strip():
+                    target[field_name] = str(raw_value or "").strip().lower()
+            target["route_fallback_applied"] = bool(
+                summary.get("route_fallback_applied", row.get("route_fallback_applied", False))
+            )
+            target["provider_blocked"] = bool(
+                summary.get("provider_blocked", row.get("provider_blocked", target.get("provider_blocked", False)))
+            )
+            target["setup_followup_required"] = bool(
+                summary.get("setup_followup_required", target.get("setup_followup_required", False))
+            )
+            target["setup_followup_count"] = max(
+                int(target.get("setup_followup_count", 0) or 0),
+                int(summary.get("setup_followup_count", 0) or 0),
+            )
+            target["blocker_codes"] = self._machine_dedupe(
+                [
+                    *target.get("blocker_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in summary.get("blocker_codes", [])
+                        if isinstance(summary.get("blocker_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            target["related_setup_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("related_setup_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in summary.get("related_setup_action_codes", [])
+                        if isinstance(summary.get("related_setup_action_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=10,
+            )
+            target["route_selection_reason_codes"] = self._machine_dedupe(
+                [
+                    *target.get("route_selection_reason_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in summary.get("route_selection_reason_codes", [])
+                        if isinstance(summary.get("route_selection_reason_codes", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=12,
+            )
+
+        status_rank = {
+            "blocked": 0,
+            "setup_constrained": 1,
+            "setup_waiting": 2,
+            "fallback": 3,
+            "degraded": 4,
+            "attention": 5,
+            "matched": 6,
+            "ready": 6,
+            "success": 7,
+        }
+        priority_rank = {"high": 0, "medium": 1, "low": 2, "": 3}
+        remediation_items: List[Dict[str, Any]] = []
+        route_status_counts: Dict[str, int] = {}
+        remediation_kind_counts: Dict[str, int] = {}
+        priority_band_counts: Dict[str, int] = {}
+        top_setup_action_codes: Dict[str, int] = {}
+        top_blocker_codes: Dict[str, int] = {}
+        expected_route_profile_counts: Dict[str, int] = {}
+
+        for row in merged_rows.values():
+            blocker_codes = self._machine_dedupe(list(row.get("blocker_codes", [])), limit=10)
+            related_setup_action_codes = self._machine_dedupe(
+                list(row.get("related_setup_action_codes", [])),
+                limit=10,
+            )
+            provider_blocked = bool(row.get("provider_blocked", False)) or any(
+                code.startswith("provider_") for code in blocker_codes
+            )
+            route_resolution_status = str(row.get("route_resolution_status", "") or "").strip().lower()
+            readiness_status = str(row.get("readiness_status", "") or "").strip().lower()
+            execution_mode = str(row.get("execution_mode", "") or "").strip().lower()
+            if not route_resolution_status:
+                if readiness_status == "blocked" or not bool(row.get("auto_prepare_allowed", True)):
+                    route_resolution_status = "blocked"
+                elif provider_blocked or related_setup_action_codes or blocker_codes:
+                    route_resolution_status = "setup_constrained"
+                elif bool(row.get("route_fallback_applied", False)):
+                    route_resolution_status = "fallback"
+                elif readiness_status == "degraded" or execution_mode == "degraded":
+                    route_resolution_status = "degraded"
+                else:
+                    route_resolution_status = "matched"
+            actionable = (
+                route_resolution_status not in {"matched", "ready", "success"}
+                or provider_blocked
+                or bool(related_setup_action_codes)
+                or bool(blocker_codes)
+            )
+            if not actionable:
+                continue
+
+            remediation_kind = "route_tuning"
+            if provider_blocked or any(code.startswith("provider_") for code in blocker_codes):
+                remediation_kind = "provider_setup"
+            elif related_setup_action_codes:
+                remediation_kind = "model_setup"
+            elif route_resolution_status in {"fallback", "degraded"}:
+                remediation_kind = "route_tuning"
+            elif route_resolution_status == "blocked":
+                remediation_kind = "dependency_setup"
+
+            recommended_action = ""
+            if related_setup_action_codes:
+                recommended_action = related_setup_action_codes[0]
+            elif blocker_codes:
+                recommended_action = blocker_codes[0]
+            elif provider_blocked:
+                recommended_action = "configure_required_providers"
+            elif route_resolution_status in {"degraded", "fallback"}:
+                recommended_action = "revalidate_app_learning"
+
+            priority_band = str(row.get("prepare_priority_band", "") or "").strip().lower()
+            if not priority_band:
+                priority_band = (
+                    "high"
+                    if route_resolution_status in {"blocked", "setup_constrained", "setup_waiting"}
+                    else "medium"
+                )
+            expected_route_profile = str(row.get("expected_route_profile", "") or "").strip().lower()
+            if expected_route_profile:
+                expected_route_profile_counts[expected_route_profile] = int(
+                    expected_route_profile_counts.get(expected_route_profile, 0) or 0
+                ) + 1
+            for code in related_setup_action_codes:
+                top_setup_action_codes[code] = int(top_setup_action_codes.get(code, 0) or 0) + 1
+            for code in blocker_codes:
+                top_blocker_codes[code] = int(top_blocker_codes.get(code, 0) or 0) + 1
+            route_status_counts[route_resolution_status] = int(
+                route_status_counts.get(route_resolution_status, 0) or 0
+            ) + 1
+            remediation_kind_counts[remediation_kind] = int(
+                remediation_kind_counts.get(remediation_kind, 0) or 0
+            ) + 1
+            priority_band_counts[priority_band] = int(priority_band_counts.get(priority_band, 0) or 0) + 1
+            remediation_items.append(
+                {
+                    "id": f"route_remediation:{row.get('app_key', '')}",
+                    "app_name": str(row.get("app_name", "") or "").strip(),
+                    "category": str(row.get("category", "") or "").strip().lower(),
+                    "route_resolution_status": route_resolution_status,
+                    "remediation_kind": remediation_kind,
+                    "priority_band": priority_band,
+                    "execution_mode": execution_mode,
+                    "readiness_status": readiness_status,
+                    "expected_route_profile": expected_route_profile,
+                    "actual_route_profile": str(row.get("actual_route_profile", "") or "").strip().lower(),
+                    "expected_model_preference": str(
+                        row.get("expected_model_preference", "") or ""
+                    ).strip().lower(),
+                    "actual_model_preference": str(
+                        row.get("actual_model_preference", "") or ""
+                    ).strip().lower(),
+                    "expected_provider_source": str(
+                        row.get("expected_provider_source", "") or ""
+                    ).strip().lower(),
+                    "actual_provider_source": str(
+                        row.get("actual_provider_source", "") or ""
+                    ).strip().lower(),
+                    "route_alignment_status": str(
+                        row.get("route_alignment_status", "") or ""
+                    ).strip().lower(),
+                    "route_fallback_applied": bool(row.get("route_fallback_applied", False)),
+                    "provider_blocked": provider_blocked,
+                    "setup_followup_required": bool(row.get("setup_followup_required", False)),
+                    "setup_followup_count": max(
+                        int(row.get("setup_followup_count", 0) or 0),
+                        len(related_setup_action_codes),
+                    ),
+                    "required_tasks": list(row.get("required_tasks", []))
+                    if isinstance(row.get("required_tasks", []), list)
+                    else [],
+                    "blocker_codes": blocker_codes,
+                    "related_setup_action_codes": related_setup_action_codes,
+                    "route_selection_reason_codes": list(row.get("route_selection_reason_codes", []))
+                    if isinstance(row.get("route_selection_reason_codes", []), list)
+                    else [],
+                    "recommended_action_code": recommended_action,
+                }
+            )
+
+        remediation_items.sort(
+            key=lambda row: (
+                status_rank.get(str(row.get("route_resolution_status", "") or "").strip().lower(), 9),
+                priority_rank.get(str(row.get("priority_band", "") or "").strip().lower(), 9),
+                str(row.get("app_name", "") or "").strip().lower(),
+            )
+        )
+        selected_items = remediation_items[:bounded]
+        next_actions = [
+            {
+                "id": str(item.get("id", "") or "").strip(),
+                "stage": "route_remediation",
+                "kind": str(item.get("remediation_kind", "") or "route_tuning").strip().lower(),
+                "status": str(item.get("route_resolution_status", "") or "attention").strip().lower(),
+                "title": f"Resolve {str(item.get('app_name', '') or 'app').strip()} route constraints",
+                "target": str(
+                    item.get("recommended_action_code", "") or item.get("app_name", "") or ""
+                ).strip(),
+                "app_name": str(item.get("app_name", "") or "").strip(),
+                "auto_runnable": False,
+                "required": bool(
+                    str(item.get("route_resolution_status", "") or "").strip().lower()
+                    in {"blocked", "setup_constrained", "setup_waiting"}
+                ),
+            }
+            for item in selected_items[:6]
+        ]
+        return {
+            "status": "success",
+            "count": len(selected_items),
+            "items": selected_items,
+            "next_actions": next_actions,
+            "summary": {
+                "blocked_app_count": int(route_status_counts.get("blocked", 0) or 0),
+                "degraded_app_count": int(route_status_counts.get("degraded", 0) or 0),
+                "fallback_app_count": int(route_status_counts.get("fallback", 0) or 0),
+                "setup_constrained_app_count": int(route_status_counts.get("setup_constrained", 0) or 0),
+                "setup_waiting_app_count": int(route_status_counts.get("setup_waiting", 0) or 0),
+                "setup_followup_app_count": len(
+                    [
+                        item
+                        for item in selected_items
+                        if bool(item.get("setup_followup_required", False))
+                    ]
+                ),
+                "provider_blocked_app_count": len(
+                    [item for item in selected_items if bool(item.get("provider_blocked", False))]
+                ),
+                "route_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(route_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "remediation_kind_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(remediation_kind_counts.items(), key=lambda entry: entry[0])
+                },
+                "priority_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(priority_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "top_setup_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(top_setup_action_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+                },
+                "top_blocker_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(top_blocker_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+                },
+            },
+        }
+
+    @staticmethod
+    def _desktop_machine_merge_next_actions(
+        primary_actions: List[Dict[str, Any]],
+        secondary_actions: List[Dict[str, Any]],
+        *,
+        limit: int = 8,
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in [*primary_actions, *secondary_actions]:
+            if not isinstance(row, dict):
+                continue
+            key = "|".join(
+                [
+                    str(row.get("id", "") or "").strip().lower(),
+                    str(row.get("stage", "") or "").strip().lower(),
+                    str(row.get("kind", "") or "").strip().lower(),
+                    str(row.get("target", "") or "").strip().lower(),
+                    str(row.get("title", "") or "").strip().lower(),
+                ]
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(row))
+            if len(merged) >= max(1, min(int(limit or 8), 16)):
+                break
+        return merged
+
     def _desktop_machine_provider_action_items(
         self,
         *,
@@ -12144,10 +12676,22 @@ class DesktopBackendService:
             if isinstance(execution_queue.get("summary", {}), dict)
             else {}
         )
+        route_remediation = self._desktop_machine_route_remediation_plan(
+            app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+            app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
+            limit=min(6, max_targets),
+        )
         next_actions = (
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
             else []
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(route_remediation.get("next_actions", []))
+            if isinstance(route_remediation.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
         steps = [
             {
@@ -12258,6 +12802,7 @@ class DesktopBackendService:
                 "launch_seed_plan": launch_seed_plan,
                 "app_control_prepare_plan": app_control_prepare_plan,
                 "app_learning_plan": app_learning_plan,
+                "route_remediation": route_remediation,
                 "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
                 "execution_queue_summary": execution_queue_summary,
                 "next_actions": next_actions,
@@ -12298,6 +12843,32 @@ class DesktopBackendService:
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
+                    "route_remediation_count": int(route_remediation.get("count", 0) or 0),
+                    "route_remediation_blocked_count": int(
+                        dict(route_remediation.get("summary", {})).get("blocked_app_count", 0)
+                        if isinstance(route_remediation.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "route_remediation_degraded_count": int(
+                        dict(route_remediation.get("summary", {})).get("degraded_app_count", 0)
+                        if isinstance(route_remediation.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "route_remediation_setup_followup_count": int(
+                        dict(route_remediation.get("summary", {})).get("setup_followup_app_count", 0)
+                        if isinstance(route_remediation.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "route_remediation_provider_blocked_count": int(
+                        dict(route_remediation.get("summary", {})).get("provider_blocked_app_count", 0)
+                        if isinstance(route_remediation.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "top_route_remediation_kinds": dict(
+                        dict(route_remediation.get("summary", {})).get("remediation_kind_counts", {})
+                        if isinstance(route_remediation.get("summary", {}), dict)
+                        else {}
+                    ),
                     "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
                     "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),
                     "execution_ready_count": int(execution_queue_summary.get("ready_count", 0) or 0),
@@ -12946,10 +13517,23 @@ class DesktopBackendService:
             if isinstance(execution_queue.get("summary", {}), dict)
             else {}
         )
+        route_remediation = self._desktop_machine_route_remediation_plan(
+            app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
+            app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
+            app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
+            limit=min(6, max_targets),
+        )
         next_actions = (
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
             else []
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(route_remediation.get("next_actions", []))
+            if isinstance(route_remediation.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
 
         final_profile = self.desktop_machine_profile(
@@ -12995,6 +13579,7 @@ class DesktopBackendService:
             "model_install": model_install_result,
             "app_learning_campaign": app_learning_result,
             "app_control_prepare": app_control_prepare_result,
+            "route_remediation": route_remediation,
             "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
             "execution_queue_summary": execution_queue_summary,
             "next_actions": next_actions,
@@ -13062,6 +13647,32 @@ class DesktopBackendService:
                     dict(app_control_prepare_result.get("summary", {})).get("setup_constrained_app_count", 0)
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else 0
+                ),
+                "route_remediation_count": int(route_remediation.get("count", 0) or 0),
+                "route_remediation_blocked_count": int(
+                    dict(route_remediation.get("summary", {})).get("blocked_app_count", 0)
+                    if isinstance(route_remediation.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_degraded_count": int(
+                    dict(route_remediation.get("summary", {})).get("degraded_app_count", 0)
+                    if isinstance(route_remediation.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_setup_followup_count": int(
+                    dict(route_remediation.get("summary", {})).get("setup_followup_app_count", 0)
+                    if isinstance(route_remediation.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_provider_blocked_count": int(
+                    dict(route_remediation.get("summary", {})).get("provider_blocked_app_count", 0)
+                    if isinstance(route_remediation.get("summary", {}), dict)
+                    else 0
+                ),
+                "top_route_remediation_kinds": dict(
+                    dict(route_remediation.get("summary", {})).get("remediation_kind_counts", {})
+                    if isinstance(route_remediation.get("summary", {}), dict)
+                    else {}
                 ),
                 "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
                 "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),

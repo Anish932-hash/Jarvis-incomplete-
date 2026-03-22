@@ -2580,6 +2580,28 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         : [],
     [desktopMachineAppControlPreparePlan]
   );
+  const desktopMachineOnboardingRouteRemediation = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.route_remediation),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingRouteRemediationSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingRouteRemediation.summary),
+    [desktopMachineOnboardingRouteRemediation]
+  );
+  const desktopMachineOnboardingRouteRemediationRows = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingRouteRemediation.items)
+        ? desktopMachineOnboardingRouteRemediation.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingRouteRemediation]
+  );
+  const desktopMachineOnboardingRouteRemediationNextActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingRouteRemediation.next_actions)
+        ? desktopMachineOnboardingRouteRemediation.next_actions.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingRouteRemediation]
+  );
   const desktopMachineAppControlPrepareModeCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineAppControlPrepareSummary.execution_mode_counts)).sort(
@@ -2593,6 +2615,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
       ),
     [desktopMachineAppControlPrepareSummary]
+  );
+  const desktopMachineOnboardingRouteRemediationKindCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingRouteRemediationSummary.remediation_kind_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingRouteRemediationSummary]
+  );
+  const desktopMachineOnboardingRouteRemediationBlockerCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingRouteRemediationSummary.top_blocker_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingRouteRemediationSummary]
+  );
+  const desktopMachineOnboardingRouteRemediationSetupCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingRouteRemediationSummary.top_setup_action_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingRouteRemediationSummary]
   );
   const desktopMachineOnboardingProfileSetupTopCodes = useMemo(
     () =>
@@ -21008,6 +21051,38 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}degraded:{Number(desktopMachineAppControlPrepareSummary.degraded_count ?? 0)}
                                           {' • '}blocked:{Number(desktopMachineAppControlPrepareSummary.blocked_count ?? 0)}
                                         </p>
+                                        {(Number(desktopMachineOnboardingSummary.route_remediation_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingRouteRemediationSummary.setup_followup_app_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingRouteRemediationSummary.provider_blocked_app_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            route remediation:{Number(desktopMachineOnboardingSummary.route_remediation_count ?? 0)}
+                                            {' • '}setup followups:{Number(
+                                              desktopMachineOnboardingSummary.route_remediation_setup_followup_count ??
+                                                desktopMachineOnboardingRouteRemediationSummary.setup_followup_app_count ??
+                                                0
+                                            )}
+                                            {' • '}provider blocked:{Number(
+                                              desktopMachineOnboardingSummary.route_remediation_provider_blocked_count ??
+                                                desktopMachineOnboardingRouteRemediationSummary.provider_blocked_app_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingSummary.route_remediation_blocked_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingSummary.route_remediation_degraded_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingRouteRemediationSummary.setup_constrained_app_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            route blocked:{Number(
+                                              desktopMachineOnboardingSummary.route_remediation_blocked_count ?? 0
+                                            )}
+                                            {' • '}degraded:{Number(
+                                              desktopMachineOnboardingSummary.route_remediation_degraded_count ?? 0
+                                            )}
+                                            {' • '}constrained:{Number(
+                                              desktopMachineOnboardingRouteRemediationSummary.setup_constrained_app_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineAppControlPrepareModeCounts.length > 0 ? (
                                           <p className="mt-1">
                                             modes:{' '}
@@ -21036,6 +21111,60 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {desktopMachineAppControlPrepareBlockerCounts
                                               .slice(0, 3)
                                               .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingRouteRemediationKindCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation kinds:{' '}
+                                            {desktopMachineOnboardingRouteRemediationKindCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingRouteRemediationRows.length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation apps:{' '}
+                                            {desktopMachineOnboardingRouteRemediationRows
+                                              .slice(0, 3)
+                                              .map((item) => {
+                                                const appName = String(item.app_name ?? 'app').trim();
+                                                const state = String(item.route_resolution_status ?? '').trim();
+                                                const action = String(item.recommended_action_code ?? '').trim();
+                                                return `${appName}${state ? `:${state}` : ''}${action ? `:${action}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingRouteRemediationBlockerCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation blockers:{' '}
+                                            {desktopMachineOnboardingRouteRemediationBlockerCounts
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingRouteRemediationSetupCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation setup codes:{' '}
+                                            {desktopMachineOnboardingRouteRemediationSetupCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingRouteRemediationNextActions.length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation next:{' '}
+                                            {desktopMachineOnboardingRouteRemediationNextActions
+                                              .slice(0, 3)
+                                              .map((item) => {
+                                                const title = String(item.title ?? item.kind ?? 'action').trim();
+                                                const target = String(item.target ?? '').trim();
+                                                return `${title}${target ? `:${target}` : ''}`;
+                                              })
                                               .join(' • ')}
                                           </p>
                                         ) : null}
@@ -21432,6 +21561,43 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}boosted:{Number(desktopMachineOnboardingLatestSummary.prepared_setup_boosted_count ?? 0)}
                                           {' • '}constrained:{Number(desktopMachineOnboardingLatestSummary.prepared_setup_constrained_count ?? 0)}
                                         </p>
+                                        {(Number(desktopMachineOnboardingLatestSummary.route_remediation_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.route_remediation_setup_followup_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.route_remediation_provider_blocked_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            remediation:{Number(desktopMachineOnboardingLatestSummary.route_remediation_count ?? 0)}
+                                            {' • '}setup followups:{Number(
+                                              desktopMachineOnboardingLatestSummary.route_remediation_setup_followup_count ?? 0
+                                            )}
+                                            {' • '}provider blocked:{Number(
+                                              desktopMachineOnboardingLatestSummary.route_remediation_provider_blocked_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingLatestSummary.route_remediation_blocked_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingLatestSummary.route_remediation_degraded_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            remediation blocked:{Number(
+                                              desktopMachineOnboardingLatestSummary.route_remediation_blocked_count ?? 0
+                                            )}
+                                            {' • '}degraded:{Number(
+                                              desktopMachineOnboardingLatestSummary.route_remediation_degraded_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingLatestSummary.top_route_remediation_kinds)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            remediation kinds:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingLatestSummary.top_route_remediation_kinds)
+                                            )
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${Number(value ?? 0)}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {(Number(desktopMachineOnboardingLatestSummary.setup_action_count ?? 0) > 0 ||
                                           Number(desktopMachineOnboardingLatestSummary.profile_setup_action_count ?? 0) > 0) ? (
                                           <p className="mt-1">
