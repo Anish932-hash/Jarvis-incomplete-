@@ -638,6 +638,7 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert payload["items"][0]["adaptive_learning_runtime"]["route_profile"] == "local_vision_assist"
     assert payload["items"][0]["adaptive_learning_runtime"]["model_preference"] == "hybrid_runtime"
     assert payload["items"][0]["adaptive_learning_runtime"]["runtime_provider_source"] == "local_runtime_plus_ocr"
+    assert payload["targeting"]["route_resolution_counts"]["matched"] == 1
     recommended_paths = payload["items"][0]["targeting"]["recommended_traversal_paths"]
     assert recommended_paths[:2] == ["dialog", "menu"]
     assert "sidebar" in recommended_paths
@@ -1842,3 +1843,88 @@ def test_desktop_action_router_stabilizes_custom_probe_and_persists_route_memory
     assert payload["memory_entry"]["vision_learning_route"]["local_runtime_ready"] is True
     assert int(payload["memory_entry"]["native_stabilization_summary"]["stabilized_total"] or 0) >= 1
     assert int(payload["app_memory"]["summary"]["native_stabilization_total"] or 0) >= 1
+
+
+def test_desktop_action_router_marks_setup_constrained_runtime_route() -> None:
+    router = DesktopActionRouter(
+        action_handlers={
+            "open_app": lambda _payload: {"status": "success", "requested_app": "custom-tool", "launch_method": "system_path"},
+            "list_windows": lambda _payload: {
+                "status": "success",
+                "windows": [{"hwnd": 901, "title": "Custom Tool", "exe": r"C:\Tools\custom-tool.exe"}],
+            },
+            "active_window": lambda _payload: {
+                "status": "success",
+                "window": {"hwnd": 901, "title": "Custom Tool"},
+            },
+            "accessibility_status": lambda _payload: {"status": "success", "capabilities": {"invoke_element": True}},
+            "vision_status": lambda _payload: {"status": "success", "capabilities": {"ocr_targets": True}},
+            "accessibility_list_elements": lambda _payload: {
+                "status": "success",
+                "items": [
+                    {
+                        "element_id": "sync_button",
+                        "name": "Sync",
+                        "control_type": "button",
+                        "automation_id": "SyncButton",
+                        "root_window_title": "Custom Tool",
+                    }
+                ],
+            },
+            "computer_observe": lambda payload: {
+                "status": "success",
+                "text": "Custom tool sync panel",
+                "screen_hash": "hash-custom-sync",
+                "targets": (
+                    [{"text": "Sync", "confidence": 92.0}, {"text": "Advanced", "confidence": 84.0}]
+                    if bool(payload.get("include_targets", False))
+                    else []
+                ),
+            },
+        },
+        workflow_memory=_isolated_workflow_memory(),
+        app_memory=_isolated_app_memory(),
+        settle_delay_s=0.0,
+    )
+
+    payload = router.survey_app_memory(
+        app_name="custom-tool",
+        query="sync",
+        ensure_app_launch=True,
+        include_observation=True,
+        include_ocr_targets=True,
+        probe_controls=False,
+        follow_surface_waves=False,
+        learning_profile="hybrid_guided_explore",
+        execution_mode="hybrid_ready",
+        adaptive_runtime_strategy={
+            "strategy_profile": "hybrid_guided_runtime",
+            "runtime_band_preference": "hybrid",
+            "preferred_probe_mode": "hybrid_verify",
+            "preferred_wave_mode": "vision_guided_safe_traversal",
+            "preferred_target_mode": "hybrid",
+            "preferred_verification_mode": "multi_signal_before_after",
+            "preferred_native_recovery_mode": "focus_related_window_chain",
+            "allow_api_assist": True,
+            "prefer_local_runtime": True,
+        },
+        provider_model_readiness={
+            "required_tasks": ["vision"],
+            "related_setup_action_codes": ["configure_huggingface_token"],
+            "local_ready_tasks": ["reasoning"],
+            "remote_ready_tasks": ["vision"],
+            "blocker_codes": ["provider_missing_huggingface"],
+            "readiness_status": "degraded",
+        },
+    )
+
+    adaptive_runtime = dict(payload.get("adaptive_learning_runtime", {}))
+    assert payload["status"] == "success"
+    assert adaptive_runtime["selected_runtime_band"] == "accessibility"
+    assert adaptive_runtime["route_profile"] == "vision_first"
+    assert adaptive_runtime["model_preference"] == "ocr_only"
+    assert adaptive_runtime["runtime_provider_source"] == "ocr_runtime"
+    assert adaptive_runtime["route_resolution_status"] == "setup_constrained"
+    assert adaptive_runtime["setup_followup_required"] is True
+    assert adaptive_runtime["provider_blocked"] is True
+    assert "setup constrained" in str(payload["message"]).lower()

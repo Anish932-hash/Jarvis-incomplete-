@@ -915,8 +915,30 @@ class DesktopAppMemorySupervisor:
                 and isinstance(dict(result.get("targeting", {})).get("runtime_provider_source_counts", {}), dict)
                 else {}
             )
+            actual_route_resolution_counts = (
+                dict(dict(result.get("targeting", {})).get("route_resolution_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("route_resolution_counts", {}), dict)
+                else {}
+            )
             route_fallback_app_count = self._coerce_int(
                 dict(result.get("targeting", {})).get("route_fallback_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            setup_constrained_app_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("setup_constrained_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            provider_blocked_app_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("provider_blocked_app_count", 0)
                 if isinstance(result.get("targeting", {}), dict)
                 else 0,
                 minimum=0,
@@ -1245,7 +1267,14 @@ class DesktopAppMemorySupervisor:
                 for key, value in actual_provider_source_counts.items()
                 if str(key).strip()
             }
+            campaign["route_resolution_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_route_resolution_counts.items()
+                if str(key).strip()
+            }
             campaign["route_fallback_app_count"] = route_fallback_app_count
+            campaign["setup_constrained_app_count"] = setup_constrained_app_count
+            campaign["provider_blocked_app_count"] = provider_blocked_app_count
             campaign["effective_max_surface_waves"] = effective_max_surface_waves
             campaign["adaptive_surface_wave_depth"] = adaptive_surface_wave_depth
             campaign["traversed_container_roles"] = self._dedupe_strings(

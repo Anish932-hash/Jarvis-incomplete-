@@ -21273,6 +21273,15 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}alignment:{String(desktopMachinePrepareSummary.route_alignment_status ?? 'n/a')}
                                           </p>
                                         ) : null}
+                                        {(String(desktopMachinePrepareSummary.route_resolution_status ?? '').trim() ||
+                                          Number(desktopMachinePrepareSummary.setup_followup_count ?? 0) > 0 ||
+                                          Boolean(desktopMachinePrepareSummary.provider_blocked)) ? (
+                                          <p className="mt-1">
+                                            route state:{String(desktopMachinePrepareSummary.route_resolution_status ?? 'n/a')}
+                                            {' • '}setup followups:{Number(desktopMachinePrepareSummary.setup_followup_count ?? 0)}
+                                            {' • '}provider blocked:{String(Boolean(desktopMachinePrepareSummary.provider_blocked))}
+                                          </p>
+                                        ) : null}
                                         {(String(desktopMachinePrepareSummary.actual_model_preference ?? '').trim() ||
                                           String(desktopMachinePrepareSummary.actual_provider_source ?? '').trim()) ? (
                                           <p className="mt-1">
@@ -21344,6 +21353,16 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           <p className="mt-1">
                                             setup followups:{' '}
                                             {desktopMachinePrepareRelatedSetupActionCodes.slice(0, 4).join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Array.isArray(desktopMachinePrepareSummary.route_selection_reason_codes) &&
+                                        desktopMachinePrepareSummary.route_selection_reason_codes.length > 0 ? (
+                                          <p className="mt-1">
+                                            route reasons:{' '}
+                                            {desktopMachinePrepareSummary.route_selection_reason_codes
+                                              .slice(0, 4)
+                                              .map((item) => String(item))
+                                              .join(' • ')}
                                           </p>
                                         ) : null}
                                         {String(desktopMachinePrepareSummary.setup_execution_mode ?? '').trim() ? (

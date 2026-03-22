@@ -9160,6 +9160,16 @@ class DesktopBackendService:
             "actual_provider_source": actual_provider_source,
             "route_alignment_status": route_alignment_status,
             "route_fallback_applied": bool(adaptive_learning_runtime.get("route_fallback_applied", False)),
+            "route_resolution_status": str(adaptive_learning_runtime.get("route_resolution_status", "") or "").strip().lower(),
+            "route_selection_reason_codes": [
+                str(item).strip().lower()
+                for item in adaptive_learning_runtime.get("route_selection_reason_codes", [])
+                if isinstance(adaptive_learning_runtime.get("route_selection_reason_codes", []), list) and str(item).strip()
+            ][:10],
+            "setup_followup_required": bool(adaptive_learning_runtime.get("setup_followup_required", False)),
+            "setup_followup_count": int(adaptive_learning_runtime.get("setup_followup_count", 0) or 0),
+            "provider_blocked": bool(adaptive_learning_runtime.get("provider_blocked", False)),
+            "runtime_blocker_count": int(adaptive_learning_runtime.get("blocker_count", 0) or 0),
             "preferred_probe_mode": str(
                 adaptive_learning_runtime.get("preferred_probe_mode", "")
                 or adaptive_runtime_strategy.get("preferred_probe_mode", "")
@@ -11912,6 +11922,40 @@ class DesktopBackendService:
                             for code in item.get("blocker_codes", [])
                             if isinstance(item.get("blocker_codes", []), list) and str(code).strip()
                         ],
+                        "provider_model_readiness": {
+                            "required_tasks": [
+                                str(task).strip().lower()
+                                for task in item.get("required_tasks", [])
+                                if isinstance(item.get("required_tasks", []), list) and str(task).strip()
+                            ][:8],
+                            "related_setup_action_codes": [
+                                str(code).strip().lower()
+                                for code in item.get("related_setup_action_codes", [])
+                                if isinstance(item.get("related_setup_action_codes", []), list) and str(code).strip()
+                            ][:10],
+                            "local_ready_tasks": [
+                                str(task).strip().lower()
+                                for task in item.get("local_ready_tasks", [])
+                                if isinstance(item.get("local_ready_tasks", []), list) and str(task).strip()
+                            ][:8],
+                            "install_ready_tasks": [
+                                str(task).strip().lower()
+                                for task in item.get("install_ready_tasks", [])
+                                if isinstance(item.get("install_ready_tasks", []), list) and str(task).strip()
+                            ][:8],
+                            "remote_ready_tasks": [
+                                str(task).strip().lower()
+                                for task in item.get("remote_ready_tasks", [])
+                                if isinstance(item.get("remote_ready_tasks", []), list) and str(task).strip()
+                            ][:8],
+                            "blocker_codes": [
+                                str(code).strip().lower()
+                                for code in item.get("blocker_codes", [])
+                                if isinstance(item.get("blocker_codes", []), list) and str(code).strip()
+                            ][:10],
+                            "execution_mode": str(item.get("execution_mode", "") or "").strip().lower(),
+                            "readiness_status": str(item.get("readiness_status", "") or "").strip().lower(),
+                        },
                     }
                     for item in selected_targets[:8]
                 ],

@@ -8687,10 +8687,20 @@ class DesktopActionRouter:
                 ]
                 if part
             ]
-            if route_bits:
-                message_parts.append(
-                    f"Live learning ran through the {' / '.join(route_bits[:3])} route."
-                )
+        if route_bits:
+            message_parts.append(
+                f"Live learning ran through the {' / '.join(route_bits[:3])} route."
+            )
+        route_resolution_status = str(adaptive_runtime_payload.get("route_resolution_status", "") or "").strip().lower()
+        if route_resolution_status in {"setup_constrained", "fallback", "blocked", "setup_waiting"}:
+            resolution_bits = [route_resolution_status.replace("_", " ")]
+            if bool(adaptive_runtime_payload.get("setup_followup_required", False)):
+                resolution_bits.append("setup followups pending")
+            if bool(adaptive_runtime_payload.get("provider_blocked", False)):
+                resolution_bits.append("provider blocked")
+            message_parts.append(
+                f"Adaptive route resolution was {' / '.join(resolution_bits[:3])} for this surface."
+            )
         return {
             "status": "success",
             "message": " ".join(part for part in message_parts if part).strip(),
@@ -8804,7 +8814,11 @@ class DesktopActionRouter:
         route_profile_counts: Dict[str, int] = {}
         model_preference_counts: Dict[str, int] = {}
         runtime_provider_source_counts: Dict[str, int] = {}
+        route_resolution_counts: Dict[str, int] = {}
+        route_reason_counts: Dict[str, int] = {}
         route_fallback_app_count = 0
+        setup_constrained_app_count = 0
+        provider_blocked_app_count = 0
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -8972,6 +8986,29 @@ class DesktopActionRouter:
                     if isinstance(matched_adaptive_profile.get("runtime_strategy", {}), dict)
                     else {}
                 )
+                matched_readiness = (
+                    dict(matched_adaptive_profile.get("provider_model_readiness", {}))
+                    if isinstance(matched_adaptive_profile.get("provider_model_readiness", {}), dict)
+                    else {}
+                )
+                matched_setup_actions = [
+                    str(item).strip()
+                    for item in (
+                        matched_readiness.get("related_setup_action_codes", [])
+                        if isinstance(matched_readiness.get("related_setup_action_codes", []), list)
+                        else []
+                    )
+                    if str(item).strip()
+                ]
+                matched_blockers = [
+                    str(item).strip()
+                    for item in (
+                        matched_readiness.get("blocker_codes", [])
+                        if isinstance(matched_readiness.get("blocker_codes", []), list)
+                        else []
+                    )
+                    if str(item).strip()
+                ]
                 adaptive_learning_runtime = {
                     "status": "success",
                     "learning_profile": str(matched_adaptive_profile.get("learning_profile", "") or "").strip().lower(),
@@ -9044,6 +9081,16 @@ class DesktopActionRouter:
                     "preferred_verification_mode": str(matched_runtime_strategy.get("preferred_verification_mode", "") or "").strip().lower(),
                     "native_recovery_mode": str(matched_runtime_strategy.get("preferred_native_recovery_mode", "") or "").strip().lower(),
                     "adaptive_route_applied": bool(matched_runtime_strategy),
+                    "route_resolution_status": "setup_waiting" if matched_setup_actions else ("blocked" if matched_blockers else "matched"),
+                    "setup_followup_required": bool(matched_setup_actions),
+                    "setup_followup_count": len(matched_setup_actions),
+                    "blocker_count": len(matched_blockers),
+                    "provider_blocked": any(
+                        any(token in code.lower() for token in ("provider", "credential", "token", "api", "huggingface", "openai"))
+                        for code in matched_blockers
+                    ),
+                    "local_runtime_eligible": True,
+                    "api_runtime_eligible": True,
                 }
             runtime_strategy_profile = str(
                 adaptive_learning_runtime.get("strategy_profile", "")
@@ -9070,6 +9117,24 @@ class DesktopActionRouter:
                 runtime_provider_source_counts[runtime_provider_source] = int(
                     runtime_provider_source_counts.get(runtime_provider_source, 0) or 0
                 ) + 1
+            route_resolution_status = str(adaptive_learning_runtime.get("route_resolution_status", "") or "").strip().lower()
+            if route_resolution_status:
+                route_resolution_counts[route_resolution_status] = int(
+                    route_resolution_counts.get(route_resolution_status, 0) or 0
+                ) + 1
+            if bool(adaptive_learning_runtime.get("setup_followup_required", False)):
+                setup_constrained_app_count += 1
+            if bool(adaptive_learning_runtime.get("provider_blocked", False)):
+                provider_blocked_app_count += 1
+            for reason in (
+                adaptive_learning_runtime.get("route_selection_reason_codes", [])
+                if isinstance(adaptive_learning_runtime.get("route_selection_reason_codes", []), list)
+                else []
+            ):
+                clean_reason = str(reason).strip().lower()
+                if not clean_reason:
+                    continue
+                route_reason_counts[clean_reason] = int(route_reason_counts.get(clean_reason, 0) or 0) + 1
             if bool(adaptive_learning_runtime.get("route_fallback_applied", False)):
                 route_fallback_app_count += 1
             recommended_wave_container_roles = self._dedupe_strings(
@@ -9270,7 +9335,17 @@ class DesktopActionRouter:
                     str(key): int(value)
                     for key, value in sorted(runtime_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "route_resolution_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(route_resolution_counts.items(), key=lambda entry: entry[0])
+                },
+                "route_resolution_reason_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(route_reason_counts.items(), key=lambda entry: (-int(entry[1]), str(entry[0])))[:8]
+                },
                 "route_fallback_app_count": int(route_fallback_app_count),
+                "setup_constrained_app_count": int(setup_constrained_app_count),
+                "provider_blocked_app_count": int(provider_blocked_app_count),
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
                 "recommended_traversal_paths": recommended_traversal_paths[:8],
                 "preferred_wave_actions": [
@@ -10587,6 +10662,49 @@ class DesktopActionRouter:
             if isinstance(provider_model_readiness, dict)
             else {}
         )
+        required_tasks = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("required_tasks", [])
+                if isinstance(readiness_payload.get("required_tasks", []), list) and str(item).strip()
+            ]
+        )[:8]
+        local_ready_tasks = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("local_ready_tasks", [])
+                if isinstance(readiness_payload.get("local_ready_tasks", []), list) and str(item).strip()
+            ]
+        )[:8]
+        install_ready_tasks = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("install_ready_tasks", [])
+                if isinstance(readiness_payload.get("install_ready_tasks", []), list) and str(item).strip()
+            ]
+        )[:8]
+        remote_ready_tasks = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("remote_ready_tasks", [])
+                if isinstance(readiness_payload.get("remote_ready_tasks", []), list) and str(item).strip()
+            ]
+        )[:8]
+        blocker_codes = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("blocker_codes", [])
+                if isinstance(readiness_payload.get("blocker_codes", []), list) and str(item).strip()
+            ]
+        )[:10]
+        related_setup_action_codes = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("related_setup_action_codes", [])
+                if isinstance(readiness_payload.get("related_setup_action_codes", []), list) and str(item).strip()
+            ]
+        )[:10]
+        readiness_status = str(readiness_payload.get("readiness_status", "") or "").strip().lower()
         if not strategy and not clean_learning_profile and not clean_execution_mode and not readiness_payload:
             return base_route
 
@@ -10671,18 +10789,53 @@ class DesktopActionRouter:
         runtime_band_preference = str(strategy.get("runtime_band_preference", "") or "").strip().lower() or "accessibility"
         actual_local_ready = bool(base_route.get("local_runtime_ready", False))
         actual_ocr_ready = bool(base_route.get("ocr_ready", False))
-        actual_api_ready = bool(base_route.get("api_assist_recommended", False)) or bool(strategy.get("allow_api_assist", False))
+        provider_blocked = any(
+            any(token in code for token in ("provider", "credential", "token", "api", "huggingface", "openai"))
+            for code in blocker_codes
+        )
+        task_set = set(required_tasks)
+        local_task_ready = bool(actual_local_ready) and (
+            not task_set or not local_ready_tasks or bool(task_set.intersection(local_ready_tasks))
+        )
+        remote_task_ready = (
+            bool(task_set.intersection(remote_ready_tasks))
+            if task_set and remote_ready_tasks
+            else bool(remote_ready_tasks)
+        )
+        local_runtime_eligible = bool(actual_local_ready) and (
+            local_task_ready or not task_set or not local_ready_tasks or clean_execution_mode == "local_ready"
+        )
+        actual_api_ready = (
+            bool(strategy.get("allow_api_assist", False))
+            and actual_ocr_ready
+            and not provider_blocked
+            and (remote_task_ready or not task_set or not remote_ready_tasks or clean_execution_mode == "remote_assist")
+        )
+        local_setup_gap = bool(local_ready_tasks) and not local_runtime_eligible
+        remote_setup_gap = (bool(remote_ready_tasks) or clean_execution_mode == "remote_assist") and not actual_api_ready
+        setup_followup_required = bool(
+            related_setup_action_codes
+            or install_ready_tasks
+            or local_setup_gap
+            or remote_setup_gap
+        )
         selected_runtime_band = runtime_band_preference
-        if runtime_band_preference == "local" and not actual_local_ready:
-            selected_runtime_band = "hybrid" if actual_ocr_ready else "accessibility"
+        if runtime_band_preference == "local" and not local_runtime_eligible:
+            selected_runtime_band = "api" if actual_api_ready else "accessibility"
         elif runtime_band_preference == "hybrid":
-            if not actual_local_ready and actual_api_ready and actual_ocr_ready:
+            if local_runtime_eligible and actual_ocr_ready:
+                selected_runtime_band = "hybrid"
+            elif local_runtime_eligible:
+                selected_runtime_band = "local"
+            elif actual_api_ready:
                 selected_runtime_band = "api"
-            elif not actual_local_ready and not actual_ocr_ready:
+            elif not actual_ocr_ready:
                 selected_runtime_band = "accessibility"
-        elif runtime_band_preference == "api" and not actual_ocr_ready and actual_local_ready:
+            else:
+                selected_runtime_band = "accessibility"
+        elif runtime_band_preference == "api" and not actual_api_ready and local_runtime_eligible:
             selected_runtime_band = "local"
-        elif runtime_band_preference == "api" and not actual_ocr_ready and not actual_local_ready:
+        elif runtime_band_preference == "api" and not actual_api_ready and not local_runtime_eligible:
             selected_runtime_band = "accessibility"
         route_fallback_applied = bool(selected_runtime_band != runtime_band_preference)
 
@@ -10691,30 +10844,36 @@ class DesktopActionRouter:
             preferred_probe_mode = (
                 preferred_probe_mode
                 if preferred_probe_mode in {"local_vision_assist", "hybrid_verify"}
-                else ("local_vision_assist" if actual_local_ready else "accessibility_first")
+                else ("local_vision_assist" if local_runtime_eligible else "accessibility_first")
             )
             if preferred_probe_mode == "hybrid_verify" and not actual_ocr_ready:
                 preferred_probe_mode = "local_vision_assist"
         elif selected_runtime_band == "hybrid":
-            if actual_local_ready and actual_ocr_ready:
+            if local_runtime_eligible and actual_ocr_ready:
                 preferred_probe_mode = "hybrid_verify"
-            elif actual_local_ready:
+            elif local_runtime_eligible:
                 preferred_probe_mode = "local_vision_assist"
-            elif actual_api_ready and actual_ocr_ready:
+            elif actual_api_ready:
                 preferred_probe_mode = "api_vision_assist"
             elif actual_ocr_ready:
                 preferred_probe_mode = "vision_first"
             else:
                 preferred_probe_mode = "accessibility_first"
         elif selected_runtime_band == "api":
-            preferred_probe_mode = "api_vision_assist" if actual_ocr_ready else ("local_vision_assist" if actual_local_ready else "accessibility_first")
+            preferred_probe_mode = (
+                "api_vision_assist"
+                if actual_api_ready
+                else ("local_vision_assist" if local_runtime_eligible else ("vision_first" if actual_ocr_ready else "accessibility_first"))
+            )
         else:
             if preferred_probe_mode in {"api_vision_assist", "vision_first"} and not actual_ocr_ready:
                 preferred_probe_mode = "accessibility_first"
-            elif preferred_probe_mode == "local_vision_assist" and not actual_local_ready:
+            elif preferred_probe_mode == "local_vision_assist" and not local_runtime_eligible:
                 preferred_probe_mode = "accessibility_first"
             elif not preferred_probe_mode:
                 preferred_probe_mode = "accessibility_first"
+            elif preferred_probe_mode in {"api_vision_assist", "hybrid_verify"} and actual_ocr_ready:
+                preferred_probe_mode = "vision_first"
 
         preferred_wave_mode = str(strategy.get("preferred_wave_mode", "") or merged.get("preferred_wave_mode", "") or "").strip().lower()
         if not preferred_wave_mode:
@@ -10753,6 +10912,8 @@ class DesktopActionRouter:
             model_preference = "api_assist"
         elif selected_runtime_band == "hybrid":
             model_preference = "hybrid_runtime"
+        elif preferred_probe_mode == "vision_first" and actual_ocr_ready:
+            model_preference = "ocr_only"
         else:
             model_preference = "accessibility"
 
@@ -10788,11 +10949,25 @@ class DesktopActionRouter:
             runtime_provider_source = "ocr_runtime"
         else:
             runtime_provider_source = "accessibility_only"
+        route_resolution_status = "matched"
+        if readiness_status == "blocked" or (provider_blocked and selected_runtime_band == "accessibility" and not actual_local_ready and not actual_ocr_ready):
+            route_resolution_status = "blocked"
+        elif setup_followup_required and route_fallback_applied:
+            route_resolution_status = "setup_constrained"
+        elif route_fallback_applied:
+            route_resolution_status = "fallback"
+        elif setup_followup_required:
+            route_resolution_status = "setup_waiting"
         route_selection_reason_codes = self._dedupe_strings(
             [
-                *(["local_runtime_unavailable"] if runtime_band_preference in {"local", "hybrid"} and not actual_local_ready else []),
+                *(["local_runtime_unavailable"] if runtime_band_preference in {"local", "hybrid"} and not local_runtime_eligible else []),
                 *(["ocr_runtime_unavailable"] if runtime_band_preference in {"hybrid", "api"} and not actual_ocr_ready else []),
                 *(["api_assist_unavailable"] if runtime_band_preference == "api" and not actual_api_ready else []),
+                *(["provider_blocked"] if provider_blocked else []),
+                *(["setup_followup_required"] if setup_followup_required else []),
+                *(["local_ready_tasks_missing_runtime"] if local_setup_gap else []),
+                *(["remote_ready_tasks_missing_runtime"] if remote_setup_gap else []),
+                *(["pending_install_ready_tasks"] if install_ready_tasks else []),
                 *(
                     [f"runtime_band_fallback_{runtime_band_preference}_to_{selected_runtime_band}"]
                     if route_fallback_applied and runtime_band_preference and selected_runtime_band
@@ -10800,6 +10975,7 @@ class DesktopActionRouter:
                 ),
                 *(["native_stabilization_enabled"] if needs_native_stabilization else []),
                 *(["provider_source_" + runtime_provider_source] if runtime_provider_source else []),
+                *(["route_resolution_" + route_resolution_status] if route_resolution_status else []),
             ]
         )[:10]
 
@@ -10821,7 +10997,14 @@ class DesktopActionRouter:
                 "selected_runtime_band": selected_runtime_band,
                 "runtime_provider_source": runtime_provider_source,
                 "route_fallback_applied": route_fallback_applied,
+                "route_resolution_status": route_resolution_status,
                 "route_selection_reason_codes": route_selection_reason_codes,
+                "setup_followup_required": setup_followup_required,
+                "setup_followup_count": len(related_setup_action_codes),
+                "blocker_count": len(blocker_codes),
+                "provider_blocked": provider_blocked,
+                "local_runtime_eligible": local_runtime_eligible,
+                "api_runtime_eligible": actual_api_ready,
                 "learning_profile": clean_learning_profile,
                 "execution_mode": clean_execution_mode,
                 "provider_model_readiness": readiness_payload,
@@ -10897,11 +11080,18 @@ class DesktopActionRouter:
             "native_recovery_mode": str(route.get("native_recovery_mode", "") or "").strip().lower(),
             "adaptive_route_applied": bool(route.get("adaptive_route_applied", False)),
             "route_fallback_applied": bool(route.get("route_fallback_applied", False)),
+            "route_resolution_status": str(route.get("route_resolution_status", "") or "").strip().lower(),
             "route_selection_reason_codes": [
                 str(item).strip().lower()
                 for item in route.get("route_selection_reason_codes", [])
                 if isinstance(route.get("route_selection_reason_codes", []), list) and str(item).strip()
             ][:10],
+            "setup_followup_required": bool(route.get("setup_followup_required", False)),
+            "setup_followup_count": max(0, int(route.get("setup_followup_count", 0) or 0)),
+            "blocker_count": max(0, int(route.get("blocker_count", 0) or 0)),
+            "provider_blocked": bool(route.get("provider_blocked", False)),
+            "local_runtime_eligible": bool(route.get("local_runtime_eligible", False)),
+            "api_runtime_eligible": bool(route.get("api_runtime_eligible", False)),
             "local_runtime_ready": bool(route.get("local_runtime_ready", False)),
             "ocr_ready": bool(route.get("ocr_ready", False)),
             "api_assist_recommended": bool(route.get("api_assist_recommended", False)),

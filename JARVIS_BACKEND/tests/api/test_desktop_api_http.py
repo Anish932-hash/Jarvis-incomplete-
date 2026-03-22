@@ -14485,6 +14485,15 @@ class FakeDesktopService:
                             "setup_execution_remaining_ready_count": 0,
                             "setup_execution_resume_ready": False,
                             "setup_execution_policy": "mission_followthrough",
+                            "provider_model_readiness": {
+                                "required_tasks": ["vision", "reasoning"],
+                                "related_setup_action_codes": ["configure_huggingface_token"],
+                                "local_ready_tasks": ["reasoning"],
+                                "remote_ready_tasks": ["vision"],
+                                "blocker_codes": [],
+                                "execution_mode": "hybrid_ready",
+                                "readiness_status": "ready",
+                            },
                         },
                         {
                             "app_name": "Visual Studio Code",
@@ -14507,6 +14516,15 @@ class FakeDesktopService:
                             "setup_execution_remaining_ready_count": 0,
                             "setup_execution_resume_ready": False,
                             "setup_execution_policy": "unchanged",
+                            "provider_model_readiness": {
+                                "required_tasks": ["vision"],
+                                "related_setup_action_codes": ["configure_huggingface_token"],
+                                "local_ready_tasks": [],
+                                "remote_ready_tasks": [],
+                                "blocker_codes": ["provider_missing_huggingface"],
+                                "execution_mode": "degraded",
+                                "readiness_status": "degraded",
+                            },
                         },
                     ],
                 },
@@ -14733,6 +14751,12 @@ class FakeDesktopService:
                 "actual_provider_source": "local_runtime_plus_ocr",
                 "route_alignment_status": "matched",
                 "route_fallback_applied": False,
+                "route_resolution_status": "matched",
+                "route_selection_reason_codes": ["provider_source_local_runtime_plus_ocr"],
+                "setup_followup_required": True,
+                "setup_followup_count": 2,
+                "provider_blocked": False,
+                "runtime_blocker_count": 0,
                 "preferred_probe_mode": "local_vision_assist",
                 "preferred_wave_mode": "surface_traversal_first",
                 "preferred_target_mode": "ocr",
@@ -15120,7 +15144,39 @@ class FakeDesktopService:
                 "native_recovery_mode": str(adaptive_runtime.get("preferred_native_recovery_mode", "focus_related_window_chain") or "focus_related_window_chain").strip().lower(),
                 "adaptive_route_applied": bool(adaptive_runtime),
                 "route_fallback_applied": False,
+                "route_resolution_status": "matched",
                 "route_selection_reason_codes": ["provider_source_" + runtime_provider_source],
+                "setup_followup_required": bool(dict(provider_model_readiness or {}).get("related_setup_action_codes", [])),
+                "setup_followup_count": len(
+                    [
+                        str(item).strip()
+                        for item in (
+                            dict(provider_model_readiness or {}).get("related_setup_action_codes", [])
+                            if isinstance(dict(provider_model_readiness or {}).get("related_setup_action_codes", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ]
+                ),
+                "provider_blocked": any(
+                    "provider" in str(item).lower()
+                    for item in (
+                        dict(provider_model_readiness or {}).get("blocker_codes", [])
+                        if isinstance(dict(provider_model_readiness or {}).get("blocker_codes", []), list)
+                        else []
+                    )
+                ),
+                "blocker_count": len(
+                    [
+                        str(item).strip()
+                        for item in (
+                            dict(provider_model_readiness or {}).get("blocker_codes", [])
+                            if isinstance(dict(provider_model_readiness or {}).get("blocker_codes", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ]
+                ),
                 "provider_model_readiness": dict(provider_model_readiness or {}),
             },
             "vision_learning_route": {
@@ -24311,7 +24367,9 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["actual_route_profile"] == "local_vision_assist"
     assert prepared["summary"]["actual_model_preference"] == "hybrid_runtime"
     assert prepared["summary"]["route_alignment_status"] == "matched"
+    assert prepared["summary"]["route_resolution_status"] == "matched"
     assert prepared["summary"]["related_setup_action_count"] == 2
+    assert prepared["summary"]["setup_followup_count"] == 2
     assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
@@ -24336,6 +24394,7 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["plan"]["summary"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["runtime_band_preference"] == "hybrid"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["expected_route_profile"] == "local_vision_assist"
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["provider_model_readiness"]["required_tasks"][0] == "vision"
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
     status, campaign = request_json(
