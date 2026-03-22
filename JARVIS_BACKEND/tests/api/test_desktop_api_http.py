@@ -31,6 +31,9 @@ class FakeDesktopService:
         self.provider_recovery_calls: list[Dict[str, Any]] = []
         self.model_setup_scope_calls: list[Dict[str, Any]] = []
         self.machine_profile_calls: list[Dict[str, Any]] = []
+        self.machine_onboarding_plan_calls: list[Dict[str, Any]] = []
+        self.machine_onboarding_launch_calls: list[Dict[str, Any]] = []
+        self.machine_onboarding_history_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_plan_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_campaign_calls: list[Dict[str, Any]] = []
         self.machine_task_preference_calls: list[Dict[str, Any]] = []
@@ -13465,6 +13468,214 @@ class FakeDesktopService:
             "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
         }
 
+    def desktop_machine_onboarding_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = True,
+        refresh_provider_credentials: bool = True,
+        verify_providers: bool = True,
+        provider_timeout_s: float = 8.0,
+        max_targets: int = 8,
+        max_model_items: int = 6,
+        source: str = "machine_onboarding_plan",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "refresh_provider_credentials": bool(refresh_provider_credentials),
+            "verify_providers": bool(verify_providers),
+            "provider_timeout_s": float(provider_timeout_s),
+            "max_targets": int(max_targets),
+            "max_model_items": int(max_model_items),
+            "source": source,
+        }
+        self.machine_onboarding_plan_calls.append(call)
+        return {
+            "status": "success",
+            "profile": self.desktop_machine_profile(
+                task=task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                model_limit=model_limit,
+                refresh_apps=refresh_apps,
+                refresh_provider_credentials=refresh_provider_credentials,
+                verify_providers=verify_providers,
+                provider_timeout_s=provider_timeout_s,
+                source=source,
+            ),
+            "provider_actions": {
+                "status": "success",
+                "count": 1,
+                "items": [
+                    {
+                        "provider": "huggingface",
+                        "required": True,
+                        "present": False,
+                        "state": "needs_input",
+                    }
+                ],
+                "summary": {"missing_count": 1, "attention_count": 0, "ready_count": 0},
+            },
+            "model_setup": {
+                "selection": {
+                    "selected_item_keys": ["reasoning-qwen3.5-9b"],
+                    "needs_huggingface": True,
+                },
+                "preflight": {"status": "success", "summary": {"launchable_count": 1}},
+            },
+            "launch_seed_plan": {
+                "status": "success",
+                "count": 2,
+                "items": [
+                    {"app_name": "Google Chrome", "memory_present": True},
+                    {"app_name": "Visual Studio Code", "memory_present": False},
+                ],
+            },
+            "app_learning_plan": self.desktop_machine_app_learning_plan(
+                task=task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                refresh_apps=refresh_apps,
+                max_targets=max_targets,
+            ),
+            "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
+            "summary": {"selected_model_count": 1, "launch_seed_count": 2, "app_learning_target_count": 2},
+            "message": "Built onboarding plan.",
+        }
+
+    def desktop_machine_onboarding_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        self.machine_onboarding_history_calls.append(
+            {
+                "limit": int(limit),
+                "status": status,
+                "source": source,
+            }
+        )
+        return {
+            "status": "success",
+            "count": 1,
+            "total": 1,
+            "limit": int(limit),
+            "items": [
+                {
+                    "status": "success",
+                    "task": "reasoning",
+                    "source": "machine_onboarding",
+                }
+            ],
+            "latest_run": {
+                "status": "success",
+                "task": "reasoning",
+                "source": "machine_onboarding",
+            },
+            "summary": {
+                "status_counts": {"success": 1},
+                "source_counts": {"machine_onboarding": 1},
+            },
+        }
+
+    def desktop_machine_onboarding_launch(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = True,
+        refresh_provider_credentials: bool = True,
+        verify_providers: bool = True,
+        provider_timeout_s: float = 8.0,
+        max_targets: int = 8,
+        max_model_items: int = 6,
+        provider_credentials: Dict[str, Any] | None = None,
+        task_preferences: Dict[str, Any] | None = None,
+        apply_recommended_task_preferences: bool = True,
+        scaffold_workspace: bool = True,
+        seed_launch_memory: bool = True,
+        seed_launch_limit: int = 6,
+        auto_launch_model_setup: bool = True,
+        selected_model_item_keys: list[str] | None = None,
+        auto_create_app_learning_campaign: bool = True,
+        auto_run_app_learning_campaign: bool = True,
+        campaign_label: str = "",
+        dry_run: bool = False,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "refresh_provider_credentials": bool(refresh_provider_credentials),
+            "verify_providers": bool(verify_providers),
+            "provider_timeout_s": float(provider_timeout_s),
+            "max_targets": int(max_targets),
+            "max_model_items": int(max_model_items),
+            "provider_credentials": dict(provider_credentials or {}),
+            "task_preferences": dict(task_preferences or {}),
+            "apply_recommended_task_preferences": bool(apply_recommended_task_preferences),
+            "scaffold_workspace": bool(scaffold_workspace),
+            "seed_launch_memory": bool(seed_launch_memory),
+            "seed_launch_limit": int(seed_launch_limit),
+            "auto_launch_model_setup": bool(auto_launch_model_setup),
+            "selected_model_item_keys": list(selected_model_item_keys or []),
+            "auto_create_app_learning_campaign": bool(auto_create_app_learning_campaign),
+            "auto_run_app_learning_campaign": bool(auto_run_app_learning_campaign),
+            "campaign_label": campaign_label,
+            "dry_run": bool(dry_run),
+            "source": source,
+        }
+        self.machine_onboarding_launch_calls.append(call)
+        return {
+            "status": "success" if not dry_run else "planned",
+            "task": task,
+            "dry_run": bool(dry_run),
+            "plan": self.desktop_machine_onboarding_plan(
+                task=task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                model_limit=model_limit,
+                refresh_apps=refresh_apps,
+                refresh_provider_credentials=refresh_provider_credentials,
+                verify_providers=verify_providers,
+                provider_timeout_s=provider_timeout_s,
+                max_targets=max_targets,
+                max_model_items=max_model_items,
+                source=f"{source}_plan",
+            ),
+            "provider_updates": {"status": "success", "count": len(dict(provider_credentials or {})), "items": [{"provider": "huggingface", "status": "success"}]},
+            "task_preference_update": {"status": "success", "count": 1},
+            "workspace_scaffold": {"status": "success"},
+            "launch_seed": {"status": "success", "count": 2},
+            "model_install": {"status": "success", "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])},
+            "app_learning_campaign": {"status": "success", "run": {"status": "success"} if auto_run_app_learning_campaign else {}},
+            "final_profile": {"status": "success", "machine_id": "machine-demo-01"},
+            "summary": {"provider_update_count": len(dict(provider_credentials or {})), "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]))},
+            "history": self.desktop_machine_onboarding_history(limit=8),
+            "message": "Completed onboarding run.",
+        }
+
     def update_desktop_machine_task_preferences(
         self,
         *,
@@ -23007,6 +23218,54 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert campaign["campaign"]["campaign"]["campaign_id"] == "machine-campaign-01"
     assert campaign["run"]["status"] == "success"
     assert service.machine_app_learning_campaign_calls[-1]["auto_run"] is True
+
+
+def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopService]) -> None:
+    base_url, service = api_server
+
+    status, plan = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile/onboarding-plan?task=reasoning&query=chrome&max_targets=2&max_model_items=3",
+    )
+    assert status == 200
+    assert plan["status"] == "success"
+    assert plan["provider_actions"]["summary"]["missing_count"] == 1
+    assert plan["model_setup"]["selection"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
+
+    status, launched = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/onboarding-launch",
+        payload={
+            "task": "reasoning",
+            "query": "chrome",
+            "max_targets": 2,
+            "max_model_items": 3,
+            "provider_credentials": {
+                "huggingface": {
+                    "api_key": "hf_demo_token_1234567890",
+                    "verify_after_update": True,
+                }
+            },
+            "selected_model_item_keys": ["reasoning-qwen3.5-9b"],
+            "auto_run_app_learning_campaign": True,
+            "campaign_label": "Onboarding campaign",
+        },
+    )
+    assert status == 200
+    assert launched["status"] == "success"
+    assert launched["provider_updates"]["count"] == 1
+    assert launched["model_install"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
+
+    status, history = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile/onboarding-history?limit=3&source=machine_onboarding",
+    )
+    assert status == 200
+    assert history["status"] == "success"
+    assert history["latest_run"]["task"] == "reasoning"
+    assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 
 
 def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeDesktopService]) -> None:

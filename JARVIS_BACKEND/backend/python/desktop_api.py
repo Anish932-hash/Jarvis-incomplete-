@@ -30,6 +30,7 @@ from backend.python.core.provider_credentials import ProviderCredentialManager
 from backend.python.core.desktop_action_router import DesktopActionRouter
 from backend.python.core.desktop_app_memory_supervisor import DesktopAppMemorySupervisor
 from backend.python.core.desktop_machine_profile import DesktopMachineProfileManager
+from backend.python.core.desktop_onboarding_manager import DesktopOnboardingManager
 from backend.python.core.desktop_governance_policy import DesktopGovernancePolicyManager
 from backend.python.core.desktop_governance_policy import desktop_governance_profile_catalog
 from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
@@ -529,6 +530,7 @@ class DesktopBackendService:
         self.desktop_recovery_watchdog_memory = DesktopRecoveryWatchdogMemory()
         self.app_launcher = AppLauncher()
         self.desktop_machine_profile_manager = DesktopMachineProfileManager()
+        self.desktop_onboarding_manager = DesktopOnboardingManager()
         self.model_registry = ModelRegistry(
             provider_credentials=self.provider_credentials,
             enforce_provider_keys=self._env_bool("JARVIS_MODEL_ENFORCE_PROVIDER_KEYS", False),
@@ -8783,6 +8785,721 @@ class DesktopBackendService:
                     source=source,
                 )
         return _to_jsonable(result)
+
+    def _desktop_machine_onboarding_provider_actions(
+        self,
+        *,
+        profile: Dict[str, Any],
+        model_selection: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        providers_section = profile.get("providers", {}) if isinstance(profile.get("providers", {}), dict) else {}
+        snapshot = providers_section.get("snapshot", {}) if isinstance(providers_section.get("snapshot", {}), dict) else {}
+        verifications = (
+            providers_section.get("verifications", {})
+            if isinstance(providers_section.get("verifications", {}), dict)
+            else {}
+        )
+        provider_rows = snapshot.get("providers", {}) if isinstance(snapshot.get("providers", {}), dict) else {}
+        required_names = {
+            self._machine_text(item)
+            for item in snapshot.get("manifest_required_providers", [])
+            if isinstance(snapshot.get("manifest_required_providers", []), list) and self._machine_text(item)
+        }
+        if bool(model_selection.get("needs_huggingface", False)):
+            required_names.add("huggingface")
+        candidate_names = sorted(
+            {
+                *required_names,
+                *[
+                    self._machine_text(name)
+                    for name in provider_rows.keys()
+                    if self._machine_text(name)
+                ],
+                *[
+                    self._machine_text(name)
+                    for name in verifications.keys()
+                    if self._machine_text(name)
+                ],
+            }
+        )
+        items: List[Dict[str, Any]] = []
+        missing_count = 0
+        attention_count = 0
+        ready_count = 0
+        for provider_name in candidate_names:
+            provider_row = provider_rows.get(provider_name, {}) if isinstance(provider_rows.get(provider_name, {}), dict) else {}
+            verification = verifications.get(provider_name, {}) if isinstance(verifications.get(provider_name, {}), dict) else {}
+            present = bool(provider_row.get("present", False))
+            ready = bool(provider_row.get("ready", False))
+            verification_status = str(verification.get("status", "") or "").strip().lower()
+            verified = bool(verification.get("verified", False))
+            required = provider_name in required_names or bool(provider_row.get("required_by_manifest", False))
+            state = "ready"
+            if required and not present:
+                state = "needs_input"
+                missing_count += 1
+            elif present and verification_status in {"error", "partial"}:
+                state = "needs_attention"
+                attention_count += 1
+            elif not ready and (present or required):
+                state = "needs_attention"
+                attention_count += 1
+            else:
+                ready_count += 1
+            items.append(
+                {
+                    "provider": provider_name,
+                    "required": required,
+                    "present": present,
+                    "ready": ready,
+                    "verified": verified,
+                    "verification_status": verification_status or ("success" if verified else "unknown"),
+                    "state": state,
+                    "needs_input": state == "needs_input",
+                    "needs_attention": state == "needs_attention",
+                    "required_env": list(provider_row.get("missing_requirements", []))
+                    if isinstance(provider_row.get("missing_requirements", []), list)
+                    else [],
+                    "summary": str(
+                        verification.get("summary", "")
+                        or verification.get("message", "")
+                        or provider_row.get("format_reason", "")
+                        or ""
+                    ).strip(),
+                }
+            )
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+            "summary": {
+                "required_count": len(required_names),
+                "missing_count": missing_count,
+                "attention_count": attention_count,
+                "ready_count": ready_count,
+            },
+        }
+
+    def _desktop_machine_select_model_items(
+        self,
+        *,
+        profile: Dict[str, Any],
+        setup_plan: Dict[str, Any],
+        task: str = "",
+        max_model_items: int = 6,
+        explicit_item_keys: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        items = [dict(item) for item in setup_plan.get("items", []) if isinstance(item, dict)] if isinstance(setup_plan, dict) else []
+        requested_task = self._machine_text(task)
+        applications = profile.get("applications", {}) if isinstance(profile.get("applications", {}), dict) else {}
+        models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
+        task_focus = applications.get("task_focus", []) if isinstance(applications.get("task_focus", []), list) else []
+        recommended_models = models.get("recommended_models", []) if isinstance(models.get("recommended_models", []), list) else []
+        priority_tasks = self._machine_dedupe(
+            [
+                *([requested_task] if requested_task else []),
+                *[
+                    self._machine_text(item.get("task", ""))
+                    for item in task_focus
+                    if isinstance(item, dict)
+                ],
+                *[
+                    self._machine_text(item.get("task", ""))
+                    for item in recommended_models
+                    if isinstance(item, dict)
+                ],
+                "reasoning",
+                "vision",
+                "stt",
+                "tts",
+                "embedding",
+                "intent",
+            ],
+            limit=12,
+        )
+        explicit_keys = {
+            str(item).strip().lower()
+            for item in (explicit_item_keys or [])
+            if str(item).strip()
+        }
+        bounded_limit = max(1, min(int(max_model_items or 6), 16))
+
+        def _priority_rank(row: Dict[str, Any]) -> tuple[int, int, int, str]:
+            task_name = self._machine_text(row.get("task", ""))
+            task_index = priority_tasks.index(task_name) if task_name in priority_tasks else len(priority_tasks) + 8
+            automation_rank = 0 if bool(row.get("automation_ready", False)) else 1
+            source_kind = self._machine_text(row.get("source_kind", ""))
+            source_rank = 0 if source_kind == "huggingface" else 1 if source_kind == "direct_url" else 2
+            return (automation_rank, task_index, source_rank, str(row.get("key", "") or "").strip().lower())
+
+        ordered = sorted(items, key=_priority_rank)
+        if explicit_keys:
+            selected_items = [
+                dict(item)
+                for item in ordered
+                if str(item.get("key", "") or "").strip().lower() in explicit_keys
+            ]
+        else:
+            selected_items = [dict(item) for item in ordered if bool(item.get("automation_ready", False))][:bounded_limit]
+        blocked_items = [
+            dict(item)
+            for item in ordered
+            if not bool(item.get("automation_ready", False))
+        ][:8]
+        selected_keys = [
+            str(item.get("key", "") or "").strip()
+            for item in selected_items
+            if str(item.get("key", "") or "").strip()
+        ]
+        selected_task_counts: Dict[str, int] = {}
+        for item in selected_items:
+            task_name = self._machine_text(item.get("task", "")) or "unknown"
+            selected_task_counts[task_name] = int(selected_task_counts.get(task_name, 0) or 0) + 1
+        needs_huggingface = any(
+            self._machine_text(item.get("source_kind", "")) == "huggingface"
+            for item in [*selected_items, *blocked_items]
+        )
+        return {
+            "status": "success",
+            "priority_tasks": priority_tasks,
+            "selected_item_keys": selected_keys,
+            "selected_items": selected_items,
+            "blocked_items": blocked_items,
+            "needs_huggingface": bool(needs_huggingface),
+            "summary": {
+                "selected_count": len(selected_items),
+                "blocked_count": len(blocked_items),
+                "automation_ready_count": len([item for item in items if bool(item.get("automation_ready", False))]),
+                "task_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(selected_task_counts.items(), key=lambda entry: entry[0])
+                },
+            },
+        }
+
+    def _desktop_machine_launch_seed_plan(
+        self,
+        *,
+        profile: Dict[str, Any],
+        app_learning_plan: Dict[str, Any],
+        max_apps: int = 6,
+    ) -> Dict[str, Any]:
+        applications = profile.get("applications", {}) if isinstance(profile.get("applications", {}), dict) else {}
+        inventory = applications.get("inventory", {}) if isinstance(applications.get("inventory", {}), dict) else {}
+        launch_memory = applications.get("launch_memory", {}) if isinstance(applications.get("launch_memory", {}), dict) else {}
+        inventory_items = [dict(item) for item in inventory.get("items", []) if isinstance(item, dict)] if isinstance(inventory.get("items", []), list) else []
+        memory_items = [dict(item) for item in launch_memory.get("items", []) if isinstance(launch_memory.get("items", []), list) and isinstance(item, dict)] if isinstance(launch_memory, dict) else []
+        memory_names = {
+            self._machine_text(item.get("display_name", "") or item.get("requested_app", ""))
+            for item in memory_items
+            if self._machine_text(item.get("display_name", "") or item.get("requested_app", ""))
+        }
+        inventory_by_name = {
+            self._machine_text(item.get("display_name", "") or item.get("name", "")): dict(item)
+            for item in inventory_items
+            if self._machine_text(item.get("display_name", "") or item.get("name", ""))
+        }
+        plan = app_learning_plan.get("plan", {}) if isinstance(app_learning_plan.get("plan", {}), dict) else {}
+        target_rows = [dict(item) for item in plan.get("targets", []) if isinstance(plan.get("targets", []), list) and isinstance(item, dict)]
+        ordered_names = self._machine_dedupe(
+            [
+                *[
+                    str(item.get("app_name", "") or "").strip()
+                    for item in target_rows
+                    if str(item.get("app_name", "") or "").strip()
+                ],
+                *[
+                    str(item.get("display_name", "") or item.get("name", "") or "").strip()
+                    for item in sorted(
+                        inventory_items,
+                        key=lambda row: (
+                            -float(row.get("usage_score", 0.0) or 0.0),
+                            str(row.get("display_name", "") or row.get("name", "")).lower(),
+                        ),
+                    )
+                    if bool(item.get("path_ready", False)) and str(item.get("display_name", "") or item.get("name", "")).strip()
+                ],
+            ],
+            limit=max_apps * 3,
+        )
+        items: List[Dict[str, Any]] = []
+        for app_name in ordered_names:
+            row = inventory_by_name.get(self._machine_text(app_name), {})
+            if not row or not bool(row.get("path_ready", False)):
+                continue
+            items.append(
+                {
+                    "app_name": str(row.get("display_name", "") or row.get("name", "") or app_name).strip(),
+                    "path": str(row.get("path", "") or "").strip(),
+                    "category": str(row.get("category", "") or "").strip().lower(),
+                    "usage_score": float(row.get("usage_score", 0.0) or 0.0),
+                    "memory_present": self._machine_text(app_name) in memory_names,
+                }
+            )
+            if len(items) >= max(1, min(int(max_apps or 6), 24)):
+                break
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+            "summary": {
+                "memory_present_count": len([item for item in items if bool(item.get("memory_present", False))]),
+                "needs_seed_count": len([item for item in items if not bool(item.get("memory_present", False))]),
+            },
+        }
+
+    @staticmethod
+    def _normalize_onboarding_provider_inputs(provider_credentials: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        rows: Dict[str, Dict[str, Any]] = {}
+        if not isinstance(provider_credentials, dict):
+            return rows
+        for raw_name, raw_value in provider_credentials.items():
+            provider_name = str(raw_name or "").strip().lower()
+            if not provider_name:
+                continue
+            payload: Dict[str, Any] = {}
+            if isinstance(raw_value, str):
+                if raw_value.strip():
+                    payload["api_key"] = raw_value.strip()
+            elif isinstance(raw_value, dict):
+                payload = dict(raw_value)
+                if not payload.get("api_key") and isinstance(payload.get("token"), str) and str(payload.get("token", "")).strip():
+                    payload["api_key"] = str(payload.get("token", "")).strip()
+            if payload:
+                rows[provider_name] = payload
+        return rows
+
+    def desktop_machine_onboarding_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = True,
+        refresh_provider_credentials: bool = True,
+        verify_providers: bool = True,
+        provider_timeout_s: float = 8.0,
+        max_targets: int = 8,
+        max_model_items: int = 6,
+        source: str = "machine_onboarding_plan",
+    ) -> Dict[str, Any]:
+        clean_task = str(task or "").strip().lower()
+        profile = self.desktop_machine_profile(
+            task=clean_task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=refresh_provider_credentials,
+            verify_providers=verify_providers,
+            provider_timeout_s=provider_timeout_s,
+            source=source,
+        )
+        if not isinstance(profile, dict) or profile.get("status") != "success":
+            return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine onboarding profile"}
+        app_learning_plan = (
+            dict(profile.get("app_learning_plan", {}))
+            if isinstance(profile.get("app_learning_plan", {}), dict)
+            else {}
+        )
+        if not app_learning_plan:
+            fallback_plan = self.desktop_machine_app_learning_plan(
+                task=clean_task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                refresh_apps=False,
+                max_targets=max_targets,
+            )
+            app_learning_plan = dict(fallback_plan) if isinstance(fallback_plan, dict) else {}
+        setup_plan = self.model_setup_plan(
+            task=clean_task,
+            limit=max(8, min(int(model_limit or 200), 2000)),
+            include_present=False,
+        )
+        model_selection = self._desktop_machine_select_model_items(
+            profile=profile,
+            setup_plan=setup_plan if isinstance(setup_plan, dict) else {},
+            task=clean_task,
+            max_model_items=max_model_items,
+        )
+        selected_item_keys = list(model_selection.get("selected_item_keys", [])) if isinstance(model_selection.get("selected_item_keys", []), list) else []
+        preflight = (
+            self.model_setup_preflight(
+                task=clean_task,
+                item_keys=selected_item_keys,
+                limit=max(8, min(int(model_limit or 200), 2000)),
+                include_present=False,
+                refresh_remote=False,
+            )
+            if selected_item_keys
+            else {"status": "skipped", "message": "no automation-ready model items selected"}
+        )
+        provider_actions = self._desktop_machine_onboarding_provider_actions(
+            profile=profile,
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+        )
+        launch_seed_plan = self._desktop_machine_launch_seed_plan(
+            profile=profile,
+            app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+            max_apps=min(8, max_targets),
+        )
+        app_learning_target_count = (
+            int(app_learning_plan.get("plan", {}).get("count", 0) or 0)
+            if isinstance(app_learning_plan.get("plan", {}), dict)
+            else 0
+        )
+        steps = [
+            {
+                "id": "provider_credentials",
+                "kind": "provider_credentials",
+                "status": "manual_input_required"
+                if int(dict(provider_actions.get("summary", {})).get("missing_count", 0) or 0) > 0
+                else "attention"
+                if int(dict(provider_actions.get("summary", {})).get("attention_count", 0) or 0) > 0
+                else "ready",
+                "title": "Validate provider credentials",
+                "auto_runnable": False,
+                "required": True,
+                "count": int(provider_actions.get("count", 0) or 0),
+            },
+            {
+                "id": "launch_memory_seed",
+                "kind": "app_launcher_seed",
+                "status": "ready" if int(launch_seed_plan.get("count", 0) or 0) > 0 else "skipped",
+                "title": "Seed installed app launch memory",
+                "auto_runnable": True,
+                "required": False,
+                "count": int(launch_seed_plan.get("count", 0) or 0),
+            },
+            {
+                "id": "model_setup",
+                "kind": "model_setup",
+                "status": "ready" if selected_item_keys else "attention",
+                "title": "Prepare and install recommended local models",
+                "auto_runnable": bool(selected_item_keys),
+                "required": bool(selected_item_keys),
+                "count": len(selected_item_keys),
+            },
+            {
+                "id": "app_learning",
+                "kind": "app_learning_campaign",
+                "status": "ready" if app_learning_target_count > 0 else "skipped",
+                "title": "Start installed-app learning campaign",
+                "auto_runnable": True,
+                "required": False,
+                "count": app_learning_target_count,
+            },
+        ]
+        return _to_jsonable(
+            {
+                "status": "success",
+                "profile": profile,
+                "provider_actions": provider_actions,
+                "model_setup": {
+                    "plan": setup_plan,
+                    "selection": model_selection,
+                    "preflight": preflight,
+                },
+                "launch_seed_plan": launch_seed_plan,
+                "app_learning_plan": app_learning_plan,
+                "steps": steps,
+                "summary": {
+                    "provider_missing_count": int(dict(provider_actions.get("summary", {})).get("missing_count", 0) or 0),
+                    "provider_attention_count": int(dict(provider_actions.get("summary", {})).get("attention_count", 0) or 0),
+                    "selected_model_count": len(selected_item_keys),
+                    "launch_seed_count": int(launch_seed_plan.get("count", 0) or 0),
+                    "app_learning_target_count": app_learning_target_count,
+                },
+                "message": "Built a machine onboarding plan with provider validation, local-model setup, launch-memory seeding, and app-learning campaign targets.",
+            }
+        )
+
+    def desktop_machine_onboarding_history(
+        self,
+        *,
+        limit: int = 12,
+        status: str = "",
+        source: str = "",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_onboarding_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop onboarding manager unavailable"}
+        try:
+            return _to_jsonable(
+                manager.history(
+                    limit=max(1, min(int(limit or 12), 128)),
+                    status=status,
+                    source=source,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_machine_onboarding_launch(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = True,
+        refresh_provider_credentials: bool = True,
+        verify_providers: bool = True,
+        provider_timeout_s: float = 8.0,
+        max_targets: int = 8,
+        max_model_items: int = 6,
+        provider_credentials: Optional[Dict[str, Any]] = None,
+        task_preferences: Optional[Dict[str, Any]] = None,
+        apply_recommended_task_preferences: bool = True,
+        scaffold_workspace: bool = True,
+        seed_launch_memory: bool = True,
+        seed_launch_limit: int = 6,
+        auto_launch_model_setup: bool = True,
+        selected_model_item_keys: Optional[List[str]] = None,
+        auto_create_app_learning_campaign: bool = True,
+        auto_run_app_learning_campaign: bool = True,
+        campaign_label: str = "",
+        dry_run: bool = False,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_onboarding_manager", None)
+        plan = self.desktop_machine_onboarding_plan(
+            task=task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=refresh_provider_credentials,
+            verify_providers=verify_providers,
+            provider_timeout_s=provider_timeout_s,
+            max_targets=max_targets,
+            max_model_items=max_model_items,
+            source=f"{source}_plan",
+        )
+        if not isinstance(plan, dict) or plan.get("status") != "success":
+            return plan if isinstance(plan, dict) else {"status": "error", "message": "unable to build machine onboarding plan"}
+        profile = dict(plan.get("profile", {})) if isinstance(plan.get("profile", {}), dict) else {}
+        onboarding_provider_inputs = self._normalize_onboarding_provider_inputs(provider_credentials)
+        model_setup = plan.get("model_setup", {}) if isinstance(plan.get("model_setup", {}), dict) else {}
+        model_selection = model_setup.get("selection", {}) if isinstance(model_setup.get("selection", {}), dict) else {}
+        suggested_item_keys = [
+            str(item).strip()
+            for item in model_selection.get("selected_item_keys", [])
+            if isinstance(model_selection.get("selected_item_keys", []), list) and str(item).strip()
+        ]
+        explicit_item_keys = [str(item).strip() for item in (selected_model_item_keys or []) if str(item).strip()]
+        effective_item_keys = explicit_item_keys or suggested_item_keys
+        launch_seed_plan = plan.get("launch_seed_plan", {}) if isinstance(plan.get("launch_seed_plan", {}), dict) else {}
+        launch_seed_items = [
+            dict(item)
+            for item in launch_seed_plan.get("items", [])
+            if isinstance(launch_seed_plan.get("items", []), list) and isinstance(item, dict)
+        ][: max(1, min(int(seed_launch_limit or 6), 24))]
+
+        task_preference_payload: Dict[str, Any] = {}
+        if isinstance(task_preferences, dict) and task_preferences:
+            task_preference_payload = dict(task_preferences)
+        elif bool(apply_recommended_task_preferences):
+            models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
+            existing_by_task = (
+                models.get("task_preferences", {}).get("by_task", {})
+                if isinstance(models.get("task_preferences", {}), dict)
+                and isinstance(models.get("task_preferences", {}).get("by_task", {}), dict)
+                else {}
+            )
+            recommended_models = models.get("recommended_models", []) if isinstance(models.get("recommended_models", []), list) else []
+            for row in recommended_models:
+                if not isinstance(row, dict):
+                    continue
+                task_name = self._machine_text(row.get("task", ""))
+                if not task_name or task_name in existing_by_task:
+                    continue
+                task_preference_payload[task_name] = {
+                    "provider": str(row.get("provider", "") or "").strip().lower(),
+                    "model_name": str(row.get("model_name", "") or "").strip(),
+                    "execution_backend": str(row.get("execution_backend", "") or "").strip().lower(),
+                    "model_path": str(row.get("model_path", "") or "").strip(),
+                    "source": "machine_onboarding_recommendation",
+                }
+
+        provider_updates: Dict[str, Any] = {"status": "success", "count": 0, "items": []}
+        task_preference_update: Dict[str, Any] = {}
+        workspace_scaffold: Dict[str, Any] = {}
+        launch_seed_results: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
+        model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
+        app_learning_result: Dict[str, Any] = {"status": "skipped"}
+
+        if not bool(dry_run):
+            if task_preference_payload:
+                task_preference_update = self.update_desktop_machine_task_preferences(
+                    preferences=task_preference_payload,
+                    source="machine_onboarding",
+                )
+            if onboarding_provider_inputs:
+                provider_results = []
+                for provider_name, payload in onboarding_provider_inputs.items():
+                    provider_results.append(
+                        self.update_provider_credentials(
+                            provider=provider_name,
+                            api_key=str(payload.get("api_key", "") or "").strip(),
+                            requirements=payload.get("requirements", {}) if isinstance(payload.get("requirements", {}), dict) else None,
+                            persist_plaintext=bool(payload.get("persist_plaintext", True)),
+                            persist_encrypted=payload.get("persist_encrypted"),
+                            overwrite_env=bool(payload.get("overwrite_env", True)),
+                            clear_api_key=bool(payload.get("clear_api_key", False)),
+                            verify_after_update=bool(payload.get("verify_after_update", True)),
+                            task=str(task or "").strip().lower(),
+                            limit=max(8, min(int(model_limit or 200), 2000)),
+                            include_present=False,
+                            continue_setup_recovery=bool(payload.get("continue_setup_recovery", True)),
+                            continue_on_error=bool(payload.get("continue_on_error", True)),
+                            continue_followup_actions=bool(payload.get("continue_followup_actions", True)),
+                            max_followup_waves=int(payload.get("max_followup_waves", 3) or 3),
+                            include_coworker_status=bool(payload.get("include_coworker_status", False)),
+                            refresh_remote=bool(payload.get("refresh_remote", False)),
+                            timeout_s=float(payload.get("timeout_s", provider_timeout_s) or provider_timeout_s),
+                        )
+                    )
+                provider_updates = {
+                    "status": "success",
+                    "count": len(provider_results),
+                    "items": provider_results,
+                }
+            if bool(scaffold_workspace):
+                workspace_scaffold = self.model_setup_workspace_scaffold(
+                    dry_run=False,
+                    refresh_provider_credentials=False,
+                    limit=max(8, min(int(model_limit or 200), 2000)),
+                )
+            if bool(seed_launch_memory) and launch_seed_items:
+                launch_items = []
+                for item in launch_seed_items:
+                    app_name = str(item.get("app_name", "") or "").strip()
+                    if not app_name:
+                        continue
+                    launch_items.append(self.desktop_app_launcher_resolve(app_name=app_name))
+                launch_seed_results = {
+                    "status": "success",
+                    "count": len(launch_items),
+                    "items": launch_items,
+                }
+            if bool(auto_launch_model_setup) and effective_item_keys:
+                model_install_result = self.model_setup_install_launch(
+                    task=str(task or "").strip().lower(),
+                    item_keys=effective_item_keys,
+                    dry_run=False,
+                    include_present=False,
+                    limit=max(8, min(int(model_limit or 200), 2000)),
+                    refresh_remote=True,
+                )
+            if bool(auto_create_app_learning_campaign):
+                app_learning_result = self.create_desktop_machine_app_learning_campaign(
+                    task=str(task or "").strip().lower(),
+                    app_query=app_query,
+                    app_category=app_category,
+                    app_limit=app_limit,
+                    refresh_apps=False,
+                    max_targets=max_targets,
+                    label=str(campaign_label or "Machine onboarding app learning").strip(),
+                    max_apps=min(6, max_targets),
+                    auto_run=bool(auto_run_app_learning_campaign),
+                    source="machine_onboarding",
+                )
+        else:
+            provider_updates = {
+                "status": "planned",
+                "count": len(onboarding_provider_inputs),
+                "items": [
+                    {
+                        "provider": provider_name,
+                        "status": "planned",
+                        "verify_after_update": bool(payload.get("verify_after_update", True)),
+                    }
+                    for provider_name, payload in onboarding_provider_inputs.items()
+                ],
+            }
+            task_preference_update = {
+                "status": "planned",
+                "count": len(task_preference_payload),
+                "preferences": task_preference_payload,
+            } if task_preference_payload else {"status": "skipped"}
+            workspace_scaffold = {"status": "planned" if scaffold_workspace else "skipped"}
+            launch_seed_results = {
+                "status": "planned" if seed_launch_memory and launch_seed_items else "skipped",
+                "count": len(launch_seed_items) if seed_launch_memory else 0,
+                "items": launch_seed_items,
+            }
+            model_install_result = {
+                "status": "planned" if auto_launch_model_setup and effective_item_keys else "skipped",
+                "selected_item_keys": effective_item_keys,
+            }
+            app_learning_result = {
+                "status": "planned" if auto_create_app_learning_campaign else "skipped",
+                "auto_run": bool(auto_run_app_learning_campaign),
+            }
+
+        final_profile = self.desktop_machine_profile(
+            task=str(task or "").strip().lower(),
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=False,
+            refresh_provider_credentials=False,
+            verify_providers=False,
+            provider_timeout_s=provider_timeout_s,
+            source=f"{source}_final",
+        )
+        section_statuses = [
+            str(provider_updates.get("status", "") or "").strip().lower(),
+            str(task_preference_update.get("status", "") or "").strip().lower(),
+            str(workspace_scaffold.get("status", "") or "").strip().lower(),
+            str(launch_seed_results.get("status", "") or "").strip().lower(),
+            str(model_install_result.get("status", "") or "").strip().lower(),
+            str(app_learning_result.get("status", "") or "").strip().lower(),
+        ]
+        overall_status = "success"
+        if any(status_name == "error" for status_name in section_statuses):
+            overall_status = "partial"
+        if bool(dry_run):
+            overall_status = "planned"
+        run_payload = {
+            "status": overall_status,
+            "task": str(task or "").strip().lower(),
+            "app_query": str(app_query or "").strip(),
+            "app_category": str(app_category or "").strip(),
+            "dry_run": bool(dry_run),
+            "plan": plan,
+            "provider_updates": provider_updates,
+            "task_preference_update": task_preference_update,
+            "workspace_scaffold": workspace_scaffold,
+            "launch_seed": launch_seed_results,
+            "model_install": model_install_result,
+            "app_learning_campaign": app_learning_result,
+            "final_profile": final_profile,
+            "summary": {
+                "provider_update_count": int(provider_updates.get("count", 0) or 0),
+                "task_preference_count": int(task_preference_update.get("count", 0) or 0),
+                "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
+                "selected_model_count": len(effective_item_keys),
+                "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
+            },
+            "message": (
+                "Prepared a machine onboarding run."
+                if bool(dry_run)
+                else "Completed a machine onboarding run with provider validation, model setup orchestration, launcher seeding, and app-learning campaign setup."
+            ),
+        }
+        recorded = manager.record_run(run_payload, source=source) if manager is not None else dict(run_payload)
+        history = self.desktop_machine_onboarding_history(limit=8)
+        recorded["history"] = history if isinstance(history, dict) else {}
+        return _to_jsonable(recorded)
 
     def update_desktop_machine_task_preferences(
         self,
@@ -44189,6 +44906,39 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-machine-profile/onboarding-plan":
+                payload = self.server.service.desktop_machine_onboarding_plan(
+                    task=str(query.get("task", [""])[0] or "").strip(),
+                    app_query=str(query.get("app_query", [""])[0] or query.get("query", [""])[0] or "").strip(),
+                    app_category=str(query.get("app_category", [""])[0] or query.get("category", [""])[0] or "").strip(),
+                    app_limit=self._parse_int(str(query.get("app_limit", ["320"])[0]), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(str(query.get("model_limit", ["200"])[0]), 200, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(str(query.get("refresh_apps", ["1"])[0]), default=True),
+                    refresh_provider_credentials=self._parse_bool(
+                        str(query.get("refresh_provider_credentials", ["1"])[0]),
+                        default=True,
+                    ),
+                    verify_providers=self._parse_bool(str(query.get("verify_providers", ["1"])[0]), default=True),
+                    provider_timeout_s=self._parse_float(
+                        str(query.get("provider_timeout_s", ["8.0"])[0]),
+                        8.0,
+                        minimum=2.0,
+                        maximum=20.0,
+                    ),
+                    max_targets=self._parse_int(str(query.get("max_targets", ["8"])[0]), 8, minimum=1, maximum=24),
+                    max_model_items=self._parse_int(str(query.get("max_model_items", ["6"])[0]), 6, minimum=1, maximum=16),
+                    source=str(query.get("source", ["machine_onboarding_plan"])[0] or "machine_onboarding_plan").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/onboarding-history":
+                payload = self.server.service.desktop_machine_onboarding_history(
+                    limit=self._parse_int(str(query.get("limit", ["12"])[0]), 12, minimum=1, maximum=128),
+                    status=str(query.get("status", [""])[0] or "").strip(),
+                    source=str(query.get("source", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/desktop-machine-profile/app-learning-plan":
                 payload = self.server.service.desktop_machine_app_learning_plan(
                     task=str(query.get("task", [""])[0] or "").strip(),
@@ -46587,6 +47337,39 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     source=str(body.get("source", "manual") or "manual").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/onboarding-launch":
+                payload = self.server.service.desktop_machine_onboarding_launch(
+                    task=str(body.get("task", "") or "").strip(),
+                    app_query=str(body.get("app_query", body.get("query", "")) or "").strip(),
+                    app_category=str(body.get("app_category", body.get("category", "")) or "").strip(),
+                    app_limit=self._parse_int(body.get("app_limit", 320), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(body.get("model_limit", 200), 200, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(body.get("refresh_apps", True), default=True),
+                    refresh_provider_credentials=self._parse_bool(body.get("refresh_provider_credentials", True), default=True),
+                    verify_providers=self._parse_bool(body.get("verify_providers", True), default=True),
+                    provider_timeout_s=self._parse_float(body.get("provider_timeout_s", 8.0), 8.0, minimum=2.0, maximum=20.0),
+                    max_targets=self._parse_int(body.get("max_targets", 8), 8, minimum=1, maximum=24),
+                    max_model_items=self._parse_int(body.get("max_model_items", 6), 6, minimum=1, maximum=16),
+                    provider_credentials=(dict(body.get("provider_credentials", {})) if isinstance(body.get("provider_credentials", {}), dict) else None),
+                    task_preferences=(dict(body.get("task_preferences", {})) if isinstance(body.get("task_preferences", {}), dict) else None),
+                    apply_recommended_task_preferences=self._parse_bool(body.get("apply_recommended_task_preferences", True), default=True),
+                    scaffold_workspace=self._parse_bool(body.get("scaffold_workspace", True), default=True),
+                    seed_launch_memory=self._parse_bool(body.get("seed_launch_memory", True), default=True),
+                    seed_launch_limit=self._parse_int(body.get("seed_launch_limit", 6), 6, minimum=1, maximum=24),
+                    auto_launch_model_setup=self._parse_bool(body.get("auto_launch_model_setup", True), default=True),
+                    selected_model_item_keys=(
+                        [str(item).strip() for item in body.get("selected_model_item_keys", []) if str(item).strip()]
+                        if isinstance(body.get("selected_model_item_keys", []), list)
+                        else None
+                    ),
+                    auto_create_app_learning_campaign=self._parse_bool(body.get("auto_create_app_learning_campaign", True), default=True),
+                    auto_run_app_learning_campaign=self._parse_bool(body.get("auto_run_app_learning_campaign", True), default=True),
+                    campaign_label=str(body.get("campaign_label", "") or "").strip(),
+                    dry_run=self._parse_bool(body.get("dry_run", False), default=False),
+                    source=str(body.get("source", "machine_onboarding") or "machine_onboarding").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "planned", "partial"} else 400, payload)
                 return
             if path == "/runtime/desktop-machine-profile/app-learning-campaign":
                 payload = self.server.service.create_desktop_machine_app_learning_campaign(
