@@ -65,6 +65,9 @@ import {
   type DesktopAppMemoryCampaignsResponse,
   type DesktopAppMemoryDaemonStatusResponse,
   type DesktopAppMemorySurveyResponse,
+  type DesktopAppLauncherInventoryResponse,
+  type DesktopAppLauncherLaunchResponse,
+  type DesktopAppLauncherResolveResponse,
   type DesktopAppProfileCatalogResponse,
   type DesktopActionAdviceResponse,
   type DesktopEvaluationCatalogResponse,
@@ -104,6 +107,11 @@ import {
   type DesktopRecoveryWatchdogHistoryResponse,
   type DesktopMissionRecord,
   type DesktopMissionSnapshotResponse,
+  type DesktopMachineAppLearningPlanResponse,
+  type DesktopMachineOnboardingHistoryResponse,
+  type DesktopMachineOnboardingLaunchResponse,
+  type DesktopMachineOnboardingPlanResponse,
+  type DesktopMachineProfileResponse,
   type DesktopSurfaceExplorationResponse,
   type DesktopSurfaceExplorationSelection,
   type GoalListItem,
@@ -1178,6 +1186,37 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopRecoveryWatchdogHistory, setDesktopRecoveryWatchdogHistory] =
     useState<DesktopRecoveryWatchdogHistoryResponse | null>(null);
   const [desktopRecoveryWatchdogBusy, setDesktopRecoveryWatchdogBusy] = useState(false);
+  const [desktopMachineTaskFocus, setDesktopMachineTaskFocus] = useState('desktop coworker');
+  const [desktopMachineCategoryFilter, setDesktopMachineCategoryFilter] = useState('');
+  const [desktopMachineCampaignLabel, setDesktopMachineCampaignLabel] = useState('');
+  const [desktopMachineProviderCredentialsText, setDesktopMachineProviderCredentialsText] = useState('');
+  const [desktopMachineProfileState, setDesktopMachineProfileState] =
+    useState<DesktopMachineProfileResponse | null>(null);
+  const [desktopMachineAppLearningPlanState, setDesktopMachineAppLearningPlanState] =
+    useState<DesktopMachineAppLearningPlanResponse | null>(null);
+  const [desktopMachineOnboardingPlanState, setDesktopMachineOnboardingPlanState] =
+    useState<DesktopMachineOnboardingPlanResponse | null>(null);
+  const [desktopMachineOnboardingLaunchState, setDesktopMachineOnboardingLaunchState] =
+    useState<DesktopMachineOnboardingLaunchResponse | null>(null);
+  const [desktopMachineOnboardingHistoryState, setDesktopMachineOnboardingHistoryState] =
+    useState<DesktopMachineOnboardingHistoryResponse | null>(null);
+  const [desktopAppLauncherInventoryState, setDesktopAppLauncherInventoryState] =
+    useState<DesktopAppLauncherInventoryResponse | null>(null);
+  const [desktopAppLauncherMemoryState, setDesktopAppLauncherMemoryState] =
+    useState<DesktopAppLauncherInventoryResponse | null>(null);
+  const [desktopAppLauncherResolveState, setDesktopAppLauncherResolveState] =
+    useState<DesktopAppLauncherResolveResponse | null>(null);
+  const [desktopAppLauncherLaunchState, setDesktopAppLauncherLaunchState] =
+    useState<DesktopAppLauncherLaunchResponse | null>(null);
+  const [desktopMachineProfileBusy, setDesktopMachineProfileBusy] = useState(false);
+  const [desktopMachineAppLearningPlanBusy, setDesktopMachineAppLearningPlanBusy] = useState(false);
+  const [desktopMachineOnboardingPlanBusy, setDesktopMachineOnboardingPlanBusy] = useState(false);
+  const [desktopMachineOnboardingLaunchBusy, setDesktopMachineOnboardingLaunchBusy] = useState(false);
+  const [desktopMachineOnboardingHistoryBusy, setDesktopMachineOnboardingHistoryBusy] = useState(false);
+  const [desktopAppLauncherInventoryBusy, setDesktopAppLauncherInventoryBusy] = useState(false);
+  const [desktopAppLauncherMemoryBusy, setDesktopAppLauncherMemoryBusy] = useState(false);
+  const [desktopAppLauncherResolveBusy, setDesktopAppLauncherResolveBusy] = useState(false);
+  const [desktopAppLauncherLaunchBusy, setDesktopAppLauncherLaunchBusy] = useState(false);
   const [desktopAppProfileCatalog, setDesktopAppProfileCatalog] = useState<DesktopAppProfileCatalogResponse | null>(null);
   const [desktopAppProfileCatalogBusy, setDesktopAppProfileCatalogBusy] = useState(false);
   const [desktopAppMemoryState, setDesktopAppMemoryState] = useState<DesktopAppMemoryResponse | null>(null);
@@ -2417,6 +2456,105 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return effective;
   }, [desktopAppMemoryDaemon, desktopLatestAppMemoryCampaign]);
+  const desktopMachineEffectiveTask = useMemo(
+    () => desktopMachineTaskFocus.trim() || desktopCoworkerQuery.trim(),
+    [desktopCoworkerQuery, desktopMachineTaskFocus]
+  );
+  const desktopMachineEffectiveAppQuery = useMemo(
+    () => desktopCoworkerAppName.trim(),
+    [desktopCoworkerAppName]
+  );
+  const desktopMachineProfile = useMemo(() => asObjectRecord(desktopMachineProfileState), [desktopMachineProfileState]);
+  const desktopMachineApplications = useMemo(
+    () => asObjectRecord(desktopMachineProfile.applications),
+    [desktopMachineProfile]
+  );
+  const desktopMachineProviders = useMemo(
+    () => asObjectRecord(desktopMachineProfile.providers),
+    [desktopMachineProfile]
+  );
+  const desktopMachineModels = useMemo(
+    () => asObjectRecord(desktopMachineProfile.models),
+    [desktopMachineProfile]
+  );
+  const desktopMachineReadiness = useMemo(
+    () => asObjectRecord(desktopMachineProfile.readiness),
+    [desktopMachineProfile]
+  );
+  const desktopMachineOnboardingPlan = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlanState),
+    [desktopMachineOnboardingPlanState]
+  );
+  const desktopMachineOnboardingSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineProviderActionSummary = useMemo(
+    () => asObjectRecord(asObjectRecord(desktopMachineOnboardingPlan.provider_actions).summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingHistory = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingHistoryState),
+    [desktopMachineOnboardingHistoryState]
+  );
+  const desktopMachineOnboardingHistoryRows = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingHistoryState?.items)
+        ? desktopMachineOnboardingHistoryState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingHistoryState]
+  );
+  const desktopMachineOnboardingLatestRun = useMemo(() => {
+    const latest = asObjectRecord(desktopMachineOnboardingHistory.latest_run);
+    if (Object.keys(latest).length > 0) {
+      return latest;
+    }
+    if (desktopMachineOnboardingHistoryRows.length > 0) {
+      return desktopMachineOnboardingHistoryRows[0] ?? {};
+    }
+    return {};
+  }, [desktopMachineOnboardingHistory, desktopMachineOnboardingHistoryRows]);
+  const desktopMachineAppLearningPlan = useMemo(
+    () => asObjectRecord(desktopMachineAppLearningPlanState),
+    [desktopMachineAppLearningPlanState]
+  );
+  const desktopMachineAppLearningPlanSummary = useMemo(
+    () => asObjectRecord(desktopMachineAppLearningPlan.plan),
+    [desktopMachineAppLearningPlan]
+  );
+  const desktopMachineAppLearningCampaignDefaults = useMemo(
+    () => asObjectRecord(desktopMachineAppLearningPlanSummary.campaign_defaults),
+    [desktopMachineAppLearningPlanSummary]
+  );
+  const desktopMachineOnboardingSteps = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlanState?.steps)
+        ? desktopMachineOnboardingPlanState.steps.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineOnboardingPlanState]
+  );
+  const desktopAppLauncherInventory = useMemo(
+    () => asObjectRecord(desktopAppLauncherInventoryState),
+    [desktopAppLauncherInventoryState]
+  );
+  const desktopAppLauncherInventoryRows = useMemo(
+    () =>
+      Array.isArray(desktopAppLauncherInventoryState?.items)
+        ? desktopAppLauncherInventoryState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopAppLauncherInventoryState]
+  );
+  const desktopAppLauncherMemory = useMemo(
+    () => asObjectRecord(desktopAppLauncherMemoryState),
+    [desktopAppLauncherMemoryState]
+  );
+  const desktopAppLauncherMemoryRows = useMemo(
+    () =>
+      Array.isArray(desktopAppLauncherMemoryState?.items)
+        ? desktopAppLauncherMemoryState.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopAppLauncherMemoryState]
+  );
   const desktopRecoveryDaemonEnabled = Boolean(desktopRecoveryDaemonStatus?.enabled);
   const desktopRecoveryDaemonIntervalS = Number(desktopRecoveryDaemonStatus?.interval_s ?? 0);
   const desktopRecoveryDaemonPolicyProfile =
@@ -13652,6 +13790,466 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     }
   }, [desktopCoworkerAppName, toast]);
 
+  const refreshDesktopMachineProfile = useCallback(
+    async ({ quiet = false, refreshApps = true }: { quiet?: boolean; refreshApps?: boolean } = {}) => {
+      setDesktopMachineProfileBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineProfile({
+          task: desktopMachineEffectiveTask || undefined,
+          app_query: desktopMachineEffectiveAppQuery || undefined,
+          app_category: desktopMachineCategoryFilter.trim() || undefined,
+          app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+          model_limit: 48,
+          refresh_apps: refreshApps,
+          refresh_provider_credentials: true,
+          verify_providers: true,
+          provider_timeout_s: 6,
+          source: 'operator_panel',
+        });
+        setDesktopMachineProfileState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Machine Profile Ready',
+            description:
+              String(payload.status ?? '').trim().toLowerCase() === 'success'
+                ? `${Number(asObjectRecord(payload.applications).inventory_count ?? 0)} app target(s) and ${Number(asObjectRecord(payload.models).inventory_count ?? 0)} model candidate(s) were profiled for this machine.`
+                : String(payload.message ?? 'JARVIS refreshed the machine profile.'),
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Machine Profile Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineProfileBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, desktopMachineEffectiveTask, toast]
+  );
+
+  const refreshDesktopMachineAppLearningPlan = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopMachineAppLearningPlanBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineAppLearningPlan({
+          task: desktopMachineEffectiveTask || undefined,
+          app_query: desktopMachineEffectiveAppQuery || undefined,
+          app_category: desktopMachineCategoryFilter.trim() || undefined,
+          app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+          refresh_apps: false,
+          max_targets: 8,
+        });
+        setDesktopMachineAppLearningPlanState(payload);
+        if (isObjectRecord(payload.profile)) {
+          setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+        }
+        if (!quiet) {
+          const planSummary = asObjectRecord(payload.plan);
+          toast({
+            title: 'App Learning Plan Ready',
+            description: `${Number(planSummary.count ?? planSummary.target_count ?? 0)} installed-app learning target(s) are ready for the current machine context.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'App Learning Plan Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineAppLearningPlanBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, desktopMachineEffectiveTask, toast]
+  );
+
+  const refreshDesktopMachineOnboardingPlan = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopMachineOnboardingPlanBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineOnboardingPlan({
+          task: desktopMachineEffectiveTask || undefined,
+          app_query: desktopMachineEffectiveAppQuery || undefined,
+          app_category: desktopMachineCategoryFilter.trim() || undefined,
+          app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+          model_limit: 48,
+          refresh_apps: true,
+          refresh_provider_credentials: true,
+          verify_providers: true,
+          provider_timeout_s: 6,
+          max_targets: 8,
+          max_model_items: 6,
+          source: 'operator_panel',
+        });
+        setDesktopMachineOnboardingPlanState(payload);
+        if (isObjectRecord(payload.profile)) {
+          setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+        }
+        if (!quiet) {
+          const summary = asObjectRecord(payload.summary);
+          toast({
+            title: 'Onboarding Plan Ready',
+            description: `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ${Number(summary.selected_model_count ?? 0)} model item(s), and ${Number(summary.app_learning_target_count ?? 0)} learning target(s) are queued.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Onboarding Plan Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineOnboardingPlanBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, desktopMachineEffectiveTask, toast]
+  );
+
+  const refreshDesktopMachineOnboardingHistory = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopMachineOnboardingHistoryBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineOnboardingHistory({ limit: 8 });
+        setDesktopMachineOnboardingHistoryState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Onboarding History Ready',
+            description: `${Number(payload.count ?? 0)} onboarding run(s) are available for this machine.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Onboarding History Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineOnboardingHistoryBusy(false);
+      }
+    },
+    [toast]
+  );
+
+  const refreshDesktopAppLauncherInventory = useCallback(
+    async ({ quiet = false, refresh = true }: { quiet?: boolean; refresh?: boolean } = {}) => {
+      setDesktopAppLauncherInventoryBusy(true);
+      try {
+        const payload = await backendClient.desktopAppLauncherInventory({
+          query: desktopMachineEffectiveAppQuery || undefined,
+          category: desktopMachineCategoryFilter.trim() || undefined,
+          limit: desktopMachineEffectiveAppQuery ? 12 : 24,
+          refresh,
+        });
+        setDesktopAppLauncherInventoryState(payload);
+        if (!quiet) {
+          toast({
+            title: 'App Inventory Ready',
+            description: `${Number(payload.count ?? 0)} launchable app target(s) are available for the current machine filter.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'App Inventory Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopAppLauncherInventoryBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, toast]
+  );
+
+  const refreshDesktopAppLauncherMemory = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopAppLauncherMemoryBusy(true);
+      try {
+        const payload = await backendClient.desktopAppLauncherMemory({
+          query: desktopMachineEffectiveAppQuery || undefined,
+          category: desktopMachineCategoryFilter.trim() || undefined,
+          limit: desktopMachineEffectiveAppQuery ? 12 : 24,
+        });
+        setDesktopAppLauncherMemoryState(payload);
+        if (!quiet) {
+          toast({
+            title: 'Launch Memory Ready',
+            description: `${Number(payload.count ?? 0)} remembered app launch target(s) matched the current machine filter.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'Launch Memory Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopAppLauncherMemoryBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, toast]
+  );
+
+  const resolveDesktopMachineLaunchTarget = useCallback(async () => {
+    const appName = desktopMachineEffectiveAppQuery || desktopCoworkerQuery.trim();
+    if (!appName) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing App Target',
+        description: 'Provide an app name in the desktop app field before asking JARVIS to resolve a launch target.',
+      });
+      return null;
+    }
+    setDesktopAppLauncherResolveBusy(true);
+    try {
+      const payload = await backendClient.resolveDesktopAppLaunchTarget({ app_name: appName });
+      setDesktopAppLauncherResolveState(payload);
+      toast({
+        title: 'Launch Target Resolved',
+        description:
+          String(payload.message ?? '').trim() ||
+          `${String(payload.requested_app ?? appName)} resolves via ${String(payload.resolution ?? payload.kind ?? 'launch memory')}.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Launch Target Resolve Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppLauncherResolveBusy(false);
+    }
+  }, [desktopCoworkerQuery, desktopMachineEffectiveAppQuery, toast]);
+
+  const launchDesktopMachineAppTarget = useCallback(async () => {
+    const appName = desktopMachineEffectiveAppQuery || desktopCoworkerQuery.trim();
+    if (!appName) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing App Target',
+        description: 'Provide an app name in the desktop app field before asking JARVIS to launch an app.',
+      });
+      return null;
+    }
+    setDesktopAppLauncherLaunchBusy(true);
+    try {
+      const payload = await backendClient.launchDesktopApp({ app_name: appName });
+      setDesktopAppLauncherLaunchState(payload);
+      void refreshDesktopAppLauncherMemory({ quiet: true });
+      toast({
+        title: 'App Launch Started',
+        description:
+          String(payload.message ?? '').trim() ||
+          `${String(payload.requested_app ?? appName)} launched via ${String(payload.launch_method ?? payload.resolution ?? 'shell')}.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'App Launch Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopAppLauncherLaunchBusy(false);
+    }
+  }, [desktopCoworkerQuery, desktopMachineEffectiveAppQuery, refreshDesktopAppLauncherMemory, toast]);
+
+  const createDesktopMachineLearningCampaign = useCallback(async () => {
+    setDesktopMachineAppLearningPlanBusy(true);
+    try {
+      const payload = await backendClient.createDesktopMachineAppLearningCampaign({
+        task: desktopMachineEffectiveTask || undefined,
+        app_query: desktopMachineEffectiveAppQuery || undefined,
+        app_category: desktopMachineCategoryFilter.trim() || undefined,
+        app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+        refresh_apps: false,
+        max_targets: 8,
+        label: desktopMachineCampaignLabel.trim() || undefined,
+        max_apps: desktopMachineEffectiveAppQuery ? 3 : 4,
+        auto_run: true,
+        source: 'operator_panel',
+      });
+      if (isObjectRecord(payload.plan)) {
+        setDesktopMachineAppLearningPlanState(payload.plan as DesktopMachineAppLearningPlanResponse);
+      }
+      void backendClient
+        .desktopAppMemoryCampaigns({ limit: 10 })
+        .then((response) => {
+          setDesktopAppMemoryCampaignState(response);
+          if (isObjectRecord(response.app_memory)) {
+            setDesktopAppMemoryState(response.app_memory as DesktopAppMemoryResponse);
+          }
+        })
+        .catch(() => undefined);
+      void backendClient
+        .desktopAppMemoryDaemon({ history_limit: 6 })
+        .then((response) => {
+          setDesktopAppMemoryDaemonState(response);
+        })
+        .catch(() => undefined);
+      toast({
+        title: 'Machine Learning Campaign Started',
+        description:
+          String(payload.status ?? '').trim().toLowerCase() === 'success'
+            ? 'JARVIS converted the machine learning plan into a real installed-app learning campaign.'
+            : String(payload.message ?? 'JARVIS attempted to create a machine-driven app-learning campaign.'),
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Machine Learning Campaign Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMachineAppLearningPlanBusy(false);
+    }
+  }, [
+    desktopMachineCampaignLabel,
+    desktopMachineCategoryFilter,
+    desktopMachineEffectiveAppQuery,
+    desktopMachineEffectiveTask,
+    toast,
+  ]);
+
+  const launchDesktopMachineOnboardingFlow = useCallback(async () => {
+    let providerCredentials: Record<string, unknown> | undefined;
+    const rawProviderText = desktopMachineProviderCredentialsText.trim();
+    if (rawProviderText) {
+      try {
+        const parsed = JSON.parse(rawProviderText) as unknown;
+        if (!isObjectRecord(parsed)) {
+          throw new Error('Provider credential JSON must be an object keyed by provider name.');
+        }
+        providerCredentials = parsed;
+      } catch (error) {
+        toast({
+          variant: 'destructive',
+          title: 'Provider Credential JSON Invalid',
+          description:
+            error instanceof Error
+              ? error.message
+              : 'Use JSON like {\"huggingface\":{\"api_key\":\"hf_xxx\"},\"openai\":{\"api_key\":\"sk-...\"}}.',
+        });
+        return null;
+      }
+    }
+    setDesktopMachineOnboardingLaunchBusy(true);
+    try {
+      const payload = await backendClient.launchDesktopMachineOnboarding({
+        task: desktopMachineEffectiveTask || undefined,
+        app_query: desktopMachineEffectiveAppQuery || undefined,
+        app_category: desktopMachineCategoryFilter.trim() || undefined,
+        app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+        model_limit: 48,
+        refresh_apps: true,
+        refresh_provider_credentials: true,
+        verify_providers: true,
+        provider_timeout_s: 6,
+        max_targets: 8,
+        max_model_items: 6,
+        provider_credentials: providerCredentials,
+        apply_recommended_task_preferences: true,
+        scaffold_workspace: true,
+        seed_launch_memory: true,
+        seed_launch_limit: 6,
+        auto_launch_model_setup: true,
+        auto_create_app_learning_campaign: true,
+        auto_run_app_learning_campaign: true,
+        campaign_label: desktopMachineCampaignLabel.trim() || undefined,
+        source: 'operator_panel',
+      });
+      setDesktopMachineOnboardingLaunchState(payload);
+      if (isObjectRecord(payload.plan)) {
+        setDesktopMachineOnboardingPlanState(payload.plan as DesktopMachineOnboardingPlanResponse);
+      }
+      if (isObjectRecord(payload.final_profile)) {
+        setDesktopMachineProfileState(payload.final_profile as DesktopMachineProfileResponse);
+      }
+      if (isObjectRecord(payload.history)) {
+        setDesktopMachineOnboardingHistoryState(payload.history as DesktopMachineOnboardingHistoryResponse);
+      } else {
+        void refreshDesktopMachineOnboardingHistory({ quiet: true });
+      }
+      if (isObjectRecord(payload.app_learning_campaign)) {
+        void refreshDesktopMachineAppLearningPlan({ quiet: true });
+        void backendClient
+          .desktopAppMemoryCampaigns({ limit: 10 })
+          .then((response) => {
+            setDesktopAppMemoryCampaignState(response);
+            if (isObjectRecord(response.app_memory)) {
+              setDesktopAppMemoryState(response.app_memory as DesktopAppMemoryResponse);
+            }
+          })
+          .catch(() => undefined);
+        void backendClient
+          .desktopAppMemoryDaemon({ history_limit: 6 })
+          .then((response) => {
+            setDesktopAppMemoryDaemonState(response);
+          })
+          .catch(() => undefined);
+      }
+      void refreshDesktopAppLauncherInventory({ quiet: true, refresh: true });
+      void refreshDesktopAppLauncherMemory({ quiet: true });
+      toast({
+        title: 'Machine Onboarding Started',
+        description:
+          String(payload.message ?? '').trim() ||
+          'JARVIS started provider validation, model setup launch, launch-memory seeding, and app-learning kickoff.',
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Machine Onboarding Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMachineOnboardingLaunchBusy(false);
+    }
+  }, [
+    desktopMachineCampaignLabel,
+    desktopMachineCategoryFilter,
+    desktopMachineEffectiveAppQuery,
+    desktopMachineEffectiveTask,
+    desktopMachineProviderCredentialsText,
+    refreshDesktopAppLauncherInventory,
+    refreshDesktopAppLauncherMemory,
+    refreshDesktopMachineAppLearningPlan,
+    refreshDesktopMachineOnboardingHistory,
+    toast,
+  ]);
+
   const refreshDesktopAppMemory = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
     setDesktopAppMemoryBusy(true);
     try {
@@ -15913,6 +16511,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     if (!open) return;
     void refreshDesktopMissions({ quiet: true });
     void refreshDesktopRecoveryDaemonStatus({ quiet: true });
+    void refreshDesktopMachineProfile({ quiet: true, refreshApps: true });
+    void refreshDesktopMachineAppLearningPlan({ quiet: true });
+    void refreshDesktopMachineOnboardingPlan({ quiet: true });
+    void refreshDesktopMachineOnboardingHistory({ quiet: true });
+    void refreshDesktopAppLauncherInventory({ quiet: true, refresh: true });
+    void refreshDesktopAppLauncherMemory({ quiet: true });
     void refreshDesktopEvaluationCatalog({ quiet: true });
     void refreshDesktopEvaluationHistory({ quiet: true });
     void refreshDesktopEvaluationGuidance({ quiet: true });
@@ -15939,6 +16543,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     refreshDesktopEvaluationLabSessions,
     refreshDesktopEvaluationNativeTargets,
     refreshDesktopEvaluationPortfolioDaemonStatus,
+    refreshDesktopAppLauncherInventory,
+    refreshDesktopAppLauncherMemory,
+    refreshDesktopMachineAppLearningPlan,
+    refreshDesktopMachineOnboardingHistory,
+    refreshDesktopMachineOnboardingPlan,
+    refreshDesktopMachineProfile,
     refreshDesktopMissions,
     refreshDesktopRecoveryDaemonStatus,
   ]);
@@ -19639,6 +20249,381 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         </div>
                                       </div>
                                     </div>
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-background/30 p-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Machine Onboarding & App Launch
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-muted-foreground">
+                                          JARVIS can profile this PC, validate provider and model readiness, seed app launch memory, kick off installed-app learning, and reuse remembered app paths for quick control.
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {desktopMachineProfileState ? (
+                                          <Badge variant="outline">
+                                            machine:{String(desktopMachineProfileState.status ?? 'ready')}
+                                          </Badge>
+                                        ) : (
+                                          <Badge variant="secondary">machine:idle</Badge>
+                                        )}
+                                        {desktopMachineOnboardingPlanState ? (
+                                          <Badge variant="outline">
+                                            onboarding:{Number(desktopMachineOnboardingSummary.selected_model_count ?? 0)} models
+                                          </Badge>
+                                        ) : null}
+                                        {desktopAppLauncherInventoryState ? (
+                                          <Badge variant="outline">
+                                            launchers:{Number(desktopAppLauncherInventoryState.count ?? 0)}
+                                          </Badge>
+                                        ) : null}
+                                        {desktopMachineOnboardingLaunchState ? (
+                                          <Badge variant="secondary">
+                                            last run:{String(desktopMachineOnboardingLaunchState.status ?? 'ready')}
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          Task Focus
+                                        </label>
+                                        <Input
+                                          value={desktopMachineTaskFocus}
+                                          onChange={(event) => setDesktopMachineTaskFocus(event.target.value)}
+                                          placeholder="desktop coworker"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          App Category
+                                        </label>
+                                        <Input
+                                          value={desktopMachineCategoryFilter}
+                                          onChange={(event) => setDesktopMachineCategoryFilter(event.target.value)}
+                                          placeholder="browser / office / productivity"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          Campaign Label
+                                        </label>
+                                        <Input
+                                          value={desktopMachineCampaignLabel}
+                                          onChange={(event) => setDesktopMachineCampaignLabel(event.target.value)}
+                                          placeholder="machine learning kickoff"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                    </div>
+                                    <p className="mt-2 text-[10px] text-muted-foreground">
+                                      current app target:{' '}
+                                      <span className="text-primary/80">
+                                        {desktopMachineEffectiveAppQuery || 'uses full installed-app inventory'}
+                                      </span>
+                                      {' • '}query fallback:{' '}
+                                      <span className="text-primary/80">
+                                        {desktopMachineEffectiveTask || 'desktop coworker'}
+                                      </span>
+                                    </p>
+                                    <div className="mt-2 space-y-1">
+                                      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                        Provider Credential JSON
+                                      </label>
+                                      <Textarea
+                                        value={desktopMachineProviderCredentialsText}
+                                        onChange={(event) => setDesktopMachineProviderCredentialsText(event.target.value)}
+                                        placeholder='{"huggingface":{"api_key":"hf_xxx"},"openai":{"api_key":"sk-..."}}'
+                                        className="min-h-[84px] border-primary/20 bg-background/40 text-xs"
+                                      />
+                                      <p className="text-[10px] text-muted-foreground">
+                                        Optional. Paste provider credentials here when you want JARVIS to validate them and include them in the onboarding run.
+                                      </p>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineProfile({ refreshApps: true })}
+                                        disabled={desktopMachineProfileBusy}
+                                      >
+                                        {desktopMachineProfileBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <BrainCircuit className="h-4 w-4" />
+                                        )}
+                                        Refresh Machine
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineAppLearningPlan()}
+                                        disabled={desktopMachineAppLearningPlanBusy}
+                                      >
+                                        {desktopMachineAppLearningPlanBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Radar className="h-4 w-4" />
+                                        )}
+                                        Learning Plan
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineOnboardingPlan()}
+                                        disabled={desktopMachineOnboardingPlanBusy}
+                                      >
+                                        {desktopMachineOnboardingPlanBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Workflow className="h-4 w-4" />
+                                        )}
+                                        Onboarding Plan
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void launchDesktopMachineOnboardingFlow()}
+                                        disabled={desktopMachineOnboardingLaunchBusy}
+                                      >
+                                        {desktopMachineOnboardingLaunchBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="h-4 w-4" />
+                                        )}
+                                        Run Onboarding
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void createDesktopMachineLearningCampaign()}
+                                        disabled={desktopMachineAppLearningPlanBusy}
+                                      >
+                                        {desktopMachineAppLearningPlanBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Layers3 className="h-4 w-4" />
+                                        )}
+                                        Seed Learning
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineOnboardingHistory()}
+                                        disabled={desktopMachineOnboardingHistoryBusy}
+                                      >
+                                        {desktopMachineOnboardingHistoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="h-4 w-4" />
+                                        )}
+                                        History
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopAppLauncherInventory({ refresh: true })}
+                                        disabled={desktopAppLauncherInventoryBusy}
+                                      >
+                                        {desktopAppLauncherInventoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Database className="h-4 w-4" />
+                                        )}
+                                        App Inventory
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopAppLauncherMemory()}
+                                        disabled={desktopAppLauncherMemoryBusy}
+                                      >
+                                        {desktopAppLauncherMemoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Database className="h-4 w-4" />
+                                        )}
+                                        Launch Memory
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void resolveDesktopMachineLaunchTarget()}
+                                        disabled={desktopAppLauncherResolveBusy}
+                                      >
+                                        {desktopAppLauncherResolveBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileSearch className="h-4 w-4" />
+                                        )}
+                                        Resolve App
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void launchDesktopMachineAppTarget()}
+                                        disabled={desktopAppLauncherLaunchBusy}
+                                      >
+                                        {desktopAppLauncherLaunchBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <TerminalSquare className="h-4 w-4" />
+                                        )}
+                                        Launch App
+                                      </Button>
+                                    </div>
+                                    <div className="mt-3 grid gap-3 xl:grid-cols-3">
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Machine Snapshot</p>
+                                        <p className="mt-2">
+                                          apps:{Number(desktopMachineApplications.inventory_count ?? 0)}
+                                          {' • '}frequent:{Number(desktopMachineApplications.frequent_count ?? 0)}
+                                          {' • '}running:{Number(desktopMachineApplications.running_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
+                                          providers:{Number(asObjectRecord(desktopMachineProviders.snapshot).provider_count ?? 0)}
+                                          {' • '}verified:{Number(asObjectRecord(desktopMachineProviders.summary).verified_count ?? 0)}
+                                          {' • '}invalid:{Number(asObjectRecord(desktopMachineProviders.summary).invalid_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
+                                          models:{Number(desktopMachineModels.inventory_count ?? 0)}
+                                          {' • '}recommended:{Array.isArray(desktopMachineModels.recommended_models) ? desktopMachineModels.recommended_models.length : 0}
+                                          {' • '}ready:{String(desktopMachineReadiness.overall_status ?? 'unknown')}
+                                        </p>
+                                        {Array.isArray(desktopMachineProfile.recommendations) && desktopMachineProfile.recommendations.length > 0 ? (
+                                          <p className="mt-1">
+                                            recommendations:{' '}
+                                            {desktopMachineProfile.recommendations
+                                              .slice(0, 3)
+                                              .map((item) => String(asObjectRecord(item).title ?? asObjectRecord(item).message ?? 'action'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        <p className="mt-1">
+                                          focus apps:{' '}
+                                          {Array.isArray(desktopMachineApplications.task_focus)
+                                            ? desktopMachineApplications.task_focus
+                                                .slice(0, 4)
+                                                .map((item) => String(asObjectRecord(item).app_name ?? asObjectRecord(item).display_name ?? item))
+                                                .join(' • ') || 'n/a'
+                                            : 'n/a'}
+                                        </p>
+                                      </div>
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Onboarding Plan</p>
+                                        <p className="mt-2">
+                                          missing providers:{Number(desktopMachineProviderActionSummary.missing_count ?? 0)}
+                                          {' • '}attention:{Number(desktopMachineProviderActionSummary.attention_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
+                                          selected models:{Number(desktopMachineOnboardingSummary.selected_model_count ?? 0)}
+                                          {' • '}launch seeds:{Number(desktopMachineOnboardingSummary.launch_seed_count ?? 0)}
+                                          {' • '}learning targets:{Number(desktopMachineOnboardingSummary.app_learning_target_count ?? 0)}
+                                        </p>
+                                        <p className="mt-1">
+                                          plan targets:{Number(desktopMachineAppLearningPlanSummary.count ?? desktopMachineAppLearningPlanSummary.target_count ?? 0)}
+                                          {' • '}campaign max apps:{Number(desktopMachineAppLearningCampaignDefaults.max_apps ?? 0)}
+                                          {' • '}waves:{Number(desktopMachineAppLearningCampaignDefaults.max_surface_waves ?? 0)}
+                                        </p>
+                                        {desktopMachineOnboardingSteps.length > 0 ? (
+                                          <p className="mt-1">
+                                            steps:{' '}
+                                            {desktopMachineOnboardingSteps
+                                              .slice(0, 4)
+                                              .map((item) => `${String(item.title ?? item.kind ?? 'step')}=${String(item.status ?? 'ready')}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingLaunchState ? (
+                                          <p className="mt-1 text-primary/80">
+                                            last run:{' '}
+                                            {String(desktopMachineOnboardingLaunchState.message ?? desktopMachineOnboardingLaunchState.status ?? 'n/a')}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                      <div className="rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <p className="font-semibold uppercase tracking-wider text-primary/80">Launch Surface</p>
+                                        <p className="mt-2">
+                                          inventory:{Number(desktopAppLauncherInventory.count ?? 0)}
+                                          {' • '}ready:{Number(desktopAppLauncherInventory.path_ready_count ?? 0)}
+                                          {' • '}memory:{Number(desktopAppLauncherMemory.count ?? 0)}
+                                        </p>
+                                        {desktopAppLauncherInventoryRows.length > 0 ? (
+                                          <p className="mt-1">
+                                            apps:{' '}
+                                            {desktopAppLauncherInventoryRows
+                                              .slice(0, 3)
+                                              .map((item) => String(item.display_name ?? item.requested_app ?? item.path ?? 'app'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopAppLauncherMemoryRows.length > 0 ? (
+                                          <p className="mt-1">
+                                            remembered:{' '}
+                                            {desktopAppLauncherMemoryRows
+                                              .slice(0, 3)
+                                              .map((item) => String(item.display_name ?? item.requested_app ?? item.path ?? 'app'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopAppLauncherResolveState ? (
+                                          <p className="mt-1">
+                                            resolve:{String(desktopAppLauncherResolveState.requested_app ?? 'app')}
+                                            {' • '}via:{String(desktopAppLauncherResolveState.resolution ?? desktopAppLauncherResolveState.kind ?? 'n/a')}
+                                            {' • '}memory:{String(Boolean(desktopAppLauncherResolveState.memory_hit))}
+                                          </p>
+                                        ) : null}
+                                        {desktopAppLauncherLaunchState ? (
+                                          <p className="mt-1 text-primary/80">
+                                            launch:{String(desktopAppLauncherLaunchState.requested_app ?? 'app')}
+                                            {' • '}method:{String(desktopAppLauncherLaunchState.launch_method ?? desktopAppLauncherLaunchState.resolution ?? 'n/a')}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    {desktopMachineOnboardingHistoryRows.length > 0 ? (
+                                      <div className="mt-3 rounded border border-primary/15 bg-background/20 p-2 text-[10px] text-muted-foreground">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <p className="font-semibold uppercase tracking-wider text-primary/80">Recent Onboarding Runs</p>
+                                          <Badge variant="outline">
+                                            {Number(desktopMachineOnboardingHistoryState?.count ?? 0)} / {Number(desktopMachineOnboardingHistoryState?.total ?? 0)}
+                                          </Badge>
+                                        </div>
+                                        <p className="mt-2">
+                                          latest:{String(desktopMachineOnboardingLatestRun.recorded_at ?? desktopMachineOnboardingLatestRun.started_at ?? 'n/a')}
+                                          {' • '}status:{String(desktopMachineOnboardingLatestRun.status ?? 'n/a')}
+                                          {' • '}source:{String(desktopMachineOnboardingLatestRun.source ?? 'n/a')}
+                                        </p>
+                                        <div className="mt-2 space-y-2">
+                                          {desktopMachineOnboardingHistoryRows.slice(0, 3).map((item, index) => (
+                                            <div
+                                              key={`desktop-machine-onboarding-${String(item.recorded_at ?? index)}`}
+                                              className="rounded border border-primary/10 bg-background/30 p-2"
+                                            >
+                                              <p>
+                                                {String(item.recorded_at ?? item.started_at ?? 'n/a')}
+                                                {' • '}status:{String(item.status ?? 'n/a')}
+                                                {' • '}models:{Number(asObjectRecord(item.summary).selected_model_count ?? 0)}
+                                                {' • '}launch seeds:{Number(asObjectRecord(item.summary).launch_seed_count ?? 0)}
+                                                {' • '}targets:{Number(asObjectRecord(item.summary).app_learning_target_count ?? 0)}
+                                              </p>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
                                   </div>
                                   <div className="rounded-md border border-primary/20 bg-background/30 p-2">
                                     <div className="flex flex-wrap items-center justify-between gap-2">
