@@ -8669,6 +8669,28 @@ class DesktopActionRouter:
                 message_parts.append(
                     f"Exploration memory captured {hypothesis_count} top targets and {branch_action_count} safe branch actions."
                 )
+        adaptive_runtime_payload = (
+            dict(snapshot.get("adaptive_learning_runtime", {}))
+            if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict)
+            else {}
+        )
+        route_profile = str(adaptive_runtime_payload.get("route_profile", "") or "").strip().lower()
+        runtime_provider_source = str(adaptive_runtime_payload.get("runtime_provider_source", "") or "").strip().lower()
+        selected_runtime_band = str(adaptive_runtime_payload.get("selected_runtime_band", "") or "").strip().lower()
+        if route_profile or selected_runtime_band or runtime_provider_source:
+            route_bits = [
+                part
+                for part in [
+                    route_profile.replace("_", " ") if route_profile else "",
+                    selected_runtime_band.replace("_", " ") if selected_runtime_band else "",
+                    runtime_provider_source.replace("_", " ") if runtime_provider_source else "",
+                ]
+                if part
+            ]
+            if route_bits:
+                message_parts.append(
+                    f"Live learning ran through the {' / '.join(route_bits[:3])} route."
+                )
         return {
             "status": "success",
             "message": " ".join(part for part in message_parts if part).strip(),
@@ -8681,6 +8703,11 @@ class DesktopActionRouter:
             "adaptive_learning_runtime": (
                 dict(snapshot.get("adaptive_learning_runtime", {}))
                 if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict)
+                else {}
+            ),
+            "vision_learning_route": (
+                dict(snapshot.get("vision_learning_route", {}))
+                if isinstance(snapshot.get("vision_learning_route", {}), dict)
                 else {}
             ),
             "revalidation": revalidation_payload if isinstance(revalidation_payload, dict) else {},
@@ -8774,6 +8801,10 @@ class DesktopActionRouter:
         preferred_wave_action_counts: Dict[str, int] = {}
         runtime_strategy_counts: Dict[str, int] = {}
         runtime_band_counts: Dict[str, int] = {}
+        route_profile_counts: Dict[str, int] = {}
+        model_preference_counts: Dict[str, int] = {}
+        runtime_provider_source_counts: Dict[str, int] = {}
+        route_fallback_app_count = 0
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -8955,6 +8986,58 @@ class DesktopActionRouter:
                         or matched_runtime_strategy.get("runtime_band_preference", "")
                         or ""
                     ).strip().lower(),
+                    "route_profile": str(
+                        matched_runtime_strategy.get("preferred_probe_mode", "")
+                        or ""
+                    ).strip().lower(),
+                    "model_preference": (
+                        "hybrid_runtime"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "hybrid"
+                        else "local_runtime"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "local"
+                        else "api_assist"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "api"
+                        else "accessibility"
+                    ),
+                    "runtime_provider_source": (
+                        "local_runtime_plus_ocr"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "hybrid"
+                        else "local_runtime"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "local"
+                        else "api_assist_plus_ocr"
+                        if str(
+                            matched_adaptive_profile.get("runtime_band_preference", "")
+                            or matched_runtime_strategy.get("runtime_band_preference", "")
+                            or ""
+                        ).strip().lower()
+                        == "api"
+                        else "accessibility_only"
+                    ),
                     "preferred_probe_mode": str(matched_runtime_strategy.get("preferred_probe_mode", "") or "").strip().lower(),
                     "preferred_wave_mode": str(matched_runtime_strategy.get("preferred_wave_mode", "") or "").strip().lower(),
                     "preferred_target_mode": str(matched_runtime_strategy.get("preferred_target_mode", "") or "").strip().lower(),
@@ -8976,6 +9059,19 @@ class DesktopActionRouter:
             ).strip().lower()
             if runtime_band:
                 runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
+            route_profile = str(adaptive_learning_runtime.get("route_profile", "") or "").strip().lower()
+            if route_profile:
+                route_profile_counts[route_profile] = int(route_profile_counts.get(route_profile, 0) or 0) + 1
+            model_preference = str(adaptive_learning_runtime.get("model_preference", "") or "").strip().lower()
+            if model_preference:
+                model_preference_counts[model_preference] = int(model_preference_counts.get(model_preference, 0) or 0) + 1
+            runtime_provider_source = str(adaptive_learning_runtime.get("runtime_provider_source", "") or "").strip().lower()
+            if runtime_provider_source:
+                runtime_provider_source_counts[runtime_provider_source] = int(
+                    runtime_provider_source_counts.get(runtime_provider_source, 0) or 0
+                ) + 1
+            if bool(adaptive_learning_runtime.get("route_fallback_applied", False)):
+                route_fallback_app_count += 1
             recommended_wave_container_roles = self._dedupe_strings(
                 [
                     *recommended_wave_container_roles,
@@ -9162,6 +9258,19 @@ class DesktopActionRouter:
                     str(key): int(value)
                     for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
                 },
+                "route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "model_preference_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(model_preference_counts.items(), key=lambda entry: entry[0])
+                },
+                "runtime_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(runtime_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "route_fallback_app_count": int(route_fallback_app_count),
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
                 "recommended_traversal_paths": recommended_traversal_paths[:8],
                 "preferred_wave_actions": [
@@ -10554,6 +10663,11 @@ class DesktopActionRouter:
             }
 
         merged = dict(base_route)
+        runtime_profile_payload = (
+            dict(merged.get("runtime_profile", {}))
+            if isinstance(merged.get("runtime_profile", {}), dict)
+            else {}
+        )
         runtime_band_preference = str(strategy.get("runtime_band_preference", "") or "").strip().lower() or "accessibility"
         actual_local_ready = bool(base_route.get("local_runtime_ready", False))
         actual_ocr_ready = bool(base_route.get("ocr_ready", False))
@@ -10570,6 +10684,7 @@ class DesktopActionRouter:
             selected_runtime_band = "local"
         elif runtime_band_preference == "api" and not actual_ocr_ready and not actual_local_ready:
             selected_runtime_band = "accessibility"
+        route_fallback_applied = bool(selected_runtime_band != runtime_band_preference)
 
         preferred_probe_mode = str(strategy.get("preferred_probe_mode", "") or "").strip().lower()
         if selected_runtime_band == "local":
@@ -10644,6 +10759,49 @@ class DesktopActionRouter:
         route_profile = preferred_probe_mode or "accessibility_first"
         if needs_native_stabilization:
             route_profile = f"{route_profile}_native_stabilized"
+        runtime_provider_source = str(runtime_profile_payload.get("provider_mode", "") or "").strip().lower()
+        if selected_runtime_band == "local":
+            runtime_provider_source = "local_runtime"
+        elif selected_runtime_band == "hybrid":
+            if actual_local_ready and actual_ocr_ready:
+                runtime_provider_source = "local_runtime_plus_ocr"
+            elif actual_local_ready:
+                runtime_provider_source = "local_runtime"
+            elif actual_api_ready and actual_ocr_ready:
+                runtime_provider_source = "api_assist_plus_ocr"
+            elif actual_ocr_ready:
+                runtime_provider_source = "ocr_runtime"
+            else:
+                runtime_provider_source = "accessibility_only"
+        elif selected_runtime_band == "api":
+            if actual_api_ready and actual_ocr_ready:
+                runtime_provider_source = "api_assist_plus_ocr"
+            elif actual_ocr_ready:
+                runtime_provider_source = "ocr_runtime"
+            elif actual_local_ready:
+                runtime_provider_source = "local_runtime"
+            else:
+                runtime_provider_source = "accessibility_only"
+        elif actual_local_ready and preferred_probe_mode == "local_vision_assist":
+            runtime_provider_source = "local_runtime"
+        elif actual_ocr_ready and preferred_probe_mode in {"vision_first", "hybrid_verify"}:
+            runtime_provider_source = "ocr_runtime"
+        else:
+            runtime_provider_source = "accessibility_only"
+        route_selection_reason_codes = self._dedupe_strings(
+            [
+                *(["local_runtime_unavailable"] if runtime_band_preference in {"local", "hybrid"} and not actual_local_ready else []),
+                *(["ocr_runtime_unavailable"] if runtime_band_preference in {"hybrid", "api"} and not actual_ocr_ready else []),
+                *(["api_assist_unavailable"] if runtime_band_preference == "api" and not actual_api_ready else []),
+                *(
+                    [f"runtime_band_fallback_{runtime_band_preference}_to_{selected_runtime_band}"]
+                    if route_fallback_applied and runtime_band_preference and selected_runtime_band
+                    else []
+                ),
+                *(["native_stabilization_enabled"] if needs_native_stabilization else []),
+                *(["provider_source_" + runtime_provider_source] if runtime_provider_source else []),
+            ]
+        )[:10]
 
         merged.update(
             {
@@ -10659,7 +10817,11 @@ class DesktopActionRouter:
                 "max_descendant_focus_steps": 4 if native_recovery_mode == "focus_related_window_chain" else (2 if native_recovery_mode == "focus_related_window" else 1),
                 "adaptive_route_applied": True,
                 "adaptive_runtime_strategy_profile": str(strategy.get("strategy_profile", "") or "").strip().lower(),
+                "runtime_band_preference": runtime_band_preference,
                 "selected_runtime_band": selected_runtime_band,
+                "runtime_provider_source": runtime_provider_source,
+                "route_fallback_applied": route_fallback_applied,
+                "route_selection_reason_codes": route_selection_reason_codes,
                 "learning_profile": clean_learning_profile,
                 "execution_mode": clean_execution_mode,
                 "provider_model_readiness": readiness_payload,
@@ -10677,16 +10839,17 @@ class DesktopActionRouter:
                         ],
                         *(["adaptive_runtime_route"] if clean_learning_profile or clean_execution_mode else []),
                         *(["selected_runtime_band_" + selected_runtime_band] if selected_runtime_band else []),
+                        *route_selection_reason_codes,
                     ]
                 )[:12],
                 "runtime_profile": {
-                    **(
-                        dict(merged.get("runtime_profile", {}))
-                        if isinstance(merged.get("runtime_profile", {}), dict)
-                        else {}
-                    ),
+                    **runtime_profile_payload,
                     "strategy_profile": str(strategy.get("strategy_profile", "") or "").strip().lower(),
+                    "runtime_band_preference": runtime_band_preference,
                     "selected_runtime_band": selected_runtime_band,
+                    "route_profile": route_profile,
+                    "model_preference": model_preference,
+                    "provider_source": runtime_provider_source,
                 },
             }
         )
@@ -10722,13 +10885,26 @@ class DesktopActionRouter:
             "learning_profile": str(learning_profile or route.get("learning_profile", "") or "").strip().lower(),
             "execution_mode": str(execution_mode or route.get("execution_mode", "") or "").strip().lower(),
             "strategy_profile": str(route.get("adaptive_runtime_strategy_profile", "") or "").strip().lower(),
+            "runtime_band_preference": str(route.get("runtime_band_preference", "") or "").strip().lower(),
             "selected_runtime_band": str(route.get("selected_runtime_band", "") or "").strip().lower(),
+            "route_profile": str(route.get("route_profile", "") or "").strip().lower(),
+            "model_preference": str(route.get("model_preference", "") or "").strip().lower(),
+            "runtime_provider_source": str(route.get("runtime_provider_source", "") or "").strip().lower(),
             "preferred_probe_mode": str(route.get("preferred_probe_mode", "") or "").strip().lower(),
             "preferred_wave_mode": str(route.get("preferred_wave_mode", "") or "").strip().lower(),
             "preferred_target_mode": str(route.get("preferred_target_mode", "") or "").strip().lower(),
             "preferred_verification_mode": str(route.get("preferred_verification_mode", "") or "").strip().lower(),
             "native_recovery_mode": str(route.get("native_recovery_mode", "") or "").strip().lower(),
             "adaptive_route_applied": bool(route.get("adaptive_route_applied", False)),
+            "route_fallback_applied": bool(route.get("route_fallback_applied", False)),
+            "route_selection_reason_codes": [
+                str(item).strip().lower()
+                for item in route.get("route_selection_reason_codes", [])
+                if isinstance(route.get("route_selection_reason_codes", []), list) and str(item).strip()
+            ][:10],
+            "local_runtime_ready": bool(route.get("local_runtime_ready", False)),
+            "ocr_ready": bool(route.get("ocr_ready", False)),
+            "api_assist_recommended": bool(route.get("api_assist_recommended", False)),
             "provider_model_readiness": provider_model_payload,
         }
         return updated

@@ -268,6 +268,9 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["recommended_traversal_paths"]))
         assert created["campaign"]["adaptive_runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
         assert created["campaign"]["runtime_band_counts"]["hybrid"] == 1
+        assert created["campaign"]["expected_route_profile_counts"]["local_vision_assist"] == 1
+        assert created["campaign"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
+        assert created["campaign"]["expected_provider_source_counts"]["local_runtime_plus_ocr"] == 1
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
@@ -284,6 +287,10 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert executed["campaign"]["adaptive_preferred_traversal_paths"] is True
         assert executed["campaign"]["adaptive_runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
         assert executed["campaign"]["runtime_band_counts"]["hybrid"] == 1
+        assert executed["campaign"]["route_profile_counts"]["local_vision_assist"] == 1
+        assert executed["campaign"]["model_preference_counts"]["hybrid_runtime"] == 1
+        assert executed["campaign"]["provider_source_counts"]["local_runtime_plus_ocr"] == 1
+        assert int(executed["campaign"].get("route_fallback_app_count", 0) or 0) == 0
         assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["recommended_traversal_paths"]))

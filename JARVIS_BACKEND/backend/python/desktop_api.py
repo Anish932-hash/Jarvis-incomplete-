@@ -8889,11 +8889,34 @@ class DesktopBackendService:
         memory_entry = survey.get("memory_entry", {}) if isinstance(survey.get("memory_entry", {}), dict) else {}
         metrics = memory_entry.get("metrics", {}) if isinstance(memory_entry.get("metrics", {}), dict) else {}
         probe_report = survey.get("probe_report", {}) if isinstance(survey.get("probe_report", {}), dict) else {}
+        adaptive_learning_runtime = (
+            dict(survey.get("adaptive_learning_runtime", {}))
+            if isinstance(survey.get("adaptive_learning_runtime", {}), dict)
+            else {}
+        )
         adaptive_runtime_strategy = (
             dict(selected_target.get("adaptive_runtime_strategy", {}))
             if isinstance(selected_target.get("adaptive_runtime_strategy", {}), dict)
             else {}
         )
+        expected_route_profile = str(selected_target.get("expected_route_profile", "") or "").strip().lower()
+        expected_model_preference = str(selected_target.get("expected_model_preference", "") or "").strip().lower()
+        expected_provider_source = str(selected_target.get("expected_provider_source", "") or "").strip().lower()
+        actual_route_profile = str(adaptive_learning_runtime.get("route_profile", "") or "").strip().lower()
+        actual_model_preference = str(adaptive_learning_runtime.get("model_preference", "") or "").strip().lower()
+        actual_provider_source = str(adaptive_learning_runtime.get("runtime_provider_source", "") or "").strip().lower()
+        route_alignment_status = "unknown"
+        if actual_route_profile or actual_model_preference or actual_provider_source:
+            if (
+                actual_route_profile == expected_route_profile
+                and actual_model_preference == expected_model_preference
+                and actual_provider_source == expected_provider_source
+            ):
+                route_alignment_status = "matched"
+            elif bool(adaptive_learning_runtime.get("route_fallback_applied", False)):
+                route_alignment_status = "fallback"
+            else:
+                route_alignment_status = "shifted"
         return {
             "app_name": effective_app_name,
             "launch_resolution": str(resolved.get("resolution", "") or resolved.get("kind", "") or "").strip(),
@@ -8918,24 +8941,37 @@ class DesktopBackendService:
                 or selected_target.get("runtime_band_preference", "")
                 or ""
             ).strip().lower(),
+            "expected_route_profile": expected_route_profile,
+            "expected_model_preference": expected_model_preference,
+            "expected_provider_source": expected_provider_source,
+            "actual_route_profile": actual_route_profile,
+            "actual_model_preference": actual_model_preference,
+            "actual_provider_source": actual_provider_source,
+            "route_alignment_status": route_alignment_status,
+            "route_fallback_applied": bool(adaptive_learning_runtime.get("route_fallback_applied", False)),
             "preferred_probe_mode": str(
-                adaptive_runtime_strategy.get("preferred_probe_mode", "")
+                adaptive_learning_runtime.get("preferred_probe_mode", "")
+                or adaptive_runtime_strategy.get("preferred_probe_mode", "")
                 or ""
             ).strip().lower(),
             "preferred_wave_mode": str(
-                adaptive_runtime_strategy.get("preferred_wave_mode", "")
+                adaptive_learning_runtime.get("preferred_wave_mode", "")
+                or adaptive_runtime_strategy.get("preferred_wave_mode", "")
                 or ""
             ).strip().lower(),
             "preferred_target_mode": str(
-                adaptive_runtime_strategy.get("preferred_target_mode", "")
+                adaptive_learning_runtime.get("preferred_target_mode", "")
+                or adaptive_runtime_strategy.get("preferred_target_mode", "")
                 or ""
             ).strip().lower(),
             "preferred_verification_mode": str(
-                adaptive_runtime_strategy.get("preferred_verification_mode", "")
+                adaptive_learning_runtime.get("preferred_verification_mode", "")
+                or adaptive_runtime_strategy.get("preferred_verification_mode", "")
                 or ""
             ).strip().lower(),
             "preferred_native_recovery_mode": str(
-                adaptive_runtime_strategy.get("preferred_native_recovery_mode", "")
+                adaptive_learning_runtime.get("native_recovery_mode", "")
+                or adaptive_runtime_strategy.get("preferred_native_recovery_mode", "")
                 or ""
             ).strip().lower(),
             "required_tasks": [
@@ -9083,6 +9119,11 @@ class DesktopBackendService:
         selected_target["runtime_band_preference"] = str(
             adaptive_runtime_strategy.get("runtime_band_preference", "") or ""
         ).strip().lower()
+        selected_target.update(
+            self._desktop_machine_expected_runtime_route(
+                runtime_strategy=adaptive_runtime_strategy,
+            )
+        )
 
         launch_result: Dict[str, Any]
         if ensure_app_launch:
@@ -9933,6 +9974,26 @@ class DesktopBackendService:
                     model_selection=model_selection if isinstance(model_selection, dict) else None,
                 )
             )
+            item_payload.update(
+                self._desktop_machine_learning_strategy_for_target(
+                    target_row=item_payload,
+                )
+            )
+            runtime_strategy = self._desktop_machine_learning_runtime_strategy_for_target(
+                target_row=item_payload,
+            )
+            item_payload["adaptive_runtime_strategy"] = runtime_strategy
+            item_payload["adaptive_runtime_strategy_profile"] = str(
+                runtime_strategy.get("strategy_profile", "") or ""
+            ).strip().lower()
+            item_payload["runtime_band_preference"] = str(
+                runtime_strategy.get("runtime_band_preference", "") or ""
+            ).strip().lower()
+            item_payload.update(
+                self._desktop_machine_expected_runtime_route(
+                    runtime_strategy=runtime_strategy,
+                )
+            )
             annotated_items.append(item_payload)
         execution_rank = {
             "local_ready": 0,
@@ -9953,6 +10014,9 @@ class DesktopBackendService:
         items = annotated_items[:bounded]
         execution_mode_counts: Dict[str, int] = {}
         top_blocker_codes: Dict[str, int] = {}
+        expected_route_profile_counts: Dict[str, int] = {}
+        expected_model_preference_counts: Dict[str, int] = {}
+        expected_provider_source_counts: Dict[str, int] = {}
         for item in items:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
@@ -9960,6 +10024,21 @@ class DesktopBackendService:
                 clean_code = str(blocker_code or "").strip().lower()
                 if clean_code:
                     top_blocker_codes[clean_code] = int(top_blocker_codes.get(clean_code, 0) or 0) + 1
+            expected_route_profile = str(item.get("expected_route_profile", "") or "").strip().lower()
+            if expected_route_profile:
+                expected_route_profile_counts[expected_route_profile] = int(
+                    expected_route_profile_counts.get(expected_route_profile, 0) or 0
+                ) + 1
+            expected_model_preference = str(item.get("expected_model_preference", "") or "").strip().lower()
+            if expected_model_preference:
+                expected_model_preference_counts[expected_model_preference] = int(
+                    expected_model_preference_counts.get(expected_model_preference, 0) or 0
+                ) + 1
+            expected_provider_source = str(item.get("expected_provider_source", "") or "").strip().lower()
+            if expected_provider_source:
+                expected_provider_source_counts[expected_provider_source] = int(
+                    expected_provider_source_counts.get(expected_provider_source, 0) or 0
+                ) + 1
         return {
             "status": "success",
             "count": len(items),
@@ -9974,6 +10053,18 @@ class DesktopBackendService:
                 "execution_mode_counts": {
                     str(key): int(value)
                     for key, value in sorted(execution_mode_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_model_preference_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_model_preference_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
                 "top_blocker_codes": {
                     str(key): int(value)
@@ -10181,6 +10272,37 @@ class DesktopBackendService:
             "reason_codes": self._machine_dedupe(reason_codes, limit=10),
         }
 
+    @staticmethod
+    def _desktop_machine_expected_runtime_route(
+        *,
+        runtime_strategy: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        strategy = dict(runtime_strategy) if isinstance(runtime_strategy, dict) else {}
+        runtime_band_preference = str(strategy.get("runtime_band_preference", "") or "").strip().lower() or "accessibility"
+        preferred_probe_mode = str(strategy.get("preferred_probe_mode", "") or "").strip().lower() or "accessibility_first"
+        expected_route_profile = preferred_probe_mode
+        if bool(strategy.get("prefer_native_stabilization", False)) and expected_route_profile:
+            expected_route_profile = f"{expected_route_profile}_native_stabilized"
+        expected_model_preference = "accessibility"
+        if runtime_band_preference == "local":
+            expected_model_preference = "local_runtime"
+        elif runtime_band_preference == "hybrid":
+            expected_model_preference = "hybrid_runtime"
+        elif runtime_band_preference == "api":
+            expected_model_preference = "api_assist"
+        expected_provider_source = "accessibility_only"
+        if runtime_band_preference == "local":
+            expected_provider_source = "local_runtime"
+        elif runtime_band_preference == "hybrid":
+            expected_provider_source = "local_runtime_plus_ocr"
+        elif runtime_band_preference == "api":
+            expected_provider_source = "api_assist_plus_ocr"
+        return {
+            "expected_route_profile": expected_route_profile,
+            "expected_model_preference": expected_model_preference,
+            "expected_provider_source": expected_provider_source,
+        }
+
     def _desktop_machine_finalize_app_learning_plan(
         self,
         *,
@@ -10242,6 +10364,11 @@ class DesktopBackendService:
             item_payload["runtime_band_preference"] = str(
                 runtime_strategy.get("runtime_band_preference", "") or ""
             ).strip().lower()
+            item_payload.update(
+                self._desktop_machine_expected_runtime_route(
+                    runtime_strategy=runtime_strategy,
+                )
+            )
             annotated_targets.append(item_payload)
         profile_rank = {
             "deep_local_explore": 0,
@@ -10266,6 +10393,9 @@ class DesktopBackendService:
         learning_profile_counts: Dict[str, int] = {}
         runtime_strategy_counts: Dict[str, int] = {}
         runtime_band_counts: Dict[str, int] = {}
+        expected_route_profile_counts: Dict[str, int] = {}
+        expected_model_preference_counts: Dict[str, int] = {}
+        expected_provider_source_counts: Dict[str, int] = {}
         strategy_notes: List[str] = []
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
@@ -10277,6 +10407,21 @@ class DesktopBackendService:
             runtime_band = str(runtime_strategy.get("runtime_band_preference", "") or item.get("runtime_band_preference", "") or "unknown").strip().lower() or "unknown"
             runtime_strategy_counts[runtime_strategy_profile] = int(runtime_strategy_counts.get(runtime_strategy_profile, 0) or 0) + 1
             runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
+            expected_route_profile = str(item.get("expected_route_profile", "") or "").strip().lower()
+            if expected_route_profile:
+                expected_route_profile_counts[expected_route_profile] = int(
+                    expected_route_profile_counts.get(expected_route_profile, 0) or 0
+                ) + 1
+            expected_model_preference = str(item.get("expected_model_preference", "") or "").strip().lower()
+            if expected_model_preference:
+                expected_model_preference_counts[expected_model_preference] = int(
+                    expected_model_preference_counts.get(expected_model_preference, 0) or 0
+                ) + 1
+            expected_provider_source = str(item.get("expected_provider_source", "") or "").strip().lower()
+            if expected_provider_source:
+                expected_provider_source_counts[expected_provider_source] = int(
+                    expected_provider_source_counts.get(expected_provider_source, 0) or 0
+                ) + 1
             note = str(item.get("strategy_notes", "") or "").strip()
             if note:
                 strategy_notes.append(note)
@@ -10362,6 +10507,18 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
                 },
+                "expected_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_model_preference_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_model_preference_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
             }
         )
         plan["summary"] = existing_summary
@@ -10414,6 +10571,18 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
                 },
+                "expected_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_model_preference_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_model_preference_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
                 "auto_learn_count": len(auto_targets),
                 "blocked_count": len(blocked_app_names),
                 "degraded_count": len(degraded_app_names),
@@ -10431,6 +10600,9 @@ class DesktopBackendService:
                         "priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
                         "adaptive_runtime_strategy_profile": str(item.get("adaptive_runtime_strategy_profile", "") or "").strip().lower(),
                         "runtime_band_preference": str(item.get("runtime_band_preference", "") or "").strip().lower(),
+                        "expected_route_profile": str(item.get("expected_route_profile", "") or "").strip().lower(),
+                        "expected_model_preference": str(item.get("expected_model_preference", "") or "").strip().lower(),
+                        "expected_provider_source": str(item.get("expected_provider_source", "") or "").strip().lower(),
                         "runtime_strategy": (
                             dict(item.get("adaptive_runtime_strategy", {}))
                             if isinstance(item.get("adaptive_runtime_strategy", {}), dict)

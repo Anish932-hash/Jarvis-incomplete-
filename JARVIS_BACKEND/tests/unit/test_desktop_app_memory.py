@@ -626,11 +626,18 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert payload["wave_summary"]["adaptive_wave_depth_app_count"] == 1
     assert payload["targeting"]["runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
     assert payload["targeting"]["runtime_band_counts"]["hybrid"] == 1
+    assert payload["targeting"]["route_profile_counts"]["local_vision_assist"] == 1
+    assert payload["targeting"]["model_preference_counts"]["hybrid_runtime"] == 1
+    assert payload["targeting"]["runtime_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+    assert payload["targeting"]["route_fallback_app_count"] == 0
     assert payload["items"][0]["targeting"]["target_container_roles"][:2] == ["dialog", "menu"]
     assert "sidebar" in payload["items"][0]["targeting"]["target_container_roles"]
     assert payload["items"][0]["targeting"]["preferred_wave_actions"] == ["command"]
     assert payload["items"][0]["adaptive_learning_runtime"]["strategy_profile"] == "balanced_hybrid_guided_explore"
     assert payload["items"][0]["adaptive_learning_runtime"]["selected_runtime_band"] == "hybrid"
+    assert payload["items"][0]["adaptive_learning_runtime"]["route_profile"] == "local_vision_assist"
+    assert payload["items"][0]["adaptive_learning_runtime"]["model_preference"] == "hybrid_runtime"
+    assert payload["items"][0]["adaptive_learning_runtime"]["runtime_provider_source"] == "local_runtime_plus_ocr"
     recommended_paths = payload["items"][0]["targeting"]["recommended_traversal_paths"]
     assert recommended_paths[:2] == ["dialog", "menu"]
     assert "sidebar" in recommended_paths

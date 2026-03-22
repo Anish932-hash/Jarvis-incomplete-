@@ -2635,6 +2635,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineAppLearningSummary]
   );
+  const desktopMachineAppLearningExpectedRouteCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.expected_route_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningExpectedModelCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.expected_model_preference_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningExpectedProviderCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.expected_provider_source_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
   const desktopMachineOnboardingSteps = useMemo(
     () =>
       Array.isArray(desktopMachineOnboardingPlanState?.steps)
@@ -20832,6 +20853,33 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachineAppLearningExpectedRouteCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            expected routes:{' '}
+                                            {desktopMachineAppLearningExpectedRouteCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningExpectedModelCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            model lanes:{' '}
+                                            {desktopMachineAppLearningExpectedModelCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningExpectedProviderCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            provider lanes:{' '}
+                                            {desktopMachineAppLearningExpectedProviderCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineAppLearningAdaptiveProfiles.length > 0 ? (
                                           <p className="mt-1">
                                             adaptive apps:{' '}
@@ -20842,7 +20890,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 const profileName = String(item.learning_profile ?? '').trim();
                                                 const mode = String(item.execution_mode ?? '').trim();
                                                 const runtimeBand = String(item.runtime_band_preference ?? '').trim();
-                                                return `${appName}${profileName ? `:${profileName}` : ''}${mode ? `:${mode}` : ''}${runtimeBand ? `:${runtimeBand}` : ''}`;
+                                                const route = String(item.expected_route_profile ?? '').trim();
+                                                return `${appName}${profileName ? `:${profileName}` : ''}${mode ? `:${mode}` : ''}${runtimeBand ? `:${runtimeBand}` : ''}${route ? `:${route}` : ''}`;
                                               })
                                               .join(' • ')}
                                           </p>
@@ -20971,6 +21020,22 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               'n/a'
                                           )}
                                         </p>
+                                        {(String(desktopMachinePrepareSummary.actual_route_profile ?? '').trim() ||
+                                          String(desktopMachinePrepareSummary.expected_route_profile ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            route:{String(desktopMachinePrepareSummary.actual_route_profile ?? 'n/a')}
+                                            {' • '}expected:{String(desktopMachinePrepareSummary.expected_route_profile ?? 'n/a')}
+                                            {' • '}alignment:{String(desktopMachinePrepareSummary.route_alignment_status ?? 'n/a')}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachinePrepareSummary.actual_model_preference ?? '').trim() ||
+                                          String(desktopMachinePrepareSummary.actual_provider_source ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            model:{String(desktopMachinePrepareSummary.actual_model_preference ?? 'n/a')}
+                                            {' • '}provider:{String(desktopMachinePrepareSummary.actual_provider_source ?? 'n/a')}
+                                            {' • '}fallback:{String(Boolean(desktopMachinePrepareSummary.route_fallback_applied))}
+                                          </p>
+                                        ) : null}
                                         <p className="mt-1">
                                           controls:{Number(desktopMachinePrepareSummary.discovered_control_count ?? 0)}
                                           {' • '}surfaces:{Number(desktopMachinePrepareSummary.known_surface_count ?? 0)}

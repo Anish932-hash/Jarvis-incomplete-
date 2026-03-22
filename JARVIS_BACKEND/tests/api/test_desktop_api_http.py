@@ -13878,6 +13878,9 @@ class FakeDesktopService:
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
                     "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
                     "runtime_band_counts": {"hybrid": 1, "accessibility": 1},
+                    "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
+                    "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
+                    "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
                 },
                 "targets": [
                     {
@@ -13896,6 +13899,9 @@ class FakeDesktopService:
                         "preferred_traversal_paths": ["tab", "menu", "dialog"],
                         "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
                         "runtime_band_preference": "hybrid",
+                        "expected_route_profile": "local_vision_assist",
+                        "expected_model_preference": "hybrid_runtime",
+                        "expected_provider_source": "local_runtime_plus_ocr",
                         "adaptive_runtime_strategy": {
                             "strategy_profile": "balanced_hybrid_guided_explore",
                             "runtime_band_preference": "hybrid",
@@ -13919,6 +13925,9 @@ class FakeDesktopService:
                         "preferred_traversal_paths": ["sidebar", "tree", "dialog"],
                         "adaptive_runtime_strategy_profile": "degraded_cautious_revalidate",
                         "runtime_band_preference": "accessibility",
+                        "expected_route_profile": "accessibility_first",
+                        "expected_model_preference": "accessibility",
+                        "expected_provider_source": "accessibility_only",
                         "adaptive_runtime_strategy": {
                             "strategy_profile": "degraded_cautious_revalidate",
                             "runtime_band_preference": "accessibility",
@@ -13941,6 +13950,9 @@ class FakeDesktopService:
                     "learning_profile_counts": {"cautious_revalidate": 1, "hybrid_guided_explore": 1},
                     "runtime_strategy_counts": {"balanced_hybrid_guided_explore": 1, "degraded_cautious_revalidate": 1},
                     "runtime_band_counts": {"hybrid": 1, "accessibility": 1},
+                    "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
+                    "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
+                    "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
                     "adaptive_app_profiles": [
                         {
                             "app_name": "Google Chrome",
@@ -13949,6 +13961,9 @@ class FakeDesktopService:
                             "auto_learn_allowed": True,
                             "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
                             "runtime_band_preference": "hybrid",
+                            "expected_route_profile": "local_vision_assist",
+                            "expected_model_preference": "hybrid_runtime",
+                            "expected_provider_source": "local_runtime_plus_ocr",
                             "runtime_strategy": {
                                 "strategy_profile": "balanced_hybrid_guided_explore",
                                 "runtime_band_preference": "hybrid",
@@ -13962,6 +13977,9 @@ class FakeDesktopService:
                             "auto_learn_allowed": True,
                             "adaptive_runtime_strategy_profile": "degraded_cautious_revalidate",
                             "runtime_band_preference": "accessibility",
+                            "expected_route_profile": "accessibility_first",
+                            "expected_model_preference": "accessibility",
+                            "expected_provider_source": "accessibility_only",
                             "runtime_strategy": {
                                 "strategy_profile": "degraded_cautious_revalidate",
                                 "runtime_band_preference": "accessibility",
@@ -14121,6 +14139,9 @@ class FakeDesktopService:
                 "prepare_priority_band": "high",
                 "required_tasks": ["reasoning", "vision"],
                 "blocker_codes": [],
+                "expected_route_profile": "local_vision_assist",
+                "expected_model_preference": "hybrid_runtime",
+                "expected_provider_source": "local_runtime_plus_ocr",
             },
             "resolved_target": {
                 "status": "success",
@@ -14141,6 +14162,20 @@ class FakeDesktopService:
                 "status": "success",
                 "query": query or "settings",
                 "probe_report": {"attempted_count": 2, "successful_count": 2},
+                "adaptive_learning_runtime": {
+                    "strategy_profile": "balanced_hybrid_guided_explore",
+                    "runtime_band_preference": "hybrid",
+                    "selected_runtime_band": "hybrid",
+                    "route_profile": "local_vision_assist",
+                    "model_preference": "hybrid_runtime",
+                    "runtime_provider_source": "local_runtime_plus_ocr",
+                    "preferred_probe_mode": "local_vision_assist",
+                    "preferred_wave_mode": "surface_traversal_first",
+                    "preferred_target_mode": "ocr",
+                    "preferred_verification_mode": "before_after_delta",
+                    "native_recovery_mode": "focus_related_window_chain",
+                    "route_fallback_applied": False,
+                },
                 "memory_entry": {
                     "discovered_control_count": 6,
                     "known_surface_count": 2,
@@ -14158,6 +14193,14 @@ class FakeDesktopService:
                 "prepare_priority_band": "high",
                 "runtime_strategy_profile": "balanced_hybrid_guided_explore",
                 "runtime_band_preference": "hybrid",
+                "expected_route_profile": "local_vision_assist",
+                "expected_model_preference": "hybrid_runtime",
+                "expected_provider_source": "local_runtime_plus_ocr",
+                "actual_route_profile": "local_vision_assist",
+                "actual_model_preference": "hybrid_runtime",
+                "actual_provider_source": "local_runtime_plus_ocr",
+                "route_alignment_status": "matched",
+                "route_fallback_applied": False,
                 "preferred_probe_mode": "local_vision_assist",
                 "preferred_wave_mode": "surface_traversal_first",
                 "preferred_target_mode": "ocr",
@@ -14414,6 +14457,23 @@ class FakeDesktopService:
             or adaptive_runtime.get("selected_runtime_band", "")
             or ("hybrid" if execution_mode else "local")
         ).strip().lower() or ("hybrid" if execution_mode else "local")
+        route_profile = str(adaptive_runtime.get("preferred_probe_mode", "vision_first") or "vision_first").strip().lower()
+        if bool(adaptive_runtime.get("prefer_native_stabilization", False)) and route_profile:
+            route_profile = f"{route_profile}_native_stabilized"
+        model_preference = "accessibility"
+        if selected_runtime_band == "local":
+            model_preference = "local_runtime"
+        elif selected_runtime_band == "hybrid":
+            model_preference = "hybrid_runtime"
+        elif selected_runtime_band == "api":
+            model_preference = "api_assist"
+        runtime_provider_source = "accessibility_only"
+        if selected_runtime_band == "local":
+            runtime_provider_source = "local_runtime"
+        elif selected_runtime_band == "hybrid":
+            runtime_provider_source = "local_runtime_plus_ocr"
+        elif selected_runtime_band == "api":
+            runtime_provider_source = "api_assist_plus_ocr"
         return {
             "status": "success",
             "message": "Learned app memory recorded from the surveyed surface.",
@@ -14511,14 +14571,32 @@ class FakeDesktopService:
                     or adaptive_runtime.get("adaptive_runtime_strategy_profile", "")
                     or ""
                 ).strip().lower(),
+                "runtime_band_preference": str(
+                    adaptive_runtime.get("runtime_band_preference", "")
+                    or selected_runtime_band
+                ).strip().lower(),
                 "selected_runtime_band": selected_runtime_band,
+                "route_profile": route_profile,
+                "model_preference": model_preference,
+                "runtime_provider_source": runtime_provider_source,
                 "preferred_probe_mode": str(adaptive_runtime.get("preferred_probe_mode", "vision_first") or "vision_first").strip().lower(),
                 "preferred_wave_mode": str(adaptive_runtime.get("preferred_wave_mode", "surface_traversal_first") or "surface_traversal_first").strip().lower(),
                 "preferred_target_mode": str(adaptive_runtime.get("preferred_target_mode", "ocr") or "ocr").strip().lower(),
                 "preferred_verification_mode": str(adaptive_runtime.get("preferred_verification_mode", "before_after_delta") or "before_after_delta").strip().lower(),
                 "native_recovery_mode": str(adaptive_runtime.get("preferred_native_recovery_mode", "focus_related_window_chain") or "focus_related_window_chain").strip().lower(),
                 "adaptive_route_applied": bool(adaptive_runtime),
+                "route_fallback_applied": False,
+                "route_selection_reason_codes": ["provider_source_" + runtime_provider_source],
                 "provider_model_readiness": dict(provider_model_readiness or {}),
+            },
+            "vision_learning_route": {
+                "status": "success",
+                "route_profile": route_profile,
+                "model_preference": model_preference,
+                "preferred_probe_mode": str(adaptive_runtime.get("preferred_probe_mode", "vision_first") or "vision_first").strip().lower(),
+                "preferred_wave_mode": str(adaptive_runtime.get("preferred_wave_mode", "surface_traversal_first") or "surface_traversal_first").strip().lower(),
+                "selected_runtime_band": selected_runtime_band,
+                "runtime_provider_source": runtime_provider_source,
             },
             "revalidation": {
                 "status": "success",
@@ -14607,6 +14685,10 @@ class FakeDesktopService:
         preferred_wave_action_counts: dict[str, int] = {}
         runtime_strategy_counts: dict[str, int] = {}
         runtime_band_counts: dict[str, int] = {}
+        route_profile_counts: dict[str, int] = {}
+        model_preference_counts: dict[str, int] = {}
+        runtime_provider_source_counts: dict[str, int] = {}
+        route_fallback_app_count = 0
         clean_adaptive_profiles = [dict(item) for item in (adaptive_app_profiles or []) if isinstance(item, dict)]
         for app_name in candidates[: max(1, int(max_apps))]:
             if skip_known_apps and any(str(row.get("app_name", "")).lower() == str(app_name).lower() for row in self.desktop_app_memory_items):
@@ -14729,6 +14811,19 @@ class FakeDesktopService:
             ).strip().lower()
             if runtime_band:
                 runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
+            route_profile = str(adaptive_learning_runtime.get("route_profile", "") or "").strip().lower()
+            if route_profile:
+                route_profile_counts[route_profile] = int(route_profile_counts.get(route_profile, 0) or 0) + 1
+            model_preference = str(adaptive_learning_runtime.get("model_preference", "") or "").strip().lower()
+            if model_preference:
+                model_preference_counts[model_preference] = int(model_preference_counts.get(model_preference, 0) or 0) + 1
+            runtime_provider_source = str(adaptive_learning_runtime.get("runtime_provider_source", "") or "").strip().lower()
+            if runtime_provider_source:
+                runtime_provider_source_counts[runtime_provider_source] = int(
+                    runtime_provider_source_counts.get(runtime_provider_source, 0) or 0
+                ) + 1
+            if bool(adaptive_learning_runtime.get("route_fallback_applied", False)):
+                route_fallback_app_count += 1
             items.append(
                 {
                     "app_name": app_name,
@@ -14763,6 +14858,10 @@ class FakeDesktopService:
                 "prefer_failure_memory": bool(prefer_failure_memory),
                 "runtime_strategy_counts": runtime_strategy_counts,
                 "runtime_band_counts": runtime_band_counts,
+                "route_profile_counts": route_profile_counts,
+                "model_preference_counts": model_preference_counts,
+                "runtime_provider_source_counts": runtime_provider_source_counts,
+                "route_fallback_app_count": route_fallback_app_count,
                 "target_container_roles": [
                     str(item).strip().lower()
                     for item in (target_container_roles or [])
@@ -15333,6 +15432,44 @@ class FakeDesktopService:
                 str(item.get("runtime_band_preference", "")).strip().lower(): 1
                 for item in (adaptive_app_profiles or [])
                 if isinstance(item, dict) and str(item.get("runtime_band_preference", "")).strip()
+            },
+            "expected_route_profile_counts": {
+                (
+                    f"{str(dict(item.get('runtime_strategy', {})).get('preferred_probe_mode', '')).strip().lower()}_native_stabilized"
+                    if bool(dict(item.get('runtime_strategy', {})).get('prefer_native_stabilization', False))
+                    and str(dict(item.get('runtime_strategy', {})).get('preferred_probe_mode', '')).strip()
+                    else str(dict(item.get('runtime_strategy', {})).get('preferred_probe_mode', '')).strip().lower()
+                ): 1
+                for item in (adaptive_app_profiles or [])
+                if isinstance(item, dict)
+                and isinstance(item.get("runtime_strategy", {}), dict)
+                and str(dict(item.get("runtime_strategy", {})).get("preferred_probe_mode", "")).strip()
+            },
+            "expected_model_preference_counts": {
+                (
+                    "hybrid_runtime"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "hybrid"
+                    else "local_runtime"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "local"
+                    else "api_assist"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "api"
+                    else "accessibility"
+                ): 1
+                for item in (adaptive_app_profiles or [])
+                if isinstance(item, dict)
+            },
+            "expected_provider_source_counts": {
+                (
+                    "local_runtime_plus_ocr"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "hybrid"
+                    else "local_runtime"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "local"
+                    else "api_assist_plus_ocr"
+                    if str(item.get("runtime_band_preference", "")).strip().lower() == "api"
+                    else "accessibility_only"
+                ): 1
+                for item in (adaptive_app_profiles or [])
+                if isinstance(item, dict)
             },
             "adaptive_preferred_traversal_paths": not bool(preferred_traversal_paths),
             "recommended_traversal_paths": ["dialog", "menu", "sidebar"],
@@ -23536,6 +23673,9 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert len(dict(survey.get("targeting", {})).get("recommended_traversal_paths", [])) >= 1
     assert survey["app_memory"]["status"] == "success"
     assert dict(survey.get("adaptive_learning_runtime", {})).get("selected_runtime_band") in {"local", "hybrid"}
+    assert str(dict(survey.get("adaptive_learning_runtime", {})).get("route_profile", "") or "").strip() != ""
+    assert str(dict(survey.get("adaptive_learning_runtime", {})).get("model_preference", "") or "").strip() != ""
+    assert str(dict(survey.get("adaptive_learning_runtime", {})).get("runtime_provider_source", "") or "").strip() != ""
 
     status, cleared = request_json(
         "POST",
@@ -23634,6 +23774,9 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["wave_attempt_count"] == 4
     assert prepared["summary"]["execution_mode"] == "hybrid_ready"
     assert prepared["summary"]["runtime_strategy_profile"] == "balanced_hybrid_guided_explore"
+    assert prepared["summary"]["actual_route_profile"] == "local_vision_assist"
+    assert prepared["summary"]["actual_model_preference"] == "hybrid_runtime"
+    assert prepared["summary"]["route_alignment_status"] == "matched"
     assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
@@ -23654,7 +23797,10 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["plan"]["campaign_defaults"]["strategy_profile"] == "hybrid_guided_explore"
     assert plan["plan"]["summary"]["runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
     assert plan["plan"]["summary"]["runtime_band_counts"]["hybrid"] == 1
+    assert plan["plan"]["summary"]["expected_route_profile_counts"]["local_vision_assist"] == 1
+    assert plan["plan"]["summary"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["runtime_band_preference"] == "hybrid"
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["expected_route_profile"] == "local_vision_assist"
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
     status, campaign = request_json(
@@ -23769,6 +23915,9 @@ def test_desktop_app_memory_batch_and_daemon_routes(api_server: tuple[str, FakeD
     assert len(dict(batch.get("wave_summary", {})).get("executed_traversal_paths", [])) >= 1
     assert len(dict(batch.get("targeting", {})).get("preferred_wave_actions", [])) >= 1
     assert isinstance(dict(batch.get("targeting", {})).get("runtime_strategy_counts", {}), dict)
+    assert isinstance(dict(batch.get("targeting", {})).get("route_profile_counts", {}), dict)
+    assert isinstance(dict(batch.get("targeting", {})).get("model_preference_counts", {}), dict)
+    assert isinstance(dict(batch.get("targeting", {})).get("runtime_provider_source_counts", {}), dict)
 
     status, configured = request_json(
         "POST",

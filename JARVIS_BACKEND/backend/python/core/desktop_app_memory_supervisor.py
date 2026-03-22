@@ -532,14 +532,18 @@ class DesktopAppMemorySupervisor:
             )
             adaptive_runtime_strategy_counts: Dict[str, int] = {}
             runtime_band_counts: Dict[str, int] = {}
+            expected_route_profile_counts: Dict[str, int] = {}
+            expected_model_preference_counts: Dict[str, int] = {}
+            expected_provider_source_counts: Dict[str, int] = {}
             for item in clean_adaptive_profiles:
+                runtime_strategy_payload = (
+                    dict(item.get("runtime_strategy", {}))
+                    if isinstance(item.get("runtime_strategy", {}), dict)
+                    else {}
+                )
                 runtime_strategy_profile = str(
                     item.get("adaptive_runtime_strategy_profile", "")
-                    or (
-                        dict(item.get("runtime_strategy", {})).get("strategy_profile", "")
-                        if isinstance(item.get("runtime_strategy", {}), dict)
-                        else ""
-                    )
+                    or runtime_strategy_payload.get("strategy_profile", "")
                     or ""
                 ).strip().lower()
                 if runtime_strategy_profile:
@@ -548,15 +552,40 @@ class DesktopAppMemorySupervisor:
                     ) + 1
                 runtime_band = str(
                     item.get("runtime_band_preference", "")
-                    or (
-                        dict(item.get("runtime_strategy", {})).get("runtime_band_preference", "")
-                        if isinstance(item.get("runtime_strategy", {}), dict)
-                        else ""
-                    )
+                    or runtime_strategy_payload.get("runtime_band_preference", "")
                     or ""
                 ).strip().lower()
                 if runtime_band:
                     runtime_band_counts[runtime_band] = int(runtime_band_counts.get(runtime_band, 0) or 0) + 1
+                expected_route_profile = str(
+                    runtime_strategy_payload.get("preferred_probe_mode", "") or ""
+                ).strip().lower()
+                if bool(runtime_strategy_payload.get("prefer_native_stabilization", False)) and expected_route_profile:
+                    expected_route_profile = f"{expected_route_profile}_native_stabilized"
+                if expected_route_profile:
+                    expected_route_profile_counts[expected_route_profile] = int(
+                        expected_route_profile_counts.get(expected_route_profile, 0) or 0
+                    ) + 1
+                expected_model_preference = "accessibility"
+                if runtime_band == "local":
+                    expected_model_preference = "local_runtime"
+                elif runtime_band == "hybrid":
+                    expected_model_preference = "hybrid_runtime"
+                elif runtime_band == "api":
+                    expected_model_preference = "api_assist"
+                expected_model_preference_counts[expected_model_preference] = int(
+                    expected_model_preference_counts.get(expected_model_preference, 0) or 0
+                ) + 1
+                expected_provider_source = "accessibility_only"
+                if runtime_band == "local":
+                    expected_provider_source = "local_runtime"
+                elif runtime_band == "hybrid":
+                    expected_provider_source = "local_runtime_plus_ocr"
+                elif runtime_band == "api":
+                    expected_provider_source = "api_assist_plus_ocr"
+                expected_provider_source_counts[expected_provider_source] = int(
+                    expected_provider_source_counts.get(expected_provider_source, 0) or 0
+                ) + 1
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -606,6 +635,18 @@ class DesktopAppMemorySupervisor:
                 "runtime_band_counts": {
                     str(key): int(value)
                     for key, value in sorted(runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_model_preference_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_model_preference_counts.items(), key=lambda entry: entry[0])
+                },
+                "expected_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
@@ -856,6 +897,76 @@ class DesktopAppMemorySupervisor:
                 source=str(source or "manual").strip().lower() or "manual",
             )
             result = dict(result) if isinstance(result, dict) else {"status": "error", "message": "invalid campaign execution payload"}
+            actual_route_profile_counts = (
+                dict(dict(result.get("targeting", {})).get("route_profile_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("route_profile_counts", {}), dict)
+                else {}
+            )
+            actual_model_preference_counts = (
+                dict(dict(result.get("targeting", {})).get("model_preference_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("model_preference_counts", {}), dict)
+                else {}
+            )
+            actual_provider_source_counts = (
+                dict(dict(result.get("targeting", {})).get("runtime_provider_source_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("runtime_provider_source_counts", {}), dict)
+                else {}
+            )
+            route_fallback_app_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("route_fallback_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            if not actual_route_profile_counts or not actual_model_preference_counts or not actual_provider_source_counts:
+                for item in effective_adaptive_profiles:
+                    runtime_strategy_payload = (
+                        dict(item.get("runtime_strategy", {}))
+                        if isinstance(item.get("runtime_strategy", {}), dict)
+                        else {}
+                    )
+                    runtime_band = str(
+                        item.get("runtime_band_preference", "")
+                        or runtime_strategy_payload.get("runtime_band_preference", "")
+                        or ""
+                    ).strip().lower()
+                    if not actual_route_profile_counts:
+                        expected_route_profile = str(
+                            runtime_strategy_payload.get("preferred_probe_mode", "") or ""
+                        ).strip().lower()
+                        if bool(runtime_strategy_payload.get("prefer_native_stabilization", False)) and expected_route_profile:
+                            expected_route_profile = f"{expected_route_profile}_native_stabilized"
+                        if expected_route_profile:
+                            actual_route_profile_counts[expected_route_profile] = int(
+                                actual_route_profile_counts.get(expected_route_profile, 0) or 0
+                            ) + 1
+                    if not actual_model_preference_counts:
+                        expected_model_preference = "accessibility"
+                        if runtime_band == "local":
+                            expected_model_preference = "local_runtime"
+                        elif runtime_band == "hybrid":
+                            expected_model_preference = "hybrid_runtime"
+                        elif runtime_band == "api":
+                            expected_model_preference = "api_assist"
+                        actual_model_preference_counts[expected_model_preference] = int(
+                            actual_model_preference_counts.get(expected_model_preference, 0) or 0
+                        ) + 1
+                    if not actual_provider_source_counts:
+                        expected_provider_source = "accessibility_only"
+                        if runtime_band == "local":
+                            expected_provider_source = "local_runtime"
+                        elif runtime_band == "hybrid":
+                            expected_provider_source = "local_runtime_plus_ocr"
+                        elif runtime_band == "api":
+                            expected_provider_source = "api_assist_plus_ocr"
+                        actual_provider_source_counts[expected_provider_source] = int(
+                            actual_provider_source_counts.get(expected_provider_source, 0) or 0
+                        ) + 1
             result_items = {
                 str(item.get("app_name", "") or "").strip().lower(): dict(item)
                 for item in result.get("items", [])
@@ -949,6 +1060,22 @@ class DesktopAppMemorySupervisor:
                     str(key): int(value)
                     for key, value in sorted(cycle_runtime_band_counts.items(), key=lambda entry: entry[0])
                 },
+                "route_profile_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_route_profile_counts.items()
+                    if str(key).strip()
+                },
+                "model_preference_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_model_preference_counts.items()
+                    if str(key).strip()
+                },
+                "provider_source_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_provider_source_counts.items()
+                    if str(key).strip()
+                },
+                "route_fallback_app_count": route_fallback_app_count,
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
                 "preferred_path_hits": self._coerce_int(
@@ -1103,6 +1230,22 @@ class DesktopAppMemorySupervisor:
                 str(key): int(value)
                 for key, value in sorted(cycle_runtime_band_counts.items(), key=lambda entry: entry[0])
             }
+            campaign["route_profile_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_route_profile_counts.items()
+                if str(key).strip()
+            }
+            campaign["model_preference_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_model_preference_counts.items()
+                if str(key).strip()
+            }
+            campaign["provider_source_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_provider_source_counts.items()
+                if str(key).strip()
+            }
+            campaign["route_fallback_app_count"] = route_fallback_app_count
             campaign["effective_max_surface_waves"] = effective_max_surface_waves
             campaign["adaptive_surface_wave_depth"] = adaptive_surface_wave_depth
             campaign["traversed_container_roles"] = self._dedupe_strings(
