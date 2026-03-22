@@ -10,7 +10,13 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
         {
             "status": "success",
             "task": "reasoning",
-            "summary": {"provider_update_count": 1, "launch_seed_count": 2, "prepared_app_count": 3},
+            "summary": {
+                "provider_update_count": 1,
+                "launch_seed_count": 2,
+                "prepared_app_count": 3,
+                "prepared_blocked_count": 1,
+                "prepared_degraded_count": 2,
+            },
         },
         source="machine_onboarding",
     )
@@ -31,3 +37,5 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["provider_update_total"] == 1
     assert history["summary"]["launch_seed_total"] == 2
     assert history["summary"]["prepared_app_total"] == 3
+    assert history["summary"]["prepared_blocked_total"] == 1
+    assert history["summary"]["prepared_degraded_total"] == 2

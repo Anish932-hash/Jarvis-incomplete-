@@ -2504,6 +2504,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachinePrepareState),
     [desktopMachinePrepareState]
   );
+  const desktopMachinePrepareReadiness = useMemo(
+    () => asObjectRecord(desktopMachinePrepare.provider_model_readiness),
+    [desktopMachinePrepare]
+  );
   const desktopMachinePrepareSummary = useMemo(
     () => asObjectRecord(desktopMachinePrepare.summary),
     [desktopMachinePrepare]
@@ -2516,6 +2520,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineOnboardingPlan.app_control_prepare_plan),
     [desktopMachineOnboardingPlan]
   );
+  const desktopMachineAppControlPrepareSummary = useMemo(
+    () => asObjectRecord(desktopMachineAppControlPreparePlan.summary),
+    [desktopMachineAppControlPreparePlan]
+  );
   const desktopMachineAppControlPrepareDefaults = useMemo(
     () => asObjectRecord(desktopMachineAppControlPreparePlan.defaults),
     [desktopMachineAppControlPreparePlan]
@@ -2526,6 +2534,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
         ? desktopMachineAppControlPreparePlan.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
         : [],
     [desktopMachineAppControlPreparePlan]
+  );
+  const desktopMachineAppControlPrepareModeCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppControlPrepareSummary.execution_mode_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppControlPrepareSummary]
+  );
+  const desktopMachineAppControlPrepareBlockerCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppControlPrepareSummary.top_blocker_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppControlPrepareSummary]
   );
   const desktopMachineProviderActionSummary = useMemo(
     () => asObjectRecord(asObjectRecord(desktopMachineOnboardingPlan.provider_actions).summary),
@@ -2552,6 +2574,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return {};
   }, [desktopMachineOnboardingHistory, desktopMachineOnboardingHistoryRows]);
+  const desktopMachineOnboardingLatestSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingLatestRun.summary),
+    [desktopMachineOnboardingLatestRun]
+  );
   const desktopMachineAppLearningPlan = useMemo(
     () => asObjectRecord(desktopMachineAppLearningPlanState),
     [desktopMachineAppLearningPlanState]
@@ -13937,7 +13963,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           const summary = asObjectRecord(payload.summary);
           toast({
             title: 'Onboarding Plan Ready',
-            description: `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ${Number(summary.selected_model_count ?? 0)} model item(s), ${Number(summary.app_learning_target_count ?? 0)} learning target(s), and ${Number(summary.app_control_prepare_count ?? 0)} app-control prepare target(s) are queued.`,
+            description:
+              `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ` +
+              `${Number(summary.selected_model_count ?? 0)} model item(s), ` +
+              `${Number(summary.app_learning_target_count ?? 0)} learning target(s), ` +
+              `${Number(summary.app_control_prepare_count ?? 0)} app-control prepare target(s), ` +
+              `${Number(summary.app_control_prepare_degraded_count ?? 0)} degraded.`,
           });
         }
         return payload;
@@ -14359,7 +14390,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         title: 'Machine Onboarding Started',
         description:
           String(payload.message ?? '').trim() ||
-          'JARVIS started provider validation, model setup launch, launch-memory seeding, app-learning kickoff, and automatic app-control preparation.',
+          `JARVIS started provider validation, model setup launch, launch-memory seeding, app-learning kickoff, and automatic app-control preparation across ${Number(asObjectRecord(payload.summary).prepared_app_count ?? 0)} prepared app(s).`,
       });
       return payload;
     } catch (error) {
@@ -20704,12 +20735,39 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           prepare targets:{Number(desktopMachineOnboardingSummary.app_control_prepare_count ?? 0)}
                                           {' • '}default prepare limit:{Number(desktopMachineAppControlPrepareDefaults.prepare_app_limit ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          runnable:{Number(desktopMachineAppControlPrepareSummary.runnable_count ?? 0)}
+                                          {' • '}degraded:{Number(desktopMachineAppControlPrepareSummary.degraded_count ?? 0)}
+                                          {' • '}blocked:{Number(desktopMachineAppControlPrepareSummary.blocked_count ?? 0)}
+                                        </p>
+                                        {desktopMachineAppControlPrepareModeCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            modes:{' '}
+                                            {desktopMachineAppControlPrepareModeCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineAppControlPrepareRows.length > 0 ? (
                                           <p className="mt-1">
                                             prepare apps:{' '}
                                             {desktopMachineAppControlPrepareRows
                                               .slice(0, 3)
-                                              .map((item) => String(item.app_name ?? 'app'))
+                                              .map((item) => {
+                                                const mode = String(item.execution_mode ?? '').trim();
+                                                const status = String(item.readiness_status ?? '').trim();
+                                                return `${String(item.app_name ?? 'app')}${mode ? `:${mode}` : ''}${status && status !== 'ready' ? `:${status}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppControlPrepareBlockerCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            blockers:{' '}
+                                            {desktopMachineAppControlPrepareBlockerCounts
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
                                               .join(' • ')}
                                           </p>
                                         ) : null}
@@ -20780,6 +20838,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}launch:{String(desktopMachinePrepareSummary.launch_method ?? 'n/a')}
                                         </p>
                                         <p className="mt-1">
+                                          mode:{String(desktopMachinePrepareSummary.execution_mode ?? desktopMachinePrepare.execution_mode ?? 'n/a')}
+                                          {' • '}readiness:{String(desktopMachinePrepareSummary.readiness_status ?? desktopMachinePrepare.readiness_status ?? 'n/a')}
+                                          {' • '}priority:{String(desktopMachinePrepareSummary.prepare_priority_band ?? desktopMachinePrepare.prepare_priority_band ?? 'n/a')}
+                                        </p>
+                                        <p className="mt-1">
                                           controls:{Number(desktopMachinePrepareSummary.discovered_control_count ?? 0)}
                                           {' • '}surfaces:{Number(desktopMachinePrepareSummary.known_surface_count ?? 0)}
                                           {' • '}waves:{Number(desktopMachinePrepareSummary.wave_attempt_count ?? 0)}
@@ -20790,6 +20853,32 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {Number(desktopMachinePrepareSummary.probe_attempt_count ?? 0)}
                                           {' • '}memory:{Number(desktopMachinePrepareSummary.memory_record_count ?? 0)}
                                         </p>
+                                        {Array.isArray(desktopMachinePrepareSummary.required_tasks) && desktopMachinePrepareSummary.required_tasks.length > 0 ? (
+                                          <p className="mt-1">
+                                            tasks:{' '}
+                                            {desktopMachinePrepareSummary.required_tasks
+                                              .slice(0, 4)
+                                              .map((item) => String(item))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : Array.isArray(desktopMachinePrepareReadiness.required_tasks) && desktopMachinePrepareReadiness.required_tasks.length > 0 ? (
+                                          <p className="mt-1">
+                                            tasks:{' '}
+                                            {desktopMachinePrepareReadiness.required_tasks
+                                              .slice(0, 4)
+                                              .map((item) => String(item))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Array.isArray(desktopMachinePrepareSummary.blocker_codes) && desktopMachinePrepareSummary.blocker_codes.length > 0 ? (
+                                          <p className="mt-1 text-amber-300/90">
+                                            blockers:{' '}
+                                            {desktopMachinePrepareSummary.blocker_codes
+                                              .slice(0, 4)
+                                              .map((item) => String(item))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachinePrepareState ? (
                                           <p className="mt-1 text-primary/80">
                                             {String(desktopMachinePrepare.message ?? desktopMachinePrepare.status ?? 'n/a')}
@@ -20814,6 +20903,11 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}status:{String(desktopMachineOnboardingLatestRun.status ?? 'n/a')}
                                           {' • '}source:{String(desktopMachineOnboardingLatestRun.source ?? 'n/a')}
                                         </p>
+                                        <p className="mt-1">
+                                          prepared:{Number(desktopMachineOnboardingLatestSummary.prepared_app_count ?? 0)}
+                                          {' • '}blocked:{Number(desktopMachineOnboardingLatestSummary.prepared_blocked_count ?? 0)}
+                                          {' • '}degraded:{Number(desktopMachineOnboardingLatestSummary.prepared_degraded_count ?? 0)}
+                                        </p>
                                         <div className="mt-2 space-y-2">
                                           {desktopMachineOnboardingHistoryRows.slice(0, 3).map((item, index) => (
                                             <div
@@ -20827,6 +20921,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}launch seeds:{Number(asObjectRecord(item.summary).launch_seed_count ?? 0)}
                                                 {' • '}targets:{Number(asObjectRecord(item.summary).app_learning_target_count ?? 0)}
                                                 {' • '}prepared:{Number(asObjectRecord(item.summary).prepared_app_count ?? 0)}
+                                                {' • '}blocked:{Number(asObjectRecord(item.summary).prepared_blocked_count ?? 0)}
+                                                {' • '}degraded:{Number(asObjectRecord(item.summary).prepared_degraded_count ?? 0)}
                                               </p>
                                             </div>
                                           ))}

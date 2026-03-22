@@ -8852,6 +8852,20 @@ class DesktopBackendService:
             "recommended_max_surface_waves": int(
                 selected_target.get("recommended_max_surface_waves", 0) or 0
             ),
+            "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
+            "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
+            "prepare_priority_band": str(selected_target.get("prepare_priority_band", "") or "").strip().lower(),
+            "required_tasks": [
+                str(item).strip().lower()
+                for item in selected_target.get("required_tasks", [])
+                if isinstance(selected_target.get("required_tasks", []), list) and str(item).strip()
+            ],
+            "blocker_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("blocker_codes", [])
+                if isinstance(selected_target.get("blocker_codes", []), list) and str(item).strip()
+            ],
+            "blocker_count": int(selected_target.get("blocker_count", 0) or 0),
             "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
             "known_surface_count": int(memory_entry.get("known_surface_count", 0) or metrics.get("known_surface_count", 0) or 0),
             "wave_attempt_count": int(metrics.get("wave_attempt_count", 0) or 0),
@@ -8917,6 +8931,21 @@ class DesktopBackendService:
             return plan_payload if isinstance(plan_payload, dict) else {"status": "error", "message": "unable to build machine app learning plan"}
         plan = plan_payload.get("plan", {}) if isinstance(plan_payload.get("plan", {}), dict) else {}
         campaign_defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+        setup_plan = self.model_setup_plan(
+            task=clean_task,
+            limit=max(8, min(int(model_limit or 160), 2000)),
+            include_present=False,
+        )
+        model_selection = self._desktop_machine_select_model_items(
+            profile=profile,
+            setup_plan=setup_plan if isinstance(setup_plan, dict) else {},
+            task=clean_task,
+            max_model_items=6,
+        )
+        provider_actions = self._desktop_machine_onboarding_provider_actions(
+            profile=profile,
+            model_selection=model_selection if isinstance(model_selection, dict) else {},
+        )
 
         resolved = self.desktop_app_launcher_resolve(app_name=requested_app_name)
         if not isinstance(resolved, dict) or resolved.get("status") != "success":
@@ -8942,6 +8971,20 @@ class DesktopBackendService:
         ).strip()
         if not effective_app_name:
             effective_app_name = requested_app_name
+        selected_target = dict(selected_target)
+        selected_target.update(
+            self._desktop_machine_prepare_readiness_annotation(
+                profile=profile,
+                target_row={
+                    **selected_target,
+                    "memory_present": False,
+                    "path": str(resolved.get("path", "") or resolved.get("uri", "") or "").strip(),
+                },
+                path=str(resolved.get("path", "") or resolved.get("app_id", "") or resolved.get("uri", "") or "").strip(),
+                provider_actions=provider_actions if isinstance(provider_actions, dict) else None,
+                model_selection=model_selection if isinstance(model_selection, dict) else None,
+            )
+        )
 
         launch_result: Dict[str, Any]
         if ensure_app_launch:
@@ -9048,6 +9091,18 @@ class DesktopBackendService:
                 "profile": profile,
                 "plan": plan_payload,
                 "selected_target": selected_target,
+                "provider_model_readiness": {
+                    "provider_actions": provider_actions,
+                    "model_selection": model_selection,
+                    "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
+                    "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
+                    "required_tasks": list(selected_target.get("required_tasks", []))
+                    if isinstance(selected_target.get("required_tasks", []), list)
+                    else [],
+                    "blocker_codes": list(selected_target.get("blocker_codes", []))
+                    if isinstance(selected_target.get("blocker_codes", []), list)
+                    else [],
+                },
                 "resolved_target": resolved,
                 "launch": launch_result,
                 "survey": survey_result,
@@ -9320,12 +9375,344 @@ class DesktopBackendService:
             },
         }
 
+    def _desktop_machine_provider_action_items(
+        self,
+        *,
+        profile: Dict[str, Any],
+        provider_actions: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        if isinstance(provider_actions, dict):
+            items = [
+                dict(item)
+                for item in provider_actions.get("items", [])
+                if isinstance(provider_actions.get("items", []), list) and isinstance(item, dict)
+            ]
+            if items:
+                return items
+        providers_section = profile.get("providers", {}) if isinstance(profile.get("providers", {}), dict) else {}
+        snapshot = providers_section.get("snapshot", {}) if isinstance(providers_section.get("snapshot", {}), dict) else {}
+        verifications = (
+            providers_section.get("verifications", {})
+            if isinstance(providers_section.get("verifications", {}), dict)
+            else {}
+        )
+        provider_rows = snapshot.get("providers", {}) if isinstance(snapshot.get("providers", {}), dict) else {}
+        items: List[Dict[str, Any]] = []
+        candidate_names = sorted(
+            {
+                *[self._machine_text(name) for name in provider_rows.keys() if self._machine_text(name)],
+                *[self._machine_text(name) for name in verifications.keys() if self._machine_text(name)],
+            }
+        )
+        for provider_name in candidate_names:
+            provider_row = provider_rows.get(provider_name, {}) if isinstance(provider_rows.get(provider_name, {}), dict) else {}
+            verification = verifications.get(provider_name, {}) if isinstance(verifications.get(provider_name, {}), dict) else {}
+            present = bool(provider_row.get("present", False))
+            ready = bool(provider_row.get("ready", False))
+            verification_status = str(verification.get("status", "") or "").strip().lower()
+            state = "ready"
+            if not present:
+                state = "needs_input"
+            elif verification_status in {"error", "partial"} or not ready:
+                state = "needs_attention"
+            items.append(
+                {
+                    "provider": provider_name,
+                    "present": present,
+                    "ready": ready,
+                    "verified": bool(verification.get("verified", False)),
+                    "verification_status": verification_status or ("success" if ready else "unknown"),
+                    "state": state,
+                }
+            )
+        return items
+
+    def _desktop_machine_prepare_required_tasks(
+        self,
+        *,
+        profile: Dict[str, Any],
+        target_row: Dict[str, Any],
+    ) -> List[str]:
+        category = self._machine_text(target_row.get("category", ""))
+        roles = [
+            self._machine_text(item)
+            for item in target_row.get("target_container_roles", [])
+            if isinstance(target_row.get("target_container_roles", []), list)
+        ]
+        actions = [
+            self._machine_text(item)
+            for item in target_row.get("preferred_wave_actions", [])
+            if isinstance(target_row.get("preferred_wave_actions", []), list)
+        ]
+        paths = [
+            self._machine_text(item)
+            for item in target_row.get("preferred_traversal_paths", [])
+            if isinstance(target_row.get("preferred_traversal_paths", []), list)
+        ]
+        task_focus_rows = (
+            profile.get("applications", {}).get("task_focus", [])
+            if isinstance(profile.get("applications", {}), dict)
+            and isinstance(profile.get("applications", {}).get("task_focus", []), list)
+            else []
+        )
+        tasks = list(DesktopMachineProfileManager._CATEGORY_TASK_HINTS.get(category, []))
+        if any(item in {"dialog", "menu", "toolbar", "ribbon", "sidebar", "tab", "tree", "table", "canvas"} for item in [*roles, *paths]):
+            tasks.append("vision")
+        if any(item in {"command", "command_palette", "search", "quick_open", "workspace_search"} for item in actions):
+            tasks.append("reasoning")
+        if any(item in {"notes", "communication"} for item in [category]):
+            tasks.append("tts")
+        if any(item in {"communication"} for item in [category]):
+            tasks.append("stt")
+        if not tasks:
+            tasks.extend(
+                [
+                    self._machine_text(item.get("task", ""))
+                    for item in task_focus_rows[:2]
+                    if isinstance(item, dict) and self._machine_text(item.get("task", ""))
+                ]
+            )
+        if not tasks:
+            tasks.append("reasoning")
+        return self._machine_dedupe(tasks, limit=5)
+
+    def _desktop_machine_prepare_readiness_annotation(
+        self,
+        *,
+        profile: Dict[str, Any],
+        target_row: Dict[str, Any],
+        path: str = "",
+        provider_actions: Optional[Dict[str, Any]] = None,
+        model_selection: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        required_tasks = self._desktop_machine_prepare_required_tasks(profile=profile, target_row=target_row)
+        models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
+        local_inventory = models.get("local_inventory", {}) if isinstance(models.get("local_inventory", {}), dict) else {}
+        task_preferences = (
+            models.get("task_preferences", {}).get("by_task", {})
+            if isinstance(models.get("task_preferences", {}), dict)
+            and isinstance(models.get("task_preferences", {}).get("by_task", {}), dict)
+            else {}
+        )
+        recommended_models = models.get("recommended_models", []) if isinstance(models.get("recommended_models", []), list) else []
+        task_counts = local_inventory.get("task_counts", {}) if isinstance(local_inventory.get("task_counts", {}), dict) else {}
+        inventory_items = (
+            local_inventory.get("inventory", {}).get("items", [])
+            if isinstance(local_inventory.get("inventory", {}), dict)
+            and isinstance(local_inventory.get("inventory", {}).get("items", []), list)
+            else []
+        )
+        provider_items = self._desktop_machine_provider_action_items(
+            profile=profile,
+            provider_actions=provider_actions if isinstance(provider_actions, dict) else None,
+        )
+        provider_map = {
+            self._machine_text(item.get("provider", "")): dict(item)
+            for item in provider_items
+            if self._machine_text(item.get("provider", ""))
+        }
+        ready_provider_names = sorted(
+            [
+                name
+                for name, item in provider_map.items()
+                if str(item.get("state", "") or "").strip().lower() == "ready"
+            ]
+        )
+        attention_provider_names = sorted(
+            [
+                name
+                for name, item in provider_map.items()
+                if str(item.get("state", "") or "").strip().lower() == "needs_attention"
+            ]
+        )
+        missing_provider_names = sorted(
+            [
+                name
+                for name, item in provider_map.items()
+                if str(item.get("state", "") or "").strip().lower() == "needs_input"
+            ]
+        )
+        recommended_by_task: Dict[str, Dict[str, Any]] = {}
+        for row in recommended_models:
+            if not isinstance(row, dict):
+                continue
+            task_name = self._machine_text(row.get("task", ""))
+            if task_name and task_name not in recommended_by_task:
+                recommended_by_task[task_name] = dict(row)
+        selected_items = [
+            dict(item)
+            for item in (model_selection or {}).get("selected_items", [])
+            if isinstance((model_selection or {}).get("selected_items", []), list) and isinstance(item, dict)
+        ]
+        blocked_items = [
+            dict(item)
+            for item in (model_selection or {}).get("blocked_items", [])
+            if isinstance((model_selection or {}).get("blocked_items", []), list) and isinstance(item, dict)
+        ]
+        selected_model_tasks = {
+            self._machine_text(item.get("task", ""))
+            for item in selected_items
+            if self._machine_text(item.get("task", ""))
+        }
+        blocked_model_tasks = {
+            self._machine_text(item.get("task", ""))
+            for item in blocked_items
+            if self._machine_text(item.get("task", ""))
+        }
+        if not selected_model_tasks:
+            selected_model_tasks = {
+                str(item).split("-", 1)[0].strip().lower()
+                for item in (model_selection or {}).get("selected_item_keys", [])
+                if isinstance((model_selection or {}).get("selected_item_keys", []), list) and str(item).strip()
+            }
+        local_ready_tasks = []
+        for task_name in required_tasks:
+            if int(task_counts.get(task_name, 0) or 0) > 0:
+                local_ready_tasks.append(task_name)
+                continue
+            if any(
+                isinstance(item, dict)
+                and bool(item.get("present", True))
+                and self._machine_text(item.get("task", "")) == task_name
+                for item in inventory_items
+            ):
+                local_ready_tasks.append(task_name)
+        install_ready_tasks = []
+        remote_ready_tasks = []
+        remote_provider_candidates: List[str] = []
+        hf_missing = "huggingface" in missing_provider_names
+        hf_attention = "huggingface" in attention_provider_names
+        for task_name in required_tasks:
+            preference = task_preferences.get(task_name, {}) if isinstance(task_preferences.get(task_name, {}), dict) else {}
+            preference_provider = self._machine_text(preference.get("provider", ""))
+            if preference_provider and preference_provider != "local":
+                remote_provider_candidates.append(preference_provider)
+                if preference_provider in ready_provider_names:
+                    remote_ready_tasks.append(task_name)
+            recommended = recommended_by_task.get(task_name, {})
+            recommended_provider = self._machine_text(recommended.get("provider", ""))
+            if recommended_provider and recommended_provider != "local":
+                remote_provider_candidates.append(recommended_provider)
+                if recommended_provider in ready_provider_names:
+                    remote_ready_tasks.append(task_name)
+            if task_name in selected_model_tasks and not (bool((model_selection or {}).get("needs_huggingface", False)) and hf_missing):
+                install_ready_tasks.append(task_name)
+        local_ready_tasks = self._machine_dedupe(local_ready_tasks, limit=8)
+        install_ready_tasks = self._machine_dedupe(install_ready_tasks, limit=8)
+        remote_ready_tasks = self._machine_dedupe(remote_ready_tasks, limit=8)
+        remote_provider_candidates = self._machine_dedupe(remote_provider_candidates, limit=8)
+        missing_local_tasks = [task_name for task_name in required_tasks if task_name not in local_ready_tasks]
+        has_local = bool(local_ready_tasks)
+        has_assist = bool(install_ready_tasks or remote_ready_tasks)
+        if required_tasks and all(task_name in local_ready_tasks for task_name in required_tasks):
+            execution_mode = "local_ready"
+        elif has_local and has_assist:
+            execution_mode = "hybrid_ready"
+        elif has_assist:
+            execution_mode = "remote_assist"
+        else:
+            execution_mode = "degraded"
+        blocker_codes: List[str] = []
+        if not str(path or "").strip():
+            blocker_codes.append("path_unconfirmed")
+        if bool((model_selection or {}).get("needs_huggingface", False)) and hf_missing:
+            blocker_codes.append("provider_missing_huggingface")
+        if bool((model_selection or {}).get("needs_huggingface", False)) and hf_attention:
+            blocker_codes.append("provider_attention_huggingface")
+        for task_name in required_tasks:
+            if task_name in blocked_model_tasks and task_name not in local_ready_tasks:
+                blocker_codes.append(f"model_setup_blocked_{task_name}")
+            elif (
+                task_name not in local_ready_tasks
+                and task_name not in install_ready_tasks
+                and task_name not in remote_ready_tasks
+            ):
+                blocker_codes.append(f"limited_{task_name}_coverage")
+        blocker_codes = self._machine_dedupe(blocker_codes, limit=8)
+        readiness_status = "ready"
+        if blocker_codes:
+            readiness_status = "degraded"
+        if "path_unconfirmed" in blocker_codes or (
+            bool((model_selection or {}).get("needs_huggingface", False))
+            and hf_missing
+            and not has_local
+            and not has_assist
+        ):
+            readiness_status = "blocked"
+        auto_prepare_allowed = readiness_status != "blocked"
+        reason_codes = [
+            self._machine_text(item)
+            for item in target_row.get("reason_codes", [])
+            if isinstance(target_row.get("reason_codes", []), list) and self._machine_text(item)
+        ]
+        priority_score = 28.0
+        status_name = str(target_row.get("status", "") or "").strip().lower()
+        if status_name == "unknown":
+            priority_score += 18.0
+        elif status_name == "attention":
+            priority_score += 12.0
+        if not bool(target_row.get("memory_present", False)):
+            priority_score += 10.0
+        priority_score += min(24.0, max(0.0, float(target_row.get("usage_score", 0.0) or 0.0) * 1.5))
+        if "new_app" in reason_codes:
+            priority_score += 6.0
+        if "low_coverage" in reason_codes:
+            priority_score += 5.0
+        if execution_mode == "local_ready":
+            priority_score += 14.0
+        elif execution_mode == "hybrid_ready":
+            priority_score += 10.0
+        elif execution_mode == "remote_assist":
+            priority_score += 5.0
+        else:
+            priority_score -= 4.0
+        if readiness_status == "blocked":
+            priority_score -= 18.0
+        if priority_score >= 58.0:
+            priority_band = "high"
+        elif priority_score >= 40.0:
+            priority_band = "medium"
+        else:
+            priority_band = "low"
+        priority_reasons = self._machine_dedupe(
+            [
+                *reason_codes,
+                execution_mode,
+                *(["provider_gap"] if hf_missing or hf_attention else []),
+                *(["memory_gap"] if not bool(target_row.get("memory_present", False)) else []),
+            ],
+            limit=6,
+        )
+        return {
+            "required_tasks": required_tasks,
+            "local_ready_tasks": local_ready_tasks,
+            "install_ready_tasks": install_ready_tasks,
+            "remote_ready_tasks": remote_ready_tasks,
+            "missing_local_tasks": missing_local_tasks,
+            "ready_provider_names": ready_provider_names,
+            "attention_provider_names": attention_provider_names,
+            "missing_provider_names": missing_provider_names,
+            "remote_provider_candidates": remote_provider_candidates,
+            "selected_model_tasks": sorted(selected_model_tasks),
+            "blocked_model_tasks": sorted(blocked_model_tasks),
+            "execution_mode": execution_mode,
+            "readiness_status": readiness_status,
+            "auto_prepare_allowed": bool(auto_prepare_allowed),
+            "blocker_codes": blocker_codes,
+            "blocker_count": len(blocker_codes),
+            "prepare_priority_score": round(priority_score, 3),
+            "prepare_priority_band": priority_band,
+            "prepare_priority_reasons": priority_reasons,
+        }
+
     def _desktop_machine_app_control_prepare_plan(
         self,
         *,
         profile: Dict[str, Any],
         app_learning_plan: Dict[str, Any],
         launch_seed_plan: Dict[str, Any],
+        provider_actions: Optional[Dict[str, Any]] = None,
+        model_selection: Optional[Dict[str, Any]] = None,
         max_apps: int = 4,
     ) -> Dict[str, Any]:
         bounded = max(1, min(int(max_apps or 4), 12))
@@ -9345,17 +9732,8 @@ class DesktopBackendService:
             for item in launch_seed_items
             if self._machine_text(item.get("app_name", ""))
         }
-        ordered_rows = sorted(
-            target_rows,
-            key=lambda row: (
-                0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
-                0 if not bool(launch_seed_by_name.get(self._machine_text(row.get("app_name", "")), {}).get("memory_present", False)) else 1,
-                -float(row.get("usage_score", 0.0) or 0.0),
-                str(row.get("app_name", "") or "").strip().lower(),
-            ),
-        )
-        items: List[Dict[str, Any]] = []
-        for row in ordered_rows:
+        annotated_items: List[Dict[str, Any]] = []
+        for row in target_rows:
             app_name = str(row.get("app_name", "") or "").strip()
             if not app_name:
                 continue
@@ -9370,52 +9748,95 @@ class DesktopBackendService:
                 if recommended_queries
                 else "settings"
             )
-            items.append(
-                {
-                    "app_name": app_name,
-                    "category": str(row.get("category", "") or "").strip().lower(),
-                    "status": str(row.get("status", "") or "").strip().lower() or "unknown",
-                    "usage_score": float(row.get("usage_score", 0.0) or 0.0),
-                    "reason_codes": [
-                        str(item).strip().lower()
-                        for item in row.get("reason_codes", [])
-                        if isinstance(row.get("reason_codes", []), list) and str(item).strip()
-                    ],
-                    "memory_present": bool(seed_row.get("memory_present", False)),
-                    "path": str(seed_row.get("path", "") or "").strip(),
-                    "prepare_query": prepare_query,
-                    "target_container_roles": [
-                        str(item).strip()
-                        for item in row.get("target_container_roles", [])
-                        if isinstance(row.get("target_container_roles", []), list) and str(item).strip()
-                    ],
-                    "preferred_wave_actions": [
-                        str(item).strip()
-                        for item in row.get("preferred_wave_actions", [])
-                        if isinstance(row.get("preferred_wave_actions", []), list) and str(item).strip()
-                    ],
-                    "preferred_traversal_paths": [
-                        str(item).strip()
-                        for item in row.get("preferred_traversal_paths", [])
-                        if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
-                    ],
-                    "recommended_max_surface_waves": int(row.get("recommended_max_surface_waves", 3) or 3),
-                }
+            item_payload = {
+                "app_name": app_name,
+                "category": str(row.get("category", "") or "").strip().lower(),
+                "status": str(row.get("status", "") or "").strip().lower() or "unknown",
+                "usage_score": float(row.get("usage_score", 0.0) or 0.0),
+                "reason_codes": [
+                    str(item).strip().lower()
+                    for item in row.get("reason_codes", [])
+                    if isinstance(row.get("reason_codes", []), list) and str(item).strip()
+                ],
+                "memory_present": bool(seed_row.get("memory_present", False)),
+                "path": str(seed_row.get("path", "") or "").strip(),
+                "prepare_query": prepare_query,
+                "target_container_roles": [
+                    str(item).strip()
+                    for item in row.get("target_container_roles", [])
+                    if isinstance(row.get("target_container_roles", []), list) and str(item).strip()
+                ],
+                "preferred_wave_actions": [
+                    str(item).strip()
+                    for item in row.get("preferred_wave_actions", [])
+                    if isinstance(row.get("preferred_wave_actions", []), list) and str(item).strip()
+                ],
+                "preferred_traversal_paths": [
+                    str(item).strip()
+                    for item in row.get("preferred_traversal_paths", [])
+                    if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
+                ],
+                "recommended_max_surface_waves": int(row.get("recommended_max_surface_waves", 3) or 3),
+            }
+            item_payload.update(
+                self._desktop_machine_prepare_readiness_annotation(
+                    profile=profile,
+                    target_row=item_payload,
+                    path=str(seed_row.get("path", "") or "").strip(),
+                    provider_actions=provider_actions if isinstance(provider_actions, dict) else None,
+                    model_selection=model_selection if isinstance(model_selection, dict) else None,
+                )
             )
-            if len(items) >= bounded:
-                break
+            annotated_items.append(item_payload)
+        execution_rank = {
+            "local_ready": 0,
+            "hybrid_ready": 1,
+            "remote_assist": 2,
+            "degraded": 3,
+        }
+        annotated_items.sort(
+            key=lambda row: (
+                0 if bool(row.get("auto_prepare_allowed", False)) else 1,
+                execution_rank.get(str(row.get("execution_mode", "") or "").strip().lower(), 9),
+                0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
+                0 if not bool(row.get("memory_present", False)) else 1,
+                -float(row.get("prepare_priority_score", 0.0) or 0.0),
+                str(row.get("app_name", "") or "").strip().lower(),
+            ),
+        )
+        items = annotated_items[:bounded]
+        execution_mode_counts: Dict[str, int] = {}
+        top_blocker_codes: Dict[str, int] = {}
+        for item in items:
+            execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
+            execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
+            for blocker_code in item.get("blocker_codes", []):
+                clean_code = str(blocker_code or "").strip().lower()
+                if clean_code:
+                    top_blocker_codes[clean_code] = int(top_blocker_codes.get(clean_code, 0) or 0) + 1
         return {
             "status": "success",
             "count": len(items),
             "items": items,
             "summary": {
+                "runnable_count": len([item for item in items if bool(item.get("auto_prepare_allowed", False))]),
+                "blocked_count": len([item for item in items if str(item.get("readiness_status", "") or "") == "blocked"]),
+                "degraded_count": len([item for item in items if str(item.get("readiness_status", "") or "") == "degraded"]),
                 "memory_present_count": len([item for item in items if bool(item.get("memory_present", False))]),
                 "attention_count": len([item for item in items if str(item.get("status", "") or "") == "attention"]),
                 "unknown_count": len([item for item in items if str(item.get("status", "") or "") == "unknown"]),
+                "execution_mode_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(execution_mode_counts.items(), key=lambda entry: entry[0])
+                },
+                "top_blocker_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(top_blocker_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
+                },
             },
             "defaults": {
                 "auto_prepare_app_controls": True,
-                "prepare_app_limit": len(items),
+                "prepare_app_limit": len([item for item in items if bool(item.get("auto_prepare_allowed", False))]) or len(items),
             },
         }
 
@@ -9522,7 +9943,14 @@ class DesktopBackendService:
             profile=profile,
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+            provider_actions=provider_actions if isinstance(provider_actions, dict) else None,
+            model_selection=model_selection if isinstance(model_selection, dict) else None,
             max_apps=min(4, max_targets),
+        )
+        prepare_plan_summary = (
+            dict(app_control_prepare_plan.get("summary", {}))
+            if isinstance(app_control_prepare_plan.get("summary", {}), dict)
+            else {}
         )
         app_learning_target_count = (
             int(app_learning_plan.get("plan", {}).get("count", 0) or 0)
@@ -9573,7 +10001,12 @@ class DesktopBackendService:
             {
                 "id": "app_control_prepare",
                 "kind": "app_control_prepare",
-                "status": "ready" if int(app_control_prepare_plan.get("count", 0) or 0) > 0 else "skipped",
+                "status": "skipped"
+                if int(app_control_prepare_plan.get("count", 0) or 0) <= 0
+                else "attention"
+                if int(prepare_plan_summary.get("blocked_count", 0) or 0) > 0
+                or int(prepare_plan_summary.get("degraded_count", 0) or 0) > 0
+                else "ready",
                 "title": "Prepare top installed apps for direct control",
                 "auto_runnable": True,
                 "required": False,
@@ -9601,6 +10034,9 @@ class DesktopBackendService:
                     "launch_seed_count": int(launch_seed_plan.get("count", 0) or 0),
                     "app_learning_target_count": app_learning_target_count,
                     "app_control_prepare_count": int(app_control_prepare_plan.get("count", 0) or 0),
+                    "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
+                    "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
+                    "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
                 },
                 "message": "Built a machine onboarding plan with provider validation, local-model setup, launch-memory seeding, app-learning targets, and auto-prepare app-control targets.",
             }
@@ -9818,8 +10254,34 @@ class DesktopBackendService:
                     prepare_app_name = str(item.get("app_name", "") or "").strip()
                     if not prepare_app_name:
                         continue
-                    prepare_items.append(
-                        self.desktop_machine_prepare_app_control(
+                    if not bool(item.get("auto_prepare_allowed", True)):
+                        prepare_items.append(
+                            {
+                                "status": "blocked",
+                                "requested_app": prepare_app_name,
+                                "effective_app_name": prepare_app_name,
+                                "execution_mode": str(item.get("execution_mode", "") or "").strip().lower(),
+                                "readiness_status": str(item.get("readiness_status", "") or "").strip().lower(),
+                                "prepare_priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
+                                "blocker_codes": list(item.get("blocker_codes", []))
+                                if isinstance(item.get("blocker_codes", []), list)
+                                else [],
+                                "required_tasks": list(item.get("required_tasks", []))
+                                if isinstance(item.get("required_tasks", []), list)
+                                else [],
+                                "summary": {
+                                    "execution_mode": str(item.get("execution_mode", "") or "").strip().lower(),
+                                    "readiness_status": str(item.get("readiness_status", "") or "").strip().lower(),
+                                    "blocker_count": int(item.get("blocker_count", 0) or 0),
+                                    "required_tasks": list(item.get("required_tasks", []))
+                                    if isinstance(item.get("required_tasks", []), list)
+                                    else [],
+                                },
+                                "message": "Skipped automatic app-control preparation because provider/model readiness is currently blocked for this target.",
+                            }
+                        )
+                        continue
+                    prepared_payload = self.desktop_machine_prepare_app_control(
                             task=str(task or "").strip().lower(),
                             app_name=prepare_app_name,
                             app_query=prepare_app_name,
@@ -9843,11 +10305,81 @@ class DesktopBackendService:
                             prefer_failure_memory=True,
                             source="machine_onboarding",
                         )
-                    )
+                    if isinstance(prepared_payload, dict):
+                        prepared_payload["execution_mode"] = str(item.get("execution_mode", "") or "").strip().lower()
+                        prepared_payload["readiness_status"] = str(item.get("readiness_status", "") or "").strip().lower()
+                        prepared_payload["prepare_priority_band"] = str(item.get("prepare_priority_band", "") or "").strip().lower()
+                        prepared_payload["blocker_codes"] = (
+                            list(item.get("blocker_codes", []))
+                            if isinstance(item.get("blocker_codes", []), list)
+                            else []
+                        )
+                        prepared_payload["required_tasks"] = (
+                            list(item.get("required_tasks", []))
+                            if isinstance(item.get("required_tasks", []), list)
+                            else []
+                        )
+                        prepared_summary = (
+                            dict(prepared_payload.get("summary", {}))
+                            if isinstance(prepared_payload.get("summary", {}), dict)
+                            else {}
+                        )
+                        prepared_summary["execution_mode"] = str(item.get("execution_mode", "") or "").strip().lower()
+                        prepared_summary["readiness_status"] = str(item.get("readiness_status", "") or "").strip().lower()
+                        prepared_summary["prepare_priority_band"] = str(item.get("prepare_priority_band", "") or "").strip().lower()
+                        prepared_summary["blocker_count"] = int(item.get("blocker_count", 0) or 0)
+                        prepared_summary["required_tasks"] = (
+                            list(item.get("required_tasks", []))
+                            if isinstance(item.get("required_tasks", []), list)
+                            else []
+                        )
+                        prepared_payload["summary"] = prepared_summary
+                    prepare_items.append(prepared_payload)
+                prepare_status_counts: Dict[str, int] = {}
+                prepare_execution_mode_counts: Dict[str, int] = {}
+                blocked_prepare_count = 0
+                degraded_prepare_count = 0
+                prepared_success_count = 0
+                for prepared in prepare_items:
+                    if not isinstance(prepared, dict):
+                        continue
+                    status_name = str(prepared.get("status", "") or "unknown").strip().lower() or "unknown"
+                    prepare_status_counts[status_name] = int(prepare_status_counts.get(status_name, 0) or 0) + 1
+                    summary = prepared.get("summary", {}) if isinstance(prepared.get("summary", {}), dict) else {}
+                    execution_mode = str(
+                        prepared.get("execution_mode", "")
+                        or summary.get("execution_mode", "")
+                        or "unknown"
+                    ).strip().lower() or "unknown"
+                    prepare_execution_mode_counts[execution_mode] = int(prepare_execution_mode_counts.get(execution_mode, 0) or 0) + 1
+                    readiness_status = str(
+                        prepared.get("readiness_status", "")
+                        or summary.get("readiness_status", "")
+                        or "ready"
+                    ).strip().lower() or "ready"
+                    if readiness_status == "blocked":
+                        blocked_prepare_count += 1
+                    elif readiness_status == "degraded":
+                        degraded_prepare_count += 1
+                    if status_name in {"success", "partial"}:
+                        prepared_success_count += 1
                 app_control_prepare_result = {
                     "status": "success" if prepare_items else "skipped",
                     "count": len(prepare_items),
                     "items": prepare_items,
+                    "summary": {
+                        "prepared_app_count": prepared_success_count,
+                        "blocked_count": blocked_prepare_count,
+                        "degraded_count": degraded_prepare_count,
+                        "status_counts": {
+                            str(key): int(value)
+                            for key, value in sorted(prepare_status_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "execution_mode_counts": {
+                            str(key): int(value)
+                            for key, value in sorted(prepare_execution_mode_counts.items(), key=lambda entry: entry[0])
+                        },
+                    },
                 }
         else:
             provider_updates = {
@@ -9885,6 +10417,17 @@ class DesktopBackendService:
                 "status": "planned" if auto_prepare_app_controls and prepare_plan_items else "skipped",
                 "count": len(prepare_plan_items) if auto_prepare_app_controls else 0,
                 "items": prepare_plan_items,
+                "summary": {
+                    "prepared_app_count": len(
+                        [item for item in prepare_plan_items if bool(item.get("auto_prepare_allowed", True))]
+                    ) if auto_prepare_app_controls else 0,
+                    "blocked_count": len(
+                        [item for item in prepare_plan_items if not bool(item.get("auto_prepare_allowed", True))]
+                    ) if auto_prepare_app_controls else 0,
+                    "degraded_count": len(
+                        [item for item in prepare_plan_items if str(item.get("readiness_status", "") or "") == "degraded"]
+                    ) if auto_prepare_app_controls else 0,
+                },
             }
 
         final_profile = self.desktop_machine_profile(
@@ -9934,7 +10477,21 @@ class DesktopBackendService:
                 "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
                 "selected_model_count": len(effective_item_keys),
                 "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
-                "prepared_app_count": int(app_control_prepare_result.get("count", 0) or 0),
+                "prepared_app_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("prepared_app_count", app_control_prepare_result.get("count", 0))
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else app_control_prepare_result.get("count", 0)
+                ),
+                "prepared_blocked_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("blocked_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_degraded_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("degraded_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
             },
             "message": (
                 "Prepared a machine onboarding run."

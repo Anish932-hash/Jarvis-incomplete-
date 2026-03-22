@@ -46,6 +46,8 @@ class DesktopOnboardingManager:
         status_counts: Dict[str, int] = {}
         source_counts: Dict[str, int] = {}
         prepared_app_total = 0
+        prepared_blocked_total = 0
+        prepared_degraded_total = 0
         provider_update_total = 0
         launch_seed_total = 0
         for item in items:
@@ -55,6 +57,8 @@ class DesktopOnboardingManager:
             source_counts[source_name] = int(source_counts.get(source_name, 0) or 0) + 1
             summary = item.get("summary", {}) if isinstance(item.get("summary", {}), dict) else {}
             prepared_app_total += int(summary.get("prepared_app_count", 0) or 0)
+            prepared_blocked_total += int(summary.get("prepared_blocked_count", 0) or 0)
+            prepared_degraded_total += int(summary.get("prepared_degraded_count", 0) or 0)
             provider_update_total += int(summary.get("provider_update_count", 0) or 0)
             launch_seed_total += int(summary.get("launch_seed_count", 0) or 0)
         return {
@@ -78,6 +82,8 @@ class DesktopOnboardingManager:
                     for key, value in sorted(source_counts.items(), key=lambda entry: entry[0])
                 },
                 "prepared_app_total": prepared_app_total,
+                "prepared_blocked_total": prepared_blocked_total,
+                "prepared_degraded_total": prepared_degraded_total,
                 "provider_update_total": provider_update_total,
                 "launch_seed_total": launch_seed_total,
             },

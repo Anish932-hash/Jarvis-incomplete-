@@ -13559,13 +13559,30 @@ class FakeDesktopService:
                         "app_name": "Google Chrome",
                         "prepare_query": "settings",
                         "recommended_max_surface_waves": 4,
+                        "execution_mode": "hybrid_ready",
+                        "readiness_status": "ready",
+                        "auto_prepare_allowed": True,
+                        "prepare_priority_band": "high",
+                        "blocker_codes": [],
                     },
                     {
                         "app_name": "Visual Studio Code",
                         "prepare_query": "command palette",
                         "recommended_max_surface_waves": 5,
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "auto_prepare_allowed": True,
+                        "prepare_priority_band": "medium",
+                        "blocker_codes": ["provider_missing_huggingface"],
                     },
                 ],
+                "summary": {
+                    "runnable_count": 2,
+                    "blocked_count": 0,
+                    "degraded_count": 1,
+                    "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1},
+                    "top_blocker_codes": {"provider_missing_huggingface": 1},
+                },
                 "defaults": {
                     "auto_prepare_app_controls": True,
                     "prepare_app_limit": 2,
@@ -13580,7 +13597,15 @@ class FakeDesktopService:
                 max_targets=max_targets,
             ),
             "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
-            "summary": {"selected_model_count": 1, "launch_seed_count": 2, "app_learning_target_count": 2, "app_control_prepare_count": 2},
+            "summary": {
+                "selected_model_count": 1,
+                "launch_seed_count": 2,
+                "app_learning_target_count": 2,
+                "app_control_prepare_count": 2,
+                "app_control_prepare_runnable_count": 2,
+                "app_control_prepare_blocked_count": 0,
+                "app_control_prepare_degraded_count": 1,
+            },
             "message": "Built onboarding plan.",
         }
 
@@ -13618,6 +13643,9 @@ class FakeDesktopService:
             "summary": {
                 "status_counts": {"success": 1},
                 "source_counts": {"machine_onboarding": 1},
+                "prepared_app_total": 2,
+                "prepared_blocked_total": 0,
+                "prepared_degraded_total": 1,
             },
         }
 
@@ -13711,20 +13739,39 @@ class FakeDesktopService:
                     {
                         "status": "success",
                         "effective_app_name": "Google Chrome",
-                        "summary": {"wave_attempt_count": 4, "discovered_control_count": 6},
+                        "execution_mode": "hybrid_ready",
+                        "readiness_status": "ready",
+                        "summary": {"wave_attempt_count": 4, "discovered_control_count": 6, "execution_mode": "hybrid_ready", "readiness_status": "ready"},
                     },
                     {
                         "status": "success",
                         "effective_app_name": "Visual Studio Code",
-                        "summary": {"wave_attempt_count": 5, "discovered_control_count": 7},
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "blocker_codes": ["provider_missing_huggingface"],
+                        "summary": {
+                            "wave_attempt_count": 5,
+                            "discovered_control_count": 7,
+                            "execution_mode": "degraded",
+                            "readiness_status": "degraded",
+                            "blocker_count": 1,
+                        },
                     },
                 ] if auto_prepare_app_controls else [],
+                "summary": {
+                    "prepared_app_count": 2 if auto_prepare_app_controls else 0,
+                    "blocked_count": 0,
+                    "degraded_count": 1 if auto_prepare_app_controls else 0,
+                    "execution_mode_counts": {"degraded": 1, "hybrid_ready": 1} if auto_prepare_app_controls else {},
+                },
             },
             "final_profile": {"status": "success", "machine_id": "machine-demo-01"},
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
                 "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])),
                 "prepared_app_count": 2 if auto_prepare_app_controls else 0,
+                "prepared_blocked_count": 0,
+                "prepared_degraded_count": 1 if auto_prepare_app_controls else 0,
             },
             "history": self.desktop_machine_onboarding_history(limit=8),
             "message": "Completed onboarding run.",
@@ -13969,6 +14016,11 @@ class FakeDesktopService:
                 "preferred_traversal_paths": ["menu", "dialog"],
                 "recommended_queries": [query or "settings"],
                 "recommended_max_surface_waves": max_surface_waves or 4,
+                "execution_mode": "hybrid_ready",
+                "readiness_status": "ready",
+                "prepare_priority_band": "high",
+                "required_tasks": ["reasoning", "vision"],
+                "blocker_codes": [],
             },
             "resolved_target": {
                 "status": "success",
@@ -14001,6 +14053,10 @@ class FakeDesktopService:
                 "app_name": effective_app_name,
                 "launch_method": "already_running_attach",
                 "launch_resolution": "launch_memory",
+                "execution_mode": "hybrid_ready",
+                "readiness_status": "ready",
+                "prepare_priority_band": "high",
+                "required_tasks": ["reasoning", "vision"],
                 "wave_attempt_count": 4,
                 "discovered_control_count": 6,
                 "probe_success_count": 2,
@@ -23381,6 +23437,7 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["status"] == "success"
     assert prepared["effective_app_name"] == "chrome"
     assert prepared["summary"]["wave_attempt_count"] == 4
+    assert prepared["summary"]["execution_mode"] == "hybrid_ready"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
 
@@ -23428,6 +23485,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["provider_actions"]["summary"]["missing_count"] == 1
     assert plan["model_setup"]["selection"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
     assert plan["app_control_prepare_plan"]["count"] == 2
+    assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
+    assert plan["summary"]["app_control_prepare_degraded_count"] == 1
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
 
     status, launched = request_json(
@@ -23455,6 +23514,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["model_install"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
     assert launched["app_control_prepare"]["count"] == 2
     assert launched["summary"]["prepared_app_count"] == 2
+    assert launched["summary"]["prepared_degraded_count"] == 1
+    assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
     assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
 
@@ -23465,6 +23526,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert status == 200
     assert history["status"] == "success"
     assert history["latest_run"]["task"] == "reasoning"
+    assert history["summary"]["prepared_degraded_total"] == 1
     assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 
 
