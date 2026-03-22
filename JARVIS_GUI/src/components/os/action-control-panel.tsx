@@ -2512,6 +2512,21 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineOnboardingPlan.summary),
     [desktopMachineOnboardingPlan]
   );
+  const desktopMachineAppControlPreparePlan = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.app_control_prepare_plan),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineAppControlPrepareDefaults = useMemo(
+    () => asObjectRecord(desktopMachineAppControlPreparePlan.defaults),
+    [desktopMachineAppControlPreparePlan]
+  );
+  const desktopMachineAppControlPrepareRows = useMemo(
+    () =>
+      Array.isArray(desktopMachineAppControlPreparePlan.items)
+        ? desktopMachineAppControlPreparePlan.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineAppControlPreparePlan]
+  );
   const desktopMachineProviderActionSummary = useMemo(
     () => asObjectRecord(asObjectRecord(desktopMachineOnboardingPlan.provider_actions).summary),
     [desktopMachineOnboardingPlan]
@@ -13922,7 +13937,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           const summary = asObjectRecord(payload.summary);
           toast({
             title: 'Onboarding Plan Ready',
-            description: `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ${Number(summary.selected_model_count ?? 0)} model item(s), and ${Number(summary.app_learning_target_count ?? 0)} learning target(s) are queued.`,
+            description: `${Number(summary.provider_missing_count ?? 0)} provider gap(s), ${Number(summary.selected_model_count ?? 0)} model item(s), ${Number(summary.app_learning_target_count ?? 0)} learning target(s), and ${Number(summary.app_control_prepare_count ?? 0)} app-control prepare target(s) are queued.`,
           });
         }
         return payload;
@@ -14296,6 +14311,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         auto_launch_model_setup: true,
         auto_create_app_learning_campaign: true,
         auto_run_app_learning_campaign: true,
+        auto_prepare_app_controls: true,
+        prepare_app_limit: 3,
         campaign_label: desktopMachineCampaignLabel.trim() || undefined,
         source: 'operator_panel',
       });
@@ -14310,6 +14327,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopMachineOnboardingHistoryState(payload.history as DesktopMachineOnboardingHistoryResponse);
       } else {
         void refreshDesktopMachineOnboardingHistory({ quiet: true });
+      }
+      const appControlPreparePayload = asObjectRecord(payload.app_control_prepare);
+      if (Array.isArray(appControlPreparePayload.items)) {
+        const firstPrepared = appControlPreparePayload.items.find((item) => isObjectRecord(item));
+        if (firstPrepared && isObjectRecord(firstPrepared)) {
+          setDesktopMachinePrepareState(firstPrepared as DesktopMachineAppControlPrepareResponse);
+        }
       }
       if (isObjectRecord(payload.app_learning_campaign)) {
         void refreshDesktopMachineAppLearningPlan({ quiet: true });
@@ -14335,7 +14359,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         title: 'Machine Onboarding Started',
         description:
           String(payload.message ?? '').trim() ||
-          'JARVIS started provider validation, model setup launch, launch-memory seeding, and app-learning kickoff.',
+          'JARVIS started provider validation, model setup launch, launch-memory seeding, app-learning kickoff, and automatic app-control preparation.',
       });
       return payload;
     } catch (error) {
@@ -20676,6 +20700,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}campaign max apps:{Number(desktopMachineAppLearningCampaignDefaults.max_apps ?? 0)}
                                           {' • '}waves:{Number(desktopMachineAppLearningCampaignDefaults.max_surface_waves ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          prepare targets:{Number(desktopMachineOnboardingSummary.app_control_prepare_count ?? 0)}
+                                          {' • '}default prepare limit:{Number(desktopMachineAppControlPrepareDefaults.prepare_app_limit ?? 0)}
+                                        </p>
+                                        {desktopMachineAppControlPrepareRows.length > 0 ? (
+                                          <p className="mt-1">
+                                            prepare apps:{' '}
+                                            {desktopMachineAppControlPrepareRows
+                                              .slice(0, 3)
+                                              .map((item) => String(item.app_name ?? 'app'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineOnboardingSteps.length > 0 ? (
                                           <p className="mt-1">
                                             steps:{' '}
@@ -20789,6 +20826,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}models:{Number(asObjectRecord(item.summary).selected_model_count ?? 0)}
                                                 {' • '}launch seeds:{Number(asObjectRecord(item.summary).launch_seed_count ?? 0)}
                                                 {' • '}targets:{Number(asObjectRecord(item.summary).app_learning_target_count ?? 0)}
+                                                {' • '}prepared:{Number(asObjectRecord(item.summary).prepared_app_count ?? 0)}
                                               </p>
                                             </div>
                                           ))}

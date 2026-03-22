@@ -10,7 +10,7 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
         {
             "status": "success",
             "task": "reasoning",
-            "summary": {"provider_update_count": 1},
+            "summary": {"provider_update_count": 1, "launch_seed_count": 2, "prepared_app_count": 3},
         },
         source="machine_onboarding",
     )
@@ -28,3 +28,6 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["items"][0]["task"] == "reasoning"
     assert history["summary"]["status_counts"]["success"] == 1
     assert history["summary"]["source_counts"]["machine_onboarding"] == 1
+    assert history["summary"]["provider_update_total"] == 1
+    assert history["summary"]["launch_seed_total"] == 2
+    assert history["summary"]["prepared_app_total"] == 3

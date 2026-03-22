@@ -45,11 +45,18 @@ class DesktopOnboardingManager:
         limited = items[:bounded]
         status_counts: Dict[str, int] = {}
         source_counts: Dict[str, int] = {}
+        prepared_app_total = 0
+        provider_update_total = 0
+        launch_seed_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
             status_counts[status_name] = int(status_counts.get(status_name, 0) or 0) + 1
             source_counts[source_name] = int(source_counts.get(source_name, 0) or 0) + 1
+            summary = item.get("summary", {}) if isinstance(item.get("summary", {}), dict) else {}
+            prepared_app_total += int(summary.get("prepared_app_count", 0) or 0)
+            provider_update_total += int(summary.get("provider_update_count", 0) or 0)
+            launch_seed_total += int(summary.get("launch_seed_count", 0) or 0)
         return {
             "status": "success",
             "count": len(limited),
@@ -70,6 +77,9 @@ class DesktopOnboardingManager:
                     str(key): int(value)
                     for key, value in sorted(source_counts.items(), key=lambda entry: entry[0])
                 },
+                "prepared_app_total": prepared_app_total,
+                "provider_update_total": provider_update_total,
+                "launch_seed_total": launch_seed_total,
             },
         }
 

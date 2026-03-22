@@ -9320,6 +9320,105 @@ class DesktopBackendService:
             },
         }
 
+    def _desktop_machine_app_control_prepare_plan(
+        self,
+        *,
+        profile: Dict[str, Any],
+        app_learning_plan: Dict[str, Any],
+        launch_seed_plan: Dict[str, Any],
+        max_apps: int = 4,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(max_apps or 4), 12))
+        learning_plan = app_learning_plan.get("plan", {}) if isinstance(app_learning_plan.get("plan", {}), dict) else {}
+        target_rows = [
+            dict(item)
+            for item in learning_plan.get("targets", [])
+            if isinstance(learning_plan.get("targets", []), list) and isinstance(item, dict)
+        ]
+        launch_seed_items = [
+            dict(item)
+            for item in launch_seed_plan.get("items", [])
+            if isinstance(launch_seed_plan.get("items", []), list) and isinstance(item, dict)
+        ]
+        launch_seed_by_name = {
+            self._machine_text(item.get("app_name", "")): dict(item)
+            for item in launch_seed_items
+            if self._machine_text(item.get("app_name", ""))
+        }
+        ordered_rows = sorted(
+            target_rows,
+            key=lambda row: (
+                0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
+                0 if not bool(launch_seed_by_name.get(self._machine_text(row.get("app_name", "")), {}).get("memory_present", False)) else 1,
+                -float(row.get("usage_score", 0.0) or 0.0),
+                str(row.get("app_name", "") or "").strip().lower(),
+            ),
+        )
+        items: List[Dict[str, Any]] = []
+        for row in ordered_rows:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            seed_row = launch_seed_by_name.get(self._machine_text(app_name), {})
+            recommended_queries = [
+                str(item).strip()
+                for item in row.get("recommended_queries", [])
+                if isinstance(row.get("recommended_queries", []), list) and str(item).strip()
+            ]
+            prepare_query = (
+                recommended_queries[0]
+                if recommended_queries
+                else "settings"
+            )
+            items.append(
+                {
+                    "app_name": app_name,
+                    "category": str(row.get("category", "") or "").strip().lower(),
+                    "status": str(row.get("status", "") or "").strip().lower() or "unknown",
+                    "usage_score": float(row.get("usage_score", 0.0) or 0.0),
+                    "reason_codes": [
+                        str(item).strip().lower()
+                        for item in row.get("reason_codes", [])
+                        if isinstance(row.get("reason_codes", []), list) and str(item).strip()
+                    ],
+                    "memory_present": bool(seed_row.get("memory_present", False)),
+                    "path": str(seed_row.get("path", "") or "").strip(),
+                    "prepare_query": prepare_query,
+                    "target_container_roles": [
+                        str(item).strip()
+                        for item in row.get("target_container_roles", [])
+                        if isinstance(row.get("target_container_roles", []), list) and str(item).strip()
+                    ],
+                    "preferred_wave_actions": [
+                        str(item).strip()
+                        for item in row.get("preferred_wave_actions", [])
+                        if isinstance(row.get("preferred_wave_actions", []), list) and str(item).strip()
+                    ],
+                    "preferred_traversal_paths": [
+                        str(item).strip()
+                        for item in row.get("preferred_traversal_paths", [])
+                        if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
+                    ],
+                    "recommended_max_surface_waves": int(row.get("recommended_max_surface_waves", 3) or 3),
+                }
+            )
+            if len(items) >= bounded:
+                break
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+            "summary": {
+                "memory_present_count": len([item for item in items if bool(item.get("memory_present", False))]),
+                "attention_count": len([item for item in items if str(item.get("status", "") or "") == "attention"]),
+                "unknown_count": len([item for item in items if str(item.get("status", "") or "") == "unknown"]),
+            },
+            "defaults": {
+                "auto_prepare_app_controls": True,
+                "prepare_app_limit": len(items),
+            },
+        }
+
     @staticmethod
     def _normalize_onboarding_provider_inputs(provider_credentials: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         rows: Dict[str, Dict[str, Any]] = {}
@@ -9419,6 +9518,12 @@ class DesktopBackendService:
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             max_apps=min(8, max_targets),
         )
+        app_control_prepare_plan = self._desktop_machine_app_control_prepare_plan(
+            profile=profile,
+            app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+            launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+            max_apps=min(4, max_targets),
+        )
         app_learning_target_count = (
             int(app_learning_plan.get("plan", {}).get("count", 0) or 0)
             if isinstance(app_learning_plan.get("plan", {}), dict)
@@ -9465,6 +9570,15 @@ class DesktopBackendService:
                 "required": False,
                 "count": app_learning_target_count,
             },
+            {
+                "id": "app_control_prepare",
+                "kind": "app_control_prepare",
+                "status": "ready" if int(app_control_prepare_plan.get("count", 0) or 0) > 0 else "skipped",
+                "title": "Prepare top installed apps for direct control",
+                "auto_runnable": True,
+                "required": False,
+                "count": int(app_control_prepare_plan.get("count", 0) or 0),
+            },
         ]
         return _to_jsonable(
             {
@@ -9477,6 +9591,7 @@ class DesktopBackendService:
                     "preflight": preflight,
                 },
                 "launch_seed_plan": launch_seed_plan,
+                "app_control_prepare_plan": app_control_prepare_plan,
                 "app_learning_plan": app_learning_plan,
                 "steps": steps,
                 "summary": {
@@ -9485,8 +9600,9 @@ class DesktopBackendService:
                     "selected_model_count": len(selected_item_keys),
                     "launch_seed_count": int(launch_seed_plan.get("count", 0) or 0),
                     "app_learning_target_count": app_learning_target_count,
+                    "app_control_prepare_count": int(app_control_prepare_plan.get("count", 0) or 0),
                 },
-                "message": "Built a machine onboarding plan with provider validation, local-model setup, launch-memory seeding, and app-learning campaign targets.",
+                "message": "Built a machine onboarding plan with provider validation, local-model setup, launch-memory seeding, app-learning targets, and auto-prepare app-control targets.",
             }
         )
 
@@ -9535,6 +9651,8 @@ class DesktopBackendService:
         selected_model_item_keys: Optional[List[str]] = None,
         auto_create_app_learning_campaign: bool = True,
         auto_run_app_learning_campaign: bool = True,
+        auto_prepare_app_controls: bool = True,
+        prepare_app_limit: int = 3,
         campaign_label: str = "",
         dry_run: bool = False,
         source: str = "machine_onboarding",
@@ -9573,6 +9691,16 @@ class DesktopBackendService:
             for item in launch_seed_plan.get("items", [])
             if isinstance(launch_seed_plan.get("items", []), list) and isinstance(item, dict)
         ][: max(1, min(int(seed_launch_limit or 6), 24))]
+        app_control_prepare_plan = (
+            plan.get("app_control_prepare_plan", {})
+            if isinstance(plan.get("app_control_prepare_plan", {}), dict)
+            else {}
+        )
+        prepare_plan_items = [
+            dict(item)
+            for item in app_control_prepare_plan.get("items", [])
+            if isinstance(app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
+        ][: max(1, min(int(prepare_app_limit or 3), 12))]
 
         task_preference_payload: Dict[str, Any] = {}
         if isinstance(task_preferences, dict) and task_preferences:
@@ -9606,6 +9734,7 @@ class DesktopBackendService:
         launch_seed_results: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
+        app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
 
         if not bool(dry_run):
             if task_preference_payload:
@@ -9683,6 +9812,43 @@ class DesktopBackendService:
                     auto_run=bool(auto_run_app_learning_campaign),
                     source="machine_onboarding",
                 )
+            if bool(auto_prepare_app_controls) and prepare_plan_items:
+                prepare_items = []
+                for item in prepare_plan_items:
+                    prepare_app_name = str(item.get("app_name", "") or "").strip()
+                    if not prepare_app_name:
+                        continue
+                    prepare_items.append(
+                        self.desktop_machine_prepare_app_control(
+                            task=str(task or "").strip().lower(),
+                            app_name=prepare_app_name,
+                            app_query=prepare_app_name,
+                            query=str(item.get("prepare_query", "") or "").strip(),
+                            app_category=str(item.get("category", "") or app_category or "").strip(),
+                            app_limit=app_limit,
+                            model_limit=model_limit,
+                            refresh_apps=False,
+                            ensure_app_launch=True,
+                            survey_limit=28,
+                            include_observation=True,
+                            include_elements=True,
+                            include_workflow_probes=True,
+                            include_exploration=True,
+                            probe_controls=True,
+                            max_probe_controls=4,
+                            follow_surface_waves=True,
+                            max_surface_waves=int(item.get("recommended_max_surface_waves", 4) or 4),
+                            allow_risky_probes=False,
+                            revalidate_known_controls=True,
+                            prefer_failure_memory=True,
+                            source="machine_onboarding",
+                        )
+                    )
+                app_control_prepare_result = {
+                    "status": "success" if prepare_items else "skipped",
+                    "count": len(prepare_items),
+                    "items": prepare_items,
+                }
         else:
             provider_updates = {
                 "status": "planned",
@@ -9715,6 +9881,11 @@ class DesktopBackendService:
                 "status": "planned" if auto_create_app_learning_campaign else "skipped",
                 "auto_run": bool(auto_run_app_learning_campaign),
             }
+            app_control_prepare_result = {
+                "status": "planned" if auto_prepare_app_controls and prepare_plan_items else "skipped",
+                "count": len(prepare_plan_items) if auto_prepare_app_controls else 0,
+                "items": prepare_plan_items,
+            }
 
         final_profile = self.desktop_machine_profile(
             task=str(task or "").strip().lower(),
@@ -9735,6 +9906,7 @@ class DesktopBackendService:
             str(launch_seed_results.get("status", "") or "").strip().lower(),
             str(model_install_result.get("status", "") or "").strip().lower(),
             str(app_learning_result.get("status", "") or "").strip().lower(),
+            str(app_control_prepare_result.get("status", "") or "").strip().lower(),
         ]
         overall_status = "success"
         if any(status_name == "error" for status_name in section_statuses):
@@ -9754,6 +9926,7 @@ class DesktopBackendService:
             "launch_seed": launch_seed_results,
             "model_install": model_install_result,
             "app_learning_campaign": app_learning_result,
+            "app_control_prepare": app_control_prepare_result,
             "final_profile": final_profile,
             "summary": {
                 "provider_update_count": int(provider_updates.get("count", 0) or 0),
@@ -9761,11 +9934,12 @@ class DesktopBackendService:
                 "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
                 "selected_model_count": len(effective_item_keys),
                 "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
+                "prepared_app_count": int(app_control_prepare_result.get("count", 0) or 0),
             },
             "message": (
                 "Prepared a machine onboarding run."
                 if bool(dry_run)
-                else "Completed a machine onboarding run with provider validation, model setup orchestration, launcher seeding, and app-learning campaign setup."
+                else "Completed a machine onboarding run with provider validation, model setup orchestration, launcher seeding, app-learning campaign setup, and automatic app-control preparation."
             ),
         }
         recorded = manager.record_run(run_payload, source=source) if manager is not None else dict(run_payload)
@@ -47637,6 +47811,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     ),
                     auto_create_app_learning_campaign=self._parse_bool(body.get("auto_create_app_learning_campaign", True), default=True),
                     auto_run_app_learning_campaign=self._parse_bool(body.get("auto_run_app_learning_campaign", True), default=True),
+                    auto_prepare_app_controls=self._parse_bool(body.get("auto_prepare_app_controls", True), default=True),
+                    prepare_app_limit=self._parse_int(body.get("prepare_app_limit", 3), 3, minimum=1, maximum=12),
                     campaign_label=str(body.get("campaign_label", "") or "").strip(),
                     dry_run=self._parse_bool(body.get("dry_run", False), default=False),
                     source=str(body.get("source", "machine_onboarding") or "machine_onboarding").strip(),

@@ -13551,6 +13551,26 @@ class FakeDesktopService:
                     {"app_name": "Visual Studio Code", "memory_present": False},
                 ],
             },
+            "app_control_prepare_plan": {
+                "status": "success",
+                "count": 2,
+                "items": [
+                    {
+                        "app_name": "Google Chrome",
+                        "prepare_query": "settings",
+                        "recommended_max_surface_waves": 4,
+                    },
+                    {
+                        "app_name": "Visual Studio Code",
+                        "prepare_query": "command palette",
+                        "recommended_max_surface_waves": 5,
+                    },
+                ],
+                "defaults": {
+                    "auto_prepare_app_controls": True,
+                    "prepare_app_limit": 2,
+                },
+            },
             "app_learning_plan": self.desktop_machine_app_learning_plan(
                 task=task,
                 app_query=app_query,
@@ -13560,7 +13580,7 @@ class FakeDesktopService:
                 max_targets=max_targets,
             ),
             "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
-            "summary": {"selected_model_count": 1, "launch_seed_count": 2, "app_learning_target_count": 2},
+            "summary": {"selected_model_count": 1, "launch_seed_count": 2, "app_learning_target_count": 2, "app_control_prepare_count": 2},
             "message": "Built onboarding plan.",
         }
 
@@ -13625,6 +13645,8 @@ class FakeDesktopService:
         selected_model_item_keys: list[str] | None = None,
         auto_create_app_learning_campaign: bool = True,
         auto_run_app_learning_campaign: bool = True,
+        auto_prepare_app_controls: bool = True,
+        prepare_app_limit: int = 3,
         campaign_label: str = "",
         dry_run: bool = False,
         source: str = "machine_onboarding",
@@ -13651,6 +13673,8 @@ class FakeDesktopService:
             "selected_model_item_keys": list(selected_model_item_keys or []),
             "auto_create_app_learning_campaign": bool(auto_create_app_learning_campaign),
             "auto_run_app_learning_campaign": bool(auto_run_app_learning_campaign),
+            "auto_prepare_app_controls": bool(auto_prepare_app_controls),
+            "prepare_app_limit": int(prepare_app_limit),
             "campaign_label": campaign_label,
             "dry_run": bool(dry_run),
             "source": source,
@@ -13680,8 +13704,28 @@ class FakeDesktopService:
             "launch_seed": {"status": "success", "count": 2},
             "model_install": {"status": "success", "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])},
             "app_learning_campaign": {"status": "success", "run": {"status": "success"} if auto_run_app_learning_campaign else {}},
+            "app_control_prepare": {
+                "status": "success" if auto_prepare_app_controls else "skipped",
+                "count": 2 if auto_prepare_app_controls else 0,
+                "items": [
+                    {
+                        "status": "success",
+                        "effective_app_name": "Google Chrome",
+                        "summary": {"wave_attempt_count": 4, "discovered_control_count": 6},
+                    },
+                    {
+                        "status": "success",
+                        "effective_app_name": "Visual Studio Code",
+                        "summary": {"wave_attempt_count": 5, "discovered_control_count": 7},
+                    },
+                ] if auto_prepare_app_controls else [],
+            },
             "final_profile": {"status": "success", "machine_id": "machine-demo-01"},
-            "summary": {"provider_update_count": len(dict(provider_credentials or {})), "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]))},
+            "summary": {
+                "provider_update_count": len(dict(provider_credentials or {})),
+                "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])),
+                "prepared_app_count": 2 if auto_prepare_app_controls else 0,
+            },
             "history": self.desktop_machine_onboarding_history(limit=8),
             "message": "Completed onboarding run.",
         }
@@ -23383,6 +23427,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["status"] == "success"
     assert plan["provider_actions"]["summary"]["missing_count"] == 1
     assert plan["model_setup"]["selection"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert plan["app_control_prepare_plan"]["count"] == 2
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
 
     status, launched = request_json(
@@ -23408,6 +23453,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["status"] == "success"
     assert launched["provider_updates"]["count"] == 1
     assert launched["model_install"]["selected_item_keys"][0] == "reasoning-qwen3.5-9b"
+    assert launched["app_control_prepare"]["count"] == 2
+    assert launched["summary"]["prepared_app_count"] == 2
+    assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
     assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
 
     status, history = request_json(
