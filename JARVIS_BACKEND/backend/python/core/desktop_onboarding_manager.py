@@ -101,6 +101,14 @@ class DesktopOnboardingManager:
         prepared_remediation_retry_total = 0
         prepared_remediation_provider_blocked_total = 0
         prepared_remediation_setup_followup_total = 0
+        multimodal_memory_app_total = 0
+        multimodal_ocr_memory_app_total = 0
+        multimodal_local_runtime_ready_app_total = 0
+        multimodal_api_assist_app_total = 0
+        multimodal_native_stabilization_app_total = 0
+        multimodal_weird_app_total = 0
+        multimodal_revalidation_target_total = 0
+        multimodal_overdue_revalidation_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
@@ -156,6 +164,22 @@ class DesktopOnboardingManager:
             )
             prepared_remediation_setup_followup_total += int(
                 summary.get("prepared_remediation_setup_followup_count", 0) or 0
+            )
+            multimodal_memory_app_total += int(summary.get("multimodal_memory_app_count", 0) or 0)
+            multimodal_ocr_memory_app_total += int(summary.get("multimodal_ocr_memory_app_count", 0) or 0)
+            multimodal_local_runtime_ready_app_total += int(
+                summary.get("multimodal_local_runtime_ready_app_count", 0) or 0
+            )
+            multimodal_api_assist_app_total += int(summary.get("multimodal_api_assist_app_count", 0) or 0)
+            multimodal_native_stabilization_app_total += int(
+                summary.get("multimodal_native_stabilization_app_count", 0) or 0
+            )
+            multimodal_weird_app_total += int(summary.get("multimodal_weird_app_count", 0) or 0)
+            multimodal_revalidation_target_total += int(
+                summary.get("multimodal_revalidation_target_count", 0) or 0
+            )
+            multimodal_overdue_revalidation_total += int(
+                summary.get("multimodal_overdue_revalidation_count", 0) or 0
             )
             route_remediation_total += int(summary.get("route_remediation_count", 0) or 0)
             route_remediation_blocked_total += int(summary.get("route_remediation_blocked_count", 0) or 0)
@@ -241,6 +265,14 @@ class DesktopOnboardingManager:
                 "prepared_remediation_retry_total": prepared_remediation_retry_total,
                 "prepared_remediation_provider_blocked_total": prepared_remediation_provider_blocked_total,
                 "prepared_remediation_setup_followup_total": prepared_remediation_setup_followup_total,
+                "multimodal_memory_app_total": multimodal_memory_app_total,
+                "multimodal_ocr_memory_app_total": multimodal_ocr_memory_app_total,
+                "multimodal_local_runtime_ready_app_total": multimodal_local_runtime_ready_app_total,
+                "multimodal_api_assist_app_total": multimodal_api_assist_app_total,
+                "multimodal_native_stabilization_app_total": multimodal_native_stabilization_app_total,
+                "multimodal_weird_app_total": multimodal_weird_app_total,
+                "multimodal_revalidation_target_total": multimodal_revalidation_target_total,
+                "multimodal_overdue_revalidation_total": multimodal_overdue_revalidation_total,
                 "route_remediation_total": route_remediation_total,
                 "route_remediation_blocked_total": route_remediation_blocked_total,
                 "route_remediation_degraded_total": route_remediation_degraded_total,

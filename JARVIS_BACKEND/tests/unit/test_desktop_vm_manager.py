@@ -47,13 +47,32 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert inventory["items"][0]["provider"] == "virtualbox"
     assert inventory["items"][0]["readiness_status"] == "ready"
 
-    plan = manager.build_vm_control_plan(inventory=inventory, task="linux", query="ubuntu", max_targets=4)
+    machine_profile = {
+        "multimodal_memory": {
+            "summary": {
+                "vision_runtime_available": True,
+                "vision_loaded_model_count": 1,
+                "vision_memory_app_count": 2,
+                "weird_app_memory_app_count": 1,
+            }
+        }
+    }
+    plan = manager.build_vm_control_plan(
+        inventory=inventory,
+        task="linux",
+        query="ubuntu",
+        max_targets=4,
+        machine_profile=machine_profile,
+    )
     assert plan["status"] == "success"
     assert plan["count"] == 1
     assert plan["items"][0]["prepare_priority_band"] == "high"
     assert plan["items"][0]["guest_learning_profile"] == "linux_desktop_explore"
     assert plan["items"][0]["expected_route_profile"] == "linux_vm_desktop_control"
     assert plan["summary"]["execution_mode_counts"]["hybrid_ready"] == 1
+    assert plan["items"][0]["provider_model_readiness"]["vision_runtime_available"] is True
+    assert plan["items"][0]["provider_model_readiness"]["vision_loaded_model_count"] == 1
+    assert plan["items"][0]["provider_model_readiness"]["multimodal_memory_pressure"] == 3
 
     prepared = manager.prepare_guest_control(
         inventory=inventory,
@@ -63,9 +82,11 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
         query="desktop settings",
         source="unit_test",
         task="linux",
+        machine_profile=machine_profile,
     )
     assert prepared["status"] == "success"
     assert prepared["summary"]["provider_launch_ready"] is True
     assert prepared["summary"]["attach_strategy"] == "provider_console"
     assert prepared["summary"]["guest_learning_profile"] == "linux_desktop_explore"
     assert prepared["summary"]["expected_route_profile"] == "linux_vm_desktop_control"
+    assert prepared["summary"]["provider_model_readiness"]["vision_runtime_available"] is True

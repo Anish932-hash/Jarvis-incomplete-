@@ -1334,6 +1334,11 @@ class DesktopAppMemory:
         survey_status_counts: Dict[str, int] = {}
         survey_source_counts: Dict[str, int] = {}
         control_type_counts: Dict[str, int] = {}
+        route_profile_counts: Dict[str, int] = {}
+        model_preference_counts: Dict[str, int] = {}
+        runtime_provider_mode_counts: Dict[str, int] = {}
+        runtime_status_counts: Dict[str, int] = {}
+        vision_model_mode_counts: Dict[str, int] = {}
         survey_count_total = 0
         survey_failure_total = 0
         probe_blocked_total = 0
@@ -1375,6 +1380,12 @@ class DesktopAppMemory:
         stale_entry_total = 0
         healthy_app_count = 0
         degraded_app_count = 0
+        vision_memory_app_count = 0
+        ocr_memory_app_count = 0
+        local_runtime_ready_app_count = 0
+        api_assist_app_count = 0
+        native_stabilization_app_count = 0
+        weird_app_memory_app_count = 0
         apps: List[Dict[str, Any]] = []
         for row in rows:
             self._increment_count(category_counts, row.get("category", ""))
@@ -1390,6 +1401,21 @@ class DesktopAppMemory:
             for key, count in self._normalize_count_map(row.get("control_type_counts", {})).items():
                 control_type_counts[key] = self._coerce_int(control_type_counts.get(key, 0), minimum=0, maximum=10_000_000, default=0) + count
             metrics = self._normalize_metrics(row.get("metrics", {}))
+            vision_learning_route = (
+                dict(row.get("last_vision_learning_route", {}))
+                if isinstance(row.get("last_vision_learning_route", {}), dict)
+                else {}
+            )
+            vision_summary = (
+                dict(row.get("last_vision_summary", {}))
+                if isinstance(row.get("last_vision_summary", {}), dict)
+                else {}
+            )
+            runtime_profile = (
+                dict(vision_learning_route.get("runtime_profile", {}))
+                if isinstance(vision_learning_route.get("runtime_profile", {}), dict)
+                else {}
+            )
             survey_count_total += self._coerce_int(metrics.get("survey_count", 0), minimum=0, maximum=10_000_000, default=0)
             survey_failure_total += self._coerce_int(metrics.get("survey_failure_count", 0), minimum=0, maximum=10_000_000, default=0)
             probe_blocked_total += self._coerce_int(metrics.get("probe_blocked_count", 0), minimum=0, maximum=10_000_000, default=0)
@@ -1439,6 +1465,86 @@ class DesktopAppMemory:
             harvested_hotkey_total += len(row.get("harvested_hotkey_counts", {})) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else 0
             if bool(dict(row.get("staleness", {})).get("stale", False)) if isinstance(row.get("staleness", {}), dict) else False:
                 stale_entry_total += 1
+            route_profile = str(vision_learning_route.get("route_profile", "") or "").strip().lower()
+            if route_profile:
+                route_profile_counts[route_profile] = self._coerce_int(
+                    route_profile_counts.get(route_profile, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + 1
+            model_preference = str(vision_learning_route.get("model_preference", "") or "").strip().lower()
+            if model_preference:
+                model_preference_counts[model_preference] = self._coerce_int(
+                    model_preference_counts.get(model_preference, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + 1
+            runtime_provider_mode = str(runtime_profile.get("provider_mode", "") or "").strip().lower()
+            if runtime_provider_mode:
+                runtime_provider_mode_counts[runtime_provider_mode] = self._coerce_int(
+                    runtime_provider_mode_counts.get(runtime_provider_mode, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + 1
+            runtime_status = str(runtime_profile.get("runtime_status", "") or "").strip().lower()
+            if runtime_status:
+                runtime_status_counts[runtime_status] = self._coerce_int(
+                    runtime_status_counts.get(runtime_status, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + 1
+            vision_model_mode = str(vision_summary.get("model_mode", "") or "").strip().lower()
+            if vision_model_mode:
+                vision_model_mode_counts[vision_model_mode] = self._coerce_int(
+                    vision_model_mode_counts.get(vision_model_mode, 0),
+                    minimum=0,
+                    maximum=10_000_000,
+                    default=0,
+                ) + 1
+            vision_top_labels = (
+                vision_summary.get("top_labels", [])
+                if isinstance(vision_summary.get("top_labels", []), list)
+                else []
+            )
+            vision_ocr_terms = (
+                vision_summary.get("ocr_terms", [])
+                if isinstance(vision_summary.get("ocr_terms", []), list)
+                else []
+            )
+            ocr_command_phrase_count = (
+                len(row.get("ocr_command_phrase_counts", {}))
+                if isinstance(row.get("ocr_command_phrase_counts", {}), dict)
+                else 0
+            )
+            if vision_model_mode or vision_top_labels or route_profile:
+                vision_memory_app_count += 1
+            if (
+                self._coerce_int(metrics.get("ocr_target_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
+                or len(vision_ocr_terms) > 0
+                or ocr_command_phrase_count > 0
+            ):
+                ocr_memory_app_count += 1
+            if bool(vision_learning_route.get("local_runtime_ready", False)):
+                local_runtime_ready_app_count += 1
+            if bool(vision_learning_route.get("api_assist_recommended", False)):
+                api_assist_app_count += 1
+            if bool(vision_learning_route.get("needs_native_stabilization", False)) or self._coerce_int(
+                metrics.get("native_stabilization_count", 0),
+                minimum=0,
+                maximum=10_000_000,
+                default=0,
+            ) > 0:
+                native_stabilization_app_count += 1
+            if (
+                float(vision_learning_route.get("weird_app_pressure", 0.0) or 0.0) >= 0.55
+                or self._coerce_int(metrics.get("custom_surface_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
+                or self._coerce_int(metrics.get("reparenting_risk_count", 0), minimum=0, maximum=10_000_000, default=0) > 0
+            ):
+                weird_app_memory_app_count += 1
             revalidation_summary = self._revalidation_summary(row)
             revalidation_target_total += self._coerce_int(revalidation_summary.get("target_count", 0), minimum=0, maximum=10_000_000, default=0)
             overdue_revalidation_total += self._coerce_int(revalidation_summary.get("overdue_count", 0), minimum=0, maximum=10_000_000, default=0)
@@ -1497,6 +1603,12 @@ class DesktopAppMemory:
             "surface_transition_total": surface_transition_total,
             "learned_command_total": learned_command_total,
             "wave_strategy_total": wave_strategy_total,
+            "vision_memory_app_count": vision_memory_app_count,
+            "ocr_memory_app_count": ocr_memory_app_count,
+            "local_runtime_ready_app_count": local_runtime_ready_app_count,
+            "api_assist_app_count": api_assist_app_count,
+            "native_stabilization_app_count": native_stabilization_app_count,
+            "weird_app_memory_app_count": weird_app_memory_app_count,
             "top_wave_container_roles": self._top_count_rows(wave_container_role_counts, limit=6),
             "top_wave_followup_roles": self._top_count_rows(wave_followup_role_counts, limit=6),
             "discovered_control_total": discovered_control_total,
@@ -1516,6 +1628,11 @@ class DesktopAppMemory:
             "survey_status_counts": self._trim_count_map(survey_status_counts, limit=8),
             "survey_source_counts": self._trim_count_map(survey_source_counts, limit=8),
             "control_type_counts": self._trim_count_map(control_type_counts, limit=24),
+            "route_profile_counts": self._trim_count_map(route_profile_counts, limit=16),
+            "model_preference_counts": self._trim_count_map(model_preference_counts, limit=16),
+            "runtime_provider_mode_counts": self._trim_count_map(runtime_provider_mode_counts, limit=12),
+            "runtime_status_counts": self._trim_count_map(runtime_status_counts, limit=12),
+            "vision_model_mode_counts": self._trim_count_map(vision_model_mode_counts, limit=12),
             "top_apps": apps[:8],
         }
 

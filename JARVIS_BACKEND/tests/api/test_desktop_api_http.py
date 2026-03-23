@@ -13503,6 +13503,33 @@ class FakeDesktopService:
                 "snapshot": {"providers": {"huggingface": {"present": False, "required_by_manifest": True}}},
                 "verifications": {"huggingface": {"status": "error", "verified": False}},
             },
+            "multimodal_memory": {
+                "status": "success",
+                "summary": {
+                    "vision_memory_app_count": 2,
+                    "ocr_memory_app_count": 2,
+                    "local_runtime_ready_app_count": 1,
+                    "api_assist_app_count": 1,
+                    "native_stabilization_app_count": 1,
+                    "weird_app_memory_app_count": 1,
+                    "revalidation_target_app_count": 3,
+                    "overdue_revalidation_total": 1,
+                    "vision_runtime_status": "success",
+                    "vision_runtime_available": True,
+                    "vision_loaded_model_count": 1,
+                    "route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
+                    "model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
+                    "runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
+                },
+                "next_actions": [
+                    {
+                        "kind": "multimodal_revalidation",
+                        "action": "revalidate_app_memory",
+                        "target": "app_memory",
+                        "auto_runnable": True,
+                    }
+                ],
+            },
             "recommendations": [{"code": "configure_huggingface_token", "severity": "high"}],
             "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
             "change_detection": {"changed": False, "areas": [], "requires_revalidation": False},
@@ -14236,6 +14263,20 @@ class FakeDesktopService:
                 "app_learning_blocked_count": 0,
                 "app_learning_degraded_count": 1,
                 "app_learning_strategy_profile": "hybrid_guided_explore",
+                "multimodal_memory_app_count": 2,
+                "multimodal_ocr_memory_app_count": 2,
+                "multimodal_local_runtime_ready_app_count": 1,
+                "multimodal_api_assist_app_count": 1,
+                "multimodal_native_stabilization_app_count": 1,
+                "multimodal_weird_app_count": 1,
+                "multimodal_revalidation_target_count": 3,
+                "multimodal_overdue_revalidation_count": 1,
+                "multimodal_vision_runtime_status": "success",
+                "multimodal_vision_runtime_available": True,
+                "multimodal_vision_loaded_model_count": 1,
+                "multimodal_route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
+                "multimodal_model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
+                "multimodal_runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
                 "app_control_prepare_count": 2,
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
@@ -14313,6 +14354,14 @@ class FakeDesktopService:
                         "launch_seed_count": 2,
                         "app_learning_target_count": 2,
                         "app_learning_strategy_profile": "hybrid_guided_explore",
+                        "multimodal_memory_app_count": 2,
+                        "multimodal_ocr_memory_app_count": 2,
+                        "multimodal_local_runtime_ready_app_count": 1,
+                        "multimodal_api_assist_app_count": 1,
+                        "multimodal_native_stabilization_app_count": 1,
+                        "multimodal_weird_app_count": 1,
+                        "multimodal_revalidation_target_count": 3,
+                        "multimodal_overdue_revalidation_count": 1,
                         "app_learning_setup_aligned_count": 2,
                         "app_learning_setup_boosted_count": 1,
                         "app_learning_setup_constrained_count": 0,
@@ -14420,6 +14469,14 @@ class FakeDesktopService:
                     "launch_seed_count": 2,
                     "app_learning_target_count": 2,
                     "app_learning_strategy_profile": "hybrid_guided_explore",
+                    "multimodal_memory_app_count": 2,
+                    "multimodal_ocr_memory_app_count": 2,
+                    "multimodal_local_runtime_ready_app_count": 1,
+                    "multimodal_api_assist_app_count": 1,
+                    "multimodal_native_stabilization_app_count": 1,
+                    "multimodal_weird_app_count": 1,
+                    "multimodal_revalidation_target_count": 3,
+                    "multimodal_overdue_revalidation_count": 1,
                     "app_learning_setup_aligned_count": 2,
                     "app_learning_setup_boosted_count": 1,
                     "app_learning_setup_constrained_count": 0,
@@ -14528,6 +14585,14 @@ class FakeDesktopService:
                 "setup_execution_continued_action_total": 1,
                 "setup_execution_remaining_ready_total": 0,
                 "setup_execution_resume_ready_total": 0,
+                "multimodal_memory_app_total": 2,
+                "multimodal_ocr_memory_app_total": 2,
+                "multimodal_local_runtime_ready_app_total": 1,
+                "multimodal_api_assist_app_total": 1,
+                "multimodal_native_stabilization_app_total": 1,
+                "multimodal_weird_app_total": 1,
+                "multimodal_revalidation_target_total": 3,
+                "multimodal_overdue_revalidation_total": 1,
                 "app_learning_setup_aligned_total": 2,
                 "app_learning_setup_boosted_total": 1,
                 "app_learning_setup_constrained_total": 0,
@@ -15049,7 +15114,48 @@ class FakeDesktopService:
                 },
             },
             "next_actions": [],
-            "final_profile": {"status": "success", "machine_id": "machine-demo-01"},
+            "final_profile": {
+                "status": "success",
+                "machine_id": "machine-demo-01",
+                "multimodal_memory": {
+                    "status": "success",
+                    "summary": {
+                        "vision_memory_app_count": 2,
+                        "ocr_memory_app_count": 2,
+                        "local_runtime_ready_app_count": 1,
+                        "api_assist_app_count": 1,
+                        "native_stabilization_app_count": 1,
+                        "weird_app_memory_app_count": 1,
+                        "revalidation_target_app_count": 3,
+                        "overdue_revalidation_total": 1,
+                        "vision_runtime_status": "success",
+                        "vision_runtime_available": True,
+                        "vision_loaded_model_count": 1,
+                        "route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
+                        "model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
+                        "runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
+                    },
+                },
+            },
+            "multimodal_memory": {
+                "status": "success",
+                "summary": {
+                    "vision_memory_app_count": 2,
+                    "ocr_memory_app_count": 2,
+                    "local_runtime_ready_app_count": 1,
+                    "api_assist_app_count": 1,
+                    "native_stabilization_app_count": 1,
+                    "weird_app_memory_app_count": 1,
+                    "revalidation_target_app_count": 3,
+                    "overdue_revalidation_total": 1,
+                    "vision_runtime_status": "success",
+                    "vision_runtime_available": True,
+                    "vision_loaded_model_count": 1,
+                    "route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
+                    "model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
+                    "runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
+                },
+            },
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
                 "profile_setup_action_count": 1,
@@ -15065,6 +15171,20 @@ class FakeDesktopService:
                 "app_learning_auto_target_count": 2,
                 "app_learning_blocked_count": 0,
                 "app_learning_degraded_count": 1,
+                "multimodal_memory_app_count": 2,
+                "multimodal_ocr_memory_app_count": 2,
+                "multimodal_local_runtime_ready_app_count": 1,
+                "multimodal_api_assist_app_count": 1,
+                "multimodal_native_stabilization_app_count": 1,
+                "multimodal_weird_app_count": 1,
+                "multimodal_revalidation_target_count": 3,
+                "multimodal_overdue_revalidation_count": 1,
+                "multimodal_vision_runtime_status": "success",
+                "multimodal_vision_runtime_available": True,
+                "multimodal_vision_loaded_model_count": 1,
+                "multimodal_route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
+                "multimodal_model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
+                "multimodal_runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
                 "app_learning_setup_aligned_count": 2,
                 "app_learning_setup_boosted_count": 1,
                 "app_learning_setup_constrained_count": 0,
@@ -25192,6 +25312,10 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert profile["machine_id"] == "machine-demo-01"
     assert profile["verify_providers"] is True
     assert profile["virtual_machines"]["summary"]["ready_guest_count"] == 1
+    assert profile["multimodal_memory"]["summary"]["vision_memory_app_count"] == 2
+    assert profile["multimodal_memory"]["summary"]["vision_runtime_status"] == "success"
+    assert profile["multimodal_memory"]["summary"]["vision_runtime_available"] is True
+    assert profile["multimodal_memory"]["summary"]["route_profile_counts"]["hybrid_verify"] == 1
     assert service.machine_profile_calls[-1]["refresh_apps"] is True
     assert service.machine_profile_calls[-1]["task"] == "reasoning"
 
@@ -25405,6 +25529,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["app_control_prepare_plan"]["count"] == 2
     assert plan["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert plan["summary"]["app_learning_degraded_count"] == 1
+    assert plan["summary"]["multimodal_memory_app_count"] == 2
+    assert plan["summary"]["multimodal_vision_runtime_status"] == "success"
+    assert plan["summary"]["multimodal_revalidation_target_count"] == 3
     assert plan["summary"]["setup_execution_selected_action_count"] == 1
     assert plan["summary"]["setup_execution_continue_recommended"] is True
     assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
@@ -25473,6 +25600,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["model_install"]["continued_action_count"] == 1
     assert launched["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert launched["summary"]["app_learning_degraded_count"] == 1
+    assert launched["summary"]["multimodal_memory_app_count"] == 2
+    assert launched["summary"]["multimodal_vision_runtime_status"] == "success"
+    assert launched["summary"]["multimodal_revalidation_target_count"] == 3
     assert launched["summary"]["app_learning_setup_aligned_count"] == 2
     assert launched["summary"]["app_learning_setup_boosted_count"] == 1
     assert launched["summary"]["app_learning_setup_constrained_count"] == 0
@@ -25532,6 +25662,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["execution_action_total"] == 6
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1
+    assert history["summary"]["multimodal_memory_app_total"] == 2
+    assert history["summary"]["multimodal_ocr_memory_app_total"] == 2
+    assert history["summary"]["multimodal_revalidation_target_total"] == 3
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 0

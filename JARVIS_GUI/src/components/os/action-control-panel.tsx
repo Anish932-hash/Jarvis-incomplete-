@@ -2510,12 +2510,41 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineProfile.change_detection),
     [desktopMachineProfile]
   );
+  const desktopMachineMultimodalMemory = useMemo(
+    () => asObjectRecord(desktopMachineProfile.multimodal_memory),
+    [desktopMachineProfile]
+  );
+  const desktopMachineMultimodalSummary = useMemo(
+    () => asObjectRecord(desktopMachineMultimodalMemory.summary),
+    [desktopMachineMultimodalMemory]
+  );
   const desktopMachineChangeAreas = useMemo(
     () =>
       Array.isArray(desktopMachineChangeDetection.areas)
         ? desktopMachineChangeDetection.areas.map((item) => String(item))
         : [],
     [desktopMachineChangeDetection]
+  );
+  const desktopMachineMultimodalRouteCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineMultimodalSummary.route_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineMultimodalSummary]
+  );
+  const desktopMachineMultimodalModelCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineMultimodalSummary.model_preference_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineMultimodalSummary]
+  );
+  const desktopMachineMultimodalProviderModeCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineMultimodalSummary.runtime_provider_mode_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineMultimodalSummary]
   );
   const desktopMachineOnboardingPlan = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlanState),
@@ -21408,6 +21437,65 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           remembered launches:{Number(desktopMachineApplications.remembered_target_count ?? 0)}
                                           {' • '}revalidate:{String(Boolean(desktopMachineChangeDetection.requires_revalidation))}
                                         </p>
+                                        <p className="mt-1">
+                                          multimodal memory:{Number(desktopMachineMultimodalSummary.vision_memory_app_count ?? 0)}
+                                          {' • '}ocr:{Number(desktopMachineMultimodalSummary.ocr_memory_app_count ?? 0)}
+                                          {' • '}runtime:{String(
+                                            desktopMachineMultimodalSummary.vision_runtime_status ?? 'idle'
+                                          )}
+                                        </p>
+                                        <p className="mt-1">
+                                          local ready:{Number(
+                                            desktopMachineMultimodalSummary.local_runtime_ready_app_count ?? 0
+                                          )}
+                                          {' • '}api assist:{Number(
+                                            desktopMachineMultimodalSummary.api_assist_app_count ?? 0
+                                          )}
+                                          {' • '}revalidation:{Number(
+                                            desktopMachineMultimodalSummary.revalidation_target_app_count ?? 0
+                                          )}
+                                        </p>
+                                        {(Number(desktopMachineMultimodalSummary.native_stabilization_app_count ?? 0) > 0 ||
+                                          Number(desktopMachineMultimodalSummary.weird_app_memory_app_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            native stabilize:{Number(
+                                              desktopMachineMultimodalSummary.native_stabilization_app_count ?? 0
+                                            )}
+                                            {' • '}weird apps:{Number(
+                                              desktopMachineMultimodalSummary.weird_app_memory_app_count ?? 0
+                                            )}
+                                            {' • '}loaded models:{Number(
+                                              desktopMachineMultimodalSummary.vision_loaded_model_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineMultimodalRouteCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal routes:{' '}
+                                            {desktopMachineMultimodalRouteCounts
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineMultimodalModelCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal models:{' '}
+                                            {desktopMachineMultimodalModelCounts
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineMultimodalProviderModeCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            runtime providers:{' '}
+                                            {desktopMachineMultimodalProviderModeCounts
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {Array.isArray(desktopMachineProfile.recommendations) && desktopMachineProfile.recommendations.length > 0 ? (
                                           <p className="mt-1">
                                             recommendations:{' '}
@@ -21449,6 +21537,68 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}learning degraded:{Number(desktopMachineOnboardingSummary.app_learning_degraded_count ?? 0)}
                                           {' • '}learning blocked:{Number(desktopMachineOnboardingSummary.app_learning_blocked_count ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          multimodal memory:{Number(
+                                            desktopMachineOnboardingSummary.multimodal_memory_app_count ?? 0
+                                          )}
+                                          {' • '}ocr:{Number(
+                                            desktopMachineOnboardingSummary.multimodal_ocr_memory_app_count ?? 0
+                                          )}
+                                          {' • '}runtime:{String(
+                                            desktopMachineOnboardingSummary.multimodal_vision_runtime_status ?? 'idle'
+                                          )}
+                                        </p>
+                                        <p className="mt-1">
+                                          local ready:{Number(
+                                            desktopMachineOnboardingSummary.multimodal_local_runtime_ready_app_count ?? 0
+                                          )}
+                                          {' • '}api assist:{Number(
+                                            desktopMachineOnboardingSummary.multimodal_api_assist_app_count ?? 0
+                                          )}
+                                          {' • '}revalidation:{Number(
+                                            desktopMachineOnboardingSummary.multimodal_revalidation_target_count ?? 0
+                                          )}
+                                        </p>
+                                        {(Number(desktopMachineOnboardingSummary.multimodal_native_stabilization_app_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingSummary.multimodal_weird_app_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            native stabilize:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_native_stabilization_app_count ?? 0
+                                            )}
+                                            {' • '}weird apps:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_weird_app_count ?? 0
+                                            )}
+                                            {' • '}loaded models:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_vision_loaded_model_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.multimodal_route_profile_counts)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal routes:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.multimodal_route_profile_counts)
+                                            )
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.multimodal_model_preference_counts)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal models:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.multimodal_model_preference_counts)
+                                            )
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         <p className="mt-1">
                                           learn setup aligned:{Number(desktopMachineOnboardingSummary.app_learning_setup_aligned_count ?? 0)}
                                           {' • '}boosted:{Number(desktopMachineOnboardingSummary.app_learning_setup_boosted_count ?? 0)}

@@ -850,7 +850,19 @@ class DesktopVMManager:
             and isinstance(machine_profile.get("models", {}).get("local_inventory", {}), dict)
             else {}
         )
+        multimodal_summary = (
+            dict(machine_profile.get("multimodal_memory", {}).get("summary", {}))
+            if isinstance(machine_profile.get("multimodal_memory", {}), dict)
+            and isinstance(machine_profile.get("multimodal_memory", {}).get("summary", {}), dict)
+            else {}
+        )
         local_model_count = int(local_inventory.get("count", 0) or 0)
+        vision_runtime_available = bool(multimodal_summary.get("vision_runtime_available", False))
+        vision_loaded_model_count = int(multimodal_summary.get("vision_loaded_model_count", 0) or 0)
+        local_vision_ready = vision_runtime_available and vision_loaded_model_count > 0
+        multimodal_memory_pressure = int(multimodal_summary.get("vision_memory_app_count", 0) or 0) + int(
+            multimodal_summary.get("weird_app_memory_app_count", 0) or 0
+        )
         expected_route_profile = cls._expected_route_profile(row, task=task)
         expected_model_preference = cls._expected_model_preference(row, task=task)
         runtime_band_preference = cls._runtime_band_preference(row)
@@ -862,7 +874,7 @@ class DesktopVMManager:
         local_ready_tasks = ["control"]
         if family == "terminal":
             local_ready_tasks.append("reasoning")
-        elif local_model_count > 0:
+        elif local_model_count > 0 or local_vision_ready:
             local_ready_tasks.append("vision")
         setup_followup_codes = list(row.get("blocker_codes", [])) if isinstance(row.get("blocker_codes", []), list) else []
         if control_mode in {"rdp", "vnc", "ssh"} and not remote_endpoint_ready:
@@ -873,6 +885,10 @@ class DesktopVMManager:
             setup_followup_codes.append("configure_rdp_guest")
         if control_mode == "ssh" and not remote_endpoint_ready:
             setup_followup_codes.append("configure_ssh_guest")
+        if expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and not vision_runtime_available:
+            setup_followup_codes.append("initialize_local_vision_runtime")
+        elif expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and vision_loaded_model_count <= 0:
+            setup_followup_codes.append("warm_local_vision_runtime")
         if expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and local_model_count <= 0 and verified_provider_count <= 0:
             setup_followup_codes.append("configure_multimodal_runtime")
         setup_followup_codes = _dedupe_strings(setup_followup_codes, limit=8)
@@ -902,6 +918,9 @@ class DesktopVMManager:
             "provider_ready": provider_ready,
             "verified_provider_count": verified_provider_count,
             "local_model_count": local_model_count,
+            "vision_runtime_available": vision_runtime_available,
+            "vision_loaded_model_count": vision_loaded_model_count,
+            "multimodal_memory_pressure": multimodal_memory_pressure,
             "remote_endpoint_ready": remote_endpoint_ready,
             "execution_mode": execution_mode,
             "runtime_band_preference": runtime_band_preference,
@@ -923,7 +942,7 @@ class DesktopVMManager:
             return "register_remote_endpoint"
         if any(code in {"configure_rdp_guest", "configure_ssh_guest", "install_vnc_viewer"} for code in codes):
             return "configure_remote_attach"
-        if any(code == "configure_multimodal_runtime" for code in codes):
+        if any(code in {"configure_multimodal_runtime", "initialize_local_vision_runtime", "warm_local_vision_runtime"} for code in codes):
             return "configure_runtime"
         return "observe"
 

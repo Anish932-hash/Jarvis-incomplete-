@@ -8580,6 +8580,7 @@ class DesktopBackendService:
             if bool(refresh_apps) and hasattr(launcher, "invalidate_catalog_cache"):
                 launcher.invalidate_catalog_cache()
             system_profile = self.monitor.machine_profile()
+            app_memory = self.desktop_app_memory_status(limit=256)
             app_inventory = self.desktop_app_launcher_inventory(
                 query=clean_query,
                 category=clean_category,
@@ -8638,9 +8639,13 @@ class DesktopBackendService:
                 refresh_apps=False,
                 source=f"{source}_vm_inventory",
             )
+            multimodal_memory = self._desktop_machine_multimodal_memory_snapshot(
+                app_memory=app_memory,
+                task=clean_task,
+            )
             app_learning_plan = self._desktop_machine_app_learning_plan_payload(
                 app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
-                app_memory=self.desktop_app_memory_status(limit=256),
+                app_memory=app_memory if isinstance(app_memory, dict) else {},
                 task_focus=(
                     payload.get("applications", {}).get("task_focus", [])
                     if isinstance(payload.get("applications", {}), dict)
@@ -8670,23 +8675,38 @@ class DesktopBackendService:
                 )
                 payload["app_learning_plan"] = app_learning_plan
                 payload["app_control_development"] = app_learning_plan
-                if isinstance(payload.get("recommendations", []), list) and isinstance(vm_inventory, dict):
-                    vm_recommendations = [
-                        dict(item)
-                        for item in vm_inventory.get("recommendations", [])
-                        if isinstance(vm_inventory.get("recommendations", []), list) and isinstance(item, dict)
-                    ]
+                payload["multimodal_memory"] = multimodal_memory if isinstance(multimodal_memory, dict) else {}
+                if isinstance(payload.get("recommendations", []), list):
                     existing_codes = {
                         str(item.get("code", "") or "").strip().lower()
                         for item in payload.get("recommendations", [])
                         if isinstance(item, dict)
                     }
-                    for row in vm_recommendations:
-                        code = str(row.get("code", "") or "").strip().lower()
-                        if code and code in existing_codes:
-                            continue
-                        payload["recommendations"].append(row)
-                        existing_codes.add(code)
+                    recommendation_sources: list[list[dict[str, Any]]] = []
+                    if isinstance(multimodal_memory, dict):
+                        recommendation_sources.append(
+                            [
+                                dict(item)
+                                for item in multimodal_memory.get("recommendations", [])
+                                if isinstance(multimodal_memory.get("recommendations", []), list) and isinstance(item, dict)
+                            ]
+                        )
+                    if isinstance(vm_inventory, dict):
+                        recommendation_sources.append(
+                            [
+                                dict(item)
+                                for item in vm_inventory.get("recommendations", [])
+                                if isinstance(vm_inventory.get("recommendations", []), list) and isinstance(item, dict)
+                            ]
+                        )
+                    for source_rows in recommendation_sources:
+                        for row in source_rows:
+                            code = str(row.get("code", "") or "").strip().lower()
+                            if code and code in existing_codes:
+                                continue
+                            payload["recommendations"].append(row)
+                            if code:
+                                existing_codes.add(code)
                     payload["setup_actions"] = list(payload.get("recommendations", []))
             recorded = manager.record_snapshot(payload if isinstance(payload, dict) else {}, source=source)
             recorded["refresh_apps"] = bool(refresh_apps)
@@ -8698,6 +8718,117 @@ class DesktopBackendService:
             return _to_jsonable(recorded)
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
+
+    def _desktop_machine_multimodal_memory_snapshot(
+        self,
+        *,
+        app_memory: Optional[Dict[str, Any]] = None,
+        task: str = "",
+    ) -> Dict[str, Any]:
+        memory_snapshot = dict(app_memory) if isinstance(app_memory, dict) else self.desktop_app_memory_status(limit=256)
+        runtime_profile = self._vision_runtime_profile_status()
+        runtime_status = str(
+            runtime_profile.get("runtime_status", runtime_profile.get("status", "idle")) or "idle"
+        ).strip().lower() or "idle"
+        runtime_available = bool(runtime_profile.get("available", False))
+        loaded_model_count = max(0, int(runtime_profile.get("loaded_count", 0) or 0))
+        task_hint = str(task or "").strip().lower()
+        summary = {
+            "status": str(memory_snapshot.get("status", "unknown") or "unknown").strip().lower() or "unknown",
+            "entry_count": max(0, int(memory_snapshot.get("entry_count", 0) or 0)),
+            "vision_memory_app_count": max(0, int(memory_snapshot.get("vision_memory_app_count", 0) or 0)),
+            "ocr_memory_app_count": max(0, int(memory_snapshot.get("ocr_memory_app_count", 0) or 0)),
+            "local_runtime_ready_app_count": max(0, int(memory_snapshot.get("local_runtime_ready_app_count", 0) or 0)),
+            "api_assist_app_count": max(0, int(memory_snapshot.get("api_assist_app_count", 0) or 0)),
+            "native_stabilization_app_count": max(0, int(memory_snapshot.get("native_stabilization_app_count", 0) or 0)),
+            "weird_app_memory_app_count": max(0, int(memory_snapshot.get("weird_app_memory_app_count", 0) or 0)),
+            "revalidation_target_app_count": max(0, int(memory_snapshot.get("revalidation_target_total", 0) or 0)),
+            "overdue_revalidation_total": max(0, int(memory_snapshot.get("overdue_revalidation_total", 0) or 0)),
+            "vision_runtime_available": runtime_available,
+            "vision_runtime_status": runtime_status,
+            "vision_loaded_model_count": loaded_model_count,
+            "route_profile_counts": dict(memory_snapshot.get("route_profile_counts", {}))
+            if isinstance(memory_snapshot.get("route_profile_counts", {}), dict)
+            else {},
+            "model_preference_counts": dict(memory_snapshot.get("model_preference_counts", {}))
+            if isinstance(memory_snapshot.get("model_preference_counts", {}), dict)
+            else {},
+            "runtime_provider_mode_counts": dict(memory_snapshot.get("runtime_provider_mode_counts", {}))
+            if isinstance(memory_snapshot.get("runtime_provider_mode_counts", {}), dict)
+            else {},
+            "runtime_status_counts": dict(memory_snapshot.get("runtime_status_counts", {}))
+            if isinstance(memory_snapshot.get("runtime_status_counts", {}), dict)
+            else {},
+            "vision_model_mode_counts": dict(memory_snapshot.get("vision_model_mode_counts", {}))
+            if isinstance(memory_snapshot.get("vision_model_mode_counts", {}), dict)
+            else {},
+        }
+        needs_multimodal_runtime = bool(
+            summary["vision_memory_app_count"]
+            or summary["ocr_memory_app_count"]
+            or summary["api_assist_app_count"]
+            or summary["weird_app_memory_app_count"]
+            or "vision" in task_hint
+            or "desktop" in task_hint
+            or "coworker" in task_hint
+        )
+        recommendations: list[Dict[str, Any]] = []
+        next_actions: list[Dict[str, Any]] = []
+        if needs_multimodal_runtime and not runtime_available:
+            recommendations.append(
+                {
+                    "code": "initialize_local_vision_runtime",
+                    "severity": "high",
+                    "summary": "Initialize the local OCR and vision runtime before deeper autonomous app learning.",
+                }
+            )
+            next_actions.append(
+                {
+                    "kind": "multimodal_runtime",
+                    "action": "initialize_local_vision_runtime",
+                    "target": "local_vision",
+                    "auto_runnable": True,
+                    "summary": "Initialize the local OCR and vision runtime for multimodal app learning.",
+                }
+            )
+        elif needs_multimodal_runtime and loaded_model_count <= 0:
+            recommendations.append(
+                {
+                    "code": "warm_local_vision_runtime",
+                    "severity": "medium",
+                    "summary": "Warm the selected OCR and vision models so adaptive app learning can stay on the local multimodal lane.",
+                }
+            )
+            next_actions.append(
+                {
+                    "kind": "multimodal_runtime",
+                    "action": "warm_local_vision_runtime",
+                    "target": "local_vision",
+                    "auto_runnable": True,
+                    "summary": "Warm the selected OCR and vision models for adaptive app learning.",
+                }
+            )
+        if summary["overdue_revalidation_total"] > 0:
+            next_actions.append(
+                {
+                    "kind": "multimodal_revalidation",
+                    "action": "revalidate_app_memory",
+                    "target": "app_memory",
+                    "auto_runnable": True,
+                    "summary": "Run stale multimodal app-memory revalidation on learned surfaces before wider campaigns.",
+                }
+            )
+        return {
+            "status": "success",
+            "task": task_hint,
+            "summary": summary,
+            "vision_runtime": runtime_profile if isinstance(runtime_profile, dict) else {},
+            "top_apps": list(memory_snapshot.get("top_apps", []))
+            if isinstance(memory_snapshot.get("top_apps", []), list)
+            else [],
+            "recommendations": recommendations,
+            "next_actions": next_actions[:6],
+        }
 
     @staticmethod
     def _machine_text(value: Any) -> str:
@@ -13844,6 +13975,16 @@ class DesktopBackendService:
         )
         if not isinstance(profile, dict) or profile.get("status") != "success":
             return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine onboarding profile"}
+        multimodal_memory = (
+            dict(profile.get("multimodal_memory", {}))
+            if isinstance(profile.get("multimodal_memory", {}), dict)
+            else {}
+        )
+        multimodal_summary = (
+            dict(multimodal_memory.get("summary", {}))
+            if isinstance(multimodal_memory.get("summary", {}), dict)
+            else {}
+        )
         app_learning_plan = (
             dict(profile.get("app_learning_plan", {}))
             if isinstance(profile.get("app_learning_plan", {}), dict)
@@ -14008,6 +14149,13 @@ class DesktopBackendService:
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
+            list(multimodal_memory.get("next_actions", []))
+            if isinstance(multimodal_memory.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
             list(route_remediation.get("next_actions", []))
             if isinstance(route_remediation.get("next_actions", []), list)
             else [],
@@ -14163,6 +14311,7 @@ class DesktopBackendService:
                 "profile_setup_action_summary": profile_setup_action_summary,
                 "task_preference_plan": task_preference_plan,
                 "launch_seed_plan": launch_seed_plan,
+                "multimodal_memory": multimodal_memory,
                 "app_control_prepare_plan": app_control_prepare_plan,
                 "vm_control_plan": vm_control_plan,
                 "app_learning_plan": app_learning_plan,
@@ -14215,6 +14364,50 @@ class DesktopBackendService:
                         learning_plan_summary.get("remediation_feedback_status_counts", {})
                     )
                     if isinstance(learning_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                    else {},
+                    "multimodal_memory_app_count": int(multimodal_summary.get("vision_memory_app_count", 0) or 0),
+                    "multimodal_ocr_memory_app_count": int(multimodal_summary.get("ocr_memory_app_count", 0) or 0),
+                    "multimodal_local_runtime_ready_app_count": int(
+                        multimodal_summary.get("local_runtime_ready_app_count", 0) or 0
+                    ),
+                    "multimodal_api_assist_app_count": int(
+                        multimodal_summary.get("api_assist_app_count", 0) or 0
+                    ),
+                    "multimodal_native_stabilization_app_count": int(
+                        multimodal_summary.get("native_stabilization_app_count", 0) or 0
+                    ),
+                    "multimodal_weird_app_count": int(
+                        multimodal_summary.get("weird_app_memory_app_count", 0) or 0
+                    ),
+                    "multimodal_revalidation_target_count": int(
+                        multimodal_summary.get("revalidation_target_app_count", 0) or 0
+                    ),
+                    "multimodal_overdue_revalidation_count": int(
+                        multimodal_summary.get("overdue_revalidation_total", 0) or 0
+                    ),
+                    "multimodal_vision_runtime_status": str(
+                        multimodal_summary.get("vision_runtime_status", "") or ""
+                    ).strip().lower(),
+                    "multimodal_vision_runtime_available": bool(
+                        multimodal_summary.get("vision_runtime_available", False)
+                    ),
+                    "multimodal_vision_loaded_model_count": int(
+                        multimodal_summary.get("vision_loaded_model_count", 0) or 0
+                    ),
+                    "multimodal_route_profile_counts": dict(
+                        multimodal_summary.get("route_profile_counts", {})
+                    )
+                    if isinstance(multimodal_summary.get("route_profile_counts", {}), dict)
+                    else {},
+                    "multimodal_model_preference_counts": dict(
+                        multimodal_summary.get("model_preference_counts", {})
+                    )
+                    if isinstance(multimodal_summary.get("model_preference_counts", {}), dict)
+                    else {},
+                    "multimodal_runtime_provider_mode_counts": dict(
+                        multimodal_summary.get("runtime_provider_mode_counts", {})
+                    )
+                    if isinstance(multimodal_summary.get("runtime_provider_mode_counts", {}), dict)
                     else {},
                     "app_control_prepare_count": int(app_control_prepare_plan.get("count", 0) or 0),
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
@@ -14427,6 +14620,11 @@ class DesktopBackendService:
         if not isinstance(plan, dict) or plan.get("status") != "success":
             return plan if isinstance(plan, dict) else {"status": "error", "message": "unable to build machine onboarding plan"}
         profile = dict(plan.get("profile", {})) if isinstance(plan.get("profile", {}), dict) else {}
+        planned_multimodal_memory = (
+            dict(plan.get("multimodal_memory", {}))
+            if isinstance(plan.get("multimodal_memory", {}), dict)
+            else {}
+        )
         profile_setup_actions = [
             dict(item)
             for item in plan.get("profile_setup_actions", [])
@@ -15237,6 +15435,23 @@ class DesktopBackendService:
             provider_timeout_s=provider_timeout_s,
             source=f"{source}_final",
         )
+        final_multimodal_memory = (
+            dict(final_profile.get("multimodal_memory", {}))
+            if isinstance(final_profile.get("multimodal_memory", {}), dict)
+            else dict(planned_multimodal_memory)
+        )
+        final_multimodal_summary = (
+            dict(final_multimodal_memory.get("summary", {}))
+            if isinstance(final_multimodal_memory.get("summary", {}), dict)
+            else {}
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(final_multimodal_memory.get("next_actions", []))
+            if isinstance(final_multimodal_memory.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
         section_statuses = [
             str(provider_updates.get("status", "") or "").strip().lower(),
             str(task_preference_update.get("status", "") or "").strip().lower(),
@@ -15279,6 +15494,7 @@ class DesktopBackendService:
             "execution_queue_summary": execution_queue_summary,
             "next_actions": next_actions,
             "final_profile": final_profile,
+            "multimodal_memory": final_multimodal_memory,
             "summary": {
                 "provider_update_count": int(provider_updates.get("count", 0) or 0),
                 "profile_setup_action_count": int(profile_setup_action_summary.get("count", 0) or 0),
@@ -15326,6 +15542,50 @@ class DesktopBackendService:
                     runtime_app_learning_plan_summary.get("remediation_feedback_status_counts", {})
                 )
                 if isinstance(runtime_app_learning_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                else {},
+                "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
+                "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
+                "multimodal_local_runtime_ready_app_count": int(
+                    final_multimodal_summary.get("local_runtime_ready_app_count", 0) or 0
+                ),
+                "multimodal_api_assist_app_count": int(
+                    final_multimodal_summary.get("api_assist_app_count", 0) or 0
+                ),
+                "multimodal_native_stabilization_app_count": int(
+                    final_multimodal_summary.get("native_stabilization_app_count", 0) or 0
+                ),
+                "multimodal_weird_app_count": int(
+                    final_multimodal_summary.get("weird_app_memory_app_count", 0) or 0
+                ),
+                "multimodal_revalidation_target_count": int(
+                    final_multimodal_summary.get("revalidation_target_app_count", 0) or 0
+                ),
+                "multimodal_overdue_revalidation_count": int(
+                    final_multimodal_summary.get("overdue_revalidation_total", 0) or 0
+                ),
+                "multimodal_vision_runtime_status": str(
+                    final_multimodal_summary.get("vision_runtime_status", "") or ""
+                ).strip().lower(),
+                "multimodal_vision_runtime_available": bool(
+                    final_multimodal_summary.get("vision_runtime_available", False)
+                ),
+                "multimodal_vision_loaded_model_count": int(
+                    final_multimodal_summary.get("vision_loaded_model_count", 0) or 0
+                ),
+                "multimodal_route_profile_counts": dict(
+                    final_multimodal_summary.get("route_profile_counts", {})
+                )
+                if isinstance(final_multimodal_summary.get("route_profile_counts", {}), dict)
+                else {},
+                "multimodal_model_preference_counts": dict(
+                    final_multimodal_summary.get("model_preference_counts", {})
+                )
+                if isinstance(final_multimodal_summary.get("model_preference_counts", {}), dict)
+                else {},
+                "multimodal_runtime_provider_mode_counts": dict(
+                    final_multimodal_summary.get("runtime_provider_mode_counts", {})
+                )
+                if isinstance(final_multimodal_summary.get("runtime_provider_mode_counts", {}), dict)
                 else {},
                 "prepared_app_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("prepared_app_count", app_control_prepare_result.get("count", 0))
