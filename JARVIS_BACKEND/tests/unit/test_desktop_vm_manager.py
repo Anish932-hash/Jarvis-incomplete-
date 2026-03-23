@@ -51,6 +51,9 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["status"] == "success"
     assert plan["count"] == 1
     assert plan["items"][0]["prepare_priority_band"] == "high"
+    assert plan["items"][0]["guest_learning_profile"] == "linux_desktop_explore"
+    assert plan["items"][0]["expected_route_profile"] == "linux_vm_desktop_control"
+    assert plan["summary"]["execution_mode_counts"]["hybrid_ready"] == 1
 
     prepared = manager.prepare_guest_control(
         inventory=inventory,
@@ -59,7 +62,10 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
         ensure_provider_launch=True,
         query="desktop settings",
         source="unit_test",
+        task="linux",
     )
     assert prepared["status"] == "success"
     assert prepared["summary"]["provider_launch_ready"] is True
     assert prepared["summary"]["attach_strategy"] == "provider_console"
+    assert prepared["summary"]["guest_learning_profile"] == "linux_desktop_explore"
+    assert prepared["summary"]["expected_route_profile"] == "linux_vm_desktop_control"

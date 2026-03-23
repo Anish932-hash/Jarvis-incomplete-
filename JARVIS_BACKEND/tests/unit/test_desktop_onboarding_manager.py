@@ -66,6 +66,7 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "vm_ready_guest_count": 1,
                 "vm_attention_guest_count": 1,
                 "vm_blocked_guest_count": 0,
+                "vm_setup_followup_guest_count": 1,
             },
         },
         source="machine_onboarding",
@@ -139,3 +140,4 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["vm_ready_guest_total"] == 1
     assert history["summary"]["vm_attention_guest_total"] == 1
     assert history["summary"]["vm_blocked_guest_total"] == 0
+    assert history["summary"]["vm_setup_followup_guest_total"] == 1

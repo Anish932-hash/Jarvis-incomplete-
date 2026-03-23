@@ -8491,6 +8491,7 @@ class DesktopBackendService:
             task=task,
             query=app_query,
             max_targets=max_guests,
+            machine_profile=profile if isinstance(profile, dict) else {},
         )
         return {"status": "success", "profile": profile, "vm_inventory": inventory, "plan": _to_jsonable(plan)}
 
@@ -8540,6 +8541,8 @@ class DesktopBackendService:
             ensure_provider_launch=ensure_provider_launch,
             query=query,
             source=source,
+            task=task,
+            machine_profile=profile if isinstance(profile, dict) else {},
         )
         return {
             "status": str(prepared.get("status", "error") or "error"),
@@ -8654,6 +8657,17 @@ class DesktopBackendService:
             )
             if isinstance(payload, dict):
                 payload["virtual_machines"] = vm_inventory if isinstance(vm_inventory, dict) else {}
+                payload["vm_control_plan"] = (
+                    self.desktop_vm_manager.build_vm_control_plan(
+                        inventory=vm_inventory if isinstance(vm_inventory, dict) else {},
+                        task=clean_task,
+                        query=clean_query,
+                        max_targets=4,
+                        machine_profile=payload,
+                    )
+                    if getattr(self, "desktop_vm_manager", None) is not None
+                    else {}
+                )
                 payload["app_learning_plan"] = app_learning_plan
                 payload["app_control_development"] = app_learning_plan
                 if isinstance(payload.get("recommendations", []), list) and isinstance(vm_inventory, dict):
@@ -13919,6 +13933,7 @@ class DesktopBackendService:
                 task=clean_task,
                 query=app_query,
                 max_targets=max(1, min(int(vm_prepare_limit or 2), 8)),
+                machine_profile=profile if isinstance(profile, dict) else {},
             )
             if getattr(self, "desktop_vm_manager", None) is not None
             else {"status": "unavailable", "count": 0, "items": [], "summary": {}, "defaults": {}}
@@ -14213,6 +14228,36 @@ class DesktopBackendService:
                     "vm_attention_guest_count": int(vm_control_plan_summary.get("attention_count", 0) or 0),
                     "vm_blocked_guest_count": int(vm_control_plan_summary.get("blocked_count", 0) or 0),
                     "vm_prepare_count": int(vm_control_plan.get("count", 0) or 0),
+                    "vm_learning_profile_counts": dict(vm_control_plan_summary.get("learning_profile_counts", {}))
+                    if isinstance(vm_control_plan_summary.get("learning_profile_counts", {}), dict)
+                    else {},
+                    "vm_execution_mode_counts": dict(vm_control_plan_summary.get("execution_mode_counts", {}))
+                    if isinstance(vm_control_plan_summary.get("execution_mode_counts", {}), dict)
+                    else {},
+                    "vm_runtime_band_counts": dict(vm_control_plan_summary.get("runtime_band_counts", {}))
+                    if isinstance(vm_control_plan_summary.get("runtime_band_counts", {}), dict)
+                    else {},
+                    "vm_expected_route_profile_counts": dict(
+                        vm_control_plan_summary.get("expected_route_profile_counts", {})
+                    )
+                    if isinstance(vm_control_plan_summary.get("expected_route_profile_counts", {}), dict)
+                    else {},
+                    "vm_expected_model_preference_counts": dict(
+                        vm_control_plan_summary.get("expected_model_preference_counts", {})
+                    )
+                    if isinstance(vm_control_plan_summary.get("expected_model_preference_counts", {}), dict)
+                    else {},
+                    "vm_route_resolution_status_counts": dict(
+                        vm_control_plan_summary.get("route_resolution_status_counts", {})
+                    )
+                    if isinstance(vm_control_plan_summary.get("route_resolution_status_counts", {}), dict)
+                    else {},
+                    "vm_remediation_kind_counts": dict(vm_control_plan_summary.get("remediation_kind_counts", {}))
+                    if isinstance(vm_control_plan_summary.get("remediation_kind_counts", {}), dict)
+                    else {},
+                    "vm_setup_followup_guest_count": int(
+                        vm_control_plan_summary.get("setup_followup_guest_count", 0) or 0
+                    ),
                     "app_control_prepare_remediation_retry_count": int(
                         prepare_plan_summary.get("remediation_retry_count", 0) or 0
                     ),
@@ -14921,27 +14966,63 @@ class DesktopBackendService:
                             if isinstance(item.get("reason_codes", []), list)
                             else []
                         )
+                        prepared_vm_payload["guest_learning_profile"] = str(
+                            item.get("guest_learning_profile", "") or ""
+                        ).strip().lower()
+                        prepared_vm_payload["expected_route_profile"] = str(
+                            item.get("expected_route_profile", "") or ""
+                        ).strip().lower()
+                        prepared_vm_payload["expected_model_preference"] = str(
+                            item.get("expected_model_preference", "") or ""
+                        ).strip().lower()
+                        prepared_vm_payload["runtime_band_preference"] = str(
+                            item.get("runtime_band_preference", "") or ""
+                        ).strip().lower()
                     vm_items.append(prepared_vm_payload if isinstance(prepared_vm_payload, dict) else {"status": "error"})
                 vm_status_counts: Dict[str, int] = {}
+                vm_execution_mode_counts: Dict[str, int] = {}
+                vm_learning_profile_counts: Dict[str, int] = {}
+                vm_runtime_band_counts: Dict[str, int] = {}
+                vm_route_profile_counts: Dict[str, int] = {}
+                vm_model_preference_counts: Dict[str, int] = {}
+                vm_route_resolution_status_counts: Dict[str, int] = {}
+                vm_remediation_kind_counts: Dict[str, int] = {}
                 vm_ready_count = 0
                 vm_attention_count = 0
                 vm_blocked_count = 0
+                vm_setup_followup_guest_count = 0
                 for prepared_vm in vm_items:
                     if not isinstance(prepared_vm, dict):
                         continue
                     status_name = str(prepared_vm.get("status", "") or "unknown").strip().lower() or "unknown"
                     vm_status_counts[status_name] = int(vm_status_counts.get(status_name, 0) or 0) + 1
-                    readiness_name = str(
-                        prepared_vm.get("summary", {}).get("readiness_status", "")
-                        if isinstance(prepared_vm.get("summary", {}), dict)
-                        else ""
-                    ).strip().lower()
+                    vm_summary = dict(prepared_vm.get("summary", {})) if isinstance(prepared_vm.get("summary", {}), dict) else {}
+                    readiness_name = str(vm_summary.get("readiness_status", "") or "").strip().lower()
                     if readiness_name == "ready":
                         vm_ready_count += 1
                     elif readiness_name == "blocked":
                         vm_blocked_count += 1
                     else:
                         vm_attention_count += 1
+                    for field_name, bucket in (
+                        ("execution_mode", vm_execution_mode_counts),
+                        ("guest_learning_profile", vm_learning_profile_counts),
+                        ("runtime_band_preference", vm_runtime_band_counts),
+                        ("expected_route_profile", vm_route_profile_counts),
+                        ("expected_model_preference", vm_model_preference_counts),
+                        ("route_resolution_status", vm_route_resolution_status_counts),
+                        ("remediation_kind", vm_remediation_kind_counts),
+                    ):
+                        field_value = str(vm_summary.get(field_name, "") or prepared_vm.get(field_name, "") or "").strip().lower()
+                        if field_value:
+                            bucket[field_value] = int(bucket.get(field_value, 0) or 0) + 1
+                    provider_model_readiness = (
+                        dict(vm_summary.get("provider_model_readiness", {}))
+                        if isinstance(vm_summary.get("provider_model_readiness", {}), dict)
+                        else {}
+                    )
+                    if isinstance(provider_model_readiness.get("setup_followup_codes", []), list) and provider_model_readiness.get("setup_followup_codes", []):
+                        vm_setup_followup_guest_count += 1
                 vm_control_prepare_result = {
                     "status": "success" if vm_items else "skipped",
                     "count": len(vm_items),
@@ -14954,6 +15035,28 @@ class DesktopBackendService:
                         "attention_count": vm_attention_count,
                         "blocked_count": vm_blocked_count,
                         "status_counts": {str(key): int(value) for key, value in sorted(vm_status_counts.items(), key=lambda entry: entry[0])},
+                        "execution_mode_counts": {
+                            str(key): int(value) for key, value in sorted(vm_execution_mode_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "learning_profile_counts": {
+                            str(key): int(value) for key, value in sorted(vm_learning_profile_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "runtime_band_counts": {
+                            str(key): int(value) for key, value in sorted(vm_runtime_band_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "expected_route_profile_counts": {
+                            str(key): int(value) for key, value in sorted(vm_route_profile_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "expected_model_preference_counts": {
+                            str(key): int(value) for key, value in sorted(vm_model_preference_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "route_resolution_status_counts": {
+                            str(key): int(value) for key, value in sorted(vm_route_resolution_status_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "remediation_kind_counts": {
+                            str(key): int(value) for key, value in sorted(vm_remediation_kind_counts.items(), key=lambda entry: entry[0])
+                        },
+                        "setup_followup_guest_count": vm_setup_followup_guest_count,
                     },
                 }
         else:
@@ -15292,6 +15395,46 @@ class DesktopBackendService:
                 ),
                 "vm_blocked_guest_count": int(
                     dict(vm_control_prepare_result.get("summary", {})).get("blocked_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_execution_mode_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("execution_mode_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_learning_profile_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("learning_profile_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_runtime_band_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("runtime_band_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_expected_route_profile_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("expected_route_profile_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_expected_model_preference_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("expected_model_preference_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_route_resolution_status_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("route_resolution_status_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_remediation_kind_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("remediation_kind_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
+                "vm_setup_followup_guest_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("setup_followup_guest_count", 0)
                     if isinstance(vm_control_prepare_result.get("summary", {}), dict)
                     else 0
                 ),

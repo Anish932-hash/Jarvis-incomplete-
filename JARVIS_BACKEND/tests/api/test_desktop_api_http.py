@@ -13541,6 +13541,7 @@ class FakeDesktopService:
                     "provider_label": "VirtualBox",
                     "guest_os": "linux",
                     "control_mode": "provider_console",
+                    "guest_family": "linux_desktop",
                     "readiness_status": "ready",
                     "enable_learning": True,
                     "reason_codes": ["provider_detected"],
@@ -13652,6 +13653,24 @@ class FakeDesktopService:
                         "provider": "virtualbox",
                         "guest_os": "linux",
                         "control_mode": "provider_console",
+                        "guest_family": "linux_desktop",
+                        "guest_learning_profile": "linux_desktop_explore",
+                        "execution_mode": "hybrid_ready",
+                        "runtime_band_preference": "hybrid",
+                        "expected_route_profile": "linux_vm_desktop_control",
+                        "expected_model_preference": "hybrid_runtime",
+                        "route_resolution_status": "matched",
+                        "remediation_kind": "observe",
+                        "provider_model_readiness": {
+                            "execution_mode": "hybrid_ready",
+                            "runtime_band_preference": "hybrid",
+                            "expected_route_profile": "linux_vm_desktop_control",
+                            "expected_model_preference": "hybrid_runtime",
+                            "route_resolution_status": "matched",
+                            "setup_followup_codes": [],
+                        },
+                        "recommended_traversal_roles": ["menu", "sidebar", "terminal"],
+                        "preferred_wave_actions": ["open_system_settings", "open_terminal"],
                         "prepare_priority_band": "high",
                         "auto_prepare_allowed": True,
                     }
@@ -13661,6 +13680,14 @@ class FakeDesktopService:
                     "attention_count": 0,
                     "blocked_count": 0,
                     "provider_counts": {"virtualbox": 1},
+                    "learning_profile_counts": {"linux_desktop_explore": 1},
+                    "execution_mode_counts": {"hybrid_ready": 1},
+                    "runtime_band_counts": {"hybrid": 1},
+                    "expected_route_profile_counts": {"linux_vm_desktop_control": 1},
+                    "expected_model_preference_counts": {"hybrid_runtime": 1},
+                    "route_resolution_status_counts": {"matched": 1},
+                    "remediation_kind_counts": {"observe": 1},
+                    "setup_followup_guest_count": 0,
                 },
             },
         }
@@ -13708,6 +13735,24 @@ class FakeDesktopService:
                 "guest_name": guest_name or "Ubuntu Dev VM",
                 "provider": "virtualbox",
                 "control_mode": "provider_console",
+                "guest_family": "linux_desktop",
+                "guest_learning_profile": "linux_desktop_explore",
+                "execution_mode": "hybrid_ready",
+                "runtime_band_preference": "hybrid",
+                "expected_route_profile": "linux_vm_desktop_control",
+                "expected_model_preference": "hybrid_runtime",
+                "route_resolution_status": "matched",
+                "remediation_kind": "observe",
+                "provider_model_readiness": {
+                    "execution_mode": "hybrid_ready",
+                    "runtime_band_preference": "hybrid",
+                    "expected_route_profile": "linux_vm_desktop_control",
+                    "expected_model_preference": "hybrid_runtime",
+                    "route_resolution_status": "matched",
+                    "setup_followup_codes": [],
+                },
+                "recommended_traversal_roles": ["menu", "sidebar", "terminal"],
+                "preferred_wave_actions": ["open_system_settings", "open_terminal"],
                 "readiness_status": "ready",
                 "provider_launch_ready": True,
                 "attach_strategy": "provider_console",
@@ -13891,6 +13936,13 @@ class FakeDesktopService:
                         "guest_name": "Ubuntu Dev VM",
                         "provider": "virtualbox",
                         "control_mode": "provider_console",
+                        "guest_learning_profile": "linux_desktop_explore",
+                        "execution_mode": "hybrid_ready",
+                        "runtime_band_preference": "hybrid",
+                        "expected_route_profile": "linux_vm_desktop_control",
+                        "expected_model_preference": "hybrid_runtime",
+                        "route_resolution_status": "matched",
+                        "remediation_kind": "observe",
                         "prepare_priority_band": "high",
                         "auto_prepare_allowed": True,
                     }
@@ -13900,6 +13952,14 @@ class FakeDesktopService:
                     "attention_count": 0,
                     "blocked_count": 0,
                     "provider_counts": {"virtualbox": 1},
+                    "learning_profile_counts": {"linux_desktop_explore": 1},
+                    "execution_mode_counts": {"hybrid_ready": 1},
+                    "runtime_band_counts": {"hybrid": 1},
+                    "expected_route_profile_counts": {"linux_vm_desktop_control": 1},
+                    "expected_model_preference_counts": {"hybrid_runtime": 1},
+                    "route_resolution_status_counts": {"matched": 1},
+                    "remediation_kind_counts": {"observe": 1},
+                    "setup_followup_guest_count": 0,
                 },
             },
             "app_learning_plan": self.desktop_machine_app_learning_plan(
@@ -14186,6 +14246,14 @@ class FakeDesktopService:
                 "vm_attention_guest_count": 0,
                 "vm_blocked_guest_count": 0,
                 "vm_prepare_count": 1,
+                "vm_learning_profile_counts": {"linux_desktop_explore": 1},
+                "vm_execution_mode_counts": {"hybrid_ready": 1},
+                "vm_runtime_band_counts": {"hybrid": 1},
+                "vm_expected_route_profile_counts": {"linux_vm_desktop_control": 1},
+                "vm_expected_model_preference_counts": {"hybrid_runtime": 1},
+                "vm_route_resolution_status_counts": {"matched": 1},
+                "vm_remediation_kind_counts": {"observe": 1},
+                "vm_setup_followup_guest_count": 0,
                 "route_remediation_count": 1,
                 "route_remediation_blocked_count": 0,
                 "route_remediation_degraded_count": 0,
@@ -14271,6 +14339,7 @@ class FakeDesktopService:
                         "continuation_retry_count": 1,
                         "continuation_provider_blocked_count": 0,
                         "continuation_setup_followup_count": 0,
+                        "vm_setup_followup_guest_count": 0,
                         "top_route_remediation_kinds": {"route_tuning": 1},
                         "execution_action_count": 6,
                         "execution_success_count": 4,
@@ -14470,6 +14539,7 @@ class FakeDesktopService:
                 "vm_ready_guest_total": 1,
                 "vm_attention_guest_total": 0,
                 "vm_blocked_guest_total": 0,
+                "vm_setup_followup_guest_total": 0,
                 "route_remediation_total": 1,
                 "route_remediation_blocked_total": 0,
                 "route_remediation_degraded_total": 1,
@@ -14696,10 +14766,30 @@ class FakeDesktopService:
                         "guest_name": "Ubuntu Dev VM",
                         "provider": "virtualbox",
                         "control_mode": "provider_console",
+                        "guest_learning_profile": "linux_desktop_explore",
+                        "execution_mode": "hybrid_ready",
+                        "runtime_band_preference": "hybrid",
+                        "expected_route_profile": "linux_vm_desktop_control",
+                        "expected_model_preference": "hybrid_runtime",
+                        "route_resolution_status": "matched",
+                        "remediation_kind": "observe",
                         "prepare_priority_band": "high",
                     }
                 ],
-                "summary": {"ready_count": 1, "attention_count": 0, "blocked_count": 0, "provider_counts": {"virtualbox": 1}},
+                "summary": {
+                    "ready_count": 1,
+                    "attention_count": 0,
+                    "blocked_count": 0,
+                    "provider_counts": {"virtualbox": 1},
+                    "learning_profile_counts": {"linux_desktop_explore": 1},
+                    "execution_mode_counts": {"hybrid_ready": 1},
+                    "runtime_band_counts": {"hybrid": 1},
+                    "expected_route_profile_counts": {"linux_vm_desktop_control": 1},
+                    "expected_model_preference_counts": {"hybrid_runtime": 1},
+                    "route_resolution_status_counts": {"matched": 1},
+                    "remediation_kind_counts": {"observe": 1},
+                    "setup_followup_guest_count": 0,
+                },
             },
             "vm_control_prepare": {
                 "status": "success" if auto_prepare_vm_controls else "skipped",
@@ -14707,10 +14797,22 @@ class FakeDesktopService:
                 "items": [
                     {
                         "status": "success",
+                        "guest_learning_profile": "linux_desktop_explore",
+                        "expected_route_profile": "linux_vm_desktop_control",
+                        "expected_model_preference": "hybrid_runtime",
+                        "runtime_band_preference": "hybrid",
                         "summary": {
                             "guest_name": "Ubuntu Dev VM",
                             "provider": "virtualbox",
                             "control_mode": "provider_console",
+                            "guest_learning_profile": "linux_desktop_explore",
+                            "execution_mode": "hybrid_ready",
+                            "runtime_band_preference": "hybrid",
+                            "expected_route_profile": "linux_vm_desktop_control",
+                            "expected_model_preference": "hybrid_runtime",
+                            "route_resolution_status": "matched",
+                            "remediation_kind": "observe",
+                            "provider_model_readiness": {"setup_followup_codes": []},
                             "readiness_status": "ready",
                             "provider_launch_ready": True,
                         },
@@ -14721,6 +14823,14 @@ class FakeDesktopService:
                     "ready_count": 1 if auto_prepare_vm_controls else 0,
                     "attention_count": 0,
                     "blocked_count": 0,
+                    "execution_mode_counts": {"hybrid_ready": 1} if auto_prepare_vm_controls else {},
+                    "learning_profile_counts": {"linux_desktop_explore": 1} if auto_prepare_vm_controls else {},
+                    "runtime_band_counts": {"hybrid": 1} if auto_prepare_vm_controls else {},
+                    "expected_route_profile_counts": {"linux_vm_desktop_control": 1} if auto_prepare_vm_controls else {},
+                    "expected_model_preference_counts": {"hybrid_runtime": 1} if auto_prepare_vm_controls else {},
+                    "route_resolution_status_counts": {"matched": 1} if auto_prepare_vm_controls else {},
+                    "remediation_kind_counts": {"observe": 1} if auto_prepare_vm_controls else {},
+                    "setup_followup_guest_count": 0,
                 },
             },
             "route_remediation": {
@@ -14969,6 +15079,14 @@ class FakeDesktopService:
                 "vm_ready_guest_count": 1 if auto_prepare_vm_controls else 0,
                 "vm_attention_guest_count": 0,
                 "vm_blocked_guest_count": 0,
+                "vm_learning_profile_counts": {"linux_desktop_explore": 1} if auto_prepare_vm_controls else {},
+                "vm_execution_mode_counts": {"hybrid_ready": 1} if auto_prepare_vm_controls else {},
+                "vm_runtime_band_counts": {"hybrid": 1} if auto_prepare_vm_controls else {},
+                "vm_expected_route_profile_counts": {"linux_vm_desktop_control": 1} if auto_prepare_vm_controls else {},
+                "vm_expected_model_preference_counts": {"hybrid_runtime": 1} if auto_prepare_vm_controls else {},
+                "vm_route_resolution_status_counts": {"matched": 1} if auto_prepare_vm_controls else {},
+                "vm_remediation_kind_counts": {"observe": 1} if auto_prepare_vm_controls else {},
+                "vm_setup_followup_guest_count": 0,
                 "route_remediation_count": 1 if auto_prepare_app_controls else 0,
                 "route_remediation_blocked_count": 0,
                 "route_remediation_degraded_count": 1 if auto_prepare_app_controls else 0,
@@ -25095,6 +25213,9 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert vm_plan["status"] == "success"
     assert vm_plan["plan"]["count"] == 1
     assert vm_plan["plan"]["items"][0]["guest_name"] == "Ubuntu Dev VM"
+    assert vm_plan["plan"]["items"][0]["guest_learning_profile"] == "linux_desktop_explore"
+    assert vm_plan["plan"]["summary"]["execution_mode_counts"]["hybrid_ready"] == 1
+    assert vm_plan["plan"]["summary"]["expected_route_profile_counts"]["linux_vm_desktop_control"] == 1
     assert service.machine_vm_control_plan_calls[-1]["max_guests"] == 2
     assert service.machine_vm_control_plan_calls[-1]["refresh_apps"] is True
 
@@ -25133,6 +25254,9 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert vm_prepared["status"] == "success"
     assert vm_prepared["summary"]["guest_name"] == "Ubuntu Dev VM"
     assert vm_prepared["summary"]["attach_strategy"] == "provider_console"
+    assert vm_prepared["summary"]["guest_learning_profile"] == "linux_desktop_explore"
+    assert vm_prepared["summary"]["expected_route_profile"] == "linux_vm_desktop_control"
+    assert vm_prepared["summary"]["execution_mode"] == "hybrid_ready"
     assert service.machine_vm_prepare_calls[-1]["guest_name"] == "Ubuntu Dev VM"
     assert service.machine_vm_prepare_calls[-1]["ensure_provider_launch"] is True
 
@@ -25296,6 +25420,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["vm_control_plan"]["count"] == 1
     assert plan["summary"]["vm_prepare_count"] == 1
     assert plan["summary"]["vm_ready_guest_count"] == 1
+    assert plan["summary"]["vm_execution_mode_counts"]["hybrid_ready"] == 1
+    assert plan["summary"]["vm_expected_route_profile_counts"]["linux_vm_desktop_control"] == 1
     assert plan["continuation_plan"]["count"] == 3
     assert plan["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
     assert plan["summary"]["continuation_count"] == 3
@@ -25359,6 +25485,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["prepared_app_count"] == 2
     assert launched["summary"]["prepared_vm_control_count"] == 1
     assert launched["summary"]["vm_ready_guest_count"] == 1
+    assert launched["summary"]["vm_execution_mode_counts"]["hybrid_ready"] == 1
+    assert launched["summary"]["vm_expected_route_profile_counts"]["linux_vm_desktop_control"] == 1
     assert launched["summary"]["prepared_degraded_count"] == 1
     assert launched["summary"]["prepared_setup_aligned_count"] == 2
     assert launched["summary"]["prepared_setup_boosted_count"] == 1
@@ -25400,6 +25528,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["vm_prepare_total"] == 1
     assert history["summary"]["prepared_vm_control_total"] == 1
     assert history["summary"]["vm_ready_guest_total"] == 1
+    assert history["summary"]["vm_setup_followup_guest_total"] == 0
     assert history["summary"]["execution_action_total"] == 6
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1

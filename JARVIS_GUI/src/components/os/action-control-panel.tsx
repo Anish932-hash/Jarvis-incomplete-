@@ -2567,6 +2567,55 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineVmPrepare.summary),
     [desktopMachineVmPrepare]
   );
+  const desktopMachineVmControlExecutionModeCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.execution_mode_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlLearningProfileCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.learning_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlRouteCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.expected_route_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlRuntimeBandCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.runtime_band_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlRemediationKindCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.remediation_kind_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmPrepareExecutionModeCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmPrepareSummary.execution_mode_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmPrepareSummary]
+  );
+  const desktopMachineVmPrepareRouteCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmPrepareSummary.expected_route_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmPrepareSummary]
+  );
   const desktopMachinePrepareReadiness = useMemo(
     () => asObjectRecord(desktopMachinePrepare.provider_model_readiness),
     [desktopMachinePrepare]
@@ -21574,6 +21623,74 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 return `${guestName}${providerName ? `:${providerName}` : ''}${mode ? `:${mode}` : ''}`;
                                               })
                                               .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlExecutionModeCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm modes:{' '}
+                                            {desktopMachineVmControlExecutionModeCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlLearningProfileCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm learning:{' '}
+                                            {desktopMachineVmControlLearningProfileCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlRouteCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm routes:{' '}
+                                            {desktopMachineVmControlRouteCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlRuntimeBandCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm runtime bands:{' '}
+                                            {desktopMachineVmControlRuntimeBandCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingSummary.vm_setup_followup_guest_count ?? 0) > 0 ||
+                                          desktopMachineVmControlRemediationKindCounts.length > 0) ? (
+                                          <p className="mt-1">
+                                            vm followups:{Number(
+                                              desktopMachineOnboardingSummary.vm_setup_followup_guest_count ??
+                                                desktopMachineVmControlPlanSummary.setup_followup_guest_count ??
+                                                0
+                                            )}
+                                            {desktopMachineVmControlRemediationKindCounts.length > 0
+                                              ? ` • ${desktopMachineVmControlRemediationKindCounts
+                                                  .slice(0, 3)
+                                                  .map(([key, value]) => `${key}:${value}`)
+                                                  .join(' • ')}`
+                                              : ''}
+                                          </p>
+                                        ) : null}
+                                        {(desktopMachineVmPrepareExecutionModeCounts.length > 0 ||
+                                          desktopMachineVmPrepareRouteCounts.length > 0) ? (
+                                          <p className="mt-1">
+                                            prepared vm:{' '}
+                                            {desktopMachineVmPrepareExecutionModeCounts
+                                              .slice(0, 2)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {desktopMachineVmPrepareRouteCounts.length > 0
+                                              ? ` • routes ${desktopMachineVmPrepareRouteCounts
+                                                  .slice(0, 2)
+                                                  .map(([key, value]) => `${key}:${value}`)
+                                                  .join(' • ')}`
+                                              : ''}
                                           </p>
                                         ) : null}
                                         <p className="mt-1">

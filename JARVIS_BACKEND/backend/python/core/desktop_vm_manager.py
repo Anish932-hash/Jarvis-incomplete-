@@ -227,6 +227,7 @@ class DesktopVMManager:
         task: str = "",
         query: str = "",
         max_targets: int = 4,
+        machine_profile: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         guests = [
             dict(item)
@@ -237,32 +238,13 @@ class DesktopVMManager:
         clean_task = _norm_text(task)
         targets: List[Dict[str, Any]] = []
         for row in guests:
-            readiness_status = _norm_text(row.get("readiness_status", "")) or "attention"
-            priority_score = 120 if readiness_status == "ready" else 88 if readiness_status == "attention" else 42
-            reason_codes: List[str] = ["ready_provider" if readiness_status == "ready" else "needs_followthrough"]
-            if bool(row.get("enable_learning", False)):
-                priority_score += 10
-                reason_codes.append("learning_enabled")
-            if clean_query and (
-                clean_query in _norm_text(row.get("guest_name", ""))
-                or clean_query in _norm_text(row.get("guest_os", ""))
-                or clean_query in _norm_text(row.get("provider_label", ""))
-            ):
-                priority_score += 18
-                reason_codes.append("query_match")
-            if clean_task and clean_task in _norm_text(row.get("guest_os", "")):
-                priority_score += 8
-                reason_codes.append("task_match")
             targets.append(
-                {
-                    **row,
-                    "priority_score": priority_score,
-                    "prepare_priority_band": "high" if priority_score >= 120 else "medium" if priority_score >= 85 else "low",
-                    "reason_codes": _dedupe_strings(reason_codes, limit=8),
-                    "auto_prepare_allowed": readiness_status != "blocked",
-                    "control_strategy": _norm_text(row.get("control_mode", "")) or "provider_console",
-                    "learning_query": self._guest_learning_query(row),
-                }
+                self._plan_guest_target(
+                    row,
+                    task=clean_task,
+                    query=clean_query,
+                    machine_profile=dict(machine_profile or {}) if isinstance(machine_profile, dict) else {},
+                )
             )
         targets.sort(key=lambda item: (-int(item.get("priority_score", 0) or 0), _norm_text(item.get("guest_name", ""))))
         selected = targets[: max(1, min(int(max_targets or 4), 16))]
@@ -277,12 +259,31 @@ class DesktopVMManager:
                 "provider_counts": self._count_values(selected, "provider"),
                 "control_mode_counts": self._count_values(selected, "control_mode"),
                 "guest_os_counts": self._count_values(selected, "guest_os"),
+                "guest_family_counts": self._count_values(selected, "guest_family"),
+                "learning_profile_counts": self._count_values(selected, "guest_learning_profile"),
+                "execution_mode_counts": self._count_values(selected, "execution_mode"),
+                "runtime_band_counts": self._count_values(selected, "runtime_band_preference"),
+                "expected_route_profile_counts": self._count_values(selected, "expected_route_profile"),
+                "expected_model_preference_counts": self._count_values(selected, "expected_model_preference"),
+                "route_resolution_status_counts": self._count_values(selected, "route_resolution_status"),
+                "remediation_kind_counts": self._count_values(selected, "remediation_kind"),
+                "setup_followup_guest_count": len(
+                    [
+                        row
+                        for row in selected
+                        if isinstance(row.get("provider_model_readiness", {}), dict)
+                        and len(row.get("provider_model_readiness", {}).get("setup_followup_codes", [])) > 0
+                    ]
+                ),
                 "focus_guest_names": [str(row.get("guest_name", "")).strip() for row in selected[:4] if str(row.get("guest_name", "")).strip()],
             },
             "defaults": {
                 "auto_prepare_vm_controls": True,
                 "vm_prepare_limit": max(1, min(len(selected) or 1, 4)),
                 "enable_learning": True,
+                "follow_surface_waves": True,
+                "max_surface_waves": 4,
+                "probe_controls": True,
             },
             "next_actions": [
                 {
@@ -291,6 +292,7 @@ class DesktopVMManager:
                     "title": f"Prepare VM control for {_clean_text(row.get('guest_name', 'guest'))}",
                     "target": _clean_text(row.get("guest_name", "guest")),
                     "status": "ready" if bool(row.get("auto_prepare_allowed", False)) else "attention",
+                    "recommended_action_code": _clean_text(row.get("remediation_action_code", "")),
                 }
                 for row in selected[:4]
             ],
@@ -306,6 +308,8 @@ class DesktopVMManager:
         ensure_provider_launch: bool = True,
         query: str = "",
         source: str = "api",
+        task: str = "",
+        machine_profile: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         guests = [
             dict(item)
@@ -315,6 +319,12 @@ class DesktopVMManager:
         target = self._select_guest(guests, guest_name=guest_name, guest_id=guest_id)
         if not target:
             return {"status": "error", "message": "guest_name or guest_id not found"}
+        target = self._plan_guest_target(
+            target,
+            task=_norm_text(task),
+            query=_norm_text(query),
+            machine_profile=dict(machine_profile or {}) if isinstance(machine_profile, dict) else {},
+        )
         provider_launch_target = (
             _clean_text(target.get("provider_launch_target", ""))
             or _clean_text(target.get("provider_app_name", ""))
@@ -362,6 +372,30 @@ class DesktopVMManager:
                 "launch_status": _norm_text(launch_payload.get("status", "")) or "skipped",
                 "attach_strategy": self._attach_strategy(target),
                 "learning_query": _clean_text(query) or self._guest_learning_query(target),
+                "guest_family": _norm_text(target.get("guest_family", "")),
+                "guest_learning_profile": _norm_text(target.get("guest_learning_profile", "")),
+                "execution_mode": _norm_text(target.get("execution_mode", "")),
+                "runtime_band_preference": _norm_text(target.get("runtime_band_preference", "")),
+                "expected_route_profile": _norm_text(target.get("expected_route_profile", "")),
+                "expected_model_preference": _norm_text(target.get("expected_model_preference", "")),
+                "route_resolution_status": _norm_text(target.get("route_resolution_status", "")),
+                "remediation_kind": _norm_text(target.get("remediation_kind", "")),
+                "remediation_action_code": _clean_text(target.get("remediation_action_code", "")),
+                "recommended_traversal_roles": list(target.get("recommended_traversal_roles", []))
+                if isinstance(target.get("recommended_traversal_roles", []), list)
+                else [],
+                "preferred_wave_actions": list(target.get("preferred_wave_actions", []))
+                if isinstance(target.get("preferred_wave_actions", []), list)
+                else [],
+                "recommended_traversal_paths": list(target.get("recommended_traversal_paths", []))
+                if isinstance(target.get("recommended_traversal_paths", []), list)
+                else [],
+                "capability_tags": list(target.get("capability_tags", []))
+                if isinstance(target.get("capability_tags", []), list)
+                else [],
+                "provider_model_readiness": dict(target.get("provider_model_readiness", {}))
+                if isinstance(target.get("provider_model_readiness", {}), dict)
+                else {},
                 "reason_codes": list(target.get("reason_codes", [])) if isinstance(target.get("reason_codes", []), list) else [],
                 "blocker_codes": list(target.get("blocker_codes", [])) if isinstance(target.get("blocker_codes", []), list) else [],
             },
@@ -476,6 +510,7 @@ class DesktopVMManager:
                     "blocker_codes": _dedupe_strings(blocker_codes, limit=8),
                     "reason_codes": _dedupe_strings(reason_codes, limit=8),
                     "suggested_control_modes": self._suggested_control_modes(row, provider_row),
+                    "guest_family": self._guest_family(row),
                     "learning_query": self._guest_learning_query(row),
                 }
             )
@@ -508,6 +543,7 @@ class DesktopVMManager:
             "provider_guest_counts": DesktopVMManager._count_values(all_guests, "provider"),
             "control_mode_counts": DesktopVMManager._count_values(all_guests, "control_mode"),
             "guest_os_counts": DesktopVMManager._count_values(all_guests, "guest_os"),
+            "guest_family_counts": DesktopVMManager._count_values(all_guests, "guest_family"),
             "focus_guest_names": [str(row.get("guest_name", "")).strip() for row in guests[:4] if str(row.get("guest_name", "")).strip()],
             "virtualization_firmware_enabled": bool(virtualization.get("virtualization_firmware_enabled", False)),
             "wsl_available": bool(virtualization.get("wsl_available", False)),
@@ -638,6 +674,323 @@ class DesktopVMManager:
         return control_mode if control_mode in {"rdp", "vnc", "ssh"} else "provider_console"
 
     @staticmethod
+    def _guest_family(row: Dict[str, Any]) -> str:
+        guest_os = _norm_text(row.get("guest_os", ""))
+        control_mode = _norm_text(row.get("control_mode", ""))
+        if control_mode == "ssh":
+            return "terminal"
+        if "windows" in guest_os:
+            return "windows_desktop"
+        if any(token in guest_os for token in ("linux", "ubuntu", "debian", "fedora", "arch", "mint")):
+            return "linux_desktop"
+        if any(token in guest_os for token in ("bsd",)):
+            return "unix_desktop"
+        if any(token in guest_os for token in ("mac", "darwin", "osx")):
+            return "macos_desktop"
+        if control_mode in {"rdp", "vnc"}:
+            return "remote_desktop"
+        return "generic_guest"
+
+    @classmethod
+    def _expected_route_profile(cls, row: Dict[str, Any], *, task: str = "") -> str:
+        control_mode = _norm_text(row.get("control_mode", ""))
+        family = cls._guest_family(row)
+        clean_task = _norm_text(task)
+        if control_mode == "ssh":
+            return "terminal_first_guest_control"
+        if control_mode == "rdp":
+            return "rdp_guest_desktop_control"
+        if control_mode == "vnc":
+            return "vnc_guest_desktop_control"
+        if family == "windows_desktop":
+            return "windows_vm_desktop_control"
+        if family in {"linux_desktop", "unix_desktop"} and "code" in clean_task:
+            return "linux_vm_workspace_control"
+        if family in {"linux_desktop", "unix_desktop"}:
+            return "linux_vm_desktop_control"
+        if family == "macos_desktop":
+            return "macos_vm_desktop_control"
+        return "generic_vm_control"
+
+    @classmethod
+    def _expected_model_preference(cls, row: Dict[str, Any], *, task: str = "") -> str:
+        control_mode = _norm_text(row.get("control_mode", ""))
+        family = cls._guest_family(row)
+        clean_task = _norm_text(task)
+        if control_mode == "ssh":
+            return "terminal_reasoning"
+        if family == "macos_desktop":
+            return "api_vision_runtime"
+        if "vision" in clean_task or control_mode in {"rdp", "vnc"}:
+            return "hybrid_runtime"
+        if family in {"windows_desktop", "linux_desktop", "unix_desktop"}:
+            return "hybrid_runtime"
+        return "balanced_runtime"
+
+    @classmethod
+    def _runtime_band_preference(cls, row: Dict[str, Any]) -> str:
+        control_mode = _norm_text(row.get("control_mode", ""))
+        family = cls._guest_family(row)
+        if control_mode == "ssh":
+            return "local"
+        if control_mode in {"rdp", "provider_console"} and family in {"windows_desktop", "linux_desktop", "unix_desktop"}:
+            return "hybrid"
+        if control_mode == "vnc" or family == "macos_desktop":
+            return "api"
+        return "hybrid"
+
+    @classmethod
+    def _guest_learning_profile(cls, row: Dict[str, Any], *, task: str = "") -> str:
+        family = cls._guest_family(row)
+        control_mode = _norm_text(row.get("control_mode", ""))
+        clean_task = _norm_text(task)
+        if control_mode == "ssh":
+            return "terminal_bootstrap" if "setup" in clean_task or "install" in clean_task else "terminal_revalidate"
+        if family == "windows_desktop":
+            return "windows_desktop_explore"
+        if family in {"linux_desktop", "unix_desktop"}:
+            return "linux_workspace_explore" if any(token in clean_task for token in ("code", "dev", "workspace")) else "linux_desktop_explore"
+        if family == "macos_desktop":
+            return "macos_desktop_explore"
+        if control_mode in {"rdp", "vnc"}:
+            return "remote_desktop_revalidate"
+        return "generic_guest_revalidate"
+
+    @classmethod
+    def _recommended_traversal_roles(cls, row: Dict[str, Any]) -> List[str]:
+        family = cls._guest_family(row)
+        control_mode = _norm_text(row.get("control_mode", ""))
+        roles: List[str] = []
+        if family == "terminal":
+            roles.extend(["terminal", "dialog", "list"])
+        elif family == "windows_desktop":
+            roles.extend(["menu", "toolbar", "ribbon", "sidebar", "tree", "list", "dialog"])
+        elif family in {"linux_desktop", "unix_desktop"}:
+            roles.extend(["menu", "toolbar", "sidebar", "tree", "list", "dialog", "terminal"])
+        elif family == "macos_desktop":
+            roles.extend(["menu", "toolbar", "sidebar", "list", "dialog"])
+        else:
+            roles.extend(["menu", "toolbar", "list", "dialog"])
+        if control_mode in {"rdp", "vnc"}:
+            roles.append("window_switcher")
+        return _dedupe_strings([role.lower() for role in roles], limit=8)
+
+    @classmethod
+    def _preferred_wave_actions(cls, row: Dict[str, Any]) -> List[str]:
+        family = cls._guest_family(row)
+        control_mode = _norm_text(row.get("control_mode", ""))
+        actions: List[str] = []
+        if control_mode == "ssh":
+            actions.extend(["run_help_command", "list_shell_context", "inspect_processes", "open_editor"])
+        elif family == "windows_desktop":
+            actions.extend(["open_settings", "focus_sidebar", "open_system_dialog", "traverse_menu"])
+        elif family in {"linux_desktop", "unix_desktop"}:
+            actions.extend(["open_system_settings", "focus_sidebar", "open_terminal", "traverse_menu"])
+        elif family == "macos_desktop":
+            actions.extend(["open_system_settings", "open_menu_bar", "focus_sidebar", "open_spotlight"])
+        else:
+            actions.extend(["traverse_menu", "focus_sidebar", "open_dialog"])
+        if control_mode in {"rdp", "vnc"}:
+            actions.append("stabilize_remote_focus")
+        return _dedupe_strings([action.lower() for action in actions], limit=8)
+
+    @classmethod
+    def _recommended_traversal_paths(cls, row: Dict[str, Any]) -> List[str]:
+        control_mode = _norm_text(row.get("control_mode", ""))
+        family = cls._guest_family(row)
+        paths: List[str] = []
+        if control_mode == "ssh":
+            paths.extend(["shell_prompt->help", "shell_prompt->processes", "shell_prompt->workspace"])
+        elif family == "windows_desktop":
+            paths.extend(["start_menu->settings", "settings_sidebar->system", "menu->dialog"])
+        elif family in {"linux_desktop", "unix_desktop"}:
+            paths.extend(["app_menu->settings", "sidebar->preferences", "terminal->workspace"])
+        elif family == "macos_desktop":
+            paths.extend(["menu_bar->settings", "settings_sidebar->general", "window->dialog"])
+        else:
+            paths.extend(["menu->dialog", "toolbar->list"])
+        if control_mode in {"rdp", "vnc"}:
+            paths.append("remote_window->dialog")
+        return _dedupe_strings(paths, limit=6)
+
+    @classmethod
+    def _guest_capability_tags(cls, row: Dict[str, Any]) -> List[str]:
+        family = cls._guest_family(row)
+        control_mode = _norm_text(row.get("control_mode", ""))
+        tags: List[str] = [family, control_mode]
+        if control_mode in {"rdp", "vnc", "ssh"}:
+            tags.append("remote_attach")
+        if control_mode == "provider_console":
+            tags.append("provider_console")
+        if family == "terminal":
+            tags.append("terminal_safe")
+        else:
+            tags.append("desktop_surface")
+        if bool(row.get("enable_learning", False)):
+            tags.append("learning_enabled")
+        return _dedupe_strings([tag.lower() for tag in tags if tag], limit=8)
+
+    @classmethod
+    def _provider_model_readiness(cls, row: Dict[str, Any], *, machine_profile: Dict[str, Any], task: str = "") -> Dict[str, Any]:
+        readiness_status = _norm_text(row.get("readiness_status", "")) or "attention"
+        control_mode = _norm_text(row.get("control_mode", ""))
+        family = cls._guest_family(row)
+        remote_endpoint_ready = bool(_clean_text(row.get("remote_endpoint", "")))
+        provider_ready = bool(row.get("provider_detected", False))
+        providers_summary = (
+            dict(machine_profile.get("providers", {}).get("summary", {}))
+            if isinstance(machine_profile.get("providers", {}), dict)
+            and isinstance(machine_profile.get("providers", {}).get("summary", {}), dict)
+            else {}
+        )
+        verified_provider_count = int(providers_summary.get("verified_count", 0) or 0)
+        local_inventory = (
+            dict(machine_profile.get("models", {}).get("local_inventory", {}))
+            if isinstance(machine_profile.get("models", {}), dict)
+            and isinstance(machine_profile.get("models", {}).get("local_inventory", {}), dict)
+            else {}
+        )
+        local_model_count = int(local_inventory.get("count", 0) or 0)
+        expected_route_profile = cls._expected_route_profile(row, task=task)
+        expected_model_preference = cls._expected_model_preference(row, task=task)
+        runtime_band_preference = cls._runtime_band_preference(row)
+        required_tasks = ["control"]
+        if family == "terminal":
+            required_tasks.append("reasoning")
+        else:
+            required_tasks.extend(["vision", "reasoning"])
+        local_ready_tasks = ["control"]
+        if family == "terminal":
+            local_ready_tasks.append("reasoning")
+        elif local_model_count > 0:
+            local_ready_tasks.append("vision")
+        setup_followup_codes = list(row.get("blocker_codes", [])) if isinstance(row.get("blocker_codes", []), list) else []
+        if control_mode in {"rdp", "vnc", "ssh"} and not remote_endpoint_ready:
+            setup_followup_codes.append("register_remote_endpoint")
+        if control_mode == "vnc" and not provider_ready:
+            setup_followup_codes.append("install_vnc_viewer")
+        if control_mode == "rdp" and not remote_endpoint_ready:
+            setup_followup_codes.append("configure_rdp_guest")
+        if control_mode == "ssh" and not remote_endpoint_ready:
+            setup_followup_codes.append("configure_ssh_guest")
+        if expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and local_model_count <= 0 and verified_provider_count <= 0:
+            setup_followup_codes.append("configure_multimodal_runtime")
+        setup_followup_codes = _dedupe_strings(setup_followup_codes, limit=8)
+        if readiness_status == "blocked":
+            execution_mode = "blocked"
+            route_resolution_status = "blocked"
+        elif control_mode == "ssh" and remote_endpoint_ready:
+            execution_mode = "remote_ready"
+            route_resolution_status = "remote_attach"
+        elif control_mode in {"rdp", "vnc"} and remote_endpoint_ready:
+            execution_mode = "hybrid_ready"
+            route_resolution_status = "remote_attach"
+        elif provider_ready and control_mode == "provider_console":
+            execution_mode = "hybrid_ready" if family != "terminal" else "local_ready"
+            route_resolution_status = "matched"
+        elif setup_followup_codes:
+            execution_mode = "degraded"
+            route_resolution_status = "setup_constrained"
+        else:
+            execution_mode = "attention"
+            route_resolution_status = "fallback"
+        remediation_kind = cls._vm_remediation_kind(setup_followup_codes)
+        return {
+            "readiness_status": readiness_status,
+            "required_tasks": _dedupe_strings(required_tasks, limit=6),
+            "local_ready_tasks": _dedupe_strings(local_ready_tasks, limit=6),
+            "provider_ready": provider_ready,
+            "verified_provider_count": verified_provider_count,
+            "local_model_count": local_model_count,
+            "remote_endpoint_ready": remote_endpoint_ready,
+            "execution_mode": execution_mode,
+            "runtime_band_preference": runtime_band_preference,
+            "expected_route_profile": expected_route_profile,
+            "expected_model_preference": expected_model_preference,
+            "route_resolution_status": route_resolution_status,
+            "setup_followup_codes": setup_followup_codes,
+            "remediation_kind": remediation_kind,
+        }
+
+    @staticmethod
+    def _vm_remediation_kind(setup_followup_codes: Iterable[Any]) -> str:
+        codes = [_norm_text(item) for item in setup_followup_codes]
+        if any(code == "virtualization_disabled" for code in codes):
+            return "enable_virtualization"
+        if any(code == "provider_not_detected" for code in codes):
+            return "install_provider"
+        if any(code == "register_remote_endpoint" for code in codes):
+            return "register_remote_endpoint"
+        if any(code in {"configure_rdp_guest", "configure_ssh_guest", "install_vnc_viewer"} for code in codes):
+            return "configure_remote_attach"
+        if any(code == "configure_multimodal_runtime" for code in codes):
+            return "configure_runtime"
+        return "observe"
+
+    @classmethod
+    def _plan_guest_target(
+        cls,
+        row: Dict[str, Any],
+        *,
+        task: str,
+        query: str,
+        machine_profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        base = dict(row)
+        readiness_status = _norm_text(base.get("readiness_status", "")) or "attention"
+        reason_codes: List[str] = list(base.get("reason_codes", [])) if isinstance(base.get("reason_codes", []), list) else []
+        if readiness_status == "ready":
+            reason_codes.append("ready_provider")
+        else:
+            reason_codes.append("needs_followthrough")
+        if bool(base.get("enable_learning", False)):
+            reason_codes.append("learning_enabled")
+        if query and (
+            query in _norm_text(base.get("guest_name", ""))
+            or query in _norm_text(base.get("guest_os", ""))
+            or query in _norm_text(base.get("provider_label", ""))
+        ):
+            reason_codes.append("query_match")
+        if task and task in _norm_text(base.get("guest_os", "")):
+            reason_codes.append("task_match")
+        provider_model_readiness = cls._provider_model_readiness(base, machine_profile=machine_profile, task=task)
+        execution_mode = _norm_text(provider_model_readiness.get("execution_mode", "")) or "attention"
+        priority_score = 120 if readiness_status == "ready" else 88 if readiness_status == "attention" else 42
+        if execution_mode in {"hybrid_ready", "remote_ready", "local_ready"}:
+            priority_score += 14
+        elif execution_mode == "degraded":
+            priority_score -= 6
+        if query and "query_match" in [_norm_text(item) for item in reason_codes]:
+            priority_score += 18
+        if task and "task_match" in [_norm_text(item) for item in reason_codes]:
+            priority_score += 8
+        remediation_kind = _norm_text(provider_model_readiness.get("remediation_kind", "")) or "observe"
+        remediation_action_code = str(remediation_kind or "").strip().replace(" ", "_")
+        return {
+            **base,
+            "guest_family": cls._guest_family(base),
+            "priority_score": priority_score,
+            "prepare_priority_band": "high" if priority_score >= 120 else "medium" if priority_score >= 85 else "low",
+            "reason_codes": _dedupe_strings(reason_codes, limit=8),
+            "auto_prepare_allowed": readiness_status != "blocked",
+            "control_strategy": _norm_text(base.get("control_mode", "")) or "provider_console",
+            "learning_query": cls._guest_learning_query(base),
+            "guest_learning_profile": cls._guest_learning_profile(base, task=task),
+            "execution_mode": execution_mode,
+            "runtime_band_preference": _norm_text(provider_model_readiness.get("runtime_band_preference", "")),
+            "expected_route_profile": _norm_text(provider_model_readiness.get("expected_route_profile", "")),
+            "expected_model_preference": _norm_text(provider_model_readiness.get("expected_model_preference", "")),
+            "route_resolution_status": _norm_text(provider_model_readiness.get("route_resolution_status", "")),
+            "provider_model_readiness": provider_model_readiness,
+            "recommended_traversal_roles": cls._recommended_traversal_roles(base),
+            "preferred_wave_actions": cls._preferred_wave_actions(base),
+            "recommended_traversal_paths": cls._recommended_traversal_paths(base),
+            "capability_tags": cls._guest_capability_tags(base),
+            "remediation_kind": remediation_kind,
+            "remediation_action_code": remediation_action_code,
+        }
+
+    @staticmethod
     def _guest_learning_query(row: Dict[str, Any]) -> str:
         guest_os = _norm_text(row.get("guest_os", ""))
         if "windows" in guest_os:
@@ -660,5 +1013,9 @@ class DesktopVMManager:
         current["last_prepared_at"] = _utc_now_iso()
         current["last_prepare_status"] = _norm_text(status)
         current["last_prepare_source"] = _norm_text(source) or "api"
+        current["last_prepare_execution_mode"] = _norm_text(target.get("execution_mode", ""))
+        current["last_prepare_route_profile"] = _norm_text(target.get("expected_route_profile", ""))
+        current["last_prepare_runtime_band"] = _norm_text(target.get("runtime_band_preference", ""))
+        current["last_prepare_learning_profile"] = _norm_text(target.get("guest_learning_profile", ""))
         rows[guest_id] = current
         self._store.set("guest_profiles", rows)
