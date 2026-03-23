@@ -109,6 +109,11 @@ class DesktopOnboardingManager:
         multimodal_weird_app_total = 0
         multimodal_revalidation_target_total = 0
         multimodal_overdue_revalidation_total = 0
+        multimodal_setup_action_total = 0
+        multimodal_setup_auto_runnable_total = 0
+        multimodal_setup_executed_total = 0
+        multimodal_setup_success_total = 0
+        multimodal_setup_loaded_model_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
@@ -181,6 +186,11 @@ class DesktopOnboardingManager:
             multimodal_overdue_revalidation_total += int(
                 summary.get("multimodal_overdue_revalidation_count", 0) or 0
             )
+            multimodal_setup_action_total += int(summary.get("multimodal_setup_action_count", 0) or 0)
+            multimodal_setup_auto_runnable_total += int(summary.get("multimodal_setup_auto_runnable_count", 0) or 0)
+            multimodal_setup_executed_total += int(summary.get("multimodal_setup_executed_count", 0) or 0)
+            multimodal_setup_success_total += int(summary.get("multimodal_setup_success_count", 0) or 0)
+            multimodal_setup_loaded_model_total += int(summary.get("multimodal_setup_loaded_model_count", 0) or 0)
             route_remediation_total += int(summary.get("route_remediation_count", 0) or 0)
             route_remediation_blocked_total += int(summary.get("route_remediation_blocked_count", 0) or 0)
             route_remediation_degraded_total += int(summary.get("route_remediation_degraded_count", 0) or 0)
@@ -273,6 +283,11 @@ class DesktopOnboardingManager:
                 "multimodal_weird_app_total": multimodal_weird_app_total,
                 "multimodal_revalidation_target_total": multimodal_revalidation_target_total,
                 "multimodal_overdue_revalidation_total": multimodal_overdue_revalidation_total,
+                "multimodal_setup_action_total": multimodal_setup_action_total,
+                "multimodal_setup_auto_runnable_total": multimodal_setup_auto_runnable_total,
+                "multimodal_setup_executed_total": multimodal_setup_executed_total,
+                "multimodal_setup_success_total": multimodal_setup_success_total,
+                "multimodal_setup_loaded_model_total": multimodal_setup_loaded_model_total,
                 "route_remediation_total": route_remediation_total,
                 "route_remediation_blocked_total": route_remediation_blocked_total,
                 "route_remediation_degraded_total": route_remediation_degraded_total,

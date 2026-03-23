@@ -8830,6 +8830,319 @@ class DesktopBackendService:
             "next_actions": next_actions[:6],
         }
 
+    def _desktop_machine_multimodal_setup_actions(
+        self,
+        *,
+        multimodal_memory: Dict[str, Any],
+        task: str = "",
+        limit: int = 6,
+    ) -> List[Dict[str, Any]]:
+        payload = dict(multimodal_memory) if isinstance(multimodal_memory, dict) else {}
+        summary = dict(payload.get("summary", {})) if isinstance(payload.get("summary", {}), dict) else {}
+        runtime_profile = dict(payload.get("vision_runtime", {})) if isinstance(payload.get("vision_runtime", {}), dict) else {}
+        recommendation_rows = {
+            self._machine_text(item.get("code", "")): dict(item)
+            for item in payload.get("recommendations", [])
+            if isinstance(payload.get("recommendations", []), list)
+            and isinstance(item, dict)
+            and self._machine_text(item.get("code", ""))
+        }
+        supported_actions = {
+            "initialize_local_vision_runtime": {
+                "kind": "multimodal_runtime",
+                "title": "Initialize local OCR and vision runtime",
+                "required": True,
+                "auto_runnable": True,
+            },
+            "warm_local_vision_runtime": {
+                "kind": "multimodal_runtime",
+                "title": "Warm local OCR and vision models",
+                "required": False,
+                "auto_runnable": True,
+            },
+            "revalidate_app_memory": {
+                "kind": "multimodal_revalidation",
+                "title": "Revalidate stale multimodal app memory",
+                "required": False,
+                "auto_runnable": False,
+            },
+        }
+        runtime_models = [
+            str(item).strip()
+            for item in runtime_profile.get("models", [])
+            if isinstance(runtime_profile.get("models", []), list) and str(item).strip()
+        ]
+        items: List[Dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        for row in payload.get("next_actions", []):
+            if not isinstance(payload.get("next_actions", []), list) or not isinstance(row, dict):
+                continue
+            action_code = self._machine_text(row.get("action", "") or row.get("code", ""))
+            action_meta = supported_actions.get(action_code)
+            if not action_meta or action_code in seen_codes:
+                continue
+            seen_codes.add(action_code)
+            recommendation = recommendation_rows.get(action_code, {})
+            severity = self._machine_text(recommendation.get("severity", "")) or (
+                "high" if action_code == "initialize_local_vision_runtime" else "medium"
+            )
+            status_name = "attention" if action_code == "revalidate_app_memory" else "ready"
+            if not bool(action_meta.get("auto_runnable", False)):
+                status_name = "attention"
+            items.append(
+                {
+                    "id": f"multimodal:{action_code}",
+                    "setup_action_code": action_code,
+                    "kind": str(action_meta.get("kind", "multimodal_runtime")).strip().lower(),
+                    "title": str(action_meta.get("title", action_code.replace("_", " "))).strip(),
+                    "status": status_name,
+                    "severity": severity or "info",
+                    "required": bool(action_meta.get("required", False)),
+                    "auto_runnable": bool(action_meta.get("auto_runnable", False)),
+                    "task": self._machine_text(task),
+                    "target": self._machine_text(row.get("target", "")) or "local_vision",
+                    "summary": str(row.get("summary", "") or recommendation.get("summary", "") or "").strip(),
+                    "models": runtime_models,
+                    "source": "multimodal_memory",
+                }
+            )
+            if len(items) >= max(1, min(int(limit or 6), 24)):
+                break
+        if (
+            int(summary.get("overdue_revalidation_total", 0) or 0) > 0
+            and "revalidate_app_memory" not in seen_codes
+        ):
+            items.append(
+                {
+                    "id": "multimodal:revalidate_app_memory",
+                    "setup_action_code": "revalidate_app_memory",
+                    "kind": "multimodal_revalidation",
+                    "title": "Revalidate stale multimodal app memory",
+                    "status": "attention",
+                    "severity": "medium",
+                    "required": False,
+                    "auto_runnable": False,
+                    "task": self._machine_text(task),
+                    "target": "app_memory",
+                    "summary": "Revisit stale multimodal controls before broad autonomous learning waves.",
+                    "models": runtime_models,
+                    "source": "multimodal_memory",
+                }
+            )
+        return items[: max(1, min(int(limit or 6), 24))]
+
+    def _desktop_machine_multimodal_setup_action_summary(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        status_counts: Dict[str, int] = {}
+        code_counts: Dict[str, int] = {}
+        auto_runnable_count = 0
+        ready_count = 0
+        attention_count = 0
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            status_name = self._machine_text(row.get("status", "")) or "planned"
+            status_counts[status_name] = int(status_counts.get(status_name, 0) or 0) + 1
+            if bool(row.get("auto_runnable", False)):
+                auto_runnable_count += 1
+            if status_name == "ready":
+                ready_count += 1
+            if status_name in {"attention", "manual_input_required", "blocked"}:
+                attention_count += 1
+            setup_action_code = self._machine_text(row.get("setup_action_code", "") or row.get("id", ""))
+            if setup_action_code:
+                code_counts[setup_action_code] = int(code_counts.get(setup_action_code, 0) or 0) + 1
+        return {
+            "count": len(items),
+            "auto_runnable_count": auto_runnable_count,
+            "ready_count": ready_count,
+            "attention_count": attention_count,
+            "status_counts": {
+                str(key): int(value)
+                for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_codes": {
+                str(key): int(value)
+                for key, value in sorted(code_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+            },
+        }
+
+    def _desktop_machine_execute_multimodal_setup_plan(
+        self,
+        *,
+        multimodal_memory: Dict[str, Any],
+        task: str = "",
+        selected_action_codes: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force_reload: bool = False,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        setup_actions = self._desktop_machine_multimodal_setup_actions(
+            multimodal_memory=multimodal_memory if isinstance(multimodal_memory, dict) else {},
+            task=task,
+            limit=6,
+        )
+        selected_code_set = {
+            self._machine_text(item)
+            for item in (selected_action_codes or [])
+            if self._machine_text(item)
+        }
+        runnable_actions = [
+            dict(item)
+            for item in setup_actions
+            if isinstance(item, dict)
+            and bool(item.get("auto_runnable", False))
+            and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+        ]
+        if selected_code_set:
+            runnable_actions = [
+                item
+                for item in runnable_actions
+                if self._machine_text(item.get("setup_action_code", "") or item.get("id", "")) in selected_code_set
+            ]
+        if not runnable_actions:
+            runtime_profile = self._vision_runtime_profile_status()
+            return {
+                "status": "planned" if bool(dry_run) else "skipped",
+                "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+                "selected_action_codes": [],
+                "selected_action_count": 0,
+                "executed_action_codes": [],
+                "executed_action_count": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "items": [],
+                "runtime_profile": runtime_profile if isinstance(runtime_profile, dict) else {},
+                "runtime_status": self._machine_text(
+                    runtime_profile.get("runtime_status", runtime_profile.get("status", "idle"))
+                    if isinstance(runtime_profile, dict)
+                    else "idle"
+                ) or "idle",
+                "runtime_available": bool(
+                    runtime_profile.get("available", False) if isinstance(runtime_profile, dict) else False
+                ),
+                "loaded_model_count": max(
+                    0,
+                    int(runtime_profile.get("loaded_count", 0) or 0) if isinstance(runtime_profile, dict) else 0,
+                ),
+                "next_actions": [],
+                "message": "No auto-runnable multimodal runtime actions are currently required.",
+            }
+
+        selected_codes = [
+            self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            for item in runnable_actions
+            if self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+        ]
+        if bool(dry_run):
+            runtime_profile = self._vision_runtime_profile_status()
+            return {
+                "status": "planned",
+                "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+                "selected_action_codes": selected_codes,
+                "selected_action_count": len(selected_codes),
+                "executed_action_codes": [],
+                "executed_action_count": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "items": [
+                    {
+                        "setup_action_code": self._machine_text(item.get("setup_action_code", "")),
+                        "status": "planned",
+                        "title": str(item.get("title", "") or "multimodal runtime action").strip(),
+                    }
+                    for item in runnable_actions
+                ],
+                "runtime_profile": runtime_profile if isinstance(runtime_profile, dict) else {},
+                "runtime_status": self._machine_text(
+                    runtime_profile.get("runtime_status", runtime_profile.get("status", "idle"))
+                    if isinstance(runtime_profile, dict)
+                    else "idle"
+                ) or "idle",
+                "runtime_available": bool(
+                    runtime_profile.get("available", False) if isinstance(runtime_profile, dict) else False
+                ),
+                "loaded_model_count": max(
+                    0,
+                    int(runtime_profile.get("loaded_count", 0) or 0) if isinstance(runtime_profile, dict) else 0,
+                ),
+                "next_actions": [],
+                "message": "Planned multimodal runtime preparation for onboarding.",
+            }
+
+        items: List[Dict[str, Any]] = []
+        executed_codes: List[str] = []
+        success_count = 0
+        error_count = 0
+        for row in runnable_actions:
+            setup_action_code = self._machine_text(row.get("setup_action_code", "") or row.get("id", ""))
+            result_payload = self.warm_vision_runtime(
+                models=[
+                    str(item).strip()
+                    for item in row.get("models", [])
+                    if isinstance(row.get("models", []), list) and str(item).strip()
+                ] or None,
+                force_reload=bool(force_reload and setup_action_code == "initialize_local_vision_runtime"),
+            )
+            result_payload = dict(result_payload) if isinstance(result_payload, dict) else {}
+            result_status = self._machine_text(result_payload.get("status", "")) or "unknown"
+            executed_codes.append(setup_action_code)
+            if result_status in {"success", "partial"}:
+                success_count += 1
+            elif result_status == "error":
+                error_count += 1
+            items.append(
+                {
+                    "setup_action_code": setup_action_code,
+                    "status": result_status,
+                    "title": str(row.get("title", "") or "multimodal runtime action").strip(),
+                    "result": result_payload,
+                }
+            )
+        runtime_profile = self._vision_runtime_profile_status()
+        runtime_status = self._machine_text(
+            runtime_profile.get("runtime_status", runtime_profile.get("status", "idle"))
+            if isinstance(runtime_profile, dict)
+            else "idle"
+        ) or "idle"
+        loaded_model_count = max(
+            0,
+            int(runtime_profile.get("loaded_count", 0) or 0) if isinstance(runtime_profile, dict) else 0,
+        )
+        updated_multimodal_memory = self._desktop_machine_multimodal_memory_snapshot(task=task)
+        next_actions = (
+            list(updated_multimodal_memory.get("next_actions", []))
+            if isinstance(updated_multimodal_memory.get("next_actions", []), list)
+            else []
+        )
+        status_name = "success"
+        if error_count > 0 and success_count > 0:
+            status_name = "partial"
+        elif error_count > 0:
+            status_name = "error"
+        return {
+            "status": status_name,
+            "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+            "selected_action_codes": selected_codes,
+            "selected_action_count": len(selected_codes),
+            "executed_action_codes": executed_codes,
+            "executed_action_count": len(executed_codes),
+            "success_count": success_count,
+            "error_count": error_count,
+            "items": items,
+            "runtime_profile": runtime_profile if isinstance(runtime_profile, dict) else {},
+            "runtime_status": runtime_status,
+            "runtime_available": bool(
+                runtime_profile.get("available", False) if isinstance(runtime_profile, dict) else False
+            ),
+            "loaded_model_count": loaded_model_count,
+            "next_actions": next_actions[:6],
+            "message": "Prepared multimodal OCR and vision runtime for onboarding-guided app learning.",
+        }
+
     @staticmethod
     def _machine_text(value: Any) -> str:
         return str(value or "").strip().lower()
@@ -10766,6 +11079,7 @@ class DesktopBackendService:
         task_preference_plan: Dict[str, Any],
         model_selection: Dict[str, Any],
         model_setup_mission: Optional[Dict[str, Any]] = None,
+        multimodal_setup_actions: Optional[List[Dict[str, Any]]] = None,
         launch_seed_plan: Dict[str, Any],
         app_learning_plan: Dict[str, Any],
         app_control_prepare_plan: Dict[str, Any],
@@ -10781,6 +11095,7 @@ class DesktopBackendService:
         workspace_scaffold: Optional[Dict[str, Any]] = None,
         launch_seed_results: Optional[Dict[str, Any]] = None,
         model_install_result: Optional[Dict[str, Any]] = None,
+        multimodal_setup_result: Optional[Dict[str, Any]] = None,
         app_learning_result: Optional[Dict[str, Any]] = None,
         app_control_prepare_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -10862,7 +11177,11 @@ class DesktopBackendService:
             }
         )
 
-        setup_action_rows = self._desktop_machine_model_setup_actions(
+        setup_action_rows = [
+            dict(item)
+            for item in (multimodal_setup_actions or [])
+            if isinstance(multimodal_setup_actions or [], list) and isinstance(item, dict)
+        ] + self._desktop_machine_model_setup_actions(
             mission_payload=model_setup_mission if isinstance(model_setup_mission, dict) else {},
             selected_item_keys=(
                 [
@@ -10878,6 +11197,13 @@ class DesktopBackendService:
             limit=12,
         )
         setup_action_result_map: Dict[str, Dict[str, Any]] = {}
+        multimodal_result_map: Dict[str, Dict[str, Any]] = {
+            self._machine_text(item.get("setup_action_code", "") or item.get("action_code", "")): dict(item)
+            for item in (multimodal_setup_result or {}).get("items", [])
+            if isinstance((multimodal_setup_result or {}).get("items", []), list)
+            and isinstance(item, dict)
+            and self._machine_text(item.get("setup_action_code", "") or item.get("action_code", ""))
+        }
         for execution_item in (
             list((model_install_result or {}).get("items", []))
             if isinstance((model_install_result or {}).get("items", []), list)
@@ -10924,6 +11250,12 @@ class DesktopBackendService:
             if action_kind == "scaffold_workspace":
                 status_name = workspace_status or ("ready" if workspace_scaffold_enabled else "skipped")
                 auto_runnable = bool(workspace_scaffold_enabled and auto_runnable)
+            elif action_kind in {"multimodal_runtime", "multimodal_revalidation"}:
+                multimodal_result = multimodal_result_map.get(setup_action_code, {})
+                if multimodal_result:
+                    result_status = self._machine_text(multimodal_result.get("status", ""))
+                    if result_status:
+                        status_name = "success" if result_status in {"success", "partial", "completed"} else result_status
             elif action_kind in {"launch_setup_install", "launch_manual_pipeline"}:
                 status_name = (
                     self._machine_text((model_install_result or {}).get("status", ""))
@@ -13985,6 +14317,14 @@ class DesktopBackendService:
             if isinstance(multimodal_memory.get("summary", {}), dict)
             else {}
         )
+        multimodal_setup_actions = self._desktop_machine_multimodal_setup_actions(
+            multimodal_memory=multimodal_memory if isinstance(multimodal_memory, dict) else {},
+            task=clean_task,
+            limit=6,
+        )
+        multimodal_setup_action_summary = self._desktop_machine_multimodal_setup_action_summary(
+            items=multimodal_setup_actions,
+        )
         app_learning_plan = (
             dict(profile.get("app_learning_plan", {}))
             if isinstance(profile.get("app_learning_plan", {}), dict)
@@ -14114,6 +14454,7 @@ class DesktopBackendService:
             task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
             model_selection=model_selection if isinstance(model_selection, dict) else {},
             model_setup_mission=model_setup_mission if isinstance(model_setup_mission, dict) else None,
+            multimodal_setup_actions=multimodal_setup_actions,
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
@@ -14238,6 +14579,20 @@ class DesktopBackendService:
                 "count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
             },
             {
+                "id": "multimodal_runtime",
+                "kind": "multimodal_runtime",
+                "status": "skipped"
+                if int(multimodal_setup_action_summary.get("count", 0) or 0) <= 0
+                else "attention"
+                if int(multimodal_setup_action_summary.get("attention_count", 0) or 0) > 0
+                and int(multimodal_setup_action_summary.get("auto_runnable_count", 0) or 0) <= 0
+                else "ready",
+                "title": "Prepare OCR and vision runtime for multimodal app learning",
+                "auto_runnable": bool(multimodal_setup_action_summary.get("auto_runnable_count", 0)),
+                "required": int(multimodal_setup_action_summary.get("count", 0) or 0) > 0,
+                "count": int(multimodal_setup_action_summary.get("count", 0) or 0),
+            },
+            {
                 "id": "app_learning",
                 "kind": "app_learning_campaign",
                 "status": "skipped"
@@ -14309,6 +14664,8 @@ class DesktopBackendService:
                 },
                 "profile_setup_actions": profile_setup_actions,
                 "profile_setup_action_summary": profile_setup_action_summary,
+                "multimodal_setup_actions": multimodal_setup_actions,
+                "multimodal_setup_action_summary": multimodal_setup_action_summary,
                 "task_preference_plan": task_preference_plan,
                 "launch_seed_plan": launch_seed_plan,
                 "multimodal_memory": multimodal_memory,
@@ -14394,6 +14751,23 @@ class DesktopBackendService:
                     "multimodal_vision_loaded_model_count": int(
                         multimodal_summary.get("vision_loaded_model_count", 0) or 0
                     ),
+                    "multimodal_setup_action_count": int(
+                        multimodal_setup_action_summary.get("count", 0) or 0
+                    ),
+                    "multimodal_setup_auto_runnable_count": int(
+                        multimodal_setup_action_summary.get("auto_runnable_count", 0) or 0
+                    ),
+                    "multimodal_setup_ready_count": int(
+                        multimodal_setup_action_summary.get("ready_count", 0) or 0
+                    ),
+                    "multimodal_setup_attention_count": int(
+                        multimodal_setup_action_summary.get("attention_count", 0) or 0
+                    ),
+                    "multimodal_setup_top_codes": dict(
+                        multimodal_setup_action_summary.get("top_codes", {})
+                    )
+                    if isinstance(multimodal_setup_action_summary.get("top_codes", {}), dict)
+                    else {},
                     "multimodal_route_profile_counts": dict(
                         multimodal_summary.get("route_profile_counts", {})
                     )
@@ -14625,6 +14999,16 @@ class DesktopBackendService:
             if isinstance(plan.get("multimodal_memory", {}), dict)
             else {}
         )
+        multimodal_setup_actions = [
+            dict(item)
+            for item in plan.get("multimodal_setup_actions", [])
+            if isinstance(plan.get("multimodal_setup_actions", []), list) and isinstance(item, dict)
+        ]
+        multimodal_setup_action_summary = (
+            dict(plan.get("multimodal_setup_action_summary", {}))
+            if isinstance(plan.get("multimodal_setup_action_summary", {}), dict)
+            else self._desktop_machine_multimodal_setup_action_summary(items=multimodal_setup_actions)
+        )
         profile_setup_actions = [
             dict(item)
             for item in plan.get("profile_setup_actions", [])
@@ -14769,6 +15153,7 @@ class DesktopBackendService:
         workspace_scaffold: Dict[str, Any] = {}
         launch_seed_results: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
+        multimodal_setup_result: Dict[str, Any] = {"status": "skipped", "selected_action_codes": [], "selected_action_count": 0}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
         app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         vm_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
@@ -14871,8 +15256,62 @@ class DesktopBackendService:
                         model_install_result["continue_followup_actions_status"] = "skipped"
                 if isinstance(model_install_result.get("updated_mission", {}), dict):
                     queue_model_setup_mission = dict(model_install_result.get("updated_mission", {}))
+            multimodal_selected_action_codes = [
+                self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+                for item in multimodal_setup_actions
+                if isinstance(item, dict)
+                and bool(item.get("auto_runnable", False))
+                and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+                and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            ]
+            if multimodal_selected_action_codes:
+                multimodal_setup_result = self._desktop_machine_execute_multimodal_setup_plan(
+                    multimodal_memory=planned_multimodal_memory if isinstance(planned_multimodal_memory, dict) else {},
+                    task=str(task or "").strip().lower(),
+                    selected_action_codes=multimodal_selected_action_codes,
+                    dry_run=False,
+                    force_reload=False,
+                    source="machine_onboarding",
+                )
+            runtime_profile_for_preparation = profile if isinstance(profile, dict) else {}
+            refreshed_app_learning_payload: Dict[str, Any] = {}
+            if str(multimodal_setup_result.get("status", "") or "").strip().lower() in {"success", "partial"}:
+                refreshed_app_learning_payload = self.desktop_machine_app_learning_plan(
+                    task=str(task or "").strip().lower(),
+                    app_query=app_query,
+                    app_category=app_category,
+                    app_limit=app_limit,
+                    refresh_apps=False,
+                    max_targets=max_targets,
+                )
+                if isinstance(refreshed_app_learning_payload.get("profile", {}), dict):
+                    runtime_profile_for_preparation = dict(refreshed_app_learning_payload.get("profile", {}))
+                runtime_vm_control_plan = (
+                    self.desktop_vm_manager.build_vm_control_plan(
+                        inventory=(
+                            dict(runtime_profile_for_preparation.get("virtual_machines", {}))
+                            if isinstance(runtime_profile_for_preparation.get("virtual_machines", {}), dict)
+                            else {}
+                        ),
+                        task=str(task or "").strip().lower(),
+                        query=app_query,
+                        max_targets=max(1, min(int(vm_prepare_limit or 2), 8)),
+                        machine_profile=runtime_profile_for_preparation if isinstance(runtime_profile_for_preparation, dict) else {},
+                    )
+                    if getattr(self, "desktop_vm_manager", None) is not None
+                    else runtime_vm_control_plan
+                )
+                vm_prepare_plan_items = [
+                    dict(item)
+                    for item in runtime_vm_control_plan.get("items", [])
+                    if isinstance(runtime_vm_control_plan.get("items", []), list) and isinstance(item, dict)
+                ][: max(1, min(int(vm_prepare_limit or 2), 8))]
             runtime_app_learning_plan_payload = self._desktop_machine_apply_setup_execution_to_learning_plan(
-                app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
+                app_learning_plan=(
+                    refreshed_app_learning_payload
+                    if isinstance(refreshed_app_learning_payload, dict) and refreshed_app_learning_payload
+                    else app_learning_plan_payload
+                ),
                 setup_execution=model_install_result if isinstance(model_install_result, dict) else {},
             )
             if bool(auto_continue_unresolved) and continuation_focus_app_names:
@@ -14894,7 +15333,7 @@ class DesktopBackendService:
                 else {}
             )
             runtime_app_control_prepare_plan = self._desktop_machine_app_control_prepare_plan(
-                profile=profile if isinstance(profile, dict) else {},
+                profile=runtime_profile_for_preparation if isinstance(runtime_profile_for_preparation, dict) else {},
                 app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
                 launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
                 provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else None,
@@ -14957,6 +15396,15 @@ class DesktopBackendService:
                                     ).strip().lower(),
                                     "setup_execution_remaining_ready_count": int(
                                         model_install_result.get("remaining_ready_action_count", 0) or 0
+                                    ),
+                                    "multimodal_setup_status": str(
+                                        multimodal_setup_result.get("status", "") or ""
+                                    ).strip().lower(),
+                                    "multimodal_setup_executed_count": int(
+                                        multimodal_setup_result.get("executed_action_count", 0) or 0
+                                    ),
+                                    "multimodal_setup_loaded_model_count": int(
+                                        multimodal_setup_result.get("loaded_model_count", 0) or 0
                                     ),
                                 },
                                 "message": "Skipped automatic app-control preparation because provider/model readiness is currently blocked for this target.",
@@ -15029,6 +15477,15 @@ class DesktopBackendService:
                         prepared_payload["setup_execution_policy"] = str(
                             item.get("setup_execution_policy", "") or ""
                         ).strip().lower()
+                        prepared_payload["multimodal_setup_status"] = str(
+                            multimodal_setup_result.get("status", "") or ""
+                        ).strip().lower()
+                        prepared_payload["multimodal_setup_executed_count"] = int(
+                            multimodal_setup_result.get("executed_action_count", 0) or 0
+                        )
+                        prepared_payload["multimodal_setup_loaded_model_count"] = int(
+                            multimodal_setup_result.get("loaded_model_count", 0) or 0
+                        )
                         prepared_summary = (
                             dict(prepared_payload.get("summary", {}))
                             if isinstance(prepared_payload.get("summary", {}), dict)
@@ -15069,6 +15526,15 @@ class DesktopBackendService:
                         prepared_summary["setup_execution_policy"] = str(
                             item.get("setup_execution_policy", "") or ""
                         ).strip().lower()
+                        prepared_summary["multimodal_setup_status"] = str(
+                            multimodal_setup_result.get("status", "") or ""
+                        ).strip().lower()
+                        prepared_summary["multimodal_setup_executed_count"] = int(
+                            multimodal_setup_result.get("executed_action_count", 0) or 0
+                        )
+                        prepared_summary["multimodal_setup_loaded_model_count"] = int(
+                            multimodal_setup_result.get("loaded_model_count", 0) or 0
+                        )
                         prepared_payload["summary"] = prepared_summary
                     prepare_items.append(prepared_payload)
                 prepare_status_counts: Dict[str, int] = {}
@@ -15176,6 +15642,30 @@ class DesktopBackendService:
                         prepared_vm_payload["runtime_band_preference"] = str(
                             item.get("runtime_band_preference", "") or ""
                         ).strip().lower()
+                        prepared_vm_payload["multimodal_setup_status"] = str(
+                            multimodal_setup_result.get("status", "") or ""
+                        ).strip().lower()
+                        prepared_vm_payload["multimodal_setup_executed_count"] = int(
+                            multimodal_setup_result.get("executed_action_count", 0) or 0
+                        )
+                        prepared_vm_payload["multimodal_setup_loaded_model_count"] = int(
+                            multimodal_setup_result.get("loaded_model_count", 0) or 0
+                        )
+                        vm_summary = (
+                            dict(prepared_vm_payload.get("summary", {}))
+                            if isinstance(prepared_vm_payload.get("summary", {}), dict)
+                            else {}
+                        )
+                        vm_summary["multimodal_setup_status"] = str(
+                            multimodal_setup_result.get("status", "") or ""
+                        ).strip().lower()
+                        vm_summary["multimodal_setup_executed_count"] = int(
+                            multimodal_setup_result.get("executed_action_count", 0) or 0
+                        )
+                        vm_summary["multimodal_setup_loaded_model_count"] = int(
+                            multimodal_setup_result.get("loaded_model_count", 0) or 0
+                        )
+                        prepared_vm_payload["summary"] = vm_summary
                     vm_items.append(prepared_vm_payload if isinstance(prepared_vm_payload, dict) else {"status": "error"})
                 vm_status_counts: Dict[str, int] = {}
                 vm_execution_mode_counts: Dict[str, int] = {}
@@ -15305,6 +15795,51 @@ class DesktopBackendService:
                 if auto_launch_model_setup and int(model_setup_execution_plan.get("selected_action_count", 0) or 0) > 0
                 else "skipped",
             }
+            multimodal_ready_codes = [
+                self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+                for item in multimodal_setup_actions
+                if isinstance(item, dict)
+                and bool(item.get("auto_runnable", False))
+                and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+                and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            ]
+            multimodal_setup_result = {
+                "status": "planned" if multimodal_ready_codes else "skipped",
+                "selected_action_codes": multimodal_ready_codes,
+                "selected_action_count": len(multimodal_ready_codes),
+                "executed_action_codes": [],
+                "executed_action_count": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "runtime_profile": dict(planned_multimodal_memory.get("vision_runtime", {}))
+                if isinstance(planned_multimodal_memory.get("vision_runtime", {}), dict)
+                else {},
+                "runtime_status": str(
+                    dict(planned_multimodal_memory.get("summary", {})).get("vision_runtime_status", "idle")
+                    if isinstance(planned_multimodal_memory.get("summary", {}), dict)
+                    else "idle"
+                ).strip().lower(),
+                "runtime_available": bool(
+                    dict(planned_multimodal_memory.get("summary", {})).get("vision_runtime_available", False)
+                    if isinstance(planned_multimodal_memory.get("summary", {}), dict)
+                    else False
+                ),
+                "loaded_model_count": int(
+                    dict(planned_multimodal_memory.get("summary", {})).get("vision_loaded_model_count", 0)
+                    if isinstance(planned_multimodal_memory.get("summary", {}), dict)
+                    else 0
+                ),
+                "items": [
+                    {
+                        "setup_action_code": self._machine_text(item.get("setup_action_code", "") or item.get("id", "")),
+                        "status": "planned",
+                        "title": str(item.get("title", "") or "multimodal runtime action").strip(),
+                    }
+                    for item in multimodal_setup_actions
+                    if isinstance(item, dict)
+                    and self._machine_text(item.get("setup_action_code", "") or item.get("id", "")) in set(multimodal_ready_codes)
+                ],
+            }
             app_learning_result = {
                 "status": "planned" if auto_create_app_learning_campaign else "skipped",
                 "auto_run": bool(auto_run_app_learning_campaign),
@@ -15354,6 +15889,7 @@ class DesktopBackendService:
             task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
             model_selection=model_selection if isinstance(model_selection, dict) else {},
             model_setup_mission=queue_model_setup_mission if isinstance(queue_model_setup_mission, dict) else None,
+            multimodal_setup_actions=multimodal_setup_actions,
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
             app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
@@ -15369,6 +15905,7 @@ class DesktopBackendService:
             workspace_scaffold=workspace_scaffold if isinstance(workspace_scaffold, dict) else None,
             launch_seed_results=launch_seed_results if isinstance(launch_seed_results, dict) else None,
             model_install_result=model_install_result if isinstance(model_install_result, dict) else None,
+            multimodal_setup_result=multimodal_setup_result if isinstance(multimodal_setup_result, dict) else None,
             app_learning_result=app_learning_result if isinstance(app_learning_result, dict) else None,
             app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
         )
@@ -15400,6 +15937,13 @@ class DesktopBackendService:
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
             else []
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(multimodal_setup_result.get("next_actions", []))
+            if isinstance(multimodal_setup_result.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
@@ -15458,6 +16002,7 @@ class DesktopBackendService:
             str(workspace_scaffold.get("status", "") or "").strip().lower(),
             str(launch_seed_results.get("status", "") or "").strip().lower(),
             str(model_install_result.get("status", "") or "").strip().lower(),
+            str(multimodal_setup_result.get("status", "") or "").strip().lower(),
             str(app_learning_result.get("status", "") or "").strip().lower(),
             str(app_control_prepare_result.get("status", "") or "").strip().lower(),
             str(vm_control_prepare_result.get("status", "") or "").strip().lower(),
@@ -15476,12 +16021,15 @@ class DesktopBackendService:
             "plan": plan,
             "profile_setup_actions": profile_setup_actions,
             "profile_setup_action_summary": profile_setup_action_summary,
+            "multimodal_setup_actions": multimodal_setup_actions,
+            "multimodal_setup_action_summary": multimodal_setup_action_summary,
             "provider_updates": provider_updates,
             "task_preference_update": task_preference_update,
             "task_preference_plan": task_preference_plan,
             "workspace_scaffold": workspace_scaffold,
             "launch_seed": launch_seed_results,
             "model_install": model_install_result,
+            "multimodal_setup_result": multimodal_setup_result,
             "app_learning_campaign": app_learning_result,
             "app_control_prepare": app_control_prepare_result,
             "vm_control_plan": runtime_vm_control_plan,
@@ -15515,6 +16063,36 @@ class DesktopBackendService:
                 "setup_execution_continue_status": str(
                     model_install_result.get("continue_followup_actions_status", "") or ""
                 ).strip().lower(),
+                "multimodal_setup_action_count": int(
+                    multimodal_setup_action_summary.get("count", 0) or 0
+                ),
+                "multimodal_setup_auto_runnable_count": int(
+                    multimodal_setup_action_summary.get("auto_runnable_count", 0) or 0
+                ),
+                "multimodal_setup_ready_count": int(
+                    multimodal_setup_action_summary.get("ready_count", 0) or 0
+                ),
+                "multimodal_setup_attention_count": int(
+                    multimodal_setup_action_summary.get("attention_count", 0) or 0
+                ),
+                "multimodal_setup_executed_count": int(
+                    multimodal_setup_result.get("executed_action_count", 0) or 0
+                ),
+                "multimodal_setup_success_count": int(
+                    multimodal_setup_result.get("success_count", 0) or 0
+                ),
+                "multimodal_setup_error_count": int(
+                    multimodal_setup_result.get("error_count", 0) or 0
+                ),
+                "multimodal_setup_runtime_status": str(
+                    multimodal_setup_result.get("runtime_status", "") or ""
+                ).strip().lower(),
+                "multimodal_setup_runtime_available": bool(
+                    multimodal_setup_result.get("runtime_available", False)
+                ),
+                "multimodal_setup_loaded_model_count": int(
+                    multimodal_setup_result.get("loaded_model_count", 0) or 0
+                ),
                 "app_learning_status": str(app_learning_result.get("status", "") or "").strip().lower(),
                 "app_learning_strategy_profile": str(runtime_app_learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
                 "app_learning_auto_target_count": int(runtime_app_learning_plan_summary.get("auto_learn_count", 0) or 0),

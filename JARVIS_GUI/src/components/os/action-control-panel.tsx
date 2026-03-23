@@ -2677,6 +2677,19 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineOnboardingPlan.profile_setup_action_summary),
     [desktopMachineOnboardingPlan]
   );
+  const desktopMachineOnboardingMultimodalSetupSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.multimodal_setup_action_summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingMultimodalSetupActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlan.multimodal_setup_actions)
+        ? desktopMachineOnboardingPlan.multimodal_setup_actions.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
+    [desktopMachineOnboardingPlan]
+  );
   const desktopMachineOnboardingProfileSetupActions = useMemo(
     () =>
       Array.isArray(desktopMachineOnboardingPlan.profile_setup_actions)
@@ -2807,6 +2820,13 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineOnboardingProfileSetupSummary]
   );
+  const desktopMachineOnboardingMultimodalSetupTopCodes = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingMultimodalSetupSummary.top_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingMultimodalSetupSummary]
+  );
   const desktopMachineOnboardingSetupActionCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineOnboardingExecutionSummary.setup_action_code_counts)).sort(
@@ -2860,6 +2880,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   );
   const desktopMachineOnboardingLaunchModelInstall = useMemo(
     () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).model_install),
+    [desktopMachineOnboardingLaunchState]
+  );
+  const desktopMachineOnboardingLaunchMultimodalSetup = useMemo(
+    () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).multimodal_setup_result),
     [desktopMachineOnboardingLaunchState]
   );
   const desktopMachineOnboardingLaunchRouteRemediationProgress = useMemo(
@@ -21855,6 +21879,26 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               0
                                           )}
                                         </p>
+                                        {(Number(desktopMachineOnboardingSummary.multimodal_setup_action_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingMultimodalSetupSummary.count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            multimodal setup:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_setup_action_count ??
+                                                desktopMachineOnboardingMultimodalSetupSummary.count ??
+                                                0
+                                            )}
+                                            {' • '}auto:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_setup_auto_runnable_count ??
+                                                desktopMachineOnboardingMultimodalSetupSummary.auto_runnable_count ??
+                                                0
+                                            )}
+                                            {' • '}ready:{Number(
+                                              desktopMachineOnboardingSummary.multimodal_setup_ready_count ??
+                                                desktopMachineOnboardingMultimodalSetupSummary.ready_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         <p className="mt-1">
                                           runnable:{Number(desktopMachineAppControlPrepareSummary.runnable_count ?? 0)}
                                           {' • '}degraded:{Number(desktopMachineAppControlPrepareSummary.degraded_count ?? 0)}
@@ -22154,6 +22198,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachineOnboardingMultimodalSetupTopCodes.length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal setup codes:{' '}
+                                            {desktopMachineOnboardingMultimodalSetupTopCodes
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : desktopMachineOnboardingMultimodalSetupActions.length > 0 ? (
+                                          <p className="mt-1">
+                                            multimodal setup codes:{' '}
+                                            {desktopMachineOnboardingMultimodalSetupActions
+                                              .slice(0, 4)
+                                              .map((item) => String(item.setup_action_code ?? item.code ?? item.title ?? 'multimodal'))
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineOnboardingSetupActionCounts.length > 0 ? (
                                           <p className="mt-1">
                                             queued setup codes:{' '}
@@ -22238,6 +22299,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             )}
                                             {' • '}remaining:{Number(
                                               desktopMachineOnboardingLaunchModelInstall.remaining_ready_action_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachineOnboardingLaunchMultimodalSetup.status ?? '').trim() ||
+                                          Number(desktopMachineOnboardingLaunchMultimodalSetup.executed_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1 text-primary/80">
+                                            last multimodal:{String(
+                                              desktopMachineOnboardingLaunchMultimodalSetup.status ?? 'n/a'
+                                            )}
+                                            {' • '}selected:{Number(
+                                              desktopMachineOnboardingLaunchMultimodalSetup.selected_action_count ?? 0
+                                            )}
+                                            {' • '}executed:{Number(
+                                              desktopMachineOnboardingLaunchMultimodalSetup.executed_action_count ?? 0
+                                            )}
+                                            {' • '}loaded:{Number(
+                                              desktopMachineOnboardingLaunchMultimodalSetup.loaded_model_count ?? 0
                                             )}
                                           </p>
                                         ) : null}
@@ -22343,6 +22421,18 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               'n/a'
                                           )}
                                         </p>
+                                        {(String(desktopMachinePrepareSummary.multimodal_setup_status ?? '').trim() ||
+                                          Number(desktopMachinePrepareSummary.multimodal_setup_executed_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            multimodal:{String(desktopMachinePrepareSummary.multimodal_setup_status ?? 'n/a')}
+                                            {' • '}executed:{Number(
+                                              desktopMachinePrepareSummary.multimodal_setup_executed_count ?? 0
+                                            )}
+                                            {' • '}loaded:{Number(
+                                              desktopMachinePrepareSummary.multimodal_setup_loaded_model_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {(String(desktopMachinePrepareSummary.actual_route_profile ?? '').trim() ||
                                           String(desktopMachinePrepareSummary.expected_route_profile ?? '').trim()) ? (
                                           <p className="mt-1">

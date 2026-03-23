@@ -13904,6 +13904,25 @@ class FakeDesktopService:
                 "severity_counts": {"high": 1},
                 "top_codes": {"configure_huggingface_token": 1},
             },
+            "multimodal_setup_actions": [
+                {
+                    "id": "multimodal:warm_local_vision_runtime",
+                    "setup_action_code": "warm_local_vision_runtime",
+                    "kind": "multimodal_runtime",
+                    "title": "Warm local OCR and vision models",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "required": False,
+                    "source": "multimodal_memory",
+                }
+            ],
+            "multimodal_setup_action_summary": {
+                "count": 1,
+                "auto_runnable_count": 1,
+                "ready_count": 1,
+                "attention_count": 0,
+                "top_codes": {"warm_local_vision_runtime": 1},
+            },
             "launch_seed_plan": {
                 "status": "success",
                 "count": 2,
@@ -14164,6 +14183,16 @@ class FakeDesktopService:
                     "required": False,
                 },
                 {
+                    "id": "multimodal:warm_local_vision_runtime",
+                    "stage": "setup_action",
+                    "kind": "multimodal_runtime",
+                    "status": "ready",
+                    "title": "Warm local OCR and vision models",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "warm_local_vision_runtime",
+                },
+                {
                     "id": "model:reasoning-qwen3.5-9b",
                     "stage": "model",
                     "kind": "install_model_item",
@@ -14213,18 +14242,21 @@ class FakeDesktopService:
                 "manual_count": 2,
                 "blocked_count": 0,
                 "error_count": 0,
-                "setup_action_count": 1,
-                "setup_action_auto_runnable_count": 1,
+                "setup_action_count": 2,
+                "setup_action_auto_runnable_count": 2,
                 "setup_action_success_count": 0,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
-                "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                "setup_action_code_counts": {
+                    "verify_provider:huggingface": 1,
+                    "warm_local_vision_runtime": 1,
+                },
                 "stage_counts": {
                     "app_prepare": 1,
                     "launch_seed": 1,
                     "model": 1,
                     "provider": 1,
-                    "setup_action": 1,
+                    "setup_action": 2,
                     "task_preferences": 1,
                 },
             },
@@ -14274,6 +14306,11 @@ class FakeDesktopService:
                 "multimodal_vision_runtime_status": "success",
                 "multimodal_vision_runtime_available": True,
                 "multimodal_vision_loaded_model_count": 1,
+                "multimodal_setup_action_count": 1,
+                "multimodal_setup_auto_runnable_count": 1,
+                "multimodal_setup_ready_count": 1,
+                "multimodal_setup_attention_count": 0,
+                "multimodal_setup_top_codes": {"warm_local_vision_runtime": 1},
                 "multimodal_route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
                 "multimodal_model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
                 "multimodal_runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
@@ -14308,18 +14345,21 @@ class FakeDesktopService:
                 "continuation_setup_followup_count": 2,
                 "continuation_focus_app_count": 1,
                 "top_route_remediation_kinds": {"provider_setup": 1},
-                "execution_action_count": 6,
-                "execution_auto_runnable_count": 5,
-                "execution_ready_count": 4,
+                "execution_action_count": 7,
+                "execution_auto_runnable_count": 6,
+                "execution_ready_count": 5,
                 "execution_manual_count": 2,
                 "execution_blocked_count": 0,
                 "execution_error_count": 0,
-                "setup_action_count": 1,
-                "setup_action_auto_runnable_count": 1,
+                "setup_action_count": 2,
+                "setup_action_auto_runnable_count": 2,
                 "setup_action_success_count": 0,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
-                "top_setup_action_codes": {"verify_provider:huggingface": 1},
+                "top_setup_action_codes": {
+                    "verify_provider:huggingface": 1,
+                    "warm_local_vision_runtime": 1,
+                },
             },
             "message": "Built onboarding plan.",
         }
@@ -14570,14 +14610,14 @@ class FakeDesktopService:
                 "prepared_app_total": 2,
                 "prepared_blocked_total": 0,
                 "prepared_degraded_total": 1,
-                "execution_action_total": 6,
+                "execution_action_total": 7,
                 "execution_success_total": 4,
                 "execution_manual_total": 1,
                 "execution_blocked_total": 0,
                 "execution_error_total": 0,
-                "setup_action_total": 1,
-                "setup_action_auto_runnable_total": 1,
-                "setup_action_success_total": 1,
+                "setup_action_total": 2,
+                "setup_action_auto_runnable_total": 2,
+                "setup_action_success_total": 2,
                 "setup_action_manual_total": 0,
                 "setup_action_blocked_total": 0,
                 "profile_setup_action_total": 1,
@@ -14593,6 +14633,11 @@ class FakeDesktopService:
                 "multimodal_weird_app_total": 1,
                 "multimodal_revalidation_target_total": 3,
                 "multimodal_overdue_revalidation_total": 1,
+                "multimodal_setup_action_total": 1,
+                "multimodal_setup_auto_runnable_total": 1,
+                "multimodal_setup_executed_total": 1,
+                "multimodal_setup_success_total": 1,
+                "multimodal_setup_loaded_model_total": 1,
                 "app_learning_setup_aligned_total": 2,
                 "app_learning_setup_boosted_total": 1,
                 "app_learning_setup_constrained_total": 0,
@@ -14734,6 +14779,25 @@ class FakeDesktopService:
                 "severity_counts": {"high": 1},
                 "top_codes": {"configure_huggingface_token": 1},
             },
+            "multimodal_setup_actions": [
+                {
+                    "id": "multimodal:warm_local_vision_runtime",
+                    "setup_action_code": "warm_local_vision_runtime",
+                    "kind": "multimodal_runtime",
+                    "title": "Warm local OCR and vision models",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "required": False,
+                    "source": "multimodal_memory",
+                }
+            ],
+            "multimodal_setup_action_summary": {
+                "count": 1,
+                "auto_runnable_count": 1,
+                "ready_count": 1,
+                "attention_count": 0,
+                "top_codes": {"warm_local_vision_runtime": 1},
+            },
             "workspace_scaffold": {"status": "success"},
             "launch_seed": {"status": "success", "count": 2},
             "model_install": {
@@ -14757,6 +14821,26 @@ class FakeDesktopService:
                     "final_ready_action_ids": [],
                 },
                 "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]),
+            },
+            "multimodal_setup_result": {
+                "status": "success",
+                "selected_action_codes": ["warm_local_vision_runtime"],
+                "selected_action_count": 1,
+                "executed_action_codes": ["warm_local_vision_runtime"],
+                "executed_action_count": 1,
+                "success_count": 1,
+                "error_count": 0,
+                "runtime_status": "success",
+                "runtime_available": True,
+                "loaded_model_count": 1,
+                "items": [
+                    {
+                        "setup_action_code": "warm_local_vision_runtime",
+                        "status": "success",
+                        "title": "Warm local OCR and vision models",
+                    }
+                ],
+                "next_actions": [],
             },
             "app_learning_campaign": {
                 "status": "success",
@@ -14786,7 +14870,15 @@ class FakeDesktopService:
                         "execution_mode": "hybrid_ready",
                         "readiness_status": "ready",
                         "related_setup_action_codes": [],
-                        "summary": {"wave_attempt_count": 4, "discovered_control_count": 6, "execution_mode": "hybrid_ready", "readiness_status": "ready"},
+                        "summary": {
+                            "wave_attempt_count": 4,
+                            "discovered_control_count": 6,
+                            "execution_mode": "hybrid_ready",
+                            "readiness_status": "ready",
+                            "multimodal_setup_status": "success",
+                            "multimodal_setup_executed_count": 1,
+                            "multimodal_setup_loaded_model_count": 1,
+                        },
                     },
                     {
                         "status": "success",
@@ -14808,6 +14900,9 @@ class FakeDesktopService:
                             "setup_execution_continued_action_count": 1,
                             "setup_execution_remaining_ready_count": 0,
                             "setup_execution_resume_ready": False,
+                            "multimodal_setup_status": "success",
+                            "multimodal_setup_executed_count": 1,
+                            "multimodal_setup_loaded_model_count": 1,
                         },
                     },
                 ] if auto_prepare_app_controls else [],
@@ -14880,6 +14975,9 @@ class FakeDesktopService:
                             "provider_model_readiness": {"setup_followup_codes": []},
                             "readiness_status": "ready",
                             "provider_launch_ready": True,
+                            "multimodal_setup_status": "success",
+                            "multimodal_setup_executed_count": 1,
+                            "multimodal_setup_loaded_model_count": 1,
                         },
                     }
                 ] if auto_prepare_vm_controls else [],
@@ -15049,6 +15147,16 @@ class FakeDesktopService:
                     "required": False,
                 },
                 {
+                    "id": "multimodal:warm_local_vision_runtime",
+                    "stage": "setup_action",
+                    "kind": "multimodal_runtime",
+                    "status": "success",
+                    "title": "Warm local OCR and vision models",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "warm_local_vision_runtime",
+                },
+                {
                     "id": "model:reasoning-qwen3.5-9b",
                     "stage": "model",
                     "kind": "install_model_item",
@@ -15091,25 +15199,28 @@ class FakeDesktopService:
                 },
             ],
             "execution_queue_summary": {
-                "count": 6,
-                "auto_runnable_count": 5,
+                "count": 7,
+                "auto_runnable_count": 6,
                 "ready_count": 0,
-                "success_count": 6,
+                "success_count": 7,
                 "manual_count": 0,
                 "blocked_count": 0,
                 "error_count": 0,
-                "setup_action_count": 1,
-                "setup_action_auto_runnable_count": 1,
-                "setup_action_success_count": 1,
+                "setup_action_count": 2,
+                "setup_action_auto_runnable_count": 2,
+                "setup_action_success_count": 2,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
-                "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                "setup_action_code_counts": {
+                    "verify_provider:huggingface": 1,
+                    "warm_local_vision_runtime": 1,
+                },
                 "stage_counts": {
                     "app_prepare": 1,
                     "launch_seed": 1,
                     "model": 1,
                     "provider": 1,
-                    "setup_action": 1,
+                    "setup_action": 2,
                     "task_preferences": 1,
                 },
             },
@@ -15182,6 +15293,16 @@ class FakeDesktopService:
                 "multimodal_vision_runtime_status": "success",
                 "multimodal_vision_runtime_available": True,
                 "multimodal_vision_loaded_model_count": 1,
+                "multimodal_setup_action_count": 1,
+                "multimodal_setup_auto_runnable_count": 1,
+                "multimodal_setup_ready_count": 1,
+                "multimodal_setup_attention_count": 0,
+                "multimodal_setup_executed_count": 1,
+                "multimodal_setup_success_count": 1,
+                "multimodal_setup_error_count": 0,
+                "multimodal_setup_runtime_status": "success",
+                "multimodal_setup_runtime_available": True,
+                "multimodal_setup_loaded_model_count": 1,
                 "multimodal_route_profile_counts": {"hybrid_verify": 1, "api_vision_assist_native_stabilized": 1},
                 "multimodal_model_preference_counts": {"hybrid_runtime": 1, "api_vision_runtime": 1},
                 "multimodal_runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
@@ -15227,19 +15348,22 @@ class FakeDesktopService:
                 "continuation_provider_blocked_count": 0,
                 "continuation_setup_followup_count": 0,
                 "continuation_focus_app_count": 1 if auto_prepare_app_controls else 0,
-                "execution_action_count": 6,
-                "execution_auto_runnable_count": 5,
+                "execution_action_count": 7,
+                "execution_auto_runnable_count": 6,
                 "execution_ready_count": 0,
-                "execution_success_count": 6,
+                "execution_success_count": 7,
                 "execution_manual_count": 0,
                 "execution_blocked_count": 0,
                 "execution_error_count": 0,
-                "setup_action_count": 1,
-                "setup_action_auto_runnable_count": 1,
-                "setup_action_success_count": 1,
+                "setup_action_count": 2,
+                "setup_action_auto_runnable_count": 2,
+                "setup_action_success_count": 2,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
-                "top_setup_action_codes": {"verify_provider:huggingface": 1},
+                "top_setup_action_codes": {
+                    "verify_provider:huggingface": 1,
+                    "warm_local_vision_runtime": 1,
+                },
             },
             "history": self.desktop_machine_onboarding_history(limit=8),
             "message": "Completed onboarding run.",
@@ -25532,6 +25656,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["summary"]["multimodal_memory_app_count"] == 2
     assert plan["summary"]["multimodal_vision_runtime_status"] == "success"
     assert plan["summary"]["multimodal_revalidation_target_count"] == 3
+    assert plan["summary"]["multimodal_setup_action_count"] == 1
+    assert plan["summary"]["multimodal_setup_auto_runnable_count"] == 1
     assert plan["summary"]["setup_execution_selected_action_count"] == 1
     assert plan["summary"]["setup_execution_continue_recommended"] is True
     assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
@@ -25557,12 +25683,12 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["summary"]["route_remediation_count"] == 1
     assert plan["summary"]["route_remediation_setup_followup_count"] == 1
     assert plan["summary"]["route_remediation_provider_blocked_count"] == 1
-    assert len(plan["execution_queue"]) == 6
+    assert len(plan["execution_queue"]) == 7
     assert plan["execution_queue_summary"]["manual_count"] == 2
-    assert plan["execution_queue_summary"]["setup_action_count"] == 1
-    assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 1
+    assert plan["execution_queue_summary"]["setup_action_count"] == 2
+    assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 2
     assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
-    assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 1
+    assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 2
     assert plan["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_plan_calls[-1]["continuation_limit"] == 5
     assert service.machine_onboarding_plan_calls[-1]["vm_prepare_limit"] == 2
@@ -25603,6 +25729,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["multimodal_memory_app_count"] == 2
     assert launched["summary"]["multimodal_vision_runtime_status"] == "success"
     assert launched["summary"]["multimodal_revalidation_target_count"] == 3
+    assert launched["summary"]["multimodal_setup_action_count"] == 1
+    assert launched["summary"]["multimodal_setup_executed_count"] == 1
+    assert launched["summary"]["multimodal_setup_success_count"] == 1
+    assert launched["multimodal_setup_result"]["status"] == "success"
+    assert launched["multimodal_setup_result"]["executed_action_codes"] == ["warm_local_vision_runtime"]
     assert launched["summary"]["app_learning_setup_aligned_count"] == 2
     assert launched["summary"]["app_learning_setup_boosted_count"] == 1
     assert launched["summary"]["app_learning_setup_constrained_count"] == 0
@@ -25635,11 +25766,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
     assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
     assert launched["task_preference_plan"]["count"] == 1
-    assert launched["execution_queue_summary"]["success_count"] == 6
-    assert launched["execution_queue_summary"]["setup_action_success_count"] == 1
-    assert launched["summary"]["execution_action_count"] == 6
-    assert launched["summary"]["execution_success_count"] == 6
-    assert launched["summary"]["setup_action_count"] == 1
+    assert launched["execution_queue_summary"]["success_count"] == 7
+    assert launched["execution_queue_summary"]["setup_action_success_count"] == 2
+    assert launched["summary"]["execution_action_count"] == 7
+    assert launched["summary"]["execution_success_count"] == 7
+    assert launched["summary"]["setup_action_count"] == 2
     assert service.machine_onboarding_launch_calls[-1]["auto_continue_unresolved"] is True
     assert service.machine_onboarding_launch_calls[-1]["continuation_limit"] == 4
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
@@ -25659,12 +25790,15 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["prepared_vm_control_total"] == 1
     assert history["summary"]["vm_ready_guest_total"] == 1
     assert history["summary"]["vm_setup_followup_guest_total"] == 0
-    assert history["summary"]["execution_action_total"] == 6
+    assert history["summary"]["execution_action_total"] == 7
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1
     assert history["summary"]["multimodal_memory_app_total"] == 2
     assert history["summary"]["multimodal_ocr_memory_app_total"] == 2
     assert history["summary"]["multimodal_revalidation_target_total"] == 3
+    assert history["summary"]["multimodal_setup_action_total"] == 1
+    assert history["summary"]["multimodal_setup_executed_total"] == 1
+    assert history["summary"]["multimodal_setup_success_total"] == 1
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 0
@@ -25679,7 +25813,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["route_remediation_resolved_setup_followup_total"] == 1
     assert history["summary"]["continuation_total"] == 1
     assert history["summary"]["continuation_retry_total"] == 1
-    assert history["summary"]["setup_action_total"] == 1
+    assert history["summary"]["setup_action_total"] == 2
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1

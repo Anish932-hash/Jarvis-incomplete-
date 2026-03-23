@@ -40,6 +40,11 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "multimodal_weird_app_count": 1,
                 "multimodal_revalidation_target_count": 4,
                 "multimodal_overdue_revalidation_count": 2,
+                "multimodal_setup_action_count": 1,
+                "multimodal_setup_auto_runnable_count": 1,
+                "multimodal_setup_executed_count": 1,
+                "multimodal_setup_success_count": 1,
+                "multimodal_setup_loaded_model_count": 2,
                 "app_learning_setup_aligned_count": 2,
                 "app_learning_setup_boosted_count": 1,
                 "app_learning_setup_constrained_count": 1,
@@ -122,6 +127,11 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["multimodal_weird_app_total"] == 1
     assert history["summary"]["multimodal_revalidation_target_total"] == 4
     assert history["summary"]["multimodal_overdue_revalidation_total"] == 2
+    assert history["summary"]["multimodal_setup_action_total"] == 1
+    assert history["summary"]["multimodal_setup_auto_runnable_total"] == 1
+    assert history["summary"]["multimodal_setup_executed_total"] == 1
+    assert history["summary"]["multimodal_setup_success_total"] == 1
+    assert history["summary"]["multimodal_setup_loaded_model_total"] == 2
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 1
