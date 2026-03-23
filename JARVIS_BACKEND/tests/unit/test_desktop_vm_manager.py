@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from backend.python.core.desktop_vm_manager import DesktopVMManager
+
+
+class _StubLauncher:
+    def resolve_launch_target(self, app_name: str):
+        return {"status": "success", "requested_app": app_name, "resolution": "launch_memory", "kind": "path"}
+
+    def launch(self, app_name: str):
+        return {"status": "success", "requested_app": app_name, "launch_method": "launch_memory"}
+
+
+def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) -> None:
+    manager = DesktopVMManager(store_path=str(tmp_path / "desktop_vm_manager.json"))
+    monkeypatch.setattr("backend.python.core.desktop_vm_manager.shutil.which", lambda value: r"C:\Tools\VBoxManage.exe" if value == "VBoxManage.exe" else "")
+
+    saved = manager.update_guest_profile(
+        guest_name="Ubuntu Dev VM",
+        provider="virtualbox",
+        guest_os="linux",
+        control_mode="provider_console",
+        provider_app_name="VirtualBox",
+        remote_endpoint="",
+        enable_learning=True,
+        source="unit_test",
+    )
+    assert saved["status"] == "success"
+    assert saved["guest"]["guest_name"] == "Ubuntu Dev VM"
+
+    inventory = manager.inventory_snapshot(
+        system_profile={"virtualization": {"virtualization_firmware_enabled": True}},
+        app_inventory={
+            "items": [
+                {"display_name": "VirtualBox", "canonical_name": "virtualbox", "path": r"C:\Program Files\Oracle\VirtualBox\VirtualBox.exe"},
+            ]
+        },
+        launch_memory={"items": []},
+        query="ubuntu",
+        limit=12,
+        task="linux",
+        source="unit_test",
+    )
+    assert inventory["status"] == "success"
+    assert inventory["summary"]["provider_count"] >= 1
+    assert inventory["summary"]["ready_guest_count"] == 1
+    assert inventory["items"][0]["provider"] == "virtualbox"
+    assert inventory["items"][0]["readiness_status"] == "ready"
+
+    plan = manager.build_vm_control_plan(inventory=inventory, task="linux", query="ubuntu", max_targets=4)
+    assert plan["status"] == "success"
+    assert plan["count"] == 1
+    assert plan["items"][0]["prepare_priority_band"] == "high"
+
+    prepared = manager.prepare_guest_control(
+        inventory=inventory,
+        guest_name="Ubuntu Dev VM",
+        app_launcher=_StubLauncher(),
+        ensure_provider_launch=True,
+        query="desktop settings",
+        source="unit_test",
+    )
+    assert prepared["status"] == "success"
+    assert prepared["summary"]["provider_launch_ready"] is True
+    assert prepared["summary"]["attach_strategy"] == "provider_console"

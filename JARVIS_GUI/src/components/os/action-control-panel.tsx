@@ -113,6 +113,9 @@ import {
   type DesktopMachineOnboardingLaunchResponse,
   type DesktopMachineOnboardingPlanResponse,
   type DesktopMachineProfileResponse,
+  type DesktopMachineVmControlPlanResponse,
+  type DesktopMachineVmInventoryResponse,
+  type DesktopMachineVmPrepareResponse,
   type DesktopSurfaceExplorationResponse,
   type DesktopSurfaceExplorationSelection,
   type GoalListItem,
@@ -1191,8 +1194,19 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopMachineCategoryFilter, setDesktopMachineCategoryFilter] = useState('');
   const [desktopMachineCampaignLabel, setDesktopMachineCampaignLabel] = useState('');
   const [desktopMachineProviderCredentialsText, setDesktopMachineProviderCredentialsText] = useState('');
+  const [desktopMachineVmGuestName, setDesktopMachineVmGuestName] = useState('');
+  const [desktopMachineVmProvider, setDesktopMachineVmProvider] = useState('');
+  const [desktopMachineVmGuestOs, setDesktopMachineVmGuestOs] = useState('');
+  const [desktopMachineVmControlMode, setDesktopMachineVmControlMode] = useState('provider_console');
+  const [desktopMachineVmRemoteEndpoint, setDesktopMachineVmRemoteEndpoint] = useState('');
   const [desktopMachineProfileState, setDesktopMachineProfileState] =
     useState<DesktopMachineProfileResponse | null>(null);
+  const [desktopMachineVmInventoryState, setDesktopMachineVmInventoryState] =
+    useState<DesktopMachineVmInventoryResponse | null>(null);
+  const [desktopMachineVmControlPlanState, setDesktopMachineVmControlPlanState] =
+    useState<DesktopMachineVmControlPlanResponse | null>(null);
+  const [desktopMachineVmPrepareState, setDesktopMachineVmPrepareState] =
+    useState<DesktopMachineVmPrepareResponse | null>(null);
   const [desktopMachineAppLearningPlanState, setDesktopMachineAppLearningPlanState] =
     useState<DesktopMachineAppLearningPlanResponse | null>(null);
   const [desktopMachineOnboardingPlanState, setDesktopMachineOnboardingPlanState] =
@@ -1212,6 +1226,9 @@ const ActionControlPanel = ({ trigger }: ActionControlPanelProps) => {
   const [desktopAppLauncherLaunchState, setDesktopAppLauncherLaunchState] =
     useState<DesktopAppLauncherLaunchResponse | null>(null);
   const [desktopMachineProfileBusy, setDesktopMachineProfileBusy] = useState(false);
+  const [desktopMachineVmInventoryBusy, setDesktopMachineVmInventoryBusy] = useState(false);
+  const [desktopMachineVmControlPlanBusy, setDesktopMachineVmControlPlanBusy] = useState(false);
+  const [desktopMachineVmPrepareBusy, setDesktopMachineVmPrepareBusy] = useState(false);
   const [desktopMachineAppLearningPlanBusy, setDesktopMachineAppLearningPlanBusy] = useState(false);
   const [desktopMachineOnboardingPlanBusy, setDesktopMachineOnboardingPlanBusy] = useState(false);
   const [desktopMachineOnboardingLaunchBusy, setDesktopMachineOnboardingLaunchBusy] = useState(false);
@@ -2473,6 +2490,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineProfile.applications),
     [desktopMachineProfile]
   );
+  const desktopMachineVirtualMachines = useMemo(
+    () => asObjectRecord(desktopMachineProfile.virtual_machines),
+    [desktopMachineProfile]
+  );
   const desktopMachineProviders = useMemo(
     () => asObjectRecord(desktopMachineProfile.providers),
     [desktopMachineProfile]
@@ -2503,6 +2524,48 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopMachinePrepare = useMemo(
     () => asObjectRecord(desktopMachinePrepareState),
     [desktopMachinePrepareState]
+  );
+  const desktopMachineVmInventory = useMemo(
+    () => asObjectRecord(desktopMachineVmInventoryState),
+    [desktopMachineVmInventoryState]
+  );
+  const desktopMachineVmInventorySummary = useMemo(
+    () => asObjectRecord(desktopMachineVmInventory.summary),
+    [desktopMachineVmInventory]
+  );
+  const desktopMachineVmInventoryItems = useMemo(
+    () =>
+      Array.isArray(desktopMachineVmInventory.items)
+        ? desktopMachineVmInventory.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineVmInventory]
+  );
+  const desktopMachineVmControlPlan = useMemo(
+    () => asObjectRecord(desktopMachineVmControlPlanState),
+    [desktopMachineVmControlPlanState]
+  );
+  const desktopMachineVmControlPlanPayload = useMemo(
+    () => asObjectRecord(desktopMachineVmControlPlan.plan),
+    [desktopMachineVmControlPlan]
+  );
+  const desktopMachineVmControlPlanSummary = useMemo(
+    () => asObjectRecord(desktopMachineVmControlPlanPayload.summary),
+    [desktopMachineVmControlPlanPayload]
+  );
+  const desktopMachineVmControlRows = useMemo(
+    () =>
+      Array.isArray(desktopMachineVmControlPlanPayload.items)
+        ? desktopMachineVmControlPlanPayload.items.filter((item): item is Record<string, unknown> => isObjectRecord(item))
+        : [],
+    [desktopMachineVmControlPlanPayload]
+  );
+  const desktopMachineVmPrepare = useMemo(
+    () => asObjectRecord(desktopMachineVmPrepareState),
+    [desktopMachineVmPrepareState]
+  );
+  const desktopMachineVmPrepareSummary = useMemo(
+    () => asObjectRecord(desktopMachineVmPrepare.summary),
+    [desktopMachineVmPrepare]
   );
   const desktopMachinePrepareReadiness = useMemo(
     () => asObjectRecord(desktopMachinePrepare.provider_model_readiness),
@@ -14125,6 +14188,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           source: 'operator_panel',
         });
         setDesktopMachineProfileState(payload);
+        if (isObjectRecord(payload.virtual_machines)) {
+          setDesktopMachineVmInventoryState(payload.virtual_machines as DesktopMachineVmInventoryResponse);
+        }
         if (!quiet) {
           toast({
             title: 'Machine Profile Ready',
@@ -14151,6 +14217,146 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, desktopMachineEffectiveTask, toast]
   );
 
+  const refreshDesktopMachineVmInventory = useCallback(
+    async ({ quiet = false, refreshApps = false }: { quiet?: boolean; refreshApps?: boolean } = {}) => {
+      setDesktopMachineVmInventoryBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineVmInventory({
+          task: desktopMachineEffectiveTask || undefined,
+          query: desktopMachineVmGuestName.trim() || undefined,
+          provider: desktopMachineVmProvider.trim() || undefined,
+          guest_os: desktopMachineVmGuestOs.trim() || undefined,
+          limit: 24,
+          refresh_apps: refreshApps,
+          source: 'operator_panel',
+        });
+        setDesktopMachineVmInventoryState(payload);
+        if (!quiet) {
+          toast({
+            title: 'VM Inventory Ready',
+            description:
+              `${Number(payload.count ?? 0)} guest target(s), ` +
+              `${Number(asObjectRecord(payload.summary).provider_count ?? 0)} provider(s), ` +
+              `${Number(asObjectRecord(payload.summary).ready_guest_count ?? 0)} ready guest(s).`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'VM Inventory Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineVmInventoryBusy(false);
+      }
+    },
+    [desktopMachineEffectiveTask, desktopMachineVmGuestName, desktopMachineVmGuestOs, desktopMachineVmProvider, toast]
+  );
+
+  const refreshDesktopMachineVmControlPlan = useCallback(
+    async ({ quiet = false }: { quiet?: boolean } = {}) => {
+      setDesktopMachineVmControlPlanBusy(true);
+      try {
+        const payload = await backendClient.desktopMachineVmControlPlan({
+          task: desktopMachineEffectiveTask || undefined,
+          query: desktopMachineVmGuestName.trim() || undefined,
+          app_category: desktopMachineCategoryFilter.trim() || undefined,
+          app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+          model_limit: 48,
+          refresh_apps: false,
+          max_guests: 4,
+          source: 'operator_panel',
+        });
+        setDesktopMachineVmControlPlanState(payload);
+        if (isObjectRecord(payload.profile)) {
+          setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+        }
+        if (isObjectRecord(payload.vm_inventory)) {
+          setDesktopMachineVmInventoryState(payload.vm_inventory as DesktopMachineVmInventoryResponse);
+        }
+        if (!quiet) {
+          const planPayload = asObjectRecord(payload.plan);
+          const summary = asObjectRecord(planPayload.summary);
+          toast({
+            title: 'VM Control Plan Ready',
+            description:
+              `${Number(planPayload.count ?? 0)} VM prepare target(s), ` +
+              `${Number(summary.ready_count ?? 0)} ready, ` +
+              `${Number(summary.attention_count ?? 0)} attention, ` +
+              `${Number(summary.blocked_count ?? 0)} blocked.`,
+          });
+        }
+        return payload;
+      } catch (error) {
+        if (!quiet) {
+          toast({
+            variant: 'destructive',
+            title: 'VM Control Plan Failed',
+            description: getErrorMessage(error),
+          });
+        }
+        return null;
+      } finally {
+        setDesktopMachineVmControlPlanBusy(false);
+      }
+    },
+    [desktopMachineCategoryFilter, desktopMachineEffectiveAppQuery, desktopMachineEffectiveTask, desktopMachineVmGuestName, toast]
+  );
+
+  const saveDesktopMachineVmProfile = useCallback(async () => {
+    const guestName = desktopMachineVmGuestName.trim();
+    const providerName = desktopMachineVmProvider.trim();
+    if (!guestName || !providerName) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing VM Details',
+        description: 'Provide at least a guest name and provider before saving a VM profile.',
+      });
+      return null;
+    }
+    setDesktopMachineVmPrepareBusy(true);
+    try {
+      const payload = await backendClient.updateDesktopMachineVmProfile({
+        guest_name: guestName,
+        provider: providerName,
+        guest_os: desktopMachineVmGuestOs.trim() || undefined,
+        control_mode: desktopMachineVmControlMode.trim() || undefined,
+        remote_endpoint: desktopMachineVmRemoteEndpoint.trim() || undefined,
+        enable_learning: true,
+        source: 'operator_panel',
+      });
+      void refreshDesktopMachineVmInventory({ quiet: true, refreshApps: true });
+      void refreshDesktopMachineVmControlPlan({ quiet: true });
+      toast({
+        title: 'VM Profile Saved',
+        description: `${guestName} is now registered for provider-aware VM control planning.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'VM Profile Save Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMachineVmPrepareBusy(false);
+    }
+  }, [
+    desktopMachineVmControlMode,
+    desktopMachineVmGuestName,
+    desktopMachineVmGuestOs,
+    desktopMachineVmProvider,
+    desktopMachineVmRemoteEndpoint,
+    refreshDesktopMachineVmControlPlan,
+    refreshDesktopMachineVmInventory,
+    toast,
+  ]);
+
   const refreshDesktopMachineAppLearningPlan = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
       setDesktopMachineAppLearningPlanBusy(true);
@@ -14166,6 +14372,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         setDesktopMachineAppLearningPlanState(payload);
         if (isObjectRecord(payload.profile)) {
           setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+          const profilePayload = payload.profile as DesktopMachineProfileResponse;
+          if (isObjectRecord(profilePayload.virtual_machines)) {
+            setDesktopMachineVmInventoryState(profilePayload.virtual_machines as DesktopMachineVmInventoryResponse);
+          }
         }
         if (!quiet) {
           const planSummary = asObjectRecord(payload.plan);
@@ -14212,11 +14422,19 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
           max_targets: 8,
           max_model_items: 6,
           continuation_limit: 6,
+          vm_prepare_limit: 2,
           source: 'operator_panel',
         });
         setDesktopMachineOnboardingPlanState(payload);
         if (isObjectRecord(payload.profile)) {
           setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+          const profilePayload = payload.profile as DesktopMachineProfileResponse;
+          if (isObjectRecord(profilePayload.virtual_machines)) {
+            setDesktopMachineVmInventoryState(profilePayload.virtual_machines as DesktopMachineVmInventoryResponse);
+          }
+        }
+        if (isObjectRecord(payload.vm_control_plan)) {
+          setDesktopMachineVmControlPlanState({ status: String(payload.status ?? 'success'), plan: payload.vm_control_plan } as DesktopMachineVmControlPlanResponse);
         }
         if (!quiet) {
           const summary = asObjectRecord(payload.summary);
@@ -14228,6 +14446,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
               `${Number(summary.app_learning_target_count ?? 0)} learning target(s), ` +
               `${Number(summary.app_learning_degraded_count ?? 0)} degraded learning target(s), ` +
               `${Number(summary.app_control_prepare_count ?? 0)} app-control prepare target(s), ` +
+              `${Number(summary.vm_prepare_count ?? 0)} VM target(s), ` +
               `${Number(summary.app_control_prepare_degraded_count ?? 0)} degraded, ` +
               `${Number(summary.continuation_count ?? 0)} continuation item(s).`,
           });
@@ -14500,6 +14719,63 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
     toast,
   ]);
 
+  const prepareDesktopMachineVmTarget = useCallback(async () => {
+    const guestName = desktopMachineVmGuestName.trim();
+    if (!guestName) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing VM Guest',
+        description: 'Provide a VM guest name before asking JARVIS to prepare VM control.',
+      });
+      return null;
+    }
+    setDesktopMachineVmPrepareBusy(true);
+    try {
+      const payload = await backendClient.prepareDesktopMachineVmControl({
+        task: desktopMachineEffectiveTask || undefined,
+        guest_name: guestName,
+        query: desktopCoworkerQuery.trim() || desktopMachineEffectiveTask || 'settings',
+        app_limit: desktopMachineEffectiveAppQuery ? 48 : 96,
+        model_limit: 48,
+        refresh_apps: false,
+        ensure_provider_launch: true,
+        source: 'operator_panel',
+      });
+      setDesktopMachineVmPrepareState(payload);
+      if (isObjectRecord(payload.profile)) {
+        setDesktopMachineProfileState(payload.profile as DesktopMachineProfileResponse);
+      }
+      if (isObjectRecord(payload.vm_inventory)) {
+        setDesktopMachineVmInventoryState(payload.vm_inventory as DesktopMachineVmInventoryResponse);
+      } else {
+        void refreshDesktopMachineVmInventory({ quiet: true });
+      }
+      toast({
+        title: 'VM Control Prepared',
+        description:
+          String(payload.message ?? '').trim() ||
+          `${String(asObjectRecord(payload.summary).guest_name ?? guestName)} is now prepared for provider-side VM control and OS learning followthrough.`,
+      });
+      return payload;
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'VM Control Preparation Failed',
+        description: getErrorMessage(error),
+      });
+      return null;
+    } finally {
+      setDesktopMachineVmPrepareBusy(false);
+    }
+  }, [
+    desktopCoworkerQuery,
+    desktopMachineEffectiveAppQuery,
+    desktopMachineEffectiveTask,
+    desktopMachineVmGuestName,
+    refreshDesktopMachineVmInventory,
+    toast,
+  ]);
+
   const createDesktopMachineLearningCampaign = useCallback(async () => {
     setDesktopMachineAppLearningPlanBusy(true);
     try {
@@ -14605,6 +14881,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         auto_run_app_learning_campaign: true,
         auto_prepare_app_controls: true,
         prepare_app_limit: 3,
+        auto_prepare_vm_controls: true,
+        vm_prepare_limit: 2,
         auto_continue_unresolved: true,
         continuation_limit: 6,
         campaign_label: desktopMachineCampaignLabel.trim() || undefined,
@@ -14616,6 +14894,18 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
       }
       if (isObjectRecord(payload.final_profile)) {
         setDesktopMachineProfileState(payload.final_profile as DesktopMachineProfileResponse);
+      }
+      if (isObjectRecord(payload.vm_control_plan)) {
+        setDesktopMachineVmControlPlanState({ status: String(payload.status ?? 'success'), plan: payload.vm_control_plan } as DesktopMachineVmControlPlanResponse);
+      }
+      if (isObjectRecord(payload.vm_control_prepare)) {
+        const vmPreparePayload = asObjectRecord(payload.vm_control_prepare);
+        if (Array.isArray(vmPreparePayload.items)) {
+          const firstPreparedVm = vmPreparePayload.items.find((item) => isObjectRecord(item));
+          if (firstPreparedVm && isObjectRecord(firstPreparedVm)) {
+            setDesktopMachineVmPrepareState(firstPreparedVm as DesktopMachineVmPrepareResponse);
+          }
+        }
       }
       if (isObjectRecord(payload.history)) {
         setDesktopMachineOnboardingHistoryState(payload.history as DesktopMachineOnboardingHistoryResponse);
@@ -14653,7 +14943,7 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         title: 'Machine Onboarding Started',
         description:
           String(payload.message ?? '').trim() ||
-          `JARVIS started provider validation, adaptive app-learning kickoff, and automatic app-control preparation across ${Number(asObjectRecord(payload.summary).app_learning_auto_target_count ?? 0)} auto-learn target(s) and ${Number(asObjectRecord(payload.summary).prepared_app_count ?? 0)} prepared app(s).`,
+          `JARVIS started provider validation, adaptive app-learning kickoff, VM preparation, and automatic app-control preparation across ${Number(asObjectRecord(payload.summary).app_learning_auto_target_count ?? 0)} auto-learn target(s), ${Number(asObjectRecord(payload.summary).prepared_app_count ?? 0)} prepared app(s), and ${Number(asObjectRecord(payload.summary).prepared_vm_control_count ?? 0)} prepared VM target(s).`,
       });
       return payload;
     } catch (error) {
@@ -20754,6 +21044,63 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                         />
                                       </div>
                                     </div>
+                                    <div className="mt-2 grid gap-2 md:grid-cols-5">
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          VM Guest
+                                        </label>
+                                        <Input
+                                          value={desktopMachineVmGuestName}
+                                          onChange={(event) => setDesktopMachineVmGuestName(event.target.value)}
+                                          placeholder="Ubuntu Dev VM"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          VM Provider
+                                        </label>
+                                        <Input
+                                          value={desktopMachineVmProvider}
+                                          onChange={(event) => setDesktopMachineVmProvider(event.target.value)}
+                                          placeholder="vmware / virtualbox / hyper-v"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          Guest OS
+                                        </label>
+                                        <Input
+                                          value={desktopMachineVmGuestOs}
+                                          onChange={(event) => setDesktopMachineVmGuestOs(event.target.value)}
+                                          placeholder="linux / windows / macos"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          Control Mode
+                                        </label>
+                                        <Input
+                                          value={desktopMachineVmControlMode}
+                                          onChange={(event) => setDesktopMachineVmControlMode(event.target.value)}
+                                          placeholder="provider_console / rdp / vnc / ssh"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                          Remote Endpoint
+                                        </label>
+                                        <Input
+                                          value={desktopMachineVmRemoteEndpoint}
+                                          onChange={(event) => setDesktopMachineVmRemoteEndpoint(event.target.value)}
+                                          placeholder="vm-host:22 or 192.168.1.8"
+                                          className="h-8 border-primary/20 bg-background/40 text-xs"
+                                        />
+                                      </div>
+                                    </div>
                                     <p className="mt-2 text-[10px] text-muted-foreground">
                                       current app target:{' '}
                                       <span className="text-primary/80">
@@ -20762,6 +21109,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                       {' • '}query fallback:{' '}
                                       <span className="text-primary/80">
                                         {desktopMachineEffectiveTask || 'desktop coworker'}
+                                      </span>
+                                      {' • '}vm guest:{' '}
+                                      <span className="text-primary/80">
+                                        {desktopMachineVmGuestName.trim() || 'not scoped'}
                                       </span>
                                     </p>
                                     <div className="mt-2 space-y-1">
@@ -20820,6 +21171,61 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           <Workflow className="h-4 w-4" />
                                         )}
                                         Onboarding Plan
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineVmInventory({ refreshApps: true })}
+                                        disabled={desktopMachineVmInventoryBusy}
+                                      >
+                                        {desktopMachineVmInventoryBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <TerminalSquare className="h-4 w-4" />
+                                        )}
+                                        VM Inventory
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void refreshDesktopMachineVmControlPlan()}
+                                        disabled={desktopMachineVmControlPlanBusy}
+                                      >
+                                        {desktopMachineVmControlPlanBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Radar className="h-4 w-4" />
+                                        )}
+                                        VM Plan
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-8 gap-2 border-primary/30 bg-transparent px-2 text-xs"
+                                        onClick={() => void saveDesktopMachineVmProfile()}
+                                        disabled={desktopMachineVmPrepareBusy}
+                                      >
+                                        {desktopMachineVmPrepareBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Database className="h-4 w-4" />
+                                        )}
+                                        Save VM
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="h-8 gap-2 px-2 text-xs"
+                                        onClick={() => void prepareDesktopMachineVmTarget()}
+                                        disabled={desktopMachineVmPrepareBusy}
+                                      >
+                                        {desktopMachineVmPrepareBusy ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="h-4 w-4" />
+                                        )}
+                                        Prepare VM
                                       </Button>
                                       <Button
                                         type="button"
@@ -21119,6 +21525,57 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           prepare targets:{Number(desktopMachineOnboardingSummary.app_control_prepare_count ?? 0)}
                                           {' • '}default prepare limit:{Number(desktopMachineAppControlPrepareDefaults.prepare_app_limit ?? 0)}
                                         </p>
+                                        <p className="mt-1">
+                                          vm targets:{Number(
+                                            desktopMachineOnboardingSummary.vm_prepare_count ??
+                                              desktopMachineVmControlPlanPayload.count ??
+                                              0
+                                          )}
+                                          {' • '}ready guests:{Number(
+                                            desktopMachineOnboardingSummary.vm_ready_guest_count ??
+                                              desktopMachineVmInventorySummary.ready_guest_count ??
+                                              0
+                                          )}
+                                          {' • '}attention:{Number(
+                                            desktopMachineOnboardingSummary.vm_attention_guest_count ??
+                                              desktopMachineVmInventorySummary.attention_guest_count ??
+                                              0
+                                          )}
+                                        </p>
+                                        {(Number(desktopMachineVmInventorySummary.provider_count ?? 0) > 0 ||
+                                          Number(asObjectRecord(desktopMachineVirtualMachines.summary).provider_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            vm providers:{Number(
+                                              desktopMachineVmInventorySummary.provider_count ??
+                                                asObjectRecord(desktopMachineVirtualMachines.summary).provider_count ??
+                                                0
+                                            )}
+                                            {' • '}detected:{Number(
+                                              desktopMachineVmInventorySummary.detected_provider_count ??
+                                                asObjectRecord(desktopMachineVirtualMachines.summary).detected_provider_count ??
+                                                0
+                                            )}
+                                            {' • '}prepared vm controls:{Number(
+                                              asObjectRecord(desktopMachineOnboardingLatestSummary).prepared_vm_control_count ??
+                                                asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).summary).prepared_vm_control_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlRows.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm focus:{' '}
+                                            {desktopMachineVmControlRows
+                                              .slice(0, 3)
+                                              .map((item) => {
+                                                const guestName = String(item.guest_name ?? 'guest').trim();
+                                                const providerName = String(item.provider ?? '').trim();
+                                                const mode = String(item.control_mode ?? '').trim();
+                                                return `${guestName}${providerName ? `:${providerName}` : ''}${mode ? `:${mode}` : ''}`;
+                                              })
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         <p className="mt-1">
                                           profile setup:{Number(
                                             desktopMachineOnboardingSummary.profile_setup_action_count ??

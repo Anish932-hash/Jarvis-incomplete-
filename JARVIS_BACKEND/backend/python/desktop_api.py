@@ -31,6 +31,7 @@ from backend.python.core.desktop_action_router import DesktopActionRouter
 from backend.python.core.desktop_app_memory_supervisor import DesktopAppMemorySupervisor
 from backend.python.core.desktop_machine_profile import DesktopMachineProfileManager
 from backend.python.core.desktop_onboarding_manager import DesktopOnboardingManager
+from backend.python.core.desktop_vm_manager import DesktopVMManager
 from backend.python.core.desktop_governance_policy import DesktopGovernancePolicyManager
 from backend.python.core.desktop_governance_policy import desktop_governance_profile_catalog
 from backend.python.core.desktop_governance_policy import normalize_desktop_governance_profile
@@ -531,6 +532,7 @@ class DesktopBackendService:
         self.app_launcher = AppLauncher()
         self.desktop_machine_profile_manager = DesktopMachineProfileManager()
         self.desktop_onboarding_manager = DesktopOnboardingManager()
+        self.desktop_vm_manager = DesktopVMManager()
         self.model_registry = ModelRegistry(
             provider_credentials=self.provider_credentials,
             enforce_provider_keys=self._env_bool("JARVIS_MODEL_ENFORCE_PROVIDER_KEYS", False),
@@ -8371,6 +8373,183 @@ class DesktopBackendService:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
+    def desktop_vm_inventory(
+        self,
+        *,
+        task: str = "",
+        query: str = "",
+        provider: str = "",
+        guest_os: str = "",
+        limit: int = 64,
+        refresh_apps: bool = False,
+        source: str = "api",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_vm_manager", None)
+        launcher = getattr(self, "app_launcher", None)
+        if manager is None or launcher is None:
+            return {"status": "unavailable", "message": "desktop vm manager unavailable"}
+        try:
+            if bool(refresh_apps) and hasattr(launcher, "invalidate_catalog_cache"):
+                launcher.invalidate_catalog_cache()
+            system_profile = self.monitor.machine_profile()
+            app_inventory = self.desktop_app_launcher_inventory(
+                query="",
+                category="",
+                limit=max(64, min(int(limit or 64) * 8, 5000)),
+                refresh=False,
+            )
+            launch_memory = self.desktop_app_launcher_memory(limit=max(64, min(int(limit or 64) * 4, 1024)))
+            payload = manager.inventory_snapshot(
+                system_profile=system_profile if isinstance(system_profile, dict) else {},
+                app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
+                launch_memory=launch_memory if isinstance(launch_memory, dict) else {},
+                query=query,
+                provider=provider,
+                guest_os=guest_os,
+                limit=limit,
+                task=task,
+                source=source,
+            )
+            return _to_jsonable(payload)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def update_desktop_vm_profile(
+        self,
+        *,
+        guest_name: str = "",
+        provider: str = "",
+        guest_os: str = "",
+        control_mode: str = "",
+        provider_app_name: str = "",
+        provider_launch_target: str = "",
+        remote_endpoint: str = "",
+        enable_learning: Optional[bool] = None,
+        notes: str = "",
+        tags: Optional[List[str]] = None,
+        credentials_ref: str = "",
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_vm_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop vm manager unavailable"}
+        try:
+            return _to_jsonable(
+                manager.update_guest_profile(
+                    guest_name=guest_name,
+                    provider=provider,
+                    guest_os=guest_os,
+                    control_mode=control_mode,
+                    provider_app_name=provider_app_name,
+                    provider_launch_target=provider_launch_target,
+                    remote_endpoint=remote_endpoint,
+                    enable_learning=enable_learning,
+                    notes=notes,
+                    tags=tags,
+                    credentials_ref=credentials_ref,
+                    source=source,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_machine_vm_control_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = False,
+        max_guests: int = 4,
+        source: str = "machine_vm_control_plan",
+    ) -> Dict[str, Any]:
+        profile = self.desktop_machine_profile(
+            task=task,
+            app_query=app_query,
+            app_category=app_category,
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=False,
+            verify_providers=False,
+            source=source,
+        )
+        if not isinstance(profile, dict) or profile.get("status") != "success":
+            return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine profile"}
+        inventory = (
+            dict(profile.get("virtual_machines", {}))
+            if isinstance(profile.get("virtual_machines", {}), dict)
+            else self.desktop_vm_inventory(task=task, query=app_query, limit=max_guests * 4, source=source)
+        )
+        manager = getattr(self, "desktop_vm_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop vm manager unavailable"}
+        plan = manager.build_vm_control_plan(
+            inventory=inventory if isinstance(inventory, dict) else {},
+            task=task,
+            query=app_query,
+            max_targets=max_guests,
+        )
+        return {"status": "success", "profile": profile, "vm_inventory": inventory, "plan": _to_jsonable(plan)}
+
+    def desktop_machine_prepare_vm_control(
+        self,
+        *,
+        task: str = "",
+        guest_name: str = "",
+        guest_id: str = "",
+        query: str = "",
+        app_limit: int = 320,
+        model_limit: int = 160,
+        refresh_apps: bool = False,
+        ensure_provider_launch: bool = True,
+        source: str = "machine_vm_prepare",
+    ) -> Dict[str, Any]:
+        requested_guest_name = str(guest_name or "").strip()
+        requested_guest_id = str(guest_id or "").strip()
+        if not requested_guest_name and not requested_guest_id:
+            return {"status": "error", "message": "guest_name or guest_id is required"}
+        profile = self.desktop_machine_profile(
+            task=task,
+            app_query=requested_guest_name or query,
+            app_category="",
+            app_limit=app_limit,
+            model_limit=model_limit,
+            refresh_apps=refresh_apps,
+            refresh_provider_credentials=False,
+            verify_providers=False,
+            source=f"{source}_profile",
+        )
+        if not isinstance(profile, dict) or profile.get("status") != "success":
+            return profile if isinstance(profile, dict) else {"status": "error", "message": "unable to build machine profile"}
+        inventory = (
+            dict(profile.get("virtual_machines", {}))
+            if isinstance(profile.get("virtual_machines", {}), dict)
+            else self.desktop_vm_inventory(task=task, query=requested_guest_name or query, source=source)
+        )
+        manager = getattr(self, "desktop_vm_manager", None)
+        if manager is None:
+            return {"status": "unavailable", "message": "desktop vm manager unavailable"}
+        prepared = manager.prepare_guest_control(
+            inventory=inventory if isinstance(inventory, dict) else {},
+            guest_name=requested_guest_name,
+            guest_id=requested_guest_id,
+            app_launcher=self.app_launcher,
+            ensure_provider_launch=ensure_provider_launch,
+            query=query,
+            source=source,
+        )
+        return {
+            "status": str(prepared.get("status", "error") or "error"),
+            "requested_guest_name": requested_guest_name,
+            "requested_guest_id": requested_guest_id,
+            "profile": profile,
+            "vm_inventory": inventory,
+            **(prepared if isinstance(prepared, dict) else {}),
+        }
+
     def desktop_machine_profile(
         self,
         *,
@@ -8447,6 +8626,15 @@ class DesktopBackendService:
                 task_preferences=task_preferences if isinstance(task_preferences, dict) else {},
                 source=source,
             )
+            vm_inventory = self.desktop_vm_inventory(
+                task=clean_task,
+                query=clean_query,
+                provider="",
+                guest_os="",
+                limit=64,
+                refresh_apps=False,
+                source=f"{source}_vm_inventory",
+            )
             app_learning_plan = self._desktop_machine_app_learning_plan_payload(
                 app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
                 app_memory=self.desktop_app_memory_status(limit=256),
@@ -8465,8 +8653,27 @@ class DesktopBackendService:
                 max_targets=8,
             )
             if isinstance(payload, dict):
+                payload["virtual_machines"] = vm_inventory if isinstance(vm_inventory, dict) else {}
                 payload["app_learning_plan"] = app_learning_plan
                 payload["app_control_development"] = app_learning_plan
+                if isinstance(payload.get("recommendations", []), list) and isinstance(vm_inventory, dict):
+                    vm_recommendations = [
+                        dict(item)
+                        for item in vm_inventory.get("recommendations", [])
+                        if isinstance(vm_inventory.get("recommendations", []), list) and isinstance(item, dict)
+                    ]
+                    existing_codes = {
+                        str(item.get("code", "") or "").strip().lower()
+                        for item in payload.get("recommendations", [])
+                        if isinstance(item, dict)
+                    }
+                    for row in vm_recommendations:
+                        code = str(row.get("code", "") or "").strip().lower()
+                        if code and code in existing_codes:
+                            continue
+                        payload["recommendations"].append(row)
+                        existing_codes.add(code)
+                    payload["setup_actions"] = list(payload.get("recommendations", []))
             recorded = manager.record_snapshot(payload if isinstance(payload, dict) else {}, source=source)
             recorded["refresh_apps"] = bool(refresh_apps)
             recorded["refresh_provider_credentials"] = bool(refresh_provider_credentials)
@@ -13605,6 +13812,7 @@ class DesktopBackendService:
         max_targets: int = 8,
         max_model_items: int = 6,
         continuation_limit: int = 6,
+        vm_prepare_limit: int = 2,
         source: str = "machine_onboarding_plan",
     ) -> Dict[str, Any]:
         clean_task = str(task or "").strip().lower()
@@ -13700,9 +13908,29 @@ class DesktopBackendService:
             model_selection=model_selection if isinstance(model_selection, dict) else None,
             max_apps=min(4, max_targets),
         )
+        vm_inventory = (
+            dict(profile.get("virtual_machines", {}))
+            if isinstance(profile.get("virtual_machines", {}), dict)
+            else self.desktop_vm_inventory(task=clean_task, query=app_query, limit=64, source=f"{source}_vm_inventory")
+        )
+        vm_control_plan = (
+            self.desktop_vm_manager.build_vm_control_plan(
+                inventory=vm_inventory if isinstance(vm_inventory, dict) else {},
+                task=clean_task,
+                query=app_query,
+                max_targets=max(1, min(int(vm_prepare_limit or 2), 8)),
+            )
+            if getattr(self, "desktop_vm_manager", None) is not None
+            else {"status": "unavailable", "count": 0, "items": [], "summary": {}, "defaults": {}}
+        )
         prepare_plan_summary = (
             dict(app_control_prepare_plan.get("summary", {}))
             if isinstance(app_control_prepare_plan.get("summary", {}), dict)
+            else {}
+        )
+        vm_control_plan_summary = (
+            dict(vm_control_plan.get("summary", {}))
+            if isinstance(vm_control_plan.get("summary", {}), dict)
             else {}
         )
         learning_plan_payload = (
@@ -13767,6 +13995,13 @@ class DesktopBackendService:
             next_actions,
             list(route_remediation.get("next_actions", []))
             if isinstance(route_remediation.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(vm_control_plan.get("next_actions", []))
+            if isinstance(vm_control_plan.get("next_actions", []), list)
             else [],
             limit=8,
         )
@@ -13868,6 +14103,20 @@ class DesktopBackendService:
                 "count": int(app_control_prepare_plan.get("count", 0) or 0),
             },
             {
+                "id": "vm_control_prepare",
+                "kind": "vm_control_prepare",
+                "status": "skipped"
+                if int(vm_control_plan.get("count", 0) or 0) <= 0
+                else "attention"
+                if int(vm_control_plan_summary.get("blocked_count", 0) or 0) > 0
+                or int(vm_control_plan_summary.get("attention_count", 0) or 0) > 0
+                else "ready",
+                "title": "Prepare top virtual machines and remote guests for cross-OS control",
+                "auto_runnable": bool(int(vm_control_plan_summary.get("ready_count", 0) or 0) > 0),
+                "required": False,
+                "count": int(vm_control_plan.get("count", 0) or 0),
+            },
+            {
                 "id": "continuation_followthrough",
                 "kind": "continuation_followthrough",
                 "status": "skipped"
@@ -13900,6 +14149,7 @@ class DesktopBackendService:
                 "task_preference_plan": task_preference_plan,
                 "launch_seed_plan": launch_seed_plan,
                 "app_control_prepare_plan": app_control_prepare_plan,
+                "vm_control_plan": vm_control_plan,
                 "app_learning_plan": app_learning_plan,
                 "route_remediation": route_remediation,
                 "continuation_plan": continuation_plan,
@@ -13955,6 +14205,14 @@ class DesktopBackendService:
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
+                    "vm_provider_count": int(vm_control_plan_summary.get("provider_counts", {}) and len(vm_control_plan_summary.get("provider_counts", {})) or 0),
+                    "vm_guest_count": int(vm_control_plan_summary.get("ready_count", 0) or 0)
+                    + int(vm_control_plan_summary.get("attention_count", 0) or 0)
+                    + int(vm_control_plan_summary.get("blocked_count", 0) or 0),
+                    "vm_ready_guest_count": int(vm_control_plan_summary.get("ready_count", 0) or 0),
+                    "vm_attention_guest_count": int(vm_control_plan_summary.get("attention_count", 0) or 0),
+                    "vm_blocked_guest_count": int(vm_control_plan_summary.get("blocked_count", 0) or 0),
+                    "vm_prepare_count": int(vm_control_plan.get("count", 0) or 0),
                     "app_control_prepare_remediation_retry_count": int(
                         prepare_plan_summary.get("remediation_retry_count", 0) or 0
                     ),
@@ -14045,7 +14303,7 @@ class DesktopBackendService:
                     if isinstance(execution_queue_summary.get("setup_action_code_counts", {}), dict)
                     else {},
                 },
-                "message": "Built a machine onboarding plan with tracked machine setup advice, resumable setup-mission execution planning, launcher seeding, readiness-aware app-learning, and automatic app-control preparation.",
+                "message": "Built a machine onboarding plan with tracked machine setup advice, resumable setup-mission execution planning, launcher seeding, readiness-aware app-learning, virtual-machine control preparation, and automatic app-control preparation.",
             }
         )
 
@@ -14096,6 +14354,8 @@ class DesktopBackendService:
         auto_run_app_learning_campaign: bool = True,
         auto_prepare_app_controls: bool = True,
         prepare_app_limit: int = 3,
+        auto_prepare_vm_controls: bool = True,
+        vm_prepare_limit: int = 2,
         auto_continue_unresolved: bool = True,
         continuation_limit: int = 6,
         campaign_label: str = "",
@@ -14116,6 +14376,7 @@ class DesktopBackendService:
             max_targets=max_targets,
             max_model_items=max_model_items,
             continuation_limit=continuation_limit,
+            vm_prepare_limit=vm_prepare_limit,
             source=f"{source}_plan",
         )
         if not isinstance(plan, dict) or plan.get("status") != "success":
@@ -14172,11 +14433,21 @@ class DesktopBackendService:
             if isinstance(plan.get("app_control_prepare_plan", {}), dict)
             else {}
         )
+        vm_control_plan = (
+            plan.get("vm_control_plan", {})
+            if isinstance(plan.get("vm_control_plan", {}), dict)
+            else {}
+        )
         prepare_plan_items = [
             dict(item)
             for item in app_control_prepare_plan.get("items", [])
             if isinstance(app_control_prepare_plan.get("items", []), list) and isinstance(item, dict)
         ][: max(1, min(int(prepare_app_limit or 3), 12))]
+        vm_prepare_plan_items = [
+            dict(item)
+            for item in vm_control_plan.get("items", [])
+            if isinstance(vm_control_plan.get("items", []), list) and isinstance(item, dict)
+        ][: max(1, min(int(vm_prepare_limit or 2), 8))]
         app_learning_plan_payload = (
             dict(plan.get("app_learning_plan", {}))
             if isinstance(plan.get("app_learning_plan", {}), dict)
@@ -14198,6 +14469,7 @@ class DesktopBackendService:
         runtime_app_learning_plan_summary = dict(app_learning_plan_summary)
         runtime_app_learning_campaign_defaults = dict(app_learning_campaign_defaults)
         runtime_app_control_prepare_plan = dict(app_control_prepare_plan) if isinstance(app_control_prepare_plan, dict) else {}
+        runtime_vm_control_plan = dict(vm_control_plan) if isinstance(vm_control_plan, dict) else {}
         planned_continuation_plan = (
             dict(plan.get("continuation_plan", {}))
             if isinstance(plan.get("continuation_plan", {}), dict)
@@ -14256,6 +14528,7 @@ class DesktopBackendService:
         model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
         app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
+        vm_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         queue_model_setup_mission: Dict[str, Any] = (
             dict(model_setup_mission) if isinstance(model_setup_mission, dict) else {}
         )
@@ -14624,6 +14897,65 @@ class DesktopBackendService:
                         else {},
                     },
                 }
+            if bool(auto_prepare_vm_controls) and vm_prepare_plan_items:
+                vm_items: List[Dict[str, Any]] = []
+                for item in vm_prepare_plan_items:
+                    guest_name_value = str(item.get("guest_name", "") or "").strip()
+                    if not guest_name_value:
+                        continue
+                    prepared_vm_payload = self.desktop_machine_prepare_vm_control(
+                        task=str(task or "").strip().lower(),
+                        guest_name=guest_name_value,
+                        guest_id=str(item.get("guest_id", "") or "").strip(),
+                        query=str(item.get("learning_query", "") or "").strip(),
+                        app_limit=app_limit,
+                        model_limit=model_limit,
+                        refresh_apps=False,
+                        ensure_provider_launch=True,
+                        source="machine_onboarding",
+                    )
+                    if isinstance(prepared_vm_payload, dict):
+                        prepared_vm_payload["prepare_priority_band"] = str(item.get("prepare_priority_band", "") or "").strip().lower()
+                        prepared_vm_payload["reason_codes"] = (
+                            list(item.get("reason_codes", []))
+                            if isinstance(item.get("reason_codes", []), list)
+                            else []
+                        )
+                    vm_items.append(prepared_vm_payload if isinstance(prepared_vm_payload, dict) else {"status": "error"})
+                vm_status_counts: Dict[str, int] = {}
+                vm_ready_count = 0
+                vm_attention_count = 0
+                vm_blocked_count = 0
+                for prepared_vm in vm_items:
+                    if not isinstance(prepared_vm, dict):
+                        continue
+                    status_name = str(prepared_vm.get("status", "") or "unknown").strip().lower() or "unknown"
+                    vm_status_counts[status_name] = int(vm_status_counts.get(status_name, 0) or 0) + 1
+                    readiness_name = str(
+                        prepared_vm.get("summary", {}).get("readiness_status", "")
+                        if isinstance(prepared_vm.get("summary", {}), dict)
+                        else ""
+                    ).strip().lower()
+                    if readiness_name == "ready":
+                        vm_ready_count += 1
+                    elif readiness_name == "blocked":
+                        vm_blocked_count += 1
+                    else:
+                        vm_attention_count += 1
+                vm_control_prepare_result = {
+                    "status": "success" if vm_items else "skipped",
+                    "count": len(vm_items),
+                    "items": vm_items,
+                    "summary": {
+                        "prepared_vm_control_count": len(
+                            [row for row in vm_items if isinstance(row, dict) and str(row.get("status", "") or "").strip().lower() in {"success", "partial"}]
+                        ),
+                        "ready_count": vm_ready_count,
+                        "attention_count": vm_attention_count,
+                        "blocked_count": vm_blocked_count,
+                        "status_counts": {str(key): int(value) for key, value in sorted(vm_status_counts.items(), key=lambda entry: entry[0])},
+                    },
+                }
         else:
             provider_updates = {
                 "status": "planned",
@@ -14810,6 +15142,7 @@ class DesktopBackendService:
             str(model_install_result.get("status", "") or "").strip().lower(),
             str(app_learning_result.get("status", "") or "").strip().lower(),
             str(app_control_prepare_result.get("status", "") or "").strip().lower(),
+            str(vm_control_prepare_result.get("status", "") or "").strip().lower(),
         ]
         overall_status = "success"
         if any(status_name == "error" for status_name in section_statuses):
@@ -14833,6 +15166,8 @@ class DesktopBackendService:
             "model_install": model_install_result,
             "app_learning_campaign": app_learning_result,
             "app_control_prepare": app_control_prepare_result,
+            "vm_control_plan": runtime_vm_control_plan,
+            "vm_control_prepare": vm_control_prepare_result,
             "route_remediation": route_remediation,
             "route_remediation_progress": route_remediation_progress,
             "continuation_plan": continuation_plan,
@@ -14938,6 +15273,27 @@ class DesktopBackendService:
                     dict(app_control_prepare_result.get("summary", {})).get("remediation_feedback_status_counts", {})
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else {}
+                ),
+                "vm_prepare_count": int(vm_control_prepare_result.get("count", 0) or 0),
+                "prepared_vm_control_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("prepared_vm_control_count", vm_control_prepare_result.get("count", 0))
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else vm_control_prepare_result.get("count", 0)
+                ),
+                "vm_ready_guest_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("ready_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_attention_guest_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("attention_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_blocked_guest_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("blocked_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
                 ),
                 "route_remediation_count": int(route_remediation.get("count", 0) or 0),
                 "route_remediation_blocked_count": int(
@@ -15046,9 +15402,9 @@ class DesktopBackendService:
                 else {},
             },
             "message": (
-                "Prepared a machine onboarding run with tracked machine setup advice, concrete setup follow-up actions, and app-control execution."
+                "Prepared a machine onboarding run with tracked machine setup advice, concrete setup follow-up actions, virtual-machine preparation, and app-control execution."
                 if bool(dry_run)
-                else "Completed a machine onboarding run with tracked machine setup advice, resumable provider/model mission execution, launcher seeding, readiness-aware app-learning campaign setup, and automatic app-control preparation."
+                else "Completed a machine onboarding run with tracked machine setup advice, resumable provider/model mission execution, launcher seeding, readiness-aware app-learning campaign setup, virtual-machine preparation, and automatic app-control preparation."
             ),
         }
         recorded = manager.record_run(run_payload, source=source) if manager is not None else dict(run_payload)
@@ -50473,6 +50829,31 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return
+            if path == "/runtime/desktop-machine-profile/vm-inventory":
+                payload = self.server.service.desktop_vm_inventory(
+                    task=str(query.get("task", [""])[0] or "").strip(),
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    provider=str(query.get("provider", [""])[0] or "").strip(),
+                    guest_os=str(query.get("guest_os", [""])[0] or "").strip(),
+                    limit=self._parse_int(str(query.get("limit", ["64"])[0]), 64, minimum=1, maximum=512),
+                    refresh_apps=self._parse_bool(str(query.get("refresh_apps", ["0"])[0]), default=False),
+                    source=str(query.get("source", ["api"])[0] or "api").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/vm-control-plan":
+                payload = self.server.service.desktop_machine_vm_control_plan(
+                    task=str(query.get("task", [""])[0] or "").strip(),
+                    app_query=str(query.get("app_query", [""])[0] or query.get("query", [""])[0] or "").strip(),
+                    app_category=str(query.get("app_category", [""])[0] or query.get("category", [""])[0] or "").strip(),
+                    app_limit=self._parse_int(str(query.get("app_limit", ["320"])[0]), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(str(query.get("model_limit", ["200"])[0]), 200, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(str(query.get("refresh_apps", ["0"])[0]), default=False),
+                    max_guests=self._parse_int(str(query.get("max_guests", ["4"])[0]), 4, minimum=1, maximum=16),
+                    source=str(query.get("source", ["machine_vm_control_plan"])[0] or "machine_vm_control_plan").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
             if path == "/runtime/desktop-machine-profile/onboarding-plan":
                 payload = self.server.service.desktop_machine_onboarding_plan(
                     task=str(query.get("task", [""])[0] or "").strip(),
@@ -50499,6 +50880,12 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                         6,
                         minimum=1,
                         maximum=24,
+                    ),
+                    vm_prepare_limit=self._parse_int(
+                        str(query.get("vm_prepare_limit", ["2"])[0]),
+                        2,
+                        minimum=1,
+                        maximum=8,
                     ),
                     source=str(query.get("source", ["machine_onboarding_plan"])[0] or "machine_onboarding_plan").strip(),
                 )
@@ -52940,6 +53327,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     auto_run_app_learning_campaign=self._parse_bool(body.get("auto_run_app_learning_campaign", True), default=True),
                     auto_prepare_app_controls=self._parse_bool(body.get("auto_prepare_app_controls", True), default=True),
                     prepare_app_limit=self._parse_int(body.get("prepare_app_limit", 3), 3, minimum=1, maximum=12),
+                    auto_prepare_vm_controls=self._parse_bool(body.get("auto_prepare_vm_controls", True), default=True),
+                    vm_prepare_limit=self._parse_int(body.get("vm_prepare_limit", 2), 2, minimum=1, maximum=8),
                     auto_continue_unresolved=self._parse_bool(body.get("auto_continue_unresolved", True), default=True),
                     continuation_limit=self._parse_int(body.get("continuation_limit", 6), 6, minimum=1, maximum=24),
                     campaign_label=str(body.get("campaign_label", "") or "").strip(),
@@ -52947,6 +53336,37 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     source=str(body.get("source", "machine_onboarding") or "machine_onboarding").strip(),
                 )
                 self._send_json(200 if payload.get("status") in {"success", "planned", "partial"} else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/vm-profiles":
+                payload = self.server.service.update_desktop_vm_profile(
+                    guest_name=str(body.get("guest_name", body.get("name", "")) or "").strip(),
+                    provider=str(body.get("provider", "") or "").strip(),
+                    guest_os=str(body.get("guest_os", body.get("os", "")) or "").strip(),
+                    control_mode=str(body.get("control_mode", "") or "").strip(),
+                    provider_app_name=str(body.get("provider_app_name", "") or "").strip(),
+                    provider_launch_target=str(body.get("provider_launch_target", "") or "").strip(),
+                    remote_endpoint=str(body.get("remote_endpoint", "") or "").strip(),
+                    enable_learning=(self._parse_bool(body.get("enable_learning"), default=True) if "enable_learning" in body else None),
+                    notes=str(body.get("notes", "") or "").strip(),
+                    tags=([str(item).strip() for item in body.get("tags", []) if str(item).strip()] if isinstance(body.get("tags", []), list) else None),
+                    credentials_ref=str(body.get("credentials_ref", "") or "").strip(),
+                    source=str(body.get("source", "manual") or "manual").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-machine-profile/vm-control-prepare":
+                payload = self.server.service.desktop_machine_prepare_vm_control(
+                    task=str(body.get("task", "") or "").strip(),
+                    guest_name=str(body.get("guest_name", body.get("name", "")) or "").strip(),
+                    guest_id=str(body.get("guest_id", "") or "").strip(),
+                    query=str(body.get("query", "") or "").strip(),
+                    app_limit=self._parse_int(body.get("app_limit", 320), 320, minimum=1, maximum=5000),
+                    model_limit=self._parse_int(body.get("model_limit", 160), 160, minimum=8, maximum=2000),
+                    refresh_apps=self._parse_bool(body.get("refresh_apps", False), default=False),
+                    ensure_provider_launch=self._parse_bool(body.get("ensure_provider_launch", True), default=True),
+                    source=str(body.get("source", "machine_vm_prepare") or "machine_vm_prepare").strip(),
+                )
+                self._send_json(200 if payload.get("status") in {"success", "partial"} else 400, payload)
                 return
             if path == "/runtime/desktop-machine-profile/app-learning-campaign":
                 payload = self.server.service.create_desktop_machine_app_learning_campaign(

@@ -34,6 +34,10 @@ class FakeDesktopService:
         self.machine_onboarding_plan_calls: list[Dict[str, Any]] = []
         self.machine_onboarding_launch_calls: list[Dict[str, Any]] = []
         self.machine_onboarding_history_calls: list[Dict[str, Any]] = []
+        self.machine_vm_profile_update_calls: list[Dict[str, Any]] = []
+        self.machine_vm_inventory_calls: list[Dict[str, Any]] = []
+        self.machine_vm_control_plan_calls: list[Dict[str, Any]] = []
+        self.machine_vm_prepare_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_plan_calls: list[Dict[str, Any]] = []
         self.machine_app_learning_campaign_calls: list[Dict[str, Any]] = []
         self.machine_prepare_app_control_calls: list[Dict[str, Any]] = []
@@ -13458,6 +13462,32 @@ class FakeDesktopService:
                 "launch_memory": {"status": "success", "total": 1},
                 "task_focus": [{"task": "reasoning", "score": 12.0}],
             },
+            "virtual_machines": {
+                "status": "success",
+                "count": 1,
+                "providers": [{"provider": "virtualbox", "provider_label": "VirtualBox", "detected": True}],
+                "items": [
+                    {
+                        "guest_id": "vm-guest-01",
+                        "guest_name": "Ubuntu Dev VM",
+                        "provider": "virtualbox",
+                        "provider_label": "VirtualBox",
+                        "guest_os": "linux",
+                        "control_mode": "provider_console",
+                        "readiness_status": "ready",
+                        "enable_learning": True,
+                        "reason_codes": ["provider_detected"],
+                    }
+                ],
+                "summary": {
+                    "provider_count": 1,
+                    "detected_provider_count": 1,
+                    "ready_guest_count": 1,
+                    "attention_guest_count": 0,
+                    "blocked_guest_count": 0,
+                },
+                "recommendations": [],
+            },
             "models": {
                 "inventory_count": 1,
                 "recommended_count": 1,
@@ -13478,6 +13508,212 @@ class FakeDesktopService:
             "change_detection": {"changed": False, "areas": [], "requires_revalidation": False},
         }
 
+    def desktop_vm_inventory(
+        self,
+        *,
+        task: str = "",
+        query: str = "",
+        provider: str = "",
+        guest_os: str = "",
+        limit: int = 64,
+        refresh_apps: bool = False,
+        source: str = "api",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "query": query,
+            "provider": provider,
+            "guest_os": guest_os,
+            "limit": int(limit),
+            "refresh_apps": bool(refresh_apps),
+            "source": source,
+        }
+        self.machine_vm_inventory_calls.append(call)
+        return {
+            "status": "success",
+            "count": 1,
+            "providers": [{"provider": "virtualbox", "provider_label": "VirtualBox", "detected": True}],
+            "items": [
+                {
+                    "guest_id": "vm-guest-01",
+                    "guest_name": "Ubuntu Dev VM",
+                    "provider": "virtualbox",
+                    "provider_label": "VirtualBox",
+                    "guest_os": "linux",
+                    "control_mode": "provider_console",
+                    "readiness_status": "ready",
+                    "enable_learning": True,
+                    "reason_codes": ["provider_detected"],
+                }
+            ],
+            "summary": {
+                "provider_count": 1,
+                "detected_provider_count": 1,
+                "ready_guest_count": 1,
+                "attention_guest_count": 0,
+                "blocked_guest_count": 0,
+            },
+        }
+
+    def update_desktop_vm_profile(
+        self,
+        *,
+        guest_name: str = "",
+        provider: str = "",
+        guest_os: str = "",
+        control_mode: str = "",
+        provider_app_name: str = "",
+        provider_launch_target: str = "",
+        remote_endpoint: str = "",
+        enable_learning: bool | None = None,
+        notes: str = "",
+        tags: list[str] | None = None,
+        credentials_ref: str = "",
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        call = {
+            "guest_name": guest_name,
+            "provider": provider,
+            "guest_os": guest_os,
+            "control_mode": control_mode,
+            "provider_app_name": provider_app_name,
+            "provider_launch_target": provider_launch_target,
+            "remote_endpoint": remote_endpoint,
+            "enable_learning": enable_learning,
+            "notes": notes,
+            "tags": list(tags or []),
+            "credentials_ref": credentials_ref,
+            "source": source,
+        }
+        self.machine_vm_profile_update_calls.append(call)
+        return {
+            "status": "success",
+            "guest": {
+                "guest_id": "vm-guest-01",
+                "guest_name": guest_name or "Ubuntu Dev VM",
+                "provider": provider or "virtualbox",
+                "guest_os": guest_os or "linux",
+                "control_mode": control_mode or "provider_console",
+                "provider_app_name": provider_app_name or "VirtualBox",
+                "provider_launch_target": provider_launch_target or "VirtualBox",
+                "remote_endpoint": remote_endpoint,
+                "enable_learning": True if enable_learning is None else bool(enable_learning),
+                "notes": notes,
+                "tags": list(tags or []),
+                "credentials_ref": credentials_ref,
+            },
+            "count": 1,
+        }
+
+    def desktop_machine_vm_control_plan(
+        self,
+        *,
+        task: str = "",
+        app_query: str = "",
+        app_category: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        refresh_apps: bool = False,
+        max_guests: int = 4,
+        source: str = "machine_vm_control_plan",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "app_query": app_query,
+            "app_category": app_category,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "max_guests": int(max_guests),
+            "source": source,
+        }
+        self.machine_vm_control_plan_calls.append(call)
+        return {
+            "status": "success",
+            "profile": self.desktop_machine_profile(
+                task=task,
+                app_query=app_query,
+                app_category=app_category,
+                app_limit=app_limit,
+                model_limit=model_limit,
+                refresh_apps=refresh_apps,
+                refresh_provider_credentials=False,
+                verify_providers=False,
+                source=source,
+            ),
+            "vm_inventory": self.desktop_vm_inventory(task=task, query=app_query, limit=max_guests * 2, source=source),
+            "plan": {
+                "status": "success",
+                "count": 1,
+                "items": [
+                    {
+                        "guest_id": "vm-guest-01",
+                        "guest_name": "Ubuntu Dev VM",
+                        "provider": "virtualbox",
+                        "guest_os": "linux",
+                        "control_mode": "provider_console",
+                        "prepare_priority_band": "high",
+                        "auto_prepare_allowed": True,
+                    }
+                ],
+                "summary": {
+                    "ready_count": 1,
+                    "attention_count": 0,
+                    "blocked_count": 0,
+                    "provider_counts": {"virtualbox": 1},
+                },
+            },
+        }
+
+    def desktop_machine_prepare_vm_control(
+        self,
+        *,
+        task: str = "",
+        guest_name: str = "",
+        guest_id: str = "",
+        query: str = "",
+        app_limit: int = 320,
+        model_limit: int = 160,
+        refresh_apps: bool = False,
+        ensure_provider_launch: bool = True,
+        source: str = "machine_vm_prepare",
+    ) -> Dict[str, Any]:
+        call = {
+            "task": task,
+            "guest_name": guest_name,
+            "guest_id": guest_id,
+            "query": query,
+            "app_limit": int(app_limit),
+            "model_limit": int(model_limit),
+            "refresh_apps": bool(refresh_apps),
+            "ensure_provider_launch": bool(ensure_provider_launch),
+            "source": source,
+        }
+        self.machine_vm_prepare_calls.append(call)
+        return {
+            "status": "success",
+            "requested_guest_name": guest_name,
+            "requested_guest_id": guest_id,
+            "profile": self.desktop_machine_profile(task=task, app_limit=app_limit, model_limit=model_limit, source=f"{source}_profile"),
+            "vm_inventory": self.desktop_vm_inventory(task=task, query=guest_name or query, source=source),
+            "guest": {
+                "guest_id": guest_id or "vm-guest-01",
+                "guest_name": guest_name or "Ubuntu Dev VM",
+                "provider": "virtualbox",
+                "control_mode": "provider_console",
+            },
+            "resolved_target": {"status": "success", "requested_app": "VirtualBox", "resolution": "launch_memory"},
+            "launch": {"status": "success", "launch_method": "launch_memory"},
+            "summary": {
+                "guest_name": guest_name or "Ubuntu Dev VM",
+                "provider": "virtualbox",
+                "control_mode": "provider_console",
+                "readiness_status": "ready",
+                "provider_launch_ready": True,
+                "attach_strategy": "provider_console",
+            },
+        }
+
     def desktop_machine_onboarding_plan(
         self,
         *,
@@ -13493,6 +13729,7 @@ class FakeDesktopService:
         max_targets: int = 8,
         max_model_items: int = 6,
         continuation_limit: int = 6,
+        vm_prepare_limit: int = 2,
         source: str = "machine_onboarding_plan",
     ) -> Dict[str, Any]:
         call = {
@@ -13508,6 +13745,7 @@ class FakeDesktopService:
             "max_targets": int(max_targets),
             "max_model_items": int(max_model_items),
             "continuation_limit": int(continuation_limit),
+            "vm_prepare_limit": int(vm_prepare_limit),
             "source": source,
         }
         self.machine_onboarding_plan_calls.append(call)
@@ -13642,6 +13880,26 @@ class FakeDesktopService:
                 "defaults": {
                     "auto_prepare_app_controls": True,
                     "prepare_app_limit": 2,
+                },
+            },
+            "vm_control_plan": {
+                "status": "success",
+                "count": 1,
+                "items": [
+                    {
+                        "guest_id": "vm-guest-01",
+                        "guest_name": "Ubuntu Dev VM",
+                        "provider": "virtualbox",
+                        "control_mode": "provider_console",
+                        "prepare_priority_band": "high",
+                        "auto_prepare_allowed": True,
+                    }
+                ],
+                "summary": {
+                    "ready_count": 1,
+                    "attention_count": 0,
+                    "blocked_count": 0,
+                    "provider_counts": {"virtualbox": 1},
                 },
             },
             "app_learning_plan": self.desktop_machine_app_learning_plan(
@@ -13922,6 +14180,12 @@ class FakeDesktopService:
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
                 "app_control_prepare_degraded_count": 1,
+                "vm_provider_count": 1,
+                "vm_guest_count": 1,
+                "vm_ready_guest_count": 1,
+                "vm_attention_guest_count": 0,
+                "vm_blocked_guest_count": 0,
+                "vm_prepare_count": 1,
                 "route_remediation_count": 1,
                 "route_remediation_blocked_count": 0,
                 "route_remediation_degraded_count": 0,
@@ -14201,6 +14465,11 @@ class FakeDesktopService:
                 "prepared_setup_aligned_total": 2,
                 "prepared_setup_boosted_total": 1,
                 "prepared_setup_constrained_total": 0,
+                "vm_prepare_total": 1,
+                "prepared_vm_control_total": 1,
+                "vm_ready_guest_total": 1,
+                "vm_attention_guest_total": 0,
+                "vm_blocked_guest_total": 0,
                 "route_remediation_total": 1,
                 "route_remediation_blocked_total": 0,
                 "route_remediation_degraded_total": 1,
@@ -14247,6 +14516,8 @@ class FakeDesktopService:
         auto_run_app_learning_campaign: bool = True,
         auto_prepare_app_controls: bool = True,
         prepare_app_limit: int = 3,
+        auto_prepare_vm_controls: bool = True,
+        vm_prepare_limit: int = 2,
         auto_continue_unresolved: bool = True,
         continuation_limit: int = 6,
         campaign_label: str = "",
@@ -14277,6 +14548,8 @@ class FakeDesktopService:
             "auto_run_app_learning_campaign": bool(auto_run_app_learning_campaign),
             "auto_prepare_app_controls": bool(auto_prepare_app_controls),
             "prepare_app_limit": int(prepare_app_limit),
+            "auto_prepare_vm_controls": bool(auto_prepare_vm_controls),
+            "vm_prepare_limit": int(vm_prepare_limit),
             "auto_continue_unresolved": bool(auto_continue_unresolved),
             "continuation_limit": int(continuation_limit),
             "campaign_label": campaign_label,
@@ -14301,6 +14574,7 @@ class FakeDesktopService:
                 max_targets=max_targets,
                 max_model_items=max_model_items,
                 continuation_limit=continuation_limit,
+                vm_prepare_limit=vm_prepare_limit,
                 source=f"{source}_plan",
             ),
             "provider_updates": {"status": "success", "count": len(dict(provider_credentials or {})), "items": [{"provider": "huggingface", "status": "success"}]},
@@ -14411,6 +14685,42 @@ class FakeDesktopService:
                     "setup_aligned_app_count": 2 if auto_prepare_app_controls else 0,
                     "setup_boosted_app_count": 1 if auto_prepare_app_controls else 0,
                     "setup_constrained_app_count": 0,
+                },
+            },
+            "vm_control_plan": {
+                "status": "success",
+                "count": 1,
+                "items": [
+                    {
+                        "guest_id": "vm-guest-01",
+                        "guest_name": "Ubuntu Dev VM",
+                        "provider": "virtualbox",
+                        "control_mode": "provider_console",
+                        "prepare_priority_band": "high",
+                    }
+                ],
+                "summary": {"ready_count": 1, "attention_count": 0, "blocked_count": 0, "provider_counts": {"virtualbox": 1}},
+            },
+            "vm_control_prepare": {
+                "status": "success" if auto_prepare_vm_controls else "skipped",
+                "count": 1 if auto_prepare_vm_controls else 0,
+                "items": [
+                    {
+                        "status": "success",
+                        "summary": {
+                            "guest_name": "Ubuntu Dev VM",
+                            "provider": "virtualbox",
+                            "control_mode": "provider_console",
+                            "readiness_status": "ready",
+                            "provider_launch_ready": True,
+                        },
+                    }
+                ] if auto_prepare_vm_controls else [],
+                "summary": {
+                    "prepared_vm_control_count": 1 if auto_prepare_vm_controls else 0,
+                    "ready_count": 1 if auto_prepare_vm_controls else 0,
+                    "attention_count": 0,
+                    "blocked_count": 0,
                 },
             },
             "route_remediation": {
@@ -14654,6 +14964,11 @@ class FakeDesktopService:
                 "prepared_setup_aligned_count": 2 if auto_prepare_app_controls else 0,
                 "prepared_setup_boosted_count": 1 if auto_prepare_app_controls else 0,
                 "prepared_setup_constrained_count": 0,
+                "vm_prepare_count": 1 if auto_prepare_vm_controls else 0,
+                "prepared_vm_control_count": 1 if auto_prepare_vm_controls else 0,
+                "vm_ready_guest_count": 1 if auto_prepare_vm_controls else 0,
+                "vm_attention_guest_count": 0,
+                "vm_blocked_guest_count": 0,
                 "route_remediation_count": 1 if auto_prepare_app_controls else 0,
                 "route_remediation_blocked_count": 0,
                 "route_remediation_degraded_count": 1 if auto_prepare_app_controls else 0,
@@ -24758,8 +25073,68 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert profile["status"] == "success"
     assert profile["machine_id"] == "machine-demo-01"
     assert profile["verify_providers"] is True
+    assert profile["virtual_machines"]["summary"]["ready_guest_count"] == 1
     assert service.machine_profile_calls[-1]["refresh_apps"] is True
     assert service.machine_profile_calls[-1]["task"] == "reasoning"
+
+    status, vm_inventory = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile/vm-inventory?task=linux&query=ubuntu&provider=virtualbox&refresh_apps=1",
+    )
+    assert status == 200
+    assert vm_inventory["status"] == "success"
+    assert vm_inventory["items"][0]["guest_name"] == "Ubuntu Dev VM"
+    assert service.machine_vm_inventory_calls[-1]["provider"] == "virtualbox"
+    assert service.machine_vm_inventory_calls[-1]["refresh_apps"] is True
+
+    status, vm_plan = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-machine-profile/vm-control-plan?task=linux&query=ubuntu&max_guests=2&refresh_apps=1",
+    )
+    assert status == 200
+    assert vm_plan["status"] == "success"
+    assert vm_plan["plan"]["count"] == 1
+    assert vm_plan["plan"]["items"][0]["guest_name"] == "Ubuntu Dev VM"
+    assert service.machine_vm_control_plan_calls[-1]["max_guests"] == 2
+    assert service.machine_vm_control_plan_calls[-1]["refresh_apps"] is True
+
+    status, vm_saved = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/vm-profiles",
+        payload={
+            "guest_name": "Ubuntu Dev VM",
+            "provider": "virtualbox",
+            "guest_os": "linux",
+            "control_mode": "provider_console",
+            "provider_app_name": "VirtualBox",
+            "provider_launch_target": "VirtualBox",
+            "enable_learning": True,
+            "tags": ["lab", "linux"],
+        },
+    )
+    assert status == 200
+    assert vm_saved["status"] == "success"
+    assert vm_saved["guest"]["provider"] == "virtualbox"
+    assert service.machine_vm_profile_update_calls[-1]["guest_name"] == "Ubuntu Dev VM"
+    assert service.machine_vm_profile_update_calls[-1]["tags"] == ["lab", "linux"]
+
+    status, vm_prepared = request_json(
+        "POST",
+        f"{base_url}/runtime/desktop-machine-profile/vm-control-prepare",
+        payload={
+            "task": "linux",
+            "guest_name": "Ubuntu Dev VM",
+            "query": "settings",
+            "refresh_apps": True,
+            "ensure_provider_launch": True,
+        },
+    )
+    assert status == 200
+    assert vm_prepared["status"] == "success"
+    assert vm_prepared["summary"]["guest_name"] == "Ubuntu Dev VM"
+    assert vm_prepared["summary"]["attach_strategy"] == "provider_console"
+    assert service.machine_vm_prepare_calls[-1]["guest_name"] == "Ubuntu Dev VM"
+    assert service.machine_vm_prepare_calls[-1]["ensure_provider_launch"] is True
 
     status, updated = request_json(
         "POST",
@@ -24896,7 +25271,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
 
     status, plan = request_json(
         "GET",
-        f"{base_url}/runtime/desktop-machine-profile/onboarding-plan?task=reasoning&query=chrome&max_targets=2&max_model_items=3&continuation_limit=5",
+        f"{base_url}/runtime/desktop-machine-profile/onboarding-plan?task=reasoning&query=chrome&max_targets=2&max_model_items=3&continuation_limit=5&vm_prepare_limit=2",
     )
     assert status == 200
     assert plan["status"] == "success"
@@ -24918,6 +25293,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["app_control_prepare_plan"]["summary"]["related_setup_action_code_counts"]["configure_huggingface_token"] == 1
     assert plan["route_remediation"]["count"] == 1
     assert plan["route_remediation"]["summary"]["provider_blocked_app_count"] == 1
+    assert plan["vm_control_plan"]["count"] == 1
+    assert plan["summary"]["vm_prepare_count"] == 1
+    assert plan["summary"]["vm_ready_guest_count"] == 1
     assert plan["continuation_plan"]["count"] == 3
     assert plan["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
     assert plan["summary"]["continuation_count"] == 3
@@ -24934,6 +25312,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 1
     assert plan["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_plan_calls[-1]["continuation_limit"] == 5
+    assert service.machine_onboarding_plan_calls[-1]["vm_prepare_limit"] == 2
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
 
     status, launched = request_json(
@@ -24952,6 +25331,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
             },
             "selected_model_item_keys": ["reasoning-qwen3.5-9b"],
             "auto_run_app_learning_campaign": True,
+            "auto_prepare_vm_controls": True,
+            "vm_prepare_limit": 2,
             "auto_continue_unresolved": True,
             "continuation_limit": 4,
             "campaign_label": "Onboarding campaign",
@@ -24973,7 +25354,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["setup_execution_selected_action_count"] == 1
     assert launched["summary"]["setup_execution_continued_action_count"] == 1
     assert launched["app_control_prepare"]["count"] == 2
+    assert launched["vm_control_plan"]["count"] == 1
+    assert launched["vm_control_prepare"]["count"] == 1
     assert launched["summary"]["prepared_app_count"] == 2
+    assert launched["summary"]["prepared_vm_control_count"] == 1
+    assert launched["summary"]["vm_ready_guest_count"] == 1
     assert launched["summary"]["prepared_degraded_count"] == 1
     assert launched["summary"]["prepared_setup_aligned_count"] == 2
     assert launched["summary"]["prepared_setup_boosted_count"] == 1
@@ -25000,6 +25385,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert service.machine_onboarding_launch_calls[-1]["auto_continue_unresolved"] is True
     assert service.machine_onboarding_launch_calls[-1]["continuation_limit"] == 4
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
+    assert service.machine_onboarding_launch_calls[-1]["auto_prepare_vm_controls"] is True
+    assert service.machine_onboarding_launch_calls[-1]["vm_prepare_limit"] == 2
     assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
 
     status, history = request_json(
@@ -25010,6 +25397,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["status"] == "success"
     assert history["latest_run"]["task"] == "reasoning"
     assert history["summary"]["prepared_degraded_total"] == 1
+    assert history["summary"]["vm_prepare_total"] == 1
+    assert history["summary"]["prepared_vm_control_total"] == 1
+    assert history["summary"]["vm_ready_guest_total"] == 1
     assert history["summary"]["execution_action_total"] == 6
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1
