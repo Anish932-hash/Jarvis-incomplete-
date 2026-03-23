@@ -77,6 +77,24 @@ class DesktopOnboardingManager:
         route_remediation_degraded_total = 0
         route_remediation_setup_followup_total = 0
         route_remediation_provider_blocked_total = 0
+        route_remediation_resolved_total = 0
+        route_remediation_improved_total = 0
+        route_remediation_persistent_total = 0
+        route_remediation_new_total = 0
+        route_remediation_resolved_setup_followup_total = 0
+        route_remediation_persistent_provider_blocked_total = 0
+        continuation_total = 0
+        continuation_auto_runnable_total = 0
+        continuation_manual_total = 0
+        continuation_retry_total = 0
+        continuation_provider_blocked_total = 0
+        continuation_setup_followup_total = 0
+        app_learning_remediation_retry_total = 0
+        app_learning_remediation_provider_blocked_total = 0
+        app_learning_remediation_setup_followup_total = 0
+        prepared_remediation_retry_total = 0
+        prepared_remediation_provider_blocked_total = 0
+        prepared_remediation_setup_followup_total = 0
         for item in items:
             status_name = str(item.get("status", "") or "unknown").strip().lower() or "unknown"
             source_name = str(item.get("source", "") or "unknown").strip().lower() or "unknown"
@@ -108,9 +126,25 @@ class DesktopOnboardingManager:
             app_learning_setup_aligned_total += int(summary.get("app_learning_setup_aligned_count", 0) or 0)
             app_learning_setup_boosted_total += int(summary.get("app_learning_setup_boosted_count", 0) or 0)
             app_learning_setup_constrained_total += int(summary.get("app_learning_setup_constrained_count", 0) or 0)
+            app_learning_remediation_retry_total += int(
+                summary.get("app_learning_remediation_retry_count", 0) or 0
+            )
+            app_learning_remediation_provider_blocked_total += int(
+                summary.get("app_learning_remediation_provider_blocked_count", 0) or 0
+            )
+            app_learning_remediation_setup_followup_total += int(
+                summary.get("app_learning_remediation_setup_followup_count", 0) or 0
+            )
             prepared_setup_aligned_total += int(summary.get("prepared_setup_aligned_count", 0) or 0)
             prepared_setup_boosted_total += int(summary.get("prepared_setup_boosted_count", 0) or 0)
             prepared_setup_constrained_total += int(summary.get("prepared_setup_constrained_count", 0) or 0)
+            prepared_remediation_retry_total += int(summary.get("prepared_remediation_retry_count", 0) or 0)
+            prepared_remediation_provider_blocked_total += int(
+                summary.get("prepared_remediation_provider_blocked_count", 0) or 0
+            )
+            prepared_remediation_setup_followup_total += int(
+                summary.get("prepared_remediation_setup_followup_count", 0) or 0
+            )
             route_remediation_total += int(summary.get("route_remediation_count", 0) or 0)
             route_remediation_blocked_total += int(summary.get("route_remediation_blocked_count", 0) or 0)
             route_remediation_degraded_total += int(summary.get("route_remediation_degraded_count", 0) or 0)
@@ -120,6 +154,22 @@ class DesktopOnboardingManager:
             route_remediation_provider_blocked_total += int(
                 summary.get("route_remediation_provider_blocked_count", 0) or 0
             )
+            route_remediation_resolved_total += int(summary.get("route_remediation_resolved_count", 0) or 0)
+            route_remediation_improved_total += int(summary.get("route_remediation_improved_count", 0) or 0)
+            route_remediation_persistent_total += int(summary.get("route_remediation_persistent_count", 0) or 0)
+            route_remediation_new_total += int(summary.get("route_remediation_new_count", 0) or 0)
+            route_remediation_resolved_setup_followup_total += int(
+                summary.get("route_remediation_resolved_setup_followup_count", 0) or 0
+            )
+            route_remediation_persistent_provider_blocked_total += int(
+                summary.get("route_remediation_persistent_provider_blocked_count", 0) or 0
+            )
+            continuation_total += int(summary.get("continuation_count", 0) or 0)
+            continuation_auto_runnable_total += int(summary.get("continuation_auto_runnable_count", 0) or 0)
+            continuation_manual_total += int(summary.get("continuation_manual_count", 0) or 0)
+            continuation_retry_total += int(summary.get("continuation_retry_count", 0) or 0)
+            continuation_provider_blocked_total += int(summary.get("continuation_provider_blocked_count", 0) or 0)
+            continuation_setup_followup_total += int(summary.get("continuation_setup_followup_count", 0) or 0)
         return {
             "status": "success",
             "count": len(limited),
@@ -164,14 +214,32 @@ class DesktopOnboardingManager:
                 "app_learning_setup_aligned_total": app_learning_setup_aligned_total,
                 "app_learning_setup_boosted_total": app_learning_setup_boosted_total,
                 "app_learning_setup_constrained_total": app_learning_setup_constrained_total,
+                "app_learning_remediation_retry_total": app_learning_remediation_retry_total,
+                "app_learning_remediation_provider_blocked_total": app_learning_remediation_provider_blocked_total,
+                "app_learning_remediation_setup_followup_total": app_learning_remediation_setup_followup_total,
                 "prepared_setup_aligned_total": prepared_setup_aligned_total,
                 "prepared_setup_boosted_total": prepared_setup_boosted_total,
                 "prepared_setup_constrained_total": prepared_setup_constrained_total,
+                "prepared_remediation_retry_total": prepared_remediation_retry_total,
+                "prepared_remediation_provider_blocked_total": prepared_remediation_provider_blocked_total,
+                "prepared_remediation_setup_followup_total": prepared_remediation_setup_followup_total,
                 "route_remediation_total": route_remediation_total,
                 "route_remediation_blocked_total": route_remediation_blocked_total,
                 "route_remediation_degraded_total": route_remediation_degraded_total,
                 "route_remediation_setup_followup_total": route_remediation_setup_followup_total,
                 "route_remediation_provider_blocked_total": route_remediation_provider_blocked_total,
+                "route_remediation_resolved_total": route_remediation_resolved_total,
+                "route_remediation_improved_total": route_remediation_improved_total,
+                "route_remediation_persistent_total": route_remediation_persistent_total,
+                "route_remediation_new_total": route_remediation_new_total,
+                "route_remediation_resolved_setup_followup_total": route_remediation_resolved_setup_followup_total,
+                "route_remediation_persistent_provider_blocked_total": route_remediation_persistent_provider_blocked_total,
+                "continuation_total": continuation_total,
+                "continuation_auto_runnable_total": continuation_auto_runnable_total,
+                "continuation_manual_total": continuation_manual_total,
+                "continuation_retry_total": continuation_retry_total,
+                "continuation_provider_blocked_total": continuation_provider_blocked_total,
+                "continuation_setup_followup_total": continuation_setup_followup_total,
             },
         }
 

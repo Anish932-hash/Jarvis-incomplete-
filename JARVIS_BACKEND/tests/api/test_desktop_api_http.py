@@ -13492,6 +13492,7 @@ class FakeDesktopService:
         provider_timeout_s: float = 8.0,
         max_targets: int = 8,
         max_model_items: int = 6,
+        continuation_limit: int = 6,
         source: str = "machine_onboarding_plan",
     ) -> Dict[str, Any]:
         call = {
@@ -13506,6 +13507,7 @@ class FakeDesktopService:
             "provider_timeout_s": float(provider_timeout_s),
             "max_targets": int(max_targets),
             "max_model_items": int(max_model_items),
+            "continuation_limit": int(continuation_limit),
             "source": source,
         }
         self.machine_onboarding_plan_calls.append(call)
@@ -13697,6 +13699,91 @@ class FakeDesktopService:
                     "top_blocker_codes": {"provider_missing_huggingface": 1},
                 },
             },
+            "continuation_plan": {
+                "status": "success",
+                "count": 3,
+                "items": [
+                    {
+                        "id": "queue:huggingface",
+                        "stage": "provider",
+                        "kind": "configure_provider_credentials",
+                        "status": "manual_input_required",
+                        "title": "Configure huggingface credentials",
+                        "auto_runnable": False,
+                        "required": True,
+                        "provider": "huggingface",
+                        "target": "huggingface",
+                        "retry_recommended": False,
+                        "provider_blocked": True,
+                        "setup_followup_required": False,
+                        "recent_action_code": "",
+                        "continuation_source": "execution_queue",
+                    },
+                    {
+                        "id": "continuation:learn:visual studio code",
+                        "stage": "app_learning",
+                        "kind": "retry_app_learning",
+                        "status": "persistent",
+                        "title": "Continue learning Visual Studio Code",
+                        "auto_runnable": True,
+                        "required": False,
+                        "app_name": "Visual Studio Code",
+                        "target": "configure_huggingface_token",
+                        "retry_recommended": True,
+                        "provider_blocked": True,
+                        "setup_followup_required": True,
+                        "recent_action_code": "configure_huggingface_token",
+                        "continuation_source": "app_learning",
+                    },
+                    {
+                        "id": "continuation:route:visual studio code",
+                        "stage": "route_remediation",
+                        "kind": "provider_setup",
+                        "status": "setup_constrained",
+                        "title": "Continue route remediation for Visual Studio Code",
+                        "auto_runnable": True,
+                        "required": False,
+                        "app_name": "Visual Studio Code",
+                        "target": "configure_huggingface_token",
+                        "retry_recommended": True,
+                        "provider_blocked": True,
+                        "setup_followup_required": True,
+                        "recent_action_code": "configure_huggingface_token",
+                        "continuation_source": "route_remediation",
+                    },
+                ],
+                "next_actions": [
+                    {
+                        "id": "queue:huggingface",
+                        "stage": "provider",
+                        "kind": "configure_provider_credentials",
+                        "status": "manual_input_required",
+                        "title": "Configure huggingface credentials",
+                        "target": "huggingface",
+                    },
+                    {
+                        "id": "continuation:learn:visual studio code",
+                        "stage": "app_learning",
+                        "kind": "retry_app_learning",
+                        "status": "persistent",
+                        "title": "Continue learning Visual Studio Code",
+                        "target": "configure_huggingface_token",
+                    },
+                ],
+                "summary": {
+                    "auto_runnable_count": 2,
+                    "manual_count": 1,
+                    "retry_count": 2,
+                    "provider_blocked_count": 3,
+                    "setup_followup_count": 2,
+                    "stage_counts": {"app_learning": 1, "provider": 1, "route_remediation": 1},
+                    "status_counts": {"manual_input_required": 1, "persistent": 1, "setup_constrained": 1},
+                    "top_apps": {"Visual Studio Code": 2},
+                    "top_recent_action_codes": {"configure_huggingface_token": 2},
+                    "focus_app_names": ["Visual Studio Code"],
+                    "focus_app_count": 1,
+                },
+            },
             "task_preference_plan": {
                 "status": "success",
                 "count": 1,
@@ -13840,6 +13927,13 @@ class FakeDesktopService:
                 "route_remediation_degraded_count": 0,
                 "route_remediation_setup_followup_count": 1,
                 "route_remediation_provider_blocked_count": 1,
+                "continuation_count": 3,
+                "continuation_auto_runnable_count": 2,
+                "continuation_manual_count": 1,
+                "continuation_retry_count": 2,
+                "continuation_provider_blocked_count": 3,
+                "continuation_setup_followup_count": 2,
+                "continuation_focus_app_count": 1,
                 "top_route_remediation_kinds": {"provider_setup": 1},
                 "execution_action_count": 6,
                 "execution_auto_runnable_count": 5,
@@ -13898,9 +13992,22 @@ class FakeDesktopService:
                         "prepared_setup_constrained_count": 0,
                         "route_remediation_count": 1,
                         "route_remediation_blocked_count": 0,
-                        "route_remediation_degraded_count": 0,
-                        "route_remediation_setup_followup_count": 1,
-                        "route_remediation_provider_blocked_count": 1,
+                        "route_remediation_degraded_count": 1,
+                        "route_remediation_setup_followup_count": 0,
+                        "route_remediation_provider_blocked_count": 0,
+                        "route_remediation_resolved_count": 0,
+                        "route_remediation_improved_count": 1,
+                        "route_remediation_persistent_count": 0,
+                        "route_remediation_new_count": 0,
+                        "route_remediation_resolved_setup_followup_count": 1,
+                        "route_remediation_persistent_provider_blocked_count": 0,
+                        "continuation_count": 1,
+                        "continuation_auto_runnable_count": 1,
+                        "continuation_manual_count": 0,
+                        "continuation_retry_count": 1,
+                        "continuation_provider_blocked_count": 0,
+                        "continuation_setup_followup_count": 0,
+                        "top_route_remediation_kinds": {"route_tuning": 1},
                         "execution_action_count": 6,
                         "execution_success_count": 4,
                         "execution_manual_count": 1,
@@ -13933,6 +14040,37 @@ class FakeDesktopService:
                             "target": "huggingface",
                         }
                     ],
+                    "continuation_plan": {
+                        "status": "success",
+                        "count": 1,
+                        "items": [
+                            {
+                                "id": "continuation:prepare:visual studio code",
+                                "stage": "app_prepare",
+                                "kind": "retry_app_prepare",
+                                "status": "degraded",
+                                "title": "Continue preparing Visual Studio Code",
+                                "auto_runnable": True,
+                                "required": False,
+                                "app_name": "Visual Studio Code",
+                                "target": "revalidate_app_learning",
+                                "retry_recommended": True,
+                                "provider_blocked": False,
+                                "setup_followup_required": False,
+                                "recent_action_code": "revalidate_app_learning",
+                                "continuation_source": "app_prepare",
+                            }
+                        ],
+                        "summary": {
+                            "auto_runnable_count": 1,
+                            "manual_count": 0,
+                            "retry_count": 1,
+                            "provider_blocked_count": 0,
+                            "setup_followup_count": 0,
+                            "focus_app_names": ["Visual Studio Code"],
+                            "focus_app_count": 1,
+                        },
+                    },
                 }
             ],
             "latest_run": {
@@ -13960,9 +14098,22 @@ class FakeDesktopService:
                         "prepared_setup_constrained_count": 0,
                         "route_remediation_count": 1,
                         "route_remediation_blocked_count": 0,
-                        "route_remediation_degraded_count": 0,
-                        "route_remediation_setup_followup_count": 1,
-                        "route_remediation_provider_blocked_count": 1,
+                        "route_remediation_degraded_count": 1,
+                        "route_remediation_setup_followup_count": 0,
+                        "route_remediation_provider_blocked_count": 0,
+                        "route_remediation_resolved_count": 0,
+                        "route_remediation_improved_count": 1,
+                        "route_remediation_persistent_count": 0,
+                        "route_remediation_new_count": 0,
+                        "route_remediation_resolved_setup_followup_count": 1,
+                        "route_remediation_persistent_provider_blocked_count": 0,
+                        "continuation_count": 1,
+                        "continuation_auto_runnable_count": 1,
+                        "continuation_manual_count": 0,
+                        "continuation_retry_count": 1,
+                        "continuation_provider_blocked_count": 0,
+                        "continuation_setup_followup_count": 0,
+                        "top_route_remediation_kinds": {"route_tuning": 1},
                         "execution_action_count": 6,
                         "execution_success_count": 4,
                     "execution_manual_count": 1,
@@ -13991,6 +14142,37 @@ class FakeDesktopService:
                         "target": "huggingface",
                     }
                 ],
+                "continuation_plan": {
+                    "status": "success",
+                    "count": 1,
+                    "items": [
+                        {
+                            "id": "continuation:prepare:visual studio code",
+                            "stage": "app_prepare",
+                            "kind": "retry_app_prepare",
+                            "status": "degraded",
+                            "title": "Continue preparing Visual Studio Code",
+                            "auto_runnable": True,
+                            "required": False,
+                            "app_name": "Visual Studio Code",
+                            "target": "revalidate_app_learning",
+                            "retry_recommended": True,
+                            "provider_blocked": False,
+                            "setup_followup_required": False,
+                            "recent_action_code": "revalidate_app_learning",
+                            "continuation_source": "app_prepare",
+                        }
+                    ],
+                    "summary": {
+                        "auto_runnable_count": 1,
+                        "manual_count": 0,
+                        "retry_count": 1,
+                        "provider_blocked_count": 0,
+                        "setup_followup_count": 0,
+                        "focus_app_names": ["Visual Studio Code"],
+                        "focus_app_count": 1,
+                    },
+                },
             },
             "summary": {
                 "status_counts": {"success": 1},
@@ -14021,9 +14203,21 @@ class FakeDesktopService:
                 "prepared_setup_constrained_total": 0,
                 "route_remediation_total": 1,
                 "route_remediation_blocked_total": 0,
-                "route_remediation_degraded_total": 0,
-                "route_remediation_setup_followup_total": 1,
-                "route_remediation_provider_blocked_total": 1,
+                "route_remediation_degraded_total": 1,
+                "route_remediation_setup_followup_total": 0,
+                "route_remediation_provider_blocked_total": 0,
+                "route_remediation_resolved_total": 0,
+                "route_remediation_improved_total": 1,
+                "route_remediation_persistent_total": 0,
+                "route_remediation_new_total": 0,
+                "route_remediation_resolved_setup_followup_total": 1,
+                "route_remediation_persistent_provider_blocked_total": 0,
+                "continuation_total": 1,
+                "continuation_auto_runnable_total": 1,
+                "continuation_manual_total": 0,
+                "continuation_retry_total": 1,
+                "continuation_provider_blocked_total": 0,
+                "continuation_setup_followup_total": 0,
             },
         }
 
@@ -14053,6 +14247,8 @@ class FakeDesktopService:
         auto_run_app_learning_campaign: bool = True,
         auto_prepare_app_controls: bool = True,
         prepare_app_limit: int = 3,
+        auto_continue_unresolved: bool = True,
+        continuation_limit: int = 6,
         campaign_label: str = "",
         dry_run: bool = False,
         source: str = "machine_onboarding",
@@ -14081,6 +14277,8 @@ class FakeDesktopService:
             "auto_run_app_learning_campaign": bool(auto_run_app_learning_campaign),
             "auto_prepare_app_controls": bool(auto_prepare_app_controls),
             "prepare_app_limit": int(prepare_app_limit),
+            "auto_continue_unresolved": bool(auto_continue_unresolved),
+            "continuation_limit": int(continuation_limit),
             "campaign_label": campaign_label,
             "dry_run": bool(dry_run),
             "source": source,
@@ -14102,6 +14300,7 @@ class FakeDesktopService:
                 provider_timeout_s=provider_timeout_s,
                 max_targets=max_targets,
                 max_model_items=max_model_items,
+                continuation_limit=continuation_limit,
                 source=f"{source}_plan",
             ),
             "provider_updates": {"status": "success", "count": len(dict(provider_credentials or {})), "items": [{"provider": "huggingface", "status": "success"}]},
@@ -14221,47 +14420,128 @@ class FakeDesktopService:
                     {
                         "id": "route_remediation:visual studio code",
                         "app_name": "Visual Studio Code",
-                        "route_resolution_status": "setup_constrained",
-                        "remediation_kind": "provider_setup",
-                        "priority_band": "high",
+                        "route_resolution_status": "degraded",
+                        "remediation_kind": "route_tuning",
+                        "priority_band": "medium",
                         "execution_mode": "degraded",
                         "readiness_status": "degraded",
                         "expected_route_profile": "api_vision_assist_native_stabilized",
                         "actual_route_profile": "vision_first",
-                        "provider_blocked": True,
-                        "setup_followup_required": True,
-                        "setup_followup_count": 1,
-                        "blocker_codes": ["provider_missing_huggingface"],
-                        "related_setup_action_codes": ["configure_huggingface_token"],
-                        "recommended_action_code": "configure_huggingface_token",
+                        "provider_blocked": False,
+                        "setup_followup_required": False,
+                        "setup_followup_count": 0,
+                        "blocker_codes": ["limited_vision_coverage"],
+                        "related_setup_action_codes": [],
+                        "recommended_action_code": "revalidate_app_learning",
                     }
                 ] if auto_prepare_app_controls else [],
                 "next_actions": [
                     {
                         "id": "route_remediation:visual studio code",
                         "stage": "route_remediation",
-                        "kind": "provider_setup",
-                        "status": "setup_constrained",
+                        "kind": "route_tuning",
+                        "status": "degraded",
                         "title": "Resolve Visual Studio Code route constraints",
-                        "target": "configure_huggingface_token",
+                        "target": "revalidate_app_learning",
                     }
                 ] if auto_prepare_app_controls else [],
                 "summary": {
                     "blocked_app_count": 0,
-                    "degraded_app_count": 0,
+                    "degraded_app_count": 1 if auto_prepare_app_controls else 0,
                     "fallback_app_count": 0,
-                    "setup_constrained_app_count": 1 if auto_prepare_app_controls else 0,
+                    "setup_constrained_app_count": 0,
                     "setup_waiting_app_count": 0,
-                    "setup_followup_app_count": 1 if auto_prepare_app_controls else 0,
-                    "provider_blocked_app_count": 1 if auto_prepare_app_controls else 0,
-                    "route_status_counts": {"setup_constrained": 1} if auto_prepare_app_controls else {},
-                    "remediation_kind_counts": {"provider_setup": 1} if auto_prepare_app_controls else {},
-                    "priority_band_counts": {"high": 1} if auto_prepare_app_controls else {},
+                    "setup_followup_app_count": 0,
+                    "provider_blocked_app_count": 0,
+                    "route_status_counts": {"degraded": 1} if auto_prepare_app_controls else {},
+                    "remediation_kind_counts": {"route_tuning": 1} if auto_prepare_app_controls else {},
+                    "priority_band_counts": {"medium": 1} if auto_prepare_app_controls else {},
                     "expected_route_profile_counts": {"api_vision_assist_native_stabilized": 1} if auto_prepare_app_controls else {},
-                    "top_setup_action_codes": {"configure_huggingface_token": 1} if auto_prepare_app_controls else {},
-                    "top_blocker_codes": {"provider_missing_huggingface": 1} if auto_prepare_app_controls else {},
+                    "top_setup_action_codes": {},
+                    "top_blocker_codes": {"limited_vision_coverage": 1} if auto_prepare_app_controls else {},
                 },
             },
+            "route_remediation_progress": {
+                "status": "success",
+                "count": 1 if auto_prepare_app_controls else 0,
+                "items": [
+                    {
+                        "id": "route_progress:visual studio code",
+                        "app_name": "Visual Studio Code",
+                        "progress_status": "improved",
+                        "previous_route_resolution_status": "setup_constrained",
+                        "current_route_resolution_status": "degraded",
+                        "remediation_kind": "route_tuning",
+                        "provider_blocked": False,
+                        "setup_followup_required": False,
+                        "recommended_action_code": "revalidate_app_learning",
+                        "related_setup_action_codes": [],
+                    }
+                ] if auto_prepare_app_controls else [],
+                "next_actions": [],
+                "summary": {
+                    "planned_count": 1 if auto_prepare_app_controls else 0,
+                    "runtime_count": 1 if auto_prepare_app_controls else 0,
+                    "resolved_count": 0,
+                    "improved_count": 1 if auto_prepare_app_controls else 0,
+                    "persistent_count": 0,
+                    "regressed_count": 0,
+                    "new_count": 0,
+                    "resolved_setup_followup_count": 1 if auto_prepare_app_controls else 0,
+                    "persistent_provider_blocked_count": 0,
+                    "status_counts": {"improved": 1} if auto_prepare_app_controls else {},
+                    "resolved_setup_action_codes": {"configure_huggingface_token": 1} if auto_prepare_app_controls else {},
+                    "persistent_setup_action_codes": {},
+                    "resolved_apps": ["Visual Studio Code"] if auto_prepare_app_controls else [],
+                    "persistent_apps": [],
+                },
+            },
+            "continuation_plan": {
+                "status": "success",
+                "count": 1 if auto_prepare_app_controls else 0,
+                "items": [
+                    {
+                        "id": "continuation:prepare:visual studio code",
+                        "stage": "app_prepare",
+                        "kind": "retry_app_prepare",
+                        "status": "degraded",
+                        "title": "Continue preparing Visual Studio Code",
+                        "auto_runnable": True,
+                        "required": False,
+                        "app_name": "Visual Studio Code",
+                        "target": "revalidate_app_learning",
+                        "retry_recommended": True,
+                        "provider_blocked": False,
+                        "setup_followup_required": False,
+                        "recent_action_code": "revalidate_app_learning",
+                        "continuation_source": "app_prepare",
+                    }
+                ] if auto_prepare_app_controls else [],
+                "next_actions": [
+                    {
+                        "id": "continuation:prepare:visual studio code",
+                        "stage": "app_prepare",
+                        "kind": "retry_app_prepare",
+                        "status": "degraded",
+                        "title": "Continue preparing Visual Studio Code",
+                        "target": "revalidate_app_learning",
+                    }
+                ] if auto_prepare_app_controls else [],
+                "summary": {
+                    "auto_runnable_count": 1 if auto_prepare_app_controls else 0,
+                    "manual_count": 0,
+                    "retry_count": 1 if auto_prepare_app_controls else 0,
+                    "provider_blocked_count": 0,
+                    "setup_followup_count": 0,
+                    "stage_counts": {"app_prepare": 1} if auto_prepare_app_controls else {},
+                    "status_counts": {"degraded": 1} if auto_prepare_app_controls else {},
+                    "top_apps": {"Visual Studio Code": 1} if auto_prepare_app_controls else {},
+                    "top_recent_action_codes": {"revalidate_app_learning": 1} if auto_prepare_app_controls else {},
+                    "focus_app_names": ["Visual Studio Code"] if auto_prepare_app_controls else [],
+                    "focus_app_count": 1 if auto_prepare_app_controls else 0,
+                },
+            },
+            "auto_continue_unresolved": bool(auto_continue_unresolved),
             "execution_queue": [
                 {
                     "id": "provider:huggingface",
@@ -14376,10 +14656,24 @@ class FakeDesktopService:
                 "prepared_setup_constrained_count": 0,
                 "route_remediation_count": 1 if auto_prepare_app_controls else 0,
                 "route_remediation_blocked_count": 0,
-                "route_remediation_degraded_count": 0,
-                "route_remediation_setup_followup_count": 1 if auto_prepare_app_controls else 0,
-                "route_remediation_provider_blocked_count": 1 if auto_prepare_app_controls else 0,
-                "top_route_remediation_kinds": {"provider_setup": 1} if auto_prepare_app_controls else {},
+                "route_remediation_degraded_count": 1 if auto_prepare_app_controls else 0,
+                "route_remediation_setup_followup_count": 0,
+                "route_remediation_provider_blocked_count": 0,
+                "top_route_remediation_kinds": {"route_tuning": 1} if auto_prepare_app_controls else {},
+                "route_remediation_resolved_count": 0,
+                "route_remediation_improved_count": 1 if auto_prepare_app_controls else 0,
+                "route_remediation_persistent_count": 0,
+                "route_remediation_new_count": 0,
+                "route_remediation_resolved_setup_followup_count": 1 if auto_prepare_app_controls else 0,
+                "route_remediation_persistent_provider_blocked_count": 0,
+                "continuation_auto_continue_enabled": bool(auto_continue_unresolved),
+                "continuation_count": 1 if auto_prepare_app_controls else 0,
+                "continuation_auto_runnable_count": 1 if auto_prepare_app_controls else 0,
+                "continuation_manual_count": 0,
+                "continuation_retry_count": 1 if auto_prepare_app_controls else 0,
+                "continuation_provider_blocked_count": 0,
+                "continuation_setup_followup_count": 0,
+                "continuation_focus_app_count": 1 if auto_prepare_app_controls else 0,
                 "execution_action_count": 6,
                 "execution_auto_runnable_count": 5,
                 "execution_ready_count": 0,
@@ -14493,6 +14787,11 @@ class FakeDesktopService:
                     "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
                     "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
                     "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "remediation_feedback_count": 2,
+                    "remediation_retry_count": 1,
+                    "remediation_provider_blocked_count": 1,
+                    "remediation_setup_followup_count": 1,
+                    "remediation_feedback_status_counts": {"persistent": 1, "resolved": 1},
                 },
                 "targets": [
                     {
@@ -14519,6 +14818,13 @@ class FakeDesktopService:
                             "runtime_band_preference": "hybrid",
                             "preferred_probe_mode": "local_vision_assist",
                         },
+                        "remediation_progress_status": "resolved",
+                        "remediation_route_state": "matched",
+                        "remediation_priority_band": "medium",
+                        "remediation_retry_recommended": False,
+                        "remediation_provider_blocked": False,
+                        "remediation_setup_followup_required": False,
+                        "remediation_recent_action_code": "keep_local_runtime",
                         "setup_execution_mode": "mission",
                         "setup_execution_selected_action_count": 1,
                         "setup_execution_continued_action_count": 1,
@@ -14551,6 +14857,14 @@ class FakeDesktopService:
                             "runtime_band_preference": "accessibility",
                             "preferred_probe_mode": "accessibility_first",
                         },
+                        "remediation_progress_status": "persistent",
+                        "remediation_route_state": "setup_constrained",
+                        "remediation_priority_band": "high",
+                        "remediation_retry_recommended": True,
+                        "remediation_provider_blocked": True,
+                        "remediation_setup_followup_required": True,
+                        "remediation_recent_action_code": "configure_huggingface_token",
+                        "remediation_related_setup_action_codes": ["configure_huggingface_token"],
                         "setup_execution_mode": "mission",
                         "setup_execution_selected_action_count": 1,
                         "setup_execution_continued_action_count": 1,
@@ -14585,6 +14899,10 @@ class FakeDesktopService:
                     "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
                     "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
                     "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "remediation_feedback_status_counts": {"persistent": 1, "resolved": 1},
+                    "remediation_retry_count": 1,
+                    "remediation_provider_blocked_count": 1,
+                    "remediation_setup_followup_count": 1,
                     "adaptive_app_profiles": [
                         {
                             "app_name": "Google Chrome",
@@ -14601,6 +14919,13 @@ class FakeDesktopService:
                                 "runtime_band_preference": "hybrid",
                                 "preferred_probe_mode": "local_vision_assist",
                             },
+                            "remediation_progress_status": "resolved",
+                            "remediation_route_state": "matched",
+                            "remediation_priority_band": "medium",
+                            "remediation_retry_recommended": False,
+                            "remediation_provider_blocked": False,
+                            "remediation_setup_followup_required": False,
+                            "remediation_recent_action_code": "keep_local_runtime",
                             "setup_execution_mode": "mission",
                             "setup_execution_selected_action_count": 1,
                             "setup_execution_continued_action_count": 1,
@@ -14632,6 +14957,13 @@ class FakeDesktopService:
                                 "runtime_band_preference": "accessibility",
                                 "preferred_probe_mode": "accessibility_first",
                             },
+                            "remediation_progress_status": "persistent",
+                            "remediation_route_state": "setup_constrained",
+                            "remediation_priority_band": "high",
+                            "remediation_retry_recommended": True,
+                            "remediation_provider_blocked": True,
+                            "remediation_setup_followup_required": True,
+                            "remediation_recent_action_code": "configure_huggingface_token",
                             "setup_execution_mode": "mission",
                             "setup_execution_selected_action_count": 1,
                             "setup_execution_continued_action_count": 1,
@@ -14811,6 +15143,14 @@ class FakeDesktopService:
                 "blocker_codes": [],
                 "related_setup_action_codes": ["configure_huggingface_token", "install_local_vision_model"],
                 "related_setup_action_count": 2,
+                "setup_execution_policy": "mission_followthrough",
+                "remediation_progress_status": "resolved",
+                "remediation_route_state": "matched",
+                "remediation_priority_band": "medium",
+                "remediation_retry_recommended": False,
+                "remediation_provider_blocked": False,
+                "remediation_setup_followup_required": False,
+                "remediation_recent_action_code": "keep_local_runtime",
                 "expected_route_profile": "local_vision_assist",
                 "expected_model_preference": "hybrid_runtime",
                 "expected_provider_source": "local_runtime_plus_ocr",
@@ -14863,6 +15203,14 @@ class FakeDesktopService:
                 "execution_mode": "hybrid_ready",
                 "readiness_status": "ready",
                 "prepare_priority_band": "high",
+                "setup_execution_policy": "mission_followthrough",
+                "remediation_progress_status": "resolved",
+                "remediation_route_state": "matched",
+                "remediation_priority_band": "medium",
+                "remediation_retry_recommended": False,
+                "remediation_provider_blocked": False,
+                "remediation_setup_followup_required": False,
+                "remediation_recent_action_code": "keep_local_runtime",
                 "runtime_strategy_profile": "balanced_hybrid_guided_explore",
                 "runtime_band_preference": "hybrid",
                 "expected_route_profile": "local_vision_assist",
@@ -24492,6 +24840,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["route_resolution_status"] == "matched"
     assert prepared["summary"]["related_setup_action_count"] == 2
     assert prepared["summary"]["setup_followup_count"] == 2
+    assert prepared["summary"]["remediation_progress_status"] == "resolved"
+    assert prepared["summary"]["setup_execution_policy"] == "mission_followthrough"
     assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
@@ -24514,9 +24864,12 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["plan"]["summary"]["runtime_band_counts"]["hybrid"] == 1
     assert plan["plan"]["summary"]["expected_route_profile_counts"]["local_vision_assist"] == 1
     assert plan["plan"]["summary"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
+    assert plan["plan"]["summary"]["remediation_retry_count"] == 1
+    assert plan["plan"]["summary"]["remediation_feedback_status_counts"]["persistent"] == 1
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["runtime_band_preference"] == "hybrid"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["expected_route_profile"] == "local_vision_assist"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["provider_model_readiness"]["required_tasks"][0] == "vision"
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][1]["remediation_retry_recommended"] is True
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
     status, campaign = request_json(
@@ -24543,7 +24896,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
 
     status, plan = request_json(
         "GET",
-        f"{base_url}/runtime/desktop-machine-profile/onboarding-plan?task=reasoning&query=chrome&max_targets=2&max_model_items=3",
+        f"{base_url}/runtime/desktop-machine-profile/onboarding-plan?task=reasoning&query=chrome&max_targets=2&max_model_items=3&continuation_limit=5",
     )
     assert status == 200
     assert plan["status"] == "success"
@@ -24565,6 +24918,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["app_control_prepare_plan"]["summary"]["related_setup_action_code_counts"]["configure_huggingface_token"] == 1
     assert plan["route_remediation"]["count"] == 1
     assert plan["route_remediation"]["summary"]["provider_blocked_app_count"] == 1
+    assert plan["continuation_plan"]["count"] == 3
+    assert plan["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
+    assert plan["summary"]["continuation_count"] == 3
+    assert plan["summary"]["continuation_manual_count"] == 1
+    assert plan["summary"]["continuation_provider_blocked_count"] == 3
     assert plan["summary"]["route_remediation_count"] == 1
     assert plan["summary"]["route_remediation_setup_followup_count"] == 1
     assert plan["summary"]["route_remediation_provider_blocked_count"] == 1
@@ -24575,6 +24933,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
     assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 1
     assert plan["next_actions"][0]["target"] == "huggingface"
+    assert service.machine_onboarding_plan_calls[-1]["continuation_limit"] == 5
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
 
     status, launched = request_json(
@@ -24593,6 +24952,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
             },
             "selected_model_item_keys": ["reasoning-qwen3.5-9b"],
             "auto_run_app_learning_campaign": True,
+            "auto_continue_unresolved": True,
+            "continuation_limit": 4,
             "campaign_label": "Onboarding campaign",
         },
     )
@@ -24618,9 +24979,16 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["prepared_setup_boosted_count"] == 1
     assert launched["summary"]["prepared_setup_constrained_count"] == 0
     assert launched["route_remediation"]["count"] == 1
-    assert launched["route_remediation"]["summary"]["setup_followup_app_count"] == 1
+    assert launched["route_remediation"]["summary"]["degraded_app_count"] == 1
+    assert launched["route_remediation_progress"]["summary"]["improved_count"] == 1
+    assert launched["continuation_plan"]["count"] == 1
+    assert launched["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
+    assert launched["summary"]["continuation_count"] == 1
+    assert launched["summary"]["continuation_auto_continue_enabled"] is True
     assert launched["summary"]["route_remediation_count"] == 1
-    assert launched["summary"]["route_remediation_provider_blocked_count"] == 1
+    assert launched["summary"]["route_remediation_provider_blocked_count"] == 0
+    assert launched["summary"]["route_remediation_improved_count"] == 1
+    assert launched["summary"]["route_remediation_resolved_setup_followup_count"] == 1
     assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
     assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
     assert launched["task_preference_plan"]["count"] == 1
@@ -24629,6 +24997,8 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["execution_action_count"] == 6
     assert launched["summary"]["execution_success_count"] == 6
     assert launched["summary"]["setup_action_count"] == 1
+    assert service.machine_onboarding_launch_calls[-1]["auto_continue_unresolved"] is True
+    assert service.machine_onboarding_launch_calls[-1]["continuation_limit"] == 4
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
     assert service.machine_onboarding_launch_calls[-1]["provider_credentials"]["huggingface"]["api_key"] == "hf_demo_token_1234567890"
 
@@ -24650,13 +25020,20 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["prepared_setup_boosted_total"] == 1
     assert history["summary"]["prepared_setup_constrained_total"] == 0
     assert history["summary"]["route_remediation_total"] == 1
-    assert history["summary"]["route_remediation_setup_followup_total"] == 1
-    assert history["summary"]["route_remediation_provider_blocked_total"] == 1
+    assert history["summary"]["route_remediation_degraded_total"] == 1
+    assert history["summary"]["route_remediation_setup_followup_total"] == 0
+    assert history["summary"]["route_remediation_provider_blocked_total"] == 0
+    assert history["summary"]["route_remediation_improved_total"] == 1
+    assert history["summary"]["route_remediation_resolved_setup_followup_total"] == 1
+    assert history["summary"]["continuation_total"] == 1
+    assert history["summary"]["continuation_retry_total"] == 1
     assert history["summary"]["setup_action_total"] == 1
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["route_remediation_count"] == 1
+    assert history["latest_run"]["summary"]["route_remediation_improved_count"] == 1
+    assert history["latest_run"]["summary"]["continuation_count"] == 1
     assert history["latest_run"]["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 

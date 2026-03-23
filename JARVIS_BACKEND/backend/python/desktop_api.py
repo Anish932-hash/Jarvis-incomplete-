@@ -8702,14 +8702,13 @@ class DesktopBackendService:
         )
         if embedded_plan and int(embedded_plan.get("count", 0) or 0) >= min(max_targets, 8):
             plan = dict(embedded_plan)
-        else:
-            plan = self._desktop_machine_finalize_app_learning_plan(
-                profile=profile if isinstance(profile, dict) else {},
-                app_learning_plan=plan if isinstance(plan, dict) else {},
-                task=str(task or "").strip().lower(),
-                model_limit=160,
-                max_targets=max_targets,
-            )
+        plan = self._desktop_machine_finalize_app_learning_plan(
+            profile=profile if isinstance(profile, dict) else {},
+            app_learning_plan=plan if isinstance(plan, dict) else {},
+            task=str(task or "").strip().lower(),
+            model_limit=160,
+            max_targets=max_targets,
+        )
         return {
             "status": "success",
             "profile": profile,
@@ -9142,6 +9141,14 @@ class DesktopBackendService:
             "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
             "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
             "prepare_priority_band": str(selected_target.get("prepare_priority_band", "") or "").strip().lower(),
+            "setup_execution_policy": str(selected_target.get("setup_execution_policy", "") or "").strip().lower(),
+            "remediation_progress_status": str(selected_target.get("remediation_progress_status", "") or "").strip().lower(),
+            "remediation_route_state": str(selected_target.get("remediation_route_state", "") or "").strip().lower(),
+            "remediation_priority_band": str(selected_target.get("remediation_priority_band", "") or "").strip().lower(),
+            "remediation_retry_recommended": bool(selected_target.get("remediation_retry_recommended", False)),
+            "remediation_provider_blocked": bool(selected_target.get("remediation_provider_blocked", False)),
+            "remediation_setup_followup_required": bool(selected_target.get("remediation_setup_followup_required", False)),
+            "remediation_recent_action_code": str(selected_target.get("remediation_recent_action_code", "") or "").strip().lower(),
             "runtime_strategy_profile": str(
                 adaptive_runtime_strategy.get("strategy_profile", "")
                 or selected_target.get("adaptive_runtime_strategy_profile", "")
@@ -10779,6 +10786,400 @@ class DesktopBackendService:
             "next_actions": next_actions,
         }
 
+    def _desktop_machine_onboarding_continuation_plan(
+        self,
+        *,
+        execution_queue: Optional[Dict[str, Any]] = None,
+        app_learning_plan: Optional[Dict[str, Any]] = None,
+        app_control_prepare_plan: Optional[Dict[str, Any]] = None,
+        route_remediation: Optional[Dict[str, Any]] = None,
+        route_remediation_progress: Optional[Dict[str, Any]] = None,
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit or 8), 24))
+        queue_items = [
+            dict(item)
+            for item in (execution_queue or {}).get("items", [])
+            if isinstance((execution_queue or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        learning_targets = [
+            dict(item)
+            for item in (
+                ((app_learning_plan or {}).get("plan", {}) if isinstance((app_learning_plan or {}).get("plan", {}), dict) else {})
+            ).get("targets", [])
+            if isinstance(
+                (
+                    ((app_learning_plan or {}).get("plan", {}) if isinstance((app_learning_plan or {}).get("plan", {}), dict) else {})
+                ).get("targets", []),
+                list,
+            )
+            and isinstance(item, dict)
+        ]
+        prepare_items = [
+            dict(item)
+            for item in (app_control_prepare_plan or {}).get("items", [])
+            if isinstance((app_control_prepare_plan or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        remediation_items = [
+            dict(item)
+            for item in (route_remediation or {}).get("items", [])
+            if isinstance((route_remediation or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        remediation_progress_items = [
+            dict(item)
+            for item in (route_remediation_progress or {}).get("items", [])
+            if isinstance((route_remediation_progress or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        continuation_items: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        def _append_item(row: Dict[str, Any]) -> None:
+            clean_id = str(row.get("id", "") or "").strip().lower()
+            if clean_id and clean_id in seen_ids:
+                return
+            if clean_id:
+                seen_ids.add(clean_id)
+            continuation_items.append(row)
+
+        for row in queue_items:
+            status_name = str(row.get("status", "") or "").strip().lower()
+            if status_name in {"success", "skipped"}:
+                continue
+            clean_app_name = str(row.get("app_name", "") or "").strip()
+            clean_provider = str(row.get("provider", "") or "").strip().lower()
+            clean_target = str(
+                row.get("target", "")
+                or row.get("recommended_next_action", "")
+                or row.get("setup_action_code", "")
+                or clean_app_name
+                or clean_provider
+            ).strip()
+            _append_item(
+                {
+                    "id": str(row.get("id", "") or f"queue:{clean_target}").strip(),
+                    "stage": str(row.get("stage", "") or "").strip().lower() or "continuation",
+                    "kind": str(row.get("kind", "") or "").strip().lower() or "continue_step",
+                    "status": status_name or "attention",
+                    "title": str(row.get("title", "") or row.get("kind", "") or "Continue step").strip(),
+                    "auto_runnable": bool(row.get("auto_runnable", False)),
+                    "required": bool(row.get("required", False)),
+                    "app_name": clean_app_name,
+                    "provider": clean_provider,
+                    "target": clean_target,
+                    "retry_recommended": False,
+                    "provider_blocked": clean_provider == "huggingface" and status_name in {"manual_input_required", "blocked"},
+                    "setup_followup_required": str(row.get("stage", "") or "").strip().lower() == "setup_action",
+                    "recent_action_code": str(row.get("setup_action_code", "") or row.get("recommended_next_action", "") or "").strip().lower(),
+                    "continuation_source": "execution_queue",
+                }
+            )
+
+        for row in learning_targets:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            remediation_status = str(row.get("remediation_progress_status", "") or "").strip().lower()
+            readiness_status = str(row.get("readiness_status", "") or "").strip().lower()
+            retry_recommended = bool(row.get("remediation_retry_recommended", False))
+            provider_blocked = bool(row.get("remediation_provider_blocked", False))
+            setup_followup_required = bool(row.get("remediation_setup_followup_required", False))
+            if not (
+                retry_recommended
+                or provider_blocked
+                or setup_followup_required
+                or remediation_status in {"persistent", "regressed", "new"}
+                or readiness_status in {"degraded", "blocked"}
+            ):
+                continue
+            _append_item(
+                {
+                    "id": f"continuation:learn:{self._machine_text(app_name)}",
+                    "stage": "app_learning",
+                    "kind": "retry_app_learning",
+                    "status": remediation_status or readiness_status or "attention",
+                    "title": f"Continue learning {app_name}",
+                    "auto_runnable": bool(row.get("auto_learn_allowed", False)),
+                    "required": False,
+                    "app_name": app_name,
+                    "provider": "",
+                    "target": str(row.get("remediation_recent_action_code", "") or app_name).strip(),
+                    "retry_recommended": retry_recommended,
+                    "provider_blocked": provider_blocked,
+                    "setup_followup_required": setup_followup_required,
+                    "recent_action_code": str(row.get("remediation_recent_action_code", "") or "").strip().lower(),
+                    "continuation_source": "app_learning",
+                }
+            )
+
+        for row in prepare_items:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            remediation_status = str(row.get("remediation_progress_status", "") or "").strip().lower()
+            readiness_status = str(row.get("readiness_status", "") or "").strip().lower()
+            retry_recommended = bool(row.get("remediation_retry_recommended", False))
+            provider_blocked = bool(row.get("remediation_provider_blocked", False))
+            setup_followup_required = bool(row.get("remediation_setup_followup_required", False))
+            if not (
+                retry_recommended
+                or provider_blocked
+                or setup_followup_required
+                or remediation_status in {"persistent", "regressed", "new"}
+                or readiness_status in {"degraded", "blocked"}
+            ):
+                continue
+            _append_item(
+                {
+                    "id": f"continuation:prepare:{self._machine_text(app_name)}",
+                    "stage": "app_prepare",
+                    "kind": "retry_app_prepare",
+                    "status": remediation_status or readiness_status or "attention",
+                    "title": f"Continue preparing {app_name}",
+                    "auto_runnable": bool(row.get("auto_prepare_allowed", False)),
+                    "required": False,
+                    "app_name": app_name,
+                    "provider": "",
+                    "target": str(row.get("remediation_recent_action_code", "") or app_name).strip(),
+                    "retry_recommended": retry_recommended,
+                    "provider_blocked": provider_blocked,
+                    "setup_followup_required": setup_followup_required,
+                    "recent_action_code": str(row.get("remediation_recent_action_code", "") or "").strip().lower(),
+                    "continuation_source": "app_prepare",
+                }
+            )
+
+        for row in remediation_items:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            route_status = str(row.get("route_resolution_status", "") or "").strip().lower()
+            provider_blocked = bool(row.get("provider_blocked", False))
+            setup_followup_required = bool(row.get("setup_followup_required", False))
+            if route_status in {"matched", "ready", "success", "resolved"} and not provider_blocked and not setup_followup_required:
+                continue
+            _append_item(
+                {
+                    "id": f"continuation:route:{self._machine_text(app_name)}",
+                    "stage": "route_remediation",
+                    "kind": str(row.get("remediation_kind", "") or "route_remediation").strip().lower(),
+                    "status": route_status or "attention",
+                    "title": f"Continue route remediation for {app_name}",
+                    "auto_runnable": True,
+                    "required": False,
+                    "app_name": app_name,
+                    "provider": "",
+                    "target": str(row.get("recommended_action_code", "") or app_name).strip(),
+                    "retry_recommended": route_status in {"degraded", "fallback", "setup_constrained", "setup_waiting"},
+                    "provider_blocked": provider_blocked,
+                    "setup_followup_required": setup_followup_required,
+                    "recent_action_code": str(row.get("recommended_action_code", "") or "").strip().lower(),
+                    "continuation_source": "route_remediation",
+                }
+            )
+
+        for row in remediation_progress_items:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            progress_status = str(row.get("progress_status", "") or "").strip().lower()
+            if progress_status not in {"persistent", "regressed", "new"}:
+                continue
+            _append_item(
+                {
+                    "id": f"continuation:route_progress:{self._machine_text(app_name)}",
+                    "stage": "route_remediation_progress",
+                    "kind": str(row.get("remediation_kind", "") or "route_recheck").strip().lower(),
+                    "status": progress_status,
+                    "title": f"Recheck route progress for {app_name}",
+                    "auto_runnable": True,
+                    "required": False,
+                    "app_name": app_name,
+                    "provider": "",
+                    "target": str(row.get("recommended_action_code", "") or app_name).strip(),
+                    "retry_recommended": True,
+                    "provider_blocked": bool(row.get("provider_blocked", False)),
+                    "setup_followup_required": bool(row.get("setup_followup_required", False)),
+                    "recent_action_code": str(row.get("recommended_action_code", "") or "").strip().lower(),
+                    "continuation_source": "route_remediation_progress",
+                }
+            )
+
+        priority_rank = {
+            "manual_input_required": 0,
+            "blocked": 1,
+            "persistent": 1,
+            "regressed": 1,
+            "setup_constrained": 1,
+            "setup_waiting": 1,
+            "attention": 2,
+            "degraded": 2,
+            "new": 3,
+            "improved": 4,
+            "ready": 5,
+            "planned": 6,
+        }
+        continuation_items.sort(
+            key=lambda row: (
+                priority_rank.get(str(row.get("status", "") or "").strip().lower(), 9),
+                0 if bool(row.get("provider_blocked", False)) else 1,
+                0 if bool(row.get("setup_followup_required", False)) else 1,
+                0 if bool(row.get("retry_recommended", False)) else 1,
+                0 if bool(row.get("required", False)) else 1,
+                0 if not bool(row.get("auto_runnable", False)) else 1,
+                str(row.get("app_name", "") or row.get("target", "") or row.get("title", "")).strip().lower(),
+            ),
+        )
+        selected_items = continuation_items[:bounded]
+        stage_counts: Dict[str, int] = {}
+        status_counts: Dict[str, int] = {}
+        top_apps: Dict[str, int] = {}
+        recent_action_counts: Dict[str, int] = {}
+        retry_count = 0
+        provider_blocked_count = 0
+        setup_followup_count = 0
+        auto_runnable_count = 0
+        manual_count = 0
+        for row in selected_items:
+            stage_name = str(row.get("stage", "") or "continuation").strip().lower() or "continuation"
+            status_name = str(row.get("status", "") or "unknown").strip().lower() or "unknown"
+            stage_counts[stage_name] = int(stage_counts.get(stage_name, 0) or 0) + 1
+            status_counts[status_name] = int(status_counts.get(status_name, 0) or 0) + 1
+            app_name = str(row.get("app_name", "") or "").strip()
+            if app_name:
+                top_apps[app_name] = int(top_apps.get(app_name, 0) or 0) + 1
+            recent_action_code = str(row.get("recent_action_code", "") or "").strip().lower()
+            if recent_action_code:
+                recent_action_counts[recent_action_code] = int(recent_action_counts.get(recent_action_code, 0) or 0) + 1
+            if bool(row.get("retry_recommended", False)):
+                retry_count += 1
+            if bool(row.get("provider_blocked", False)):
+                provider_blocked_count += 1
+            if bool(row.get("setup_followup_required", False)):
+                setup_followup_count += 1
+            if bool(row.get("auto_runnable", False)):
+                auto_runnable_count += 1
+            else:
+                manual_count += 1
+        next_actions = self._desktop_machine_onboarding_next_actions(items=selected_items, limit=min(6, bounded))
+        focus_app_names = [
+            key
+            for key, _ in sorted(top_apps.items(), key=lambda entry: (-entry[1], str(entry[0]).lower()))
+            if str(key).strip()
+        ][:4]
+        return {
+            "status": "success",
+            "count": len(selected_items),
+            "items": selected_items,
+            "next_actions": next_actions,
+            "summary": {
+                "auto_runnable_count": auto_runnable_count,
+                "manual_count": manual_count,
+                "retry_count": retry_count,
+                "provider_blocked_count": provider_blocked_count,
+                "setup_followup_count": setup_followup_count,
+                "stage_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(stage_counts.items(), key=lambda entry: entry[0])
+                },
+                "status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+                },
+                "top_apps": {
+                    str(key): int(value)
+                    for key, value in sorted(top_apps.items(), key=lambda entry: (-entry[1], str(entry[0]).lower()))[:6]
+                },
+                "top_recent_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(recent_action_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+                },
+                "focus_app_names": focus_app_names,
+                "focus_app_count": len(focus_app_names),
+            },
+        }
+
+    def _desktop_machine_prioritize_app_learning_plan_targets(
+        self,
+        *,
+        app_learning_payload: Dict[str, Any],
+        focus_app_names: Optional[List[str]] = None,
+        source: str = "continuation",
+    ) -> Dict[str, Any]:
+        payload = dict(app_learning_payload) if isinstance(app_learning_payload, dict) else {}
+        plan = dict(payload.get("plan", {})) if isinstance(payload.get("plan", {}), dict) else {}
+        focus_names = self._machine_dedupe(
+            [
+                str(item).strip()
+                for item in (focus_app_names or [])
+                if str(item).strip()
+            ],
+            limit=8,
+        )
+        if not plan or not focus_names:
+            return payload
+        focus_rank = {
+            self._machine_text(name): index
+            for index, name in enumerate(focus_names)
+            if self._machine_text(name)
+        }
+        if not focus_rank:
+            return payload
+        targets = [
+            dict(item)
+            for item in plan.get("targets", [])
+            if isinstance(plan.get("targets", []), list) and isinstance(item, dict)
+        ]
+        if not targets:
+            return payload
+        targets.sort(
+            key=lambda row: (
+                0 if self._machine_text(row.get("app_name", "")) in focus_rank else 1,
+                focus_rank.get(self._machine_text(row.get("app_name", "")), 999),
+                str(row.get("app_name", "") or "").strip().lower(),
+            )
+        )
+        plan["targets"] = targets
+        summary = dict(plan.get("summary", {})) if isinstance(plan.get("summary", {}), dict) else {}
+        summary["continuation_focus_app_names"] = focus_names
+        summary["continuation_focus_count"] = len(focus_names)
+        summary["continuation_focus_source"] = str(source or "").strip().lower() or "continuation"
+        plan["summary"] = summary
+        defaults = dict(plan.get("campaign_defaults", {})) if isinstance(plan.get("campaign_defaults", {}), dict) else {}
+        adaptive_profiles = [
+            dict(item)
+            for item in defaults.get("adaptive_app_profiles", [])
+            if isinstance(defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+        ]
+        if adaptive_profiles:
+            adaptive_profiles.sort(
+                key=lambda row: (
+                    0 if self._machine_text(row.get("app_name", "")) in focus_rank else 1,
+                    focus_rank.get(self._machine_text(row.get("app_name", "")), 999),
+                    str(row.get("app_name", "") or "").strip().lower(),
+                )
+            )
+            defaults["adaptive_app_profiles"] = adaptive_profiles
+        existing_app_names = [
+            str(item).strip()
+            for item in defaults.get("app_names", [])
+            if isinstance(defaults.get("app_names", []), list) and str(item).strip()
+        ]
+        if existing_app_names:
+            existing_app_names.sort(
+                key=lambda name: (
+                    0 if self._machine_text(name) in focus_rank else 1,
+                    focus_rank.get(self._machine_text(name), 999),
+                    str(name).strip().lower(),
+                )
+            )
+            defaults["app_names"] = existing_app_names
+        defaults["continuation_focus_app_names"] = focus_names
+        defaults["continuation_focus_count"] = len(focus_names)
+        defaults["continuation_focus_source"] = str(source or "").strip().lower() or "continuation"
+        plan["campaign_defaults"] = defaults
+        payload["plan"] = plan
+        return payload
+
     def _desktop_machine_route_remediation_plan(
         self,
         *,
@@ -11311,6 +11712,443 @@ class DesktopBackendService:
                 break
         return merged
 
+    def _desktop_machine_route_remediation_progress(
+        self,
+        *,
+        planned_remediation: Dict[str, Any],
+        runtime_remediation: Dict[str, Any],
+        limit: int = 8,
+    ) -> Dict[str, Any]:
+        bounded = max(1, min(int(limit or 8), 24))
+        planned_rows = [
+            dict(item)
+            for item in planned_remediation.get("items", [])
+            if isinstance(planned_remediation.get("items", []), list) and isinstance(item, dict)
+        ]
+        runtime_rows = [
+            dict(item)
+            for item in runtime_remediation.get("items", [])
+            if isinstance(runtime_remediation.get("items", []), list) and isinstance(item, dict)
+        ]
+        severity_rank = {
+            "blocked": 5,
+            "setup_waiting": 4,
+            "setup_constrained": 4,
+            "fallback": 3,
+            "degraded": 2,
+            "attention": 2,
+            "matched": 1,
+            "ready": 1,
+            "success": 0,
+            "": 0,
+        }
+
+        def app_key(row: Dict[str, Any]) -> str:
+            return self._machine_text(row.get("app_name", "") or row.get("effective_app_name", "") or row.get("id", ""))
+
+        planned_map = {
+            app_key(row): dict(row)
+            for row in planned_rows
+            if app_key(row)
+        }
+        runtime_map = {
+            app_key(row): dict(row)
+            for row in runtime_rows
+            if app_key(row)
+        }
+        status_counts: Dict[str, int] = {}
+        items: List[Dict[str, Any]] = []
+        resolved_setup_action_codes: Dict[str, int] = {}
+        persistent_setup_action_codes: Dict[str, int] = {}
+
+        for key, planned in planned_map.items():
+            runtime = runtime_map.get(key, {})
+            planned_status = str(planned.get("route_resolution_status", "") or "").strip().lower()
+            runtime_status = str(runtime.get("route_resolution_status", "") or "").strip().lower()
+            planned_severity = severity_rank.get(planned_status, 0)
+            runtime_severity = severity_rank.get(runtime_status, 0)
+            progress_status = "persistent"
+            if not runtime:
+                progress_status = "resolved"
+            elif runtime_severity < planned_severity:
+                progress_status = "improved"
+            elif runtime_severity > planned_severity:
+                progress_status = "regressed"
+            elif planned_status != runtime_status and runtime_status in {"matched", "ready", "success"}:
+                progress_status = "resolved"
+            planned_setup_codes = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in planned.get("related_setup_action_codes", [])
+                    if isinstance(planned.get("related_setup_action_codes", []), list) and str(item).strip()
+                ],
+                limit=10,
+            )
+            runtime_setup_codes = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in runtime.get("related_setup_action_codes", [])
+                    if isinstance(runtime.get("related_setup_action_codes", []), list) and str(item).strip()
+                ],
+                limit=10,
+            )
+            if progress_status in {"resolved", "improved"}:
+                for code in planned_setup_codes:
+                    resolved_setup_action_codes[code] = int(resolved_setup_action_codes.get(code, 0) or 0) + 1
+            else:
+                for code in runtime_setup_codes or planned_setup_codes:
+                    persistent_setup_action_codes[code] = int(persistent_setup_action_codes.get(code, 0) or 0) + 1
+            status_counts[progress_status] = int(status_counts.get(progress_status, 0) or 0) + 1
+            items.append(
+                {
+                    "id": f"route_progress:{key}",
+                    "app_name": str(
+                        runtime.get("app_name", "") or planned.get("app_name", "") or key
+                    ).strip(),
+                    "progress_status": progress_status,
+                    "previous_route_resolution_status": planned_status,
+                    "current_route_resolution_status": runtime_status or "resolved",
+                    "previous_priority_band": str(planned.get("priority_band", "") or "").strip().lower(),
+                    "current_priority_band": str(runtime.get("priority_band", "") or "").strip().lower(),
+                    "remediation_kind": str(
+                        runtime.get("remediation_kind", "") or planned.get("remediation_kind", "")
+                    ).strip().lower(),
+                    "provider_blocked": bool(runtime.get("provider_blocked", False)),
+                    "setup_followup_required": bool(runtime.get("setup_followup_required", False)),
+                    "recommended_action_code": str(
+                        runtime.get("recommended_action_code", "") or planned.get("recommended_action_code", "")
+                    ).strip().lower(),
+                    "related_setup_action_codes": runtime_setup_codes or planned_setup_codes,
+                }
+            )
+        for key, runtime in runtime_map.items():
+            if key in planned_map:
+                continue
+            status_counts["new"] = int(status_counts.get("new", 0) or 0) + 1
+            runtime_setup_codes = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in runtime.get("related_setup_action_codes", [])
+                    if isinstance(runtime.get("related_setup_action_codes", []), list) and str(item).strip()
+                ],
+                limit=10,
+            )
+            for code in runtime_setup_codes:
+                persistent_setup_action_codes[code] = int(persistent_setup_action_codes.get(code, 0) or 0) + 1
+            items.append(
+                {
+                    "id": f"route_progress:{key}",
+                    "app_name": str(runtime.get("app_name", "") or key).strip(),
+                    "progress_status": "new",
+                    "previous_route_resolution_status": "",
+                    "current_route_resolution_status": str(
+                        runtime.get("route_resolution_status", "") or ""
+                    ).strip().lower(),
+                    "previous_priority_band": "",
+                    "current_priority_band": str(runtime.get("priority_band", "") or "").strip().lower(),
+                    "remediation_kind": str(runtime.get("remediation_kind", "") or "").strip().lower(),
+                    "provider_blocked": bool(runtime.get("provider_blocked", False)),
+                    "setup_followup_required": bool(runtime.get("setup_followup_required", False)),
+                    "recommended_action_code": str(runtime.get("recommended_action_code", "") or "").strip().lower(),
+                    "related_setup_action_codes": runtime_setup_codes,
+                }
+            )
+
+        progress_rank = {
+            "persistent": 0,
+            "regressed": 1,
+            "new": 2,
+            "improved": 3,
+            "resolved": 4,
+        }
+        items.sort(
+            key=lambda row: (
+                progress_rank.get(str(row.get("progress_status", "") or "").strip().lower(), 9),
+                str(row.get("app_name", "") or "").strip().lower(),
+            )
+        )
+        selected_items = items[:bounded]
+        next_actions = [
+            {
+                "id": str(item.get("id", "") or "").strip(),
+                "stage": "route_remediation_progress",
+                "kind": str(item.get("remediation_kind", "") or "route_tuning").strip().lower(),
+                "status": str(item.get("progress_status", "") or "persistent").strip().lower(),
+                "title": (
+                    f"Continue remediation for {str(item.get('app_name', '') or 'app').strip()}"
+                    if str(item.get("progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"}
+                    else f"Review improved route for {str(item.get('app_name', '') or 'app').strip()}"
+                ),
+                "target": str(
+                    item.get("recommended_action_code", "") or item.get("app_name", "") or ""
+                ).strip(),
+                "app_name": str(item.get("app_name", "") or "").strip(),
+                "auto_runnable": False,
+                "required": bool(
+                    str(item.get("progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"}
+                ),
+            }
+            for item in selected_items
+            if str(item.get("progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"}
+        ][:6]
+        return {
+            "status": "success",
+            "count": len(selected_items),
+            "items": selected_items,
+            "next_actions": next_actions,
+            "summary": {
+                "planned_count": len(planned_rows),
+                "runtime_count": len(runtime_rows),
+                "resolved_count": int(status_counts.get("resolved", 0) or 0),
+                "improved_count": int(status_counts.get("improved", 0) or 0),
+                "persistent_count": int(status_counts.get("persistent", 0) or 0),
+                "regressed_count": int(status_counts.get("regressed", 0) or 0),
+                "new_count": int(status_counts.get("new", 0) or 0),
+                "resolved_setup_followup_count": sum(resolved_setup_action_codes.values()),
+                "persistent_provider_blocked_count": len(
+                    [item for item in selected_items if bool(item.get("provider_blocked", False))]
+                ),
+                "status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+                },
+                "resolved_setup_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        resolved_setup_action_codes.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:8]
+                },
+                "persistent_setup_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        persistent_setup_action_codes.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:8]
+                },
+                "resolved_apps": [
+                    str(item.get("app_name", "") or "").strip()
+                    for item in selected_items
+                    if str(item.get("progress_status", "") or "").strip().lower() == "resolved"
+                ][:5],
+                "persistent_apps": [
+                    str(item.get("app_name", "") or "").strip()
+                    for item in selected_items
+                    if str(item.get("progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"}
+                ][:5],
+            },
+        }
+
+    def _desktop_machine_recent_route_feedback(
+        self,
+        *,
+        limit: int = 16,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_onboarding_manager", None)
+        latest_run = manager.latest_run() if manager is not None else {}
+        latest = dict(latest_run) if isinstance(latest_run, dict) else {}
+        progress_payload = (
+            latest.get("route_remediation_progress", {})
+            if isinstance(latest.get("route_remediation_progress", {}), dict)
+            else {}
+        )
+        progress_rows = [
+            dict(item)
+            for item in progress_payload.get("items", [])
+            if isinstance(progress_payload.get("items", []), list) and isinstance(item, dict)
+        ]
+        remediation_payload = (
+            latest.get("route_remediation", {})
+            if isinstance(latest.get("route_remediation", {}), dict)
+            else {}
+        )
+        remediation_rows = [
+            dict(item)
+            for item in remediation_payload.get("items", [])
+            if isinstance(remediation_payload.get("items", []), list) and isinstance(item, dict)
+        ]
+        feedback_by_app: Dict[str, Dict[str, Any]] = {}
+
+        def ensure_feedback(app_name: str) -> Dict[str, Any]:
+            app_key = self._machine_text(app_name)
+            if not app_key:
+                return {}
+            row = feedback_by_app.get(app_key)
+            if row is None:
+                row = {
+                    "app_name": str(app_name or "").strip(),
+                    "progress_status": "",
+                    "route_resolution_status": "",
+                    "priority_band": "",
+                    "remediation_kind": "",
+                    "provider_blocked": False,
+                    "setup_followup_required": False,
+                    "recommended_action_code": "",
+                    "related_setup_action_codes": [],
+                    "remediation_priority_delta": 0.0,
+                    "retry_recommended": False,
+                    "feedback_reason_codes": [],
+                }
+                feedback_by_app[app_key] = row
+            return row
+
+        for row in progress_rows[: max(1, min(int(limit or 16), 48))]:
+            feedback = ensure_feedback(str(row.get("app_name", "") or ""))
+            if not feedback:
+                continue
+            progress_status = str(row.get("progress_status", "") or "").strip().lower()
+            feedback["progress_status"] = progress_status
+            feedback["route_resolution_status"] = str(
+                row.get("current_route_resolution_status", "") or row.get("previous_route_resolution_status", "")
+            ).strip().lower()
+            feedback["priority_band"] = str(row.get("current_priority_band", "") or row.get("previous_priority_band", "")).strip().lower()
+            feedback["remediation_kind"] = str(row.get("remediation_kind", "") or "").strip().lower()
+            feedback["provider_blocked"] = bool(row.get("provider_blocked", False))
+            feedback["setup_followup_required"] = bool(row.get("setup_followup_required", False))
+            feedback["recommended_action_code"] = str(row.get("recommended_action_code", "") or "").strip().lower()
+            feedback["related_setup_action_codes"] = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("related_setup_action_codes", [])
+                    if isinstance(row.get("related_setup_action_codes", []), list) and str(item).strip()
+                ],
+                limit=8,
+            )
+            if progress_status in {"persistent", "regressed", "new"}:
+                feedback["remediation_priority_delta"] = 12.0 if progress_status != "new" else 9.0
+                feedback["retry_recommended"] = True
+            elif progress_status == "improved":
+                feedback["remediation_priority_delta"] = 5.0
+                feedback["retry_recommended"] = True
+            elif progress_status == "resolved":
+                feedback["remediation_priority_delta"] = -6.0
+                feedback["retry_recommended"] = False
+            feedback["feedback_reason_codes"] = self._machine_dedupe(
+                [
+                    f"route_progress_{progress_status}" if progress_status else "",
+                    *(["provider_blocked_recently"] if bool(feedback["provider_blocked"]) else []),
+                    *(["setup_followup_recently"] if bool(feedback["setup_followup_required"]) else []),
+                    str(feedback.get("remediation_kind", "") or "").strip().lower(),
+                ],
+                limit=8,
+            )
+
+        if not feedback_by_app:
+            for row in remediation_rows[: max(1, min(int(limit or 16), 48))]:
+                feedback = ensure_feedback(str(row.get("app_name", "") or ""))
+                if not feedback:
+                    continue
+                route_status = str(row.get("route_resolution_status", "") or "").strip().lower()
+                feedback["progress_status"] = "persistent"
+                feedback["route_resolution_status"] = route_status
+                feedback["priority_band"] = str(row.get("priority_band", "") or "").strip().lower()
+                feedback["remediation_kind"] = str(row.get("remediation_kind", "") or "").strip().lower()
+                feedback["provider_blocked"] = bool(row.get("provider_blocked", False))
+                feedback["setup_followup_required"] = bool(row.get("setup_followup_required", False))
+                feedback["recommended_action_code"] = str(row.get("recommended_action_code", "") or "").strip().lower()
+                feedback["related_setup_action_codes"] = self._machine_dedupe(
+                    [
+                        str(item).strip().lower()
+                        for item in row.get("related_setup_action_codes", [])
+                        if isinstance(row.get("related_setup_action_codes", []), list) and str(item).strip()
+                    ],
+                    limit=8,
+                )
+                feedback["remediation_priority_delta"] = 10.0
+                feedback["retry_recommended"] = True
+                feedback["feedback_reason_codes"] = self._machine_dedupe(
+                    [
+                        "route_progress_persistent",
+                        f"route_state_{route_status}" if route_status else "",
+                        *(["provider_blocked_recently"] if bool(feedback["provider_blocked"]) else []),
+                        *(["setup_followup_recently"] if bool(feedback["setup_followup_required"]) else []),
+                        str(feedback.get("remediation_kind", "") or "").strip().lower(),
+                    ],
+                    limit=8,
+                )
+
+        status_counts: Dict[str, int] = {}
+        retry_count = 0
+        for row in feedback_by_app.values():
+            progress_status = str(row.get("progress_status", "") or "").strip().lower() or "unknown"
+            status_counts[progress_status] = int(status_counts.get(progress_status, 0) or 0) + 1
+            if bool(row.get("retry_recommended", False)):
+                retry_count += 1
+        return {
+            "status": "success",
+            "count": len(feedback_by_app),
+            "latest_run_source": str(latest.get("source", "") or "").strip().lower(),
+            "latest_run_status": str(latest.get("status", "") or "").strip().lower(),
+            "items": list(feedback_by_app.values())[: max(1, min(int(limit or 16), 48))],
+            "feedback_by_app": feedback_by_app,
+            "summary": {
+                "status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+                },
+                "retry_count": retry_count,
+                "provider_blocked_count": len(
+                    [row for row in feedback_by_app.values() if bool(row.get("provider_blocked", False))]
+                ),
+                "setup_followup_count": len(
+                    [row for row in feedback_by_app.values() if bool(row.get("setup_followup_required", False))]
+                ),
+            },
+        }
+
+    def _desktop_machine_apply_route_feedback(
+        self,
+        *,
+        target_row: Dict[str, Any],
+        recent_feedback: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        row = dict(target_row) if isinstance(target_row, dict) else {}
+        feedback_map = (
+            recent_feedback.get("feedback_by_app", {})
+            if isinstance(recent_feedback, dict) and isinstance(recent_feedback.get("feedback_by_app", {}), dict)
+            else {}
+        )
+        feedback = (
+            dict(feedback_map.get(self._machine_text(row.get("app_name", "")), {}))
+            if self._machine_text(row.get("app_name", "")) and isinstance(feedback_map.get(self._machine_text(row.get("app_name", "")), {}), dict)
+            else {}
+        )
+        if not feedback:
+            return row
+        progress_status = str(feedback.get("progress_status", "") or "").strip().lower()
+        row["remediation_progress_status"] = progress_status
+        row["remediation_route_state"] = str(feedback.get("route_resolution_status", "") or "").strip().lower()
+        row["remediation_priority_band"] = str(feedback.get("priority_band", "") or "").strip().lower()
+        row["remediation_kind"] = str(feedback.get("remediation_kind", "") or "").strip().lower()
+        row["remediation_retry_recommended"] = bool(feedback.get("retry_recommended", False))
+        row["remediation_provider_blocked"] = bool(feedback.get("provider_blocked", False))
+        row["remediation_setup_followup_required"] = bool(feedback.get("setup_followup_required", False))
+        row["remediation_priority_delta"] = float(feedback.get("remediation_priority_delta", 0.0) or 0.0)
+        row["remediation_recent_action_code"] = str(feedback.get("recommended_action_code", "") or "").strip().lower()
+        row["remediation_related_setup_action_codes"] = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in feedback.get("related_setup_action_codes", [])
+                if isinstance(feedback.get("related_setup_action_codes", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        existing_reasons = [
+            str(item).strip().lower()
+            for item in row.get("reason_codes", [])
+            if isinstance(row.get("reason_codes", []), list) and str(item).strip()
+        ]
+        feedback_reasons = [
+            str(item).strip().lower()
+            for item in feedback.get("feedback_reason_codes", [])
+            if isinstance(feedback.get("feedback_reason_codes", []), list) and str(item).strip()
+        ]
+        row["reason_codes"] = self._machine_dedupe(
+            [*existing_reasons, *feedback_reasons],
+            limit=12,
+        )
+        return row
+
     def _desktop_machine_provider_action_items(
         self,
         *,
@@ -11663,6 +12501,16 @@ class DesktopBackendService:
             priority_score += 6.0
         if "low_coverage" in reason_codes:
             priority_score += 5.0
+        remediation_progress_status = str(target_row.get("remediation_progress_status", "") or "").strip().lower()
+        remediation_priority_delta = float(target_row.get("remediation_priority_delta", 0.0) or 0.0)
+        if remediation_priority_delta:
+            priority_score += remediation_priority_delta
+        if remediation_progress_status in {"persistent", "regressed"}:
+            priority_score += 6.0
+        elif remediation_progress_status == "new":
+            priority_score += 4.0
+        elif remediation_progress_status == "resolved":
+            priority_score -= 3.0
         if execution_mode == "local_ready":
             priority_score += 14.0
         elif execution_mode == "hybrid_ready":
@@ -11685,15 +12533,33 @@ class DesktopBackendService:
                 execution_mode,
                 *(["provider_gap"] if hf_missing or hf_attention else []),
                 *(["memory_gap"] if not bool(target_row.get("memory_present", False)) else []),
+                *(["remediation_retry"] if bool(target_row.get("remediation_retry_recommended", False)) else []),
+                *(["remediation_provider_blocked"] if bool(target_row.get("remediation_provider_blocked", False)) else []),
+                *(["remediation_setup_followup"] if bool(target_row.get("remediation_setup_followup_required", False)) else []),
+                *(["route_progress_" + remediation_progress_status] if remediation_progress_status else []),
             ],
             limit=6,
         )
-        related_setup_action_codes = self._desktop_machine_related_setup_action_codes(
-            profile=profile,
-            blocker_codes=blocker_codes,
-            required_tasks=required_tasks,
-            missing_provider_names=missing_provider_names,
-            attention_provider_names=attention_provider_names,
+        remediation_related_setup_action_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target_row.get("remediation_related_setup_action_codes", [])
+                if isinstance(target_row.get("remediation_related_setup_action_codes", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        related_setup_action_codes = self._machine_dedupe(
+            [
+                *self._desktop_machine_related_setup_action_codes(
+                    profile=profile,
+                    blocker_codes=blocker_codes,
+                    required_tasks=required_tasks,
+                    missing_provider_names=missing_provider_names,
+                    attention_provider_names=attention_provider_names,
+                ),
+                *remediation_related_setup_action_codes,
+            ],
+            limit=8,
         )
         return {
             "required_tasks": required_tasks,
@@ -11714,7 +12580,22 @@ class DesktopBackendService:
             "blocker_count": len(blocker_codes),
             "prepare_priority_score": round(priority_score, 3),
             "prepare_priority_band": priority_band,
-            "prepare_priority_reasons": priority_reasons,
+            "prepare_priority_reasons": self._machine_dedupe(
+                [
+                    *priority_reasons,
+                    *(
+                        ["remediation_kind_" + str(target_row.get("remediation_kind", "") or "").strip().lower()]
+                        if str(target_row.get("remediation_kind", "") or "").strip()
+                        else []
+                    ),
+                    *(
+                        ["remediation_action_" + str(target_row.get("remediation_recent_action_code", "") or "").strip().lower()]
+                        if str(target_row.get("remediation_recent_action_code", "") or "").strip()
+                        else []
+                    ),
+                ],
+                limit=8,
+            ),
             "related_setup_action_codes": related_setup_action_codes,
             "related_setup_action_count": len(related_setup_action_codes),
         }
@@ -11791,6 +12672,27 @@ class DesktopBackendService:
                     if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
                 ],
                 "recommended_max_surface_waves": int(row.get("recommended_max_surface_waves", 3) or 3),
+                "setup_execution_mode": str(row.get("setup_execution_mode", "") or "").strip().lower(),
+                "setup_execution_selected_action_count": int(row.get("setup_execution_selected_action_count", 0) or 0),
+                "setup_execution_continued_action_count": int(row.get("setup_execution_continued_action_count", 0) or 0),
+                "setup_execution_remaining_ready_count": int(row.get("setup_execution_remaining_ready_count", 0) or 0),
+                "setup_execution_resume_ready": bool(row.get("setup_execution_resume_ready", False)),
+                "setup_execution_continue_status": str(row.get("setup_execution_continue_status", "") or "").strip().lower(),
+                "setup_execution_policy": str(row.get("setup_execution_policy", "") or "").strip().lower(),
+                "remediation_progress_status": str(row.get("remediation_progress_status", "") or "").strip().lower(),
+                "remediation_route_state": str(row.get("remediation_route_state", "") or "").strip().lower(),
+                "remediation_priority_band": str(row.get("remediation_priority_band", "") or "").strip().lower(),
+                "remediation_kind": str(row.get("remediation_kind", "") or "").strip().lower(),
+                "remediation_retry_recommended": bool(row.get("remediation_retry_recommended", False)),
+                "remediation_provider_blocked": bool(row.get("remediation_provider_blocked", False)),
+                "remediation_setup_followup_required": bool(row.get("remediation_setup_followup_required", False)),
+                "remediation_priority_delta": float(row.get("remediation_priority_delta", 0.0) or 0.0),
+                "remediation_recent_action_code": str(row.get("remediation_recent_action_code", "") or "").strip().lower(),
+                "remediation_related_setup_action_codes": [
+                    str(item).strip().lower()
+                    for item in row.get("remediation_related_setup_action_codes", [])
+                    if isinstance(row.get("remediation_related_setup_action_codes", []), list) and str(item).strip()
+                ],
             }
             item_payload.update(
                 self._desktop_machine_prepare_readiness_annotation(
@@ -11831,6 +12733,8 @@ class DesktopBackendService:
         annotated_items.sort(
             key=lambda row: (
                 0 if bool(row.get("auto_prepare_allowed", False)) else 1,
+                0 if bool(row.get("remediation_retry_recommended", False)) else 1,
+                0 if str(row.get("remediation_progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"} else 1,
                 execution_rank.get(str(row.get("execution_mode", "") or "").strip().lower(), 9),
                 0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
                 0 if not bool(row.get("memory_present", False)) else 1,
@@ -11845,6 +12749,14 @@ class DesktopBackendService:
         expected_route_profile_counts: Dict[str, int] = {}
         expected_model_preference_counts: Dict[str, int] = {}
         expected_provider_source_counts: Dict[str, int] = {}
+        remediation_feedback_status_counts: Dict[str, int] = {}
+        remediation_recent_action_code_counts: Dict[str, int] = {}
+        remediation_retry_count = 0
+        remediation_provider_blocked_count = 0
+        remediation_setup_followup_count = 0
+        setup_aligned_app_count = 0
+        setup_boosted_app_count = 0
+        setup_constrained_app_count = 0
         for item in items:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
@@ -11873,6 +12785,29 @@ class DesktopBackendService:
                 expected_provider_source_counts[expected_provider_source] = int(
                     expected_provider_source_counts.get(expected_provider_source, 0) or 0
                 ) + 1
+            remediation_status = str(item.get("remediation_progress_status", "") or "").strip().lower()
+            if remediation_status:
+                remediation_feedback_status_counts[remediation_status] = int(
+                    remediation_feedback_status_counts.get(remediation_status, 0) or 0
+                ) + 1
+            remediation_recent_action_code = str(item.get("remediation_recent_action_code", "") or "").strip().lower()
+            if remediation_recent_action_code:
+                remediation_recent_action_code_counts[remediation_recent_action_code] = int(
+                    remediation_recent_action_code_counts.get(remediation_recent_action_code, 0) or 0
+                ) + 1
+            if bool(item.get("remediation_retry_recommended", False)):
+                remediation_retry_count += 1
+            if bool(item.get("remediation_provider_blocked", False)):
+                remediation_provider_blocked_count += 1
+            if bool(item.get("remediation_setup_followup_required", False)):
+                remediation_setup_followup_count += 1
+            setup_execution_policy = str(item.get("setup_execution_policy", "") or "").strip().lower()
+            if setup_execution_policy and setup_execution_policy != "unchanged":
+                setup_aligned_app_count += 1
+            if setup_execution_policy in {"mission_followthrough", "mission_boosted"}:
+                setup_boosted_app_count += 1
+            elif setup_execution_policy == "resume_pending_constrained":
+                setup_constrained_app_count += 1
         return {
             "status": "success",
             "count": len(items),
@@ -11900,6 +12835,20 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "remediation_feedback_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(remediation_feedback_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "remediation_retry_count": remediation_retry_count,
+                "remediation_provider_blocked_count": remediation_provider_blocked_count,
+                "remediation_setup_followup_count": remediation_setup_followup_count,
+                "top_remediation_recent_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        remediation_recent_action_code_counts.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:6]
+                },
                 "top_blocker_codes": {
                     str(key): int(value)
                     for key, value in sorted(top_blocker_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
@@ -11911,6 +12860,9 @@ class DesktopBackendService:
                         key=lambda entry: (-entry[1], entry[0]),
                     )[:8]
                 },
+                "setup_aligned_app_count": setup_aligned_app_count,
+                "setup_boosted_app_count": setup_boosted_app_count,
+                "setup_constrained_app_count": setup_constrained_app_count,
             },
             "defaults": {
                 "auto_prepare_app_controls": True,
@@ -11927,8 +12879,17 @@ class DesktopBackendService:
         readiness_status = str(target_row.get("readiness_status", "") or "").strip().lower() or "ready"
         base_waves = max(1, min(int(target_row.get("recommended_max_surface_waves", 3) or 3), 8))
         base_usage = float(target_row.get("usage_score", 0.0) or 0.0)
+        remediation_progress_status = str(target_row.get("remediation_progress_status", "") or "").strip().lower()
+        remediation_retry_recommended = bool(target_row.get("remediation_retry_recommended", False))
+        remediation_provider_blocked = bool(target_row.get("remediation_provider_blocked", False))
+        remediation_setup_followup_required = bool(target_row.get("remediation_setup_followup_required", False))
+        setup_execution_policy = str(target_row.get("setup_execution_policy", "") or "").strip().lower()
+        setup_execution_selected_action_count = int(target_row.get("setup_execution_selected_action_count", 0) or 0)
+        setup_execution_continued_action_count = int(target_row.get("setup_execution_continued_action_count", 0) or 0)
+        setup_execution_remaining_ready_count = int(target_row.get("setup_execution_remaining_ready_count", 0) or 0)
+        setup_execution_resume_ready = bool(target_row.get("setup_execution_resume_ready", False))
         if readiness_status == "blocked":
-            return {
+            result = {
                 "learning_profile": "manual_dependency_setup",
                 "auto_learn_allowed": False,
                 "effective_per_app_limit": 12,
@@ -11938,8 +12899,8 @@ class DesktopBackendService:
                 "revalidate_known_controls": True,
                 "strategy_notes": "Dependency or readiness blockers should be resolved before running deeper autonomous learning.",
             }
-        if execution_mode == "local_ready":
-            return {
+        elif execution_mode == "local_ready":
+            result = {
                 "learning_profile": "deep_local_explore",
                 "auto_learn_allowed": True,
                 "effective_per_app_limit": 34 if base_usage >= 10.0 else 30,
@@ -11949,8 +12910,8 @@ class DesktopBackendService:
                 "revalidate_known_controls": True,
                 "strategy_notes": "Local runtime and model coverage are strong enough for deeper linked-surface exploration.",
             }
-        if execution_mode == "hybrid_ready":
-            return {
+        elif execution_mode == "hybrid_ready":
+            result = {
                 "learning_profile": "hybrid_guided_explore",
                 "auto_learn_allowed": True,
                 "effective_per_app_limit": 30 if base_usage >= 8.0 else 26,
@@ -11960,8 +12921,8 @@ class DesktopBackendService:
                 "revalidate_known_controls": True,
                 "strategy_notes": "Hybrid local plus model-assisted exploration can push deeper while still staying bounded.",
             }
-        if execution_mode == "remote_assist":
-            return {
+        elif execution_mode == "remote_assist":
+            result = {
                 "learning_profile": "model_assisted_explore",
                 "auto_learn_allowed": True,
                 "effective_per_app_limit": 28,
@@ -11971,16 +12932,77 @@ class DesktopBackendService:
                 "revalidate_known_controls": True,
                 "strategy_notes": "Model-assisted exploration is available, but local coverage is thinner, so depth stays moderated.",
             }
-        return {
-            "learning_profile": "cautious_revalidate",
-            "auto_learn_allowed": True,
-            "effective_per_app_limit": 20,
-            "effective_max_surface_waves": min(4, max(2, base_waves - 1)),
-            "effective_max_probe_controls": 2,
-            "prefer_failure_memory": True,
-            "revalidate_known_controls": True,
-            "strategy_notes": "Learning should stay conservative and verification-heavy until coverage improves.",
-        }
+        else:
+            result = {
+                "learning_profile": "cautious_revalidate",
+                "auto_learn_allowed": True,
+                "effective_per_app_limit": 20,
+                "effective_max_surface_waves": min(4, max(2, base_waves - 1)),
+                "effective_max_probe_controls": 2,
+                "prefer_failure_memory": True,
+                "revalidate_known_controls": True,
+                "strategy_notes": "Learning should stay conservative and verification-heavy until coverage improves.",
+            }
+        strategy_notes = [
+            str(result.get("strategy_notes", "") or "").strip(),
+        ]
+        if remediation_progress_status in {"persistent", "regressed"}:
+            result["effective_per_app_limit"] = min(56, int(result.get("effective_per_app_limit", 24) or 24) + 4)
+            result["effective_max_surface_waves"] = min(8, int(result.get("effective_max_surface_waves", 3) or 3) + 1)
+            result["effective_max_probe_controls"] = min(8, int(result.get("effective_max_probe_controls", 3) or 3) + 1)
+            strategy_notes.append("Recent route remediation stayed persistent, so learning should retry deeper linked-surface passes.")
+        elif remediation_progress_status == "new":
+            result["effective_per_app_limit"] = min(52, int(result.get("effective_per_app_limit", 24) or 24) + 2)
+            result["effective_max_surface_waves"] = min(8, int(result.get("effective_max_surface_waves", 3) or 3) + 1)
+            strategy_notes.append("A newly surfaced route issue should get a bounded follow-up learning pass before it hardens into stale memory.")
+        elif remediation_progress_status == "resolved" and bool(result.get("auto_learn_allowed", False)):
+            result["effective_per_app_limit"] = max(12, int(result.get("effective_per_app_limit", 24) or 24) - 2)
+            result["effective_max_surface_waves"] = max(2, int(result.get("effective_max_surface_waves", 3) or 3) - 1)
+            strategy_notes.append("The most recent route issue looks resolved, so learning can stay a bit leaner and shift effort elsewhere.")
+        if remediation_retry_recommended:
+            result["effective_per_app_limit"] = min(56, int(result.get("effective_per_app_limit", 24) or 24) + 2)
+            strategy_notes.append("Recent remediation feedback recommends another retry, so the learner should keep failure memory active.")
+        if remediation_provider_blocked:
+            result["effective_max_probe_controls"] = max(
+                1,
+                min(int(result.get("effective_max_probe_controls", 3) or 3), 2),
+            )
+            strategy_notes.append("Provider readiness is still constrained, so probing stays careful until setup follow-through catches up.")
+        if remediation_setup_followup_required:
+            strategy_notes.append("Recent setup followups are still open, so revalidation should stay enabled while new evidence is gathered.")
+        if setup_execution_policy in {"mission_followthrough", "mission_boosted"} and setup_execution_selected_action_count > 0:
+            result["effective_per_app_limit"] = min(56, int(result.get("effective_per_app_limit", 24) or 24) + 4)
+            result["effective_max_surface_waves"] = min(8, int(result.get("effective_max_surface_waves", 3) or 3) + 1)
+            result["effective_max_probe_controls"] = min(8, int(result.get("effective_max_probe_controls", 3) or 3) + 1)
+            strategy_notes.append(
+                "Recent setup execution improved readiness for this app, so the learner can push deeper while the environment is warm."
+            )
+        elif setup_execution_policy == "resume_pending_constrained" or (
+            setup_execution_resume_ready
+            and setup_execution_remaining_ready_count > 0
+            and readiness_status in {"degraded", "blocked"}
+        ):
+            result["effective_per_app_limit"] = max(
+                12,
+                min(int(result.get("effective_per_app_limit", 24) or 24), 20),
+            )
+            result["effective_max_surface_waves"] = max(
+                2,
+                min(int(result.get("effective_max_surface_waves", 3) or 3), 3),
+            )
+            result["effective_max_probe_controls"] = max(
+                2,
+                min(int(result.get("effective_max_probe_controls", 3) or 3), 3),
+            )
+            strategy_notes.append(
+                "Setup execution still has pending ready actions, so learning stays constrained until the remaining follow-through is finished."
+            )
+        elif setup_execution_policy == "install_launch_ready":
+            strategy_notes.append("Recent install-launch setup readiness means app preparation can reuse a slightly more confident learning path.")
+        if setup_execution_continued_action_count > 0 and setup_execution_policy not in {"mission_followthrough", "mission_boosted"}:
+            strategy_notes.append("Continuing setup actions are still active, so JARVIS should keep app learning resumable.")
+        result["strategy_notes"] = " ".join(self._machine_dedupe(strategy_notes, limit=4))
+        return result
 
     def _desktop_machine_learning_runtime_strategy_for_target(
         self,
@@ -12177,10 +13199,16 @@ class DesktopBackendService:
             profile=profile,
             model_selection=model_selection if isinstance(model_selection, dict) else {},
         )
+        remediation_feedback = self._desktop_machine_recent_route_feedback(
+            limit=max(12, max_targets),
+        )
         bounded_targets = max(1, min(int(max_targets or plan.get("count", 8) or 8), 24))
         annotated_targets: List[Dict[str, Any]] = []
         for row in target_rows:
-            item_payload = dict(row)
+            item_payload = self._desktop_machine_apply_route_feedback(
+                target_row=dict(row),
+                recent_feedback=remediation_feedback if isinstance(remediation_feedback, dict) else None,
+            )
             item_payload.update(
                 self._desktop_machine_prepare_readiness_annotation(
                     profile=profile,
@@ -12324,9 +13352,28 @@ class DesktopBackendService:
             if str(item.get("readiness_status", "") or "").strip().lower() == "degraded"
             and str(item.get("app_name", "") or "").strip()
         ]
+        feedback_map = (
+            remediation_feedback.get("feedback_by_app", {})
+            if isinstance(remediation_feedback.get("feedback_by_app", {}), dict)
+            else {}
+        )
+        feedback_status_counts: Dict[str, int] = {}
+        remediation_retry_count = 0
+        remediation_provider_blocked_count = 0
+        remediation_setup_followup_count = 0
         plan["count"] = len(selected_targets)
         plan["targets"] = selected_targets
         existing_summary = dict(plan.get("summary", {})) if isinstance(plan.get("summary", {}), dict) else {}
+        for item in selected_targets:
+            status_name = str(item.get("remediation_progress_status", "") or "").strip().lower()
+            if status_name:
+                feedback_status_counts[status_name] = int(feedback_status_counts.get(status_name, 0) or 0) + 1
+            if bool(item.get("remediation_retry_recommended", False)):
+                remediation_retry_count += 1
+            if bool(item.get("remediation_provider_blocked", False)):
+                remediation_provider_blocked_count += 1
+            if bool(item.get("remediation_setup_followup_required", False)):
+                remediation_setup_followup_count += 1
         existing_summary.update(
             {
                 "auto_learn_count": len(auto_targets),
@@ -12359,6 +13406,14 @@ class DesktopBackendService:
                 "expected_provider_source_counts": {
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "remediation_feedback_count": len(feedback_map),
+                "remediation_retry_count": remediation_retry_count,
+                "remediation_provider_blocked_count": remediation_provider_blocked_count,
+                "remediation_setup_followup_count": remediation_setup_followup_count,
+                "remediation_feedback_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(feedback_status_counts.items(), key=lambda entry: entry[0])
                 },
             }
         )
@@ -12424,6 +13479,13 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "remediation_feedback_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(feedback_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "remediation_retry_count": remediation_retry_count,
+                "remediation_provider_blocked_count": remediation_provider_blocked_count,
+                "remediation_setup_followup_count": remediation_setup_followup_count,
                 "auto_learn_count": len(auto_targets),
                 "blocked_count": len(blocked_app_names),
                 "degraded_count": len(degraded_app_names),
@@ -12439,6 +13501,13 @@ class DesktopBackendService:
                         "effective_max_surface_waves": int(item.get("effective_max_surface_waves", 0) or 0),
                         "effective_max_probe_controls": int(item.get("effective_max_probe_controls", 0) or 0),
                         "priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
+                        "remediation_progress_status": str(item.get("remediation_progress_status", "") or "").strip().lower(),
+                        "remediation_route_state": str(item.get("remediation_route_state", "") or "").strip().lower(),
+                        "remediation_priority_band": str(item.get("remediation_priority_band", "") or "").strip().lower(),
+                        "remediation_retry_recommended": bool(item.get("remediation_retry_recommended", False)),
+                        "remediation_provider_blocked": bool(item.get("remediation_provider_blocked", False)),
+                        "remediation_setup_followup_required": bool(item.get("remediation_setup_followup_required", False)),
+                        "remediation_recent_action_code": str(item.get("remediation_recent_action_code", "") or "").strip().lower(),
                         "adaptive_runtime_strategy_profile": str(item.get("adaptive_runtime_strategy_profile", "") or "").strip().lower(),
                         "runtime_band_preference": str(item.get("runtime_band_preference", "") or "").strip().lower(),
                         "expected_route_profile": str(item.get("expected_route_profile", "") or "").strip().lower(),
@@ -12535,6 +13604,7 @@ class DesktopBackendService:
         provider_timeout_s: float = 8.0,
         max_targets: int = 8,
         max_model_items: int = 6,
+        continuation_limit: int = 6,
         source: str = "machine_onboarding_plan",
     ) -> Dict[str, Any]:
         clean_task = str(task or "").strip().lower()
@@ -12681,6 +13751,13 @@ class DesktopBackendService:
             app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
             limit=min(6, max_targets),
         )
+        continuation_plan = self._desktop_machine_onboarding_continuation_plan(
+            execution_queue=execution_queue if isinstance(execution_queue, dict) else {},
+            app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
+            app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
+            route_remediation=route_remediation if isinstance(route_remediation, dict) else {},
+            limit=continuation_limit,
+        )
         next_actions = (
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
@@ -12690,6 +13767,13 @@ class DesktopBackendService:
             next_actions,
             list(route_remediation.get("next_actions", []))
             if isinstance(route_remediation.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(continuation_plan.get("next_actions", []))
+            if isinstance(continuation_plan.get("next_actions", []), list)
             else [],
             limit=8,
         )
@@ -12783,6 +13867,21 @@ class DesktopBackendService:
                 "required": False,
                 "count": int(app_control_prepare_plan.get("count", 0) or 0),
             },
+            {
+                "id": "continuation_followthrough",
+                "kind": "continuation_followthrough",
+                "status": "skipped"
+                if int(continuation_plan.get("count", 0) or 0) <= 0
+                else "attention"
+                if int(dict(continuation_plan.get("summary", {})).get("manual_count", 0) or 0) > 0
+                or int(dict(continuation_plan.get("summary", {})).get("provider_blocked_count", 0) or 0) > 0
+                or int(dict(continuation_plan.get("summary", {})).get("setup_followup_count", 0) or 0) > 0
+                else "ready",
+                "title": "Carry unresolved setup and app-control work into the next onboarding pass",
+                "auto_runnable": bool(dict(continuation_plan.get("summary", {})).get("auto_runnable_count", 0)),
+                "required": int(continuation_plan.get("count", 0) or 0) > 0,
+                "count": int(continuation_plan.get("count", 0) or 0),
+            },
         ]
         return _to_jsonable(
             {
@@ -12803,6 +13902,7 @@ class DesktopBackendService:
                 "app_control_prepare_plan": app_control_prepare_plan,
                 "app_learning_plan": app_learning_plan,
                 "route_remediation": route_remediation,
+                "continuation_plan": continuation_plan,
                 "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
                 "execution_queue_summary": execution_queue_summary,
                 "next_actions": next_actions,
@@ -12839,10 +13939,36 @@ class DesktopBackendService:
                     "app_learning_blocked_count": int(learning_plan_summary.get("blocked_count", 0) or 0),
                     "app_learning_degraded_count": int(learning_plan_summary.get("degraded_count", 0) or 0),
                     "app_learning_strategy_profile": str(learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                    "app_learning_remediation_retry_count": int(learning_plan_summary.get("remediation_retry_count", 0) or 0),
+                    "app_learning_remediation_provider_blocked_count": int(
+                        learning_plan_summary.get("remediation_provider_blocked_count", 0) or 0
+                    ),
+                    "app_learning_remediation_setup_followup_count": int(
+                        learning_plan_summary.get("remediation_setup_followup_count", 0) or 0
+                    ),
+                    "app_learning_remediation_feedback_status_counts": dict(
+                        learning_plan_summary.get("remediation_feedback_status_counts", {})
+                    )
+                    if isinstance(learning_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                    else {},
                     "app_control_prepare_count": int(app_control_prepare_plan.get("count", 0) or 0),
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
+                    "app_control_prepare_remediation_retry_count": int(
+                        prepare_plan_summary.get("remediation_retry_count", 0) or 0
+                    ),
+                    "app_control_prepare_remediation_provider_blocked_count": int(
+                        prepare_plan_summary.get("remediation_provider_blocked_count", 0) or 0
+                    ),
+                    "app_control_prepare_remediation_setup_followup_count": int(
+                        prepare_plan_summary.get("remediation_setup_followup_count", 0) or 0
+                    ),
+                    "app_control_prepare_remediation_feedback_status_counts": dict(
+                        prepare_plan_summary.get("remediation_feedback_status_counts", {})
+                    )
+                    if isinstance(prepare_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                    else {},
                     "route_remediation_count": int(route_remediation.get("count", 0) or 0),
                     "route_remediation_blocked_count": int(
                         dict(route_remediation.get("summary", {})).get("blocked_app_count", 0)
@@ -12862,6 +13988,37 @@ class DesktopBackendService:
                     "route_remediation_provider_blocked_count": int(
                         dict(route_remediation.get("summary", {})).get("provider_blocked_app_count", 0)
                         if isinstance(route_remediation.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_count": int(continuation_plan.get("count", 0) or 0),
+                    "continuation_auto_runnable_count": int(
+                        dict(continuation_plan.get("summary", {})).get("auto_runnable_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_manual_count": int(
+                        dict(continuation_plan.get("summary", {})).get("manual_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_retry_count": int(
+                        dict(continuation_plan.get("summary", {})).get("retry_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_provider_blocked_count": int(
+                        dict(continuation_plan.get("summary", {})).get("provider_blocked_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_setup_followup_count": int(
+                        dict(continuation_plan.get("summary", {})).get("setup_followup_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
+                    "continuation_focus_app_count": int(
+                        dict(continuation_plan.get("summary", {})).get("focus_app_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
                         else 0
                     ),
                     "top_route_remediation_kinds": dict(
@@ -12939,6 +14096,8 @@ class DesktopBackendService:
         auto_run_app_learning_campaign: bool = True,
         auto_prepare_app_controls: bool = True,
         prepare_app_limit: int = 3,
+        auto_continue_unresolved: bool = True,
+        continuation_limit: int = 6,
         campaign_label: str = "",
         dry_run: bool = False,
         source: str = "machine_onboarding",
@@ -12956,6 +14115,7 @@ class DesktopBackendService:
             provider_timeout_s=provider_timeout_s,
             max_targets=max_targets,
             max_model_items=max_model_items,
+            continuation_limit=continuation_limit,
             source=f"{source}_plan",
         )
         if not isinstance(plan, dict) or plan.get("status") != "success":
@@ -13038,6 +14198,39 @@ class DesktopBackendService:
         runtime_app_learning_plan_summary = dict(app_learning_plan_summary)
         runtime_app_learning_campaign_defaults = dict(app_learning_campaign_defaults)
         runtime_app_control_prepare_plan = dict(app_control_prepare_plan) if isinstance(app_control_prepare_plan, dict) else {}
+        planned_continuation_plan = (
+            dict(plan.get("continuation_plan", {}))
+            if isinstance(plan.get("continuation_plan", {}), dict)
+            else {}
+        )
+        planned_continuation_summary = (
+            dict(planned_continuation_plan.get("summary", {}))
+            if isinstance(planned_continuation_plan.get("summary", {}), dict)
+            else {}
+        )
+        continuation_focus_app_names = [
+            str(item).strip()
+            for item in planned_continuation_summary.get("focus_app_names", [])
+            if isinstance(planned_continuation_summary.get("focus_app_names", []), list) and str(item).strip()
+        ]
+        if bool(auto_continue_unresolved) and continuation_focus_app_names:
+            runtime_app_learning_plan_payload = self._desktop_machine_prioritize_app_learning_plan_targets(
+                app_learning_payload=runtime_app_learning_plan_payload,
+                focus_app_names=continuation_focus_app_names,
+                source="planned_continuation",
+            )
+            runtime_app_learning_plan_summary = (
+                dict(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}))
+                if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}), dict)
+                else {}
+            )
+            runtime_app_learning_campaign_defaults = (
+                dict(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}))
+                if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}), dict)
+                else {}
+            )
         runtime_prepare_plan_items = list(prepare_plan_items)
         runtime_prepare_plan_summary = (
             dict(runtime_app_control_prepare_plan.get("summary", {}))
@@ -13166,6 +14359,12 @@ class DesktopBackendService:
                 app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
                 setup_execution=model_install_result if isinstance(model_install_result, dict) else {},
             )
+            if bool(auto_continue_unresolved) and continuation_focus_app_names:
+                runtime_app_learning_plan_payload = self._desktop_machine_prioritize_app_learning_plan_targets(
+                    app_learning_payload=runtime_app_learning_plan_payload,
+                    focus_app_names=continuation_focus_app_names,
+                    source="runtime_continuation",
+                )
             runtime_app_learning_plan_summary = (
                 dict(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}))
                 if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
@@ -13409,6 +14608,20 @@ class DesktopBackendService:
                         "setup_constrained_app_count": int(
                             runtime_prepare_plan_summary.get("setup_constrained_app_count", 0) or 0
                         ),
+                        "remediation_retry_count": int(
+                            runtime_prepare_plan_summary.get("remediation_retry_count", 0) or 0
+                        ),
+                        "remediation_provider_blocked_count": int(
+                            runtime_prepare_plan_summary.get("remediation_provider_blocked_count", 0) or 0
+                        ),
+                        "remediation_setup_followup_count": int(
+                            runtime_prepare_plan_summary.get("remediation_setup_followup_count", 0) or 0
+                        ),
+                        "remediation_feedback_status_counts": dict(
+                            runtime_prepare_plan_summary.get("remediation_feedback_status_counts", {})
+                        )
+                        if isinstance(runtime_prepare_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                        else {},
                     },
                 }
         else:
@@ -13467,10 +14680,10 @@ class DesktopBackendService:
                 "status": "planned" if auto_prepare_app_controls and runtime_prepare_plan_items else "skipped",
                 "count": len(runtime_prepare_plan_items) if auto_prepare_app_controls else 0,
                 "items": runtime_prepare_plan_items,
-                "summary": {
-                    "prepared_app_count": len(
-                        [item for item in runtime_prepare_plan_items if bool(item.get("auto_prepare_allowed", True))]
-                    ) if auto_prepare_app_controls else 0,
+                    "summary": {
+                        "prepared_app_count": len(
+                            [item for item in runtime_prepare_plan_items if bool(item.get("auto_prepare_allowed", True))]
+                        ) if auto_prepare_app_controls else 0,
                     "blocked_count": len(
                         [item for item in runtime_prepare_plan_items if not bool(item.get("auto_prepare_allowed", True))]
                     ) if auto_prepare_app_controls else 0,
@@ -13483,11 +14696,25 @@ class DesktopBackendService:
                     "setup_boosted_app_count": int(
                         runtime_prepare_plan_summary.get("setup_boosted_app_count", 0) or 0
                     ),
-                    "setup_constrained_app_count": int(
-                        runtime_prepare_plan_summary.get("setup_constrained_app_count", 0) or 0
-                    ),
-                },
-            }
+                        "setup_constrained_app_count": int(
+                            runtime_prepare_plan_summary.get("setup_constrained_app_count", 0) or 0
+                        ),
+                        "remediation_retry_count": int(
+                            runtime_prepare_plan_summary.get("remediation_retry_count", 0) or 0
+                        ),
+                        "remediation_provider_blocked_count": int(
+                            runtime_prepare_plan_summary.get("remediation_provider_blocked_count", 0) or 0
+                        ),
+                        "remediation_setup_followup_count": int(
+                            runtime_prepare_plan_summary.get("remediation_setup_followup_count", 0) or 0
+                        ),
+                        "remediation_feedback_status_counts": dict(
+                            runtime_prepare_plan_summary.get("remediation_feedback_status_counts", {})
+                        )
+                        if isinstance(runtime_prepare_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                        else {},
+                    },
+                }
 
         execution_queue = self._desktop_machine_onboarding_execution_queue(
             provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else {},
@@ -13523,6 +14750,19 @@ class DesktopBackendService:
             app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
             limit=min(6, max_targets),
         )
+        route_remediation_progress = self._desktop_machine_route_remediation_progress(
+            planned_remediation=plan.get("route_remediation", {}) if isinstance(plan.get("route_remediation", {}), dict) else {},
+            runtime_remediation=route_remediation if isinstance(route_remediation, dict) else {},
+            limit=min(6, max_targets),
+        )
+        continuation_plan = self._desktop_machine_onboarding_continuation_plan(
+            execution_queue=execution_queue if isinstance(execution_queue, dict) else {},
+            app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
+            app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
+            route_remediation=route_remediation if isinstance(route_remediation, dict) else {},
+            route_remediation_progress=route_remediation_progress if isinstance(route_remediation_progress, dict) else {},
+            limit=continuation_limit,
+        )
         next_actions = (
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
@@ -13532,6 +14772,20 @@ class DesktopBackendService:
             next_actions,
             list(route_remediation.get("next_actions", []))
             if isinstance(route_remediation.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(route_remediation_progress.get("next_actions", []))
+            if isinstance(route_remediation_progress.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(continuation_plan.get("next_actions", []))
+            if isinstance(continuation_plan.get("next_actions", []), list)
             else [],
             limit=8,
         )
@@ -13580,6 +14834,9 @@ class DesktopBackendService:
             "app_learning_campaign": app_learning_result,
             "app_control_prepare": app_control_prepare_result,
             "route_remediation": route_remediation,
+            "route_remediation_progress": route_remediation_progress,
+            "continuation_plan": continuation_plan,
+            "auto_continue_unresolved": bool(auto_continue_unresolved),
             "execution_queue": execution_queue.get("items", []) if isinstance(execution_queue, dict) else [],
             "execution_queue_summary": execution_queue_summary,
             "next_actions": next_actions,
@@ -13618,6 +14875,20 @@ class DesktopBackendService:
                 "app_learning_setup_constrained_count": int(
                     runtime_app_learning_plan_summary.get("setup_constrained_app_count", 0) or 0
                 ),
+                "app_learning_remediation_retry_count": int(
+                    runtime_app_learning_plan_summary.get("remediation_retry_count", 0) or 0
+                ),
+                "app_learning_remediation_provider_blocked_count": int(
+                    runtime_app_learning_plan_summary.get("remediation_provider_blocked_count", 0) or 0
+                ),
+                "app_learning_remediation_setup_followup_count": int(
+                    runtime_app_learning_plan_summary.get("remediation_setup_followup_count", 0) or 0
+                ),
+                "app_learning_remediation_feedback_status_counts": dict(
+                    runtime_app_learning_plan_summary.get("remediation_feedback_status_counts", {})
+                )
+                if isinstance(runtime_app_learning_plan_summary.get("remediation_feedback_status_counts", {}), dict)
+                else {},
                 "prepared_app_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("prepared_app_count", app_control_prepare_result.get("count", 0))
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
@@ -13648,6 +14919,26 @@ class DesktopBackendService:
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else 0
                 ),
+                "prepared_remediation_retry_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("remediation_retry_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_remediation_provider_blocked_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("remediation_provider_blocked_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_remediation_setup_followup_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("remediation_setup_followup_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_remediation_feedback_status_counts": dict(
+                    dict(app_control_prepare_result.get("summary", {})).get("remediation_feedback_status_counts", {})
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
                 "route_remediation_count": int(route_remediation.get("count", 0) or 0),
                 "route_remediation_blocked_count": int(
                     dict(route_remediation.get("summary", {})).get("blocked_app_count", 0)
@@ -13673,6 +14964,68 @@ class DesktopBackendService:
                     dict(route_remediation.get("summary", {})).get("remediation_kind_counts", {})
                     if isinstance(route_remediation.get("summary", {}), dict)
                     else {}
+                ),
+                "route_remediation_resolved_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("resolved_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_improved_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("improved_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_persistent_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("persistent_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_new_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("new_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_resolved_setup_followup_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("resolved_setup_followup_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "route_remediation_persistent_provider_blocked_count": int(
+                    dict(route_remediation_progress.get("summary", {})).get("persistent_provider_blocked_count", 0)
+                    if isinstance(route_remediation_progress.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_auto_continue_enabled": bool(auto_continue_unresolved),
+                "continuation_count": int(continuation_plan.get("count", 0) or 0),
+                "continuation_auto_runnable_count": int(
+                    dict(continuation_plan.get("summary", {})).get("auto_runnable_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_manual_count": int(
+                    dict(continuation_plan.get("summary", {})).get("manual_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_retry_count": int(
+                    dict(continuation_plan.get("summary", {})).get("retry_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_provider_blocked_count": int(
+                    dict(continuation_plan.get("summary", {})).get("provider_blocked_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_setup_followup_count": int(
+                    dict(continuation_plan.get("summary", {})).get("setup_followup_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_focus_app_count": int(
+                    dict(continuation_plan.get("summary", {})).get("focus_app_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
                 ),
                 "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
                 "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),
@@ -49141,6 +50494,12 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     ),
                     max_targets=self._parse_int(str(query.get("max_targets", ["8"])[0]), 8, minimum=1, maximum=24),
                     max_model_items=self._parse_int(str(query.get("max_model_items", ["6"])[0]), 6, minimum=1, maximum=16),
+                    continuation_limit=self._parse_int(
+                        str(query.get("continuation_limit", ["6"])[0]),
+                        6,
+                        minimum=1,
+                        maximum=24,
+                    ),
                     source=str(query.get("source", ["machine_onboarding_plan"])[0] or "machine_onboarding_plan").strip(),
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
@@ -51581,6 +52940,8 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     auto_run_app_learning_campaign=self._parse_bool(body.get("auto_run_app_learning_campaign", True), default=True),
                     auto_prepare_app_controls=self._parse_bool(body.get("auto_prepare_app_controls", True), default=True),
                     prepare_app_limit=self._parse_int(body.get("prepare_app_limit", 3), 3, minimum=1, maximum=12),
+                    auto_continue_unresolved=self._parse_bool(body.get("auto_continue_unresolved", True), default=True),
+                    continuation_limit=self._parse_int(body.get("continuation_limit", 6), 6, minimum=1, maximum=24),
                     campaign_label=str(body.get("campaign_label", "") or "").strip(),
                     dry_run=self._parse_bool(body.get("dry_run", False), default=False),
                     source=str(body.get("source", "machine_onboarding") or "machine_onboarding").strip(),

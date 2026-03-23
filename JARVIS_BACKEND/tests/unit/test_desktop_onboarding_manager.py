@@ -35,14 +35,32 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "app_learning_setup_aligned_count": 2,
                 "app_learning_setup_boosted_count": 1,
                 "app_learning_setup_constrained_count": 1,
+                "app_learning_remediation_retry_count": 1,
+                "app_learning_remediation_provider_blocked_count": 1,
+                "app_learning_remediation_setup_followup_count": 1,
                 "prepared_setup_aligned_count": 2,
                 "prepared_setup_boosted_count": 1,
                 "prepared_setup_constrained_count": 1,
+                "prepared_remediation_retry_count": 1,
+                "prepared_remediation_provider_blocked_count": 0,
+                "prepared_remediation_setup_followup_count": 1,
                 "route_remediation_count": 2,
                 "route_remediation_blocked_count": 1,
                 "route_remediation_degraded_count": 1,
                 "route_remediation_setup_followup_count": 2,
                 "route_remediation_provider_blocked_count": 1,
+                "route_remediation_resolved_count": 1,
+                "route_remediation_improved_count": 1,
+                "route_remediation_persistent_count": 0,
+                "route_remediation_new_count": 0,
+                "route_remediation_resolved_setup_followup_count": 1,
+                "route_remediation_persistent_provider_blocked_count": 0,
+                "continuation_count": 4,
+                "continuation_auto_runnable_count": 3,
+                "continuation_manual_count": 1,
+                "continuation_retry_count": 2,
+                "continuation_provider_blocked_count": 1,
+                "continuation_setup_followup_count": 2,
             },
         },
         source="machine_onboarding",
@@ -85,11 +103,29 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 1
+    assert history["summary"]["app_learning_remediation_retry_total"] == 1
+    assert history["summary"]["app_learning_remediation_provider_blocked_total"] == 1
+    assert history["summary"]["app_learning_remediation_setup_followup_total"] == 1
     assert history["summary"]["prepared_setup_aligned_total"] == 2
     assert history["summary"]["prepared_setup_boosted_total"] == 1
     assert history["summary"]["prepared_setup_constrained_total"] == 1
+    assert history["summary"]["prepared_remediation_retry_total"] == 1
+    assert history["summary"]["prepared_remediation_provider_blocked_total"] == 0
+    assert history["summary"]["prepared_remediation_setup_followup_total"] == 1
     assert history["summary"]["route_remediation_total"] == 2
     assert history["summary"]["route_remediation_blocked_total"] == 1
     assert history["summary"]["route_remediation_degraded_total"] == 1
     assert history["summary"]["route_remediation_setup_followup_total"] == 2
     assert history["summary"]["route_remediation_provider_blocked_total"] == 1
+    assert history["summary"]["route_remediation_resolved_total"] == 1
+    assert history["summary"]["route_remediation_improved_total"] == 1
+    assert history["summary"]["route_remediation_persistent_total"] == 0
+    assert history["summary"]["route_remediation_new_total"] == 0
+    assert history["summary"]["route_remediation_resolved_setup_followup_total"] == 1
+    assert history["summary"]["route_remediation_persistent_provider_blocked_total"] == 0
+    assert history["summary"]["continuation_total"] == 4
+    assert history["summary"]["continuation_auto_runnable_total"] == 3
+    assert history["summary"]["continuation_manual_total"] == 1
+    assert history["summary"]["continuation_retry_total"] == 2
+    assert history["summary"]["continuation_provider_blocked_total"] == 1
+    assert history["summary"]["continuation_setup_followup_total"] == 2
