@@ -1518,6 +1518,57 @@ def test_desktop_app_memory_builds_surface_graph_and_command_hints(tmp_path: Pat
     assert any(str(item.get("label", "")) == "Search settings" for item in hint["learned_commands"])
 
 
+def test_desktop_app_memory_populates_sqlite_knowledge_store_and_semantic_lookup(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(
+        store_path=str(tmp_path / "desktop_app_memory.json"),
+        knowledge_store_path=str(tmp_path / "desktop_app_memory.sqlite3"),
+    )
+
+    memory.record_survey(
+        app_name="notepad",
+        query="save file",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|main|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_inventory": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Save As", "control_type": "menuitem", "automation_id": "SaveAsMenu"},
+                ],
+                "recommended_actions": ["save", "export"],
+            },
+            "elements": {
+                "items": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Save As", "control_type": "menuitem", "automation_id": "SaveAsMenu"},
+                ]
+            },
+            "workflow_surfaces": [
+                {"action": "save", "primary_hotkey": ["ctrl+s"], "title": "Save"},
+                {"action": "save_as", "primary_hotkey": ["ctrl+shift+s"], "title": "Save As"},
+            ],
+        },
+        source="manual",
+    )
+
+    snapshot = memory.snapshot(app_name="notepad", limit=4)
+    assert snapshot["knowledge_store"]["status"] == "success"
+    assert int(snapshot["knowledge_store"]["entry_count"] or 0) >= 1
+    assert int(snapshot["knowledge_store"]["control_count"] or 0) >= 2
+    assert int(snapshot["knowledge_store"]["vector_count"] or 0) >= 2
+
+    matches = memory.semantic_lookup(query="save file", app_name="notepad", limit=4)
+    assert matches["status"] == "success"
+    assert matches["count"] >= 1
+    assert any("save" in str(item.get("label", "")).lower() for item in matches["items"])
+
+    hint = memory.surface_hint(app_name="notepad", query="save")
+    assert hint["knowledge_store"]["status"] == "success"
+    assert any("save" in str(item.get("label", "")).lower() for item in hint["semantic_matches"])
+
+
 def test_desktop_app_memory_records_adaptive_wave_strategies(tmp_path: Path) -> None:
     memory = DesktopAppMemory(store_path=str(tmp_path / "desktop_app_memory.json"))
 

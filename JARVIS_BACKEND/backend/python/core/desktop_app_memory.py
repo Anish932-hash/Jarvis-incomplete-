@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List
 
+from .desktop_app_memory_knowledge_store import DesktopAppMemoryKnowledgeStore
+
 
 class DesktopAppMemory:
     _DEFAULT_INSTANCE: "DesktopAppMemory | None" = None
@@ -22,11 +24,21 @@ class DesktopAppMemory:
         self,
         *,
         store_path: str = "data/desktop_app_memory.json",
+        knowledge_store_path: str = "",
         max_entries: int = 2500,
         max_controls_per_entry: int = 320,
         max_history_per_entry: int = 10,
+        vector_dimensions: int = 64,
     ) -> None:
         self.store_path = Path(store_path)
+        clean_knowledge_store_path = str(knowledge_store_path or "").strip()
+        if clean_knowledge_store_path:
+            derived_knowledge_store_path = clean_knowledge_store_path
+        elif self.store_path.suffix:
+            derived_knowledge_store_path = str(self.store_path.with_suffix(".sqlite3"))
+        else:
+            derived_knowledge_store_path = f"{self.store_path}.sqlite3"
+        self.knowledge_store_path = Path(derived_knowledge_store_path)
         self.max_entries = self._coerce_int(max_entries, minimum=100, maximum=100_000, default=2500)
         self.max_controls_per_entry = self._coerce_int(max_controls_per_entry, minimum=32, maximum=2000, default=320)
         self.max_history_per_entry = self._coerce_int(max_history_per_entry, minimum=2, maximum=64, default=10)
@@ -34,7 +46,13 @@ class DesktopAppMemory:
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._updates_since_save = 0
         self._last_save_monotonic = 0.0
+        self._knowledge_store = DesktopAppMemoryKnowledgeStore(
+            db_path=str(self.knowledge_store_path),
+            vector_dimensions=vector_dimensions,
+        )
         self._load()
+        with self._lock:
+            self._rebuild_knowledge_store_locked()
 
     @classmethod
     def default(cls) -> "DesktopAppMemory":
@@ -670,6 +688,7 @@ class DesktopAppMemory:
             self._trim_entry_locked(entry)
             self._entries[key] = entry
             self._trim_locked()
+            self._sync_knowledge_store_entry_locked(entry_key=key, entry=entry)
             self._updates_since_save += 1
             self._maybe_save_locked(force=False)
             return self._snapshot_item(dict(entry))
@@ -714,6 +733,11 @@ class DesktopAppMemory:
                 "category": clean_category,
             },
             "summary": self._snapshot_summary(rows),
+            "knowledge_store": self._knowledge_store.summary(
+                app_name=app_name,
+                profile_id=profile_id,
+                category=category,
+            ),
             "revalidation": self.revalidation_targets(
                 limit=max(4, min(bounded, 24)),
                 app_name=app_name,
@@ -752,6 +776,7 @@ class DesktopAppMemory:
                         continue
                     kept[key] = row
                 self._entries = kept
+            self._rebuild_knowledge_store_locked()
             self._maybe_save_locked(force=True)
         return {
             "status": "success",
@@ -762,6 +787,23 @@ class DesktopAppMemory:
                 "category": clean_category,
             },
         }
+
+    def semantic_lookup(
+        self,
+        *,
+        query: str,
+        app_name: str = "",
+        profile_id: str = "",
+        limit: int = 8,
+        entity_types: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        return self._knowledge_store.semantic_lookup(
+            query=query,
+            app_name=app_name,
+            profile_id=profile_id,
+            limit=limit,
+            entity_types=entity_types or [],
+        )
 
     def _record_control(self, *, entry: Dict[str, Any], row: Dict[str, Any], observed_at: str, query: str) -> None:
         identity = self._control_identity(row)
@@ -3033,10 +3075,23 @@ class DesktopAppMemory:
         app_name: str = "",
         profile_id: str = "",
         surface_fingerprint: str = "",
+        query: str = "",
     ) -> Dict[str, Any]:
         clean_app_name = self._normalize_text(app_name)
         clean_profile_id = self._normalize_text(profile_id)
         clean_surface_fingerprint = str(surface_fingerprint or "").strip()
+        knowledge_store_summary = self._knowledge_store.summary(
+            app_name=app_name,
+            profile_id=profile_id,
+            category="",
+        )
+        semantic_matches = self.semantic_lookup(
+            query=query,
+            app_name=app_name,
+            profile_id=profile_id,
+            limit=6,
+            entity_types=["control", "command"],
+        ) if str(query or "").strip() else {"status": "success", "count": 0, "items": []}
         with self._lock:
             rows = [dict(row) for row in self._entries.values()]
         rows.sort(key=lambda row: str(row.get("updated_at", "")), reverse=True)
@@ -3159,6 +3214,10 @@ class DesktopAppMemory:
                     if isinstance(item, dict)
                 ],
                 "shortcut_actions": self._snapshot_item(matched_row).get("shortcut_actions", []),
+                "knowledge_store": knowledge_store_summary,
+                "semantic_matches": list(semantic_matches.get("items", []))
+                if isinstance(semantic_matches, dict)
+                else [],
             }
         return {
             "status": "success",
@@ -3199,4 +3258,20 @@ class DesktopAppMemory:
             "revalidation_summary": {"target_count": 0, "overdue_count": 0, "failure_hotspot_count": 0, "top_targets": []},
             "revalidation_targets": [],
             "shortcut_actions": [],
+            "knowledge_store": knowledge_store_summary,
+            "semantic_matches": list(semantic_matches.get("items", []))
+            if isinstance(semantic_matches, dict)
+            else [],
         }
+
+    def _sync_knowledge_store_entry_locked(self, *, entry_key: str, entry: Dict[str, Any]) -> None:
+        try:
+            self._knowledge_store.sync_entry(entry_key=entry_key, row=entry)
+        except Exception:
+            return
+
+    def _rebuild_knowledge_store_locked(self) -> None:
+        try:
+            self._knowledge_store.replace_all(entries=self._entries)
+        except Exception:
+            return

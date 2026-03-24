@@ -8392,6 +8392,7 @@ class DesktopActionRouter:
             app_name=clean_app_name,
             profile_id=str(app_profile.get("profile_id", "") or "").strip(),
             surface_fingerprint=str(snapshot.get("surface_fingerprint", "") or "").strip(),
+            query=clean_query,
         )
         normalized_target_container_roles = self._dedupe_strings(
             [
@@ -10212,6 +10213,7 @@ class DesktopActionRouter:
                 app_name=app_name,
                 profile_id=str(current_app_profile.get("profile_id", "") or "").strip(),
                 surface_fingerprint=current_fingerprint,
+                query=query,
             )
             adaptive_actions = [
                 str(item).strip().lower()
@@ -10379,6 +10381,7 @@ class DesktopActionRouter:
                     app_name=app_name,
                     profile_id=str(wave_app_profile.get("profile_id", "") or "").strip(),
                     surface_fingerprint=next_fingerprint,
+                    query=query,
                 )
                 if isinstance(wave_hint, dict) and bool(wave_hint.get("known")):
                     known_surface_count += 1

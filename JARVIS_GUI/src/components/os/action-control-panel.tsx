@@ -2292,6 +2292,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   );
   const desktopAppMemory = useMemo(() => asObjectRecord(desktopAppMemoryState), [desktopAppMemoryState]);
   const desktopAppMemorySummary = useMemo(() => asObjectRecord(desktopAppMemory.summary), [desktopAppMemory]);
+  const desktopAppMemoryKnowledgeStore = useMemo(
+    () => asObjectRecord(desktopAppMemory.knowledge_store),
+    [desktopAppMemory]
+  );
   const desktopLatestAppMemory = useMemo(() => {
     const latest = asObjectRecord(desktopAppMemory.latest_entry);
     if (Object.keys(latest).length > 0) {
@@ -23304,6 +23308,12 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}waves:{Number(desktopAppMemorySummary.wave_survey_total ?? 0)}
                                               {' • '}learned commands:{Number(desktopAppMemorySummary.learned_command_total ?? 0)}
                                               {' • '}healthy:{Number(desktopAppMemorySummary.healthy_app_count ?? 0)}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              knowledge db apps:{Number(desktopAppMemoryKnowledgeStore.entry_count ?? 0)}
+                                              {' • '}controls:{Number(desktopAppMemoryKnowledgeStore.control_count ?? 0)}
+                                              {' • '}commands:{Number(desktopAppMemoryKnowledgeStore.command_count ?? 0)}
+                                              {' • '}vectors:{Number(desktopAppMemoryKnowledgeStore.vector_count ?? 0)}
                                             </p>
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
                                               {Object.entries(asObjectRecord(desktopAppMemorySummary.category_counts))
