@@ -8773,6 +8773,25 @@ class DesktopBackendService:
         task: str = "",
     ) -> Dict[str, Any]:
         memory_snapshot = dict(app_memory) if isinstance(app_memory, dict) else self.desktop_app_memory_status(limit=256)
+        memory_summary = (
+            dict(memory_snapshot.get("summary", {}))
+            if isinstance(memory_snapshot.get("summary", {}), dict)
+            else {}
+        )
+        memory_items = [
+            dict(item)
+            for item in memory_snapshot.get("items", [])
+            if isinstance(memory_snapshot.get("items", []), list) and isinstance(item, dict)
+        ]
+        knowledge_store_summary = (
+            dict(memory_snapshot.get("knowledge_store", {}))
+            if isinstance(memory_snapshot.get("knowledge_store", {}), dict)
+            else {}
+        )
+        knowledge_profiles = [
+            self._desktop_machine_memory_knowledge_profile(memory_entry=item)
+            for item in memory_items
+        ]
         runtime_profile = self._vision_runtime_profile_status()
         runtime_status = str(
             runtime_profile.get("runtime_status", runtime_profile.get("status", "idle")) or "idle"
@@ -8780,35 +8799,64 @@ class DesktopBackendService:
         runtime_available = bool(runtime_profile.get("available", False))
         loaded_model_count = max(0, int(runtime_profile.get("loaded_count", 0) or 0))
         task_hint = str(task or "").strip().lower()
+        knowledge_semantic_ready_count = len(
+            [row for row in knowledge_profiles if bool(row.get("semantic_memory_available", False))]
+        )
+        knowledge_low_coverage_count = len(
+            [row for row in knowledge_profiles if str(row.get("gap_level", "") or "") in {"cold", "thin"}]
+        )
+        knowledge_partial_coverage_count = len(
+            [row for row in knowledge_profiles if str(row.get("gap_level", "") or "") == "partial"]
+        )
+        knowledge_strong_coverage_count = len(
+            [row for row in knowledge_profiles if str(row.get("gap_level", "") or "") == "strong"]
+        )
         summary = {
             "status": str(memory_snapshot.get("status", "unknown") or "unknown").strip().lower() or "unknown",
-            "entry_count": max(0, int(memory_snapshot.get("entry_count", 0) or 0)),
-            "vision_memory_app_count": max(0, int(memory_snapshot.get("vision_memory_app_count", 0) or 0)),
-            "ocr_memory_app_count": max(0, int(memory_snapshot.get("ocr_memory_app_count", 0) or 0)),
-            "local_runtime_ready_app_count": max(0, int(memory_snapshot.get("local_runtime_ready_app_count", 0) or 0)),
-            "api_assist_app_count": max(0, int(memory_snapshot.get("api_assist_app_count", 0) or 0)),
-            "native_stabilization_app_count": max(0, int(memory_snapshot.get("native_stabilization_app_count", 0) or 0)),
-            "weird_app_memory_app_count": max(0, int(memory_snapshot.get("weird_app_memory_app_count", 0) or 0)),
-            "revalidation_target_app_count": max(0, int(memory_snapshot.get("revalidation_target_total", 0) or 0)),
-            "overdue_revalidation_total": max(0, int(memory_snapshot.get("overdue_revalidation_total", 0) or 0)),
+            "entry_count": max(
+                0,
+                int(
+                    memory_summary.get(
+                        "entry_count",
+                        memory_snapshot.get("total", memory_snapshot.get("count", 0)),
+                    )
+                    or 0
+                ),
+            ),
+            "vision_memory_app_count": max(0, int(memory_summary.get("vision_memory_app_count", 0) or 0)),
+            "ocr_memory_app_count": max(0, int(memory_summary.get("ocr_memory_app_count", 0) or 0)),
+            "local_runtime_ready_app_count": max(0, int(memory_summary.get("local_runtime_ready_app_count", 0) or 0)),
+            "api_assist_app_count": max(0, int(memory_summary.get("api_assist_app_count", 0) or 0)),
+            "native_stabilization_app_count": max(0, int(memory_summary.get("native_stabilization_app_count", 0) or 0)),
+            "weird_app_memory_app_count": max(0, int(memory_summary.get("weird_app_memory_app_count", 0) or 0)),
+            "revalidation_target_app_count": max(0, int(memory_summary.get("revalidation_target_total", 0) or 0)),
+            "overdue_revalidation_total": max(0, int(memory_summary.get("overdue_revalidation_total", 0) or 0)),
             "vision_runtime_available": runtime_available,
             "vision_runtime_status": runtime_status,
             "vision_loaded_model_count": loaded_model_count,
-            "route_profile_counts": dict(memory_snapshot.get("route_profile_counts", {}))
-            if isinstance(memory_snapshot.get("route_profile_counts", {}), dict)
+            "route_profile_counts": dict(memory_summary.get("route_profile_counts", {}))
+            if isinstance(memory_summary.get("route_profile_counts", {}), dict)
             else {},
-            "model_preference_counts": dict(memory_snapshot.get("model_preference_counts", {}))
-            if isinstance(memory_snapshot.get("model_preference_counts", {}), dict)
+            "model_preference_counts": dict(memory_summary.get("model_preference_counts", {}))
+            if isinstance(memory_summary.get("model_preference_counts", {}), dict)
             else {},
-            "runtime_provider_mode_counts": dict(memory_snapshot.get("runtime_provider_mode_counts", {}))
-            if isinstance(memory_snapshot.get("runtime_provider_mode_counts", {}), dict)
+            "runtime_provider_mode_counts": dict(memory_summary.get("runtime_provider_mode_counts", {}))
+            if isinstance(memory_summary.get("runtime_provider_mode_counts", {}), dict)
             else {},
-            "runtime_status_counts": dict(memory_snapshot.get("runtime_status_counts", {}))
-            if isinstance(memory_snapshot.get("runtime_status_counts", {}), dict)
+            "runtime_status_counts": dict(memory_summary.get("runtime_status_counts", {}))
+            if isinstance(memory_summary.get("runtime_status_counts", {}), dict)
             else {},
-            "vision_model_mode_counts": dict(memory_snapshot.get("vision_model_mode_counts", {}))
-            if isinstance(memory_snapshot.get("vision_model_mode_counts", {}), dict)
+            "vision_model_mode_counts": dict(memory_summary.get("vision_model_mode_counts", {}))
+            if isinstance(memory_summary.get("vision_model_mode_counts", {}), dict)
             else {},
+            "knowledge_store_entry_count": max(0, int(knowledge_store_summary.get("entry_count", 0) or 0)),
+            "knowledge_store_control_count": max(0, int(knowledge_store_summary.get("control_count", 0) or 0)),
+            "knowledge_store_command_count": max(0, int(knowledge_store_summary.get("command_count", 0) or 0)),
+            "knowledge_store_vector_count": max(0, int(knowledge_store_summary.get("vector_count", 0) or 0)),
+            "knowledge_semantic_ready_app_count": knowledge_semantic_ready_count,
+            "knowledge_low_coverage_app_count": knowledge_low_coverage_count,
+            "knowledge_partial_coverage_app_count": knowledge_partial_coverage_count,
+            "knowledge_strong_coverage_app_count": knowledge_strong_coverage_count,
         }
         needs_multimodal_runtime = bool(
             summary["vision_memory_app_count"]
@@ -8865,16 +8913,170 @@ class DesktopBackendService:
                     "summary": "Run stale multimodal app-memory revalidation on learned surfaces before wider campaigns.",
                 }
             )
+        if summary["entry_count"] > 0 and summary["knowledge_low_coverage_app_count"] > 0:
+            recommendations.append(
+                {
+                    "code": "expand_structured_app_memory",
+                    "severity": "medium",
+                    "summary": "Broaden safe surveys on low-coverage apps so controls, commands, hotkeys, and semantic memory are stored for reuse.",
+                }
+            )
+            next_actions.append(
+                {
+                    "kind": "app_memory",
+                    "action": "expand_structured_app_memory",
+                    "target": "desktop_app_memory",
+                    "auto_runnable": True,
+                    "summary": "Run deeper safe app-memory surveys on the apps with the thinnest structured knowledge coverage.",
+                }
+            )
         return {
             "status": "success",
             "task": task_hint,
             "summary": summary,
             "vision_runtime": runtime_profile if isinstance(runtime_profile, dict) else {},
-            "top_apps": list(memory_snapshot.get("top_apps", []))
-            if isinstance(memory_snapshot.get("top_apps", []), list)
+            "top_apps": list(memory_summary.get("top_apps", []))
+            if isinstance(memory_summary.get("top_apps", []), list)
             else [],
             "recommendations": recommendations,
             "next_actions": next_actions[:6],
+        }
+
+    def _desktop_machine_memory_knowledge_profile(
+        self,
+        *,
+        memory_entry: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        row = dict(memory_entry or {}) if isinstance(memory_entry, dict) else {}
+        knowledge_store = (
+            dict(row.get("knowledge_store", {}))
+            if isinstance(row.get("knowledge_store", {}), dict)
+            else {}
+        )
+        metrics = dict(row.get("metrics", {})) if isinstance(row.get("metrics", {}), dict) else {}
+        verification_summary = (
+            dict(row.get("verification_summary", {}))
+            if isinstance(row.get("verification_summary", {}), dict)
+            else {}
+        )
+        staleness = dict(row.get("staleness", {})) if isinstance(row.get("staleness", {}), dict) else {}
+        control_count = max(
+            0,
+            int(
+                knowledge_store.get(
+                    "control_count",
+                    row.get("discovered_control_count", 0),
+                )
+                or 0
+            ),
+        )
+        command_count = max(
+            0,
+            int(
+                knowledge_store.get(
+                    "command_count",
+                    len(row.get("learned_commands", []))
+                    if isinstance(row.get("learned_commands", []), list)
+                    else 0,
+                )
+                or 0
+            ),
+        )
+        vector_count = max(
+            0,
+            int(
+                knowledge_store.get(
+                    "vector_count",
+                    control_count + command_count,
+                )
+                or 0
+            ),
+        )
+        hotkey_count = max(
+            0,
+            int(
+                knowledge_store.get(
+                    "hotkey_count",
+                    (
+                        len(row.get("harvested_hotkeys", []))
+                        if isinstance(row.get("harvested_hotkeys", []), list)
+                        else 0
+                    )
+                    + (
+                        len(row.get("shortcut_actions", []))
+                        if isinstance(row.get("shortcut_actions", []), list)
+                        else 0
+                    ),
+                )
+                or 0
+            ),
+        )
+        survey_count = max(0, int(metrics.get("survey_count", 0) or 0))
+        surface_node_count = (
+            len(row.get("surface_nodes", []))
+            if isinstance(row.get("surface_nodes", []), list)
+            else 0
+        )
+        surface_transition_count = (
+            len(row.get("surface_transitions", []))
+            if isinstance(row.get("surface_transitions", []), list)
+            else 0
+        )
+        verified_count = max(0, int(verification_summary.get("verified_count", 0) or 0))
+        uncertain_count = max(0, int(verification_summary.get("uncertain_count", 0) or 0))
+        coverage_score = 0.0
+        if row:
+            coverage_score += 0.18
+        coverage_score += min(survey_count, 4) * 0.08
+        coverage_score += min(control_count, 12) * 0.035
+        coverage_score += min(command_count, 10) * 0.03
+        coverage_score += min(vector_count, 24) * 0.015
+        coverage_score += min(surface_node_count, 6) * 0.04
+        coverage_score += min(surface_transition_count, 6) * 0.03
+        coverage_score += min(hotkey_count, 8) * 0.02
+        coverage_score += min(verified_count, 8) * 0.02
+        coverage_score -= min(uncertain_count, 4) * 0.03
+        coverage_score = max(0.0, min(round(coverage_score, 4), 1.0))
+        if not row:
+            gap_level = "cold"
+        elif coverage_score < 0.4:
+            gap_level = "thin"
+        elif coverage_score < 0.75:
+            gap_level = "partial"
+        else:
+            gap_level = "strong"
+        gap_reasons: List[str] = []
+        if not row:
+            gap_reasons.append("new_app")
+        if control_count < 4:
+            gap_reasons.append("control_memory_thin")
+        if command_count < 2:
+            gap_reasons.append("command_memory_thin")
+        if vector_count <= 0:
+            gap_reasons.append("semantic_memory_cold")
+        if hotkey_count <= 0:
+            gap_reasons.append("hotkey_memory_thin")
+        if surface_node_count <= 0:
+            gap_reasons.append("surface_graph_thin")
+        if bool(staleness.get("stale", False)):
+            gap_reasons.append("stale_memory")
+        semantic_memory_available = vector_count > 0
+        return {
+            "entry_count": 1 if row else 0,
+            "control_count": control_count,
+            "command_count": command_count,
+            "vector_count": vector_count,
+            "hotkey_count": hotkey_count,
+            "survey_count": survey_count,
+            "surface_node_count": surface_node_count,
+            "surface_transition_count": surface_transition_count,
+            "verified_count": verified_count,
+            "uncertain_count": uncertain_count,
+            "semantic_memory_available": semantic_memory_available,
+            "coverage_score": coverage_score,
+            "gap_level": gap_level,
+            "gap_reasons": self._machine_dedupe(gap_reasons, limit=8),
+            "stale": bool(staleness.get("stale", False)),
         }
 
     @staticmethod
@@ -9804,6 +10006,23 @@ class DesktopBackendService:
             metrics = dict(memory_entry.get("metrics", {})) if isinstance(memory_entry.get("metrics", {}), dict) else {}
             survey_count = int(metrics.get("survey_count", 0) or 0)
             discovered_control_count = int(memory_entry.get("discovered_control_count", 0) or 0)
+            knowledge_profile = self._desktop_machine_memory_knowledge_profile(
+                memory_entry=memory_entry if memory_entry else None
+            )
+            knowledge_control_count = int(knowledge_profile.get("control_count", discovered_control_count) or 0)
+            knowledge_command_count = int(knowledge_profile.get("command_count", 0) or 0)
+            knowledge_vector_count = int(knowledge_profile.get("vector_count", 0) or 0)
+            hotkey_count = int(knowledge_profile.get("hotkey_count", 0) or 0)
+            semantic_memory_available = bool(knowledge_profile.get("semantic_memory_available", False))
+            knowledge_gap_level = str(knowledge_profile.get("gap_level", "") or "cold").strip().lower() or "cold"
+            knowledge_gap_reasons = [
+                str(code).strip().lower()
+                for code in knowledge_profile.get("gap_reasons", [])
+                if isinstance(knowledge_profile.get("gap_reasons", []), list) and str(code).strip()
+            ][:8]
+            knowledge_coverage_score = float(knowledge_profile.get("coverage_score", 0.0) or 0.0)
+            surface_node_count = int(knowledge_profile.get("surface_node_count", 0) or 0)
+            surface_transition_count = int(knowledge_profile.get("surface_transition_count", 0) or 0)
             plan_defaults = self._desktop_machine_app_learning_defaults(
                 category=category,
                 task_focus_tasks=task_focus_tasks,
@@ -9811,13 +10030,18 @@ class DesktopBackendService:
             status = "unknown"
             if memory_entry:
                 status = "known"
-                if survey_count <= 1 or discovered_control_count < 4:
+                if knowledge_gap_level in {"cold", "thin"} or survey_count <= 1 or discovered_control_count < 4:
                     status = "attention"
             reason_codes = ["high_usage"]
             if not memory_entry:
                 reason_codes.append("new_app")
             elif status == "attention":
                 reason_codes.append("low_coverage")
+            reason_codes.extend(knowledge_gap_reasons)
+            if not semantic_memory_available:
+                reason_codes.append("semantic_memory_cold")
+            if hotkey_count <= 0:
+                reason_codes.append("hotkey_memory_thin")
             targets.append(
                 {
                     "app_name": display_name,
@@ -9826,14 +10050,26 @@ class DesktopBackendService:
                     "status": status,
                     "survey_count": survey_count,
                     "discovered_control_count": discovered_control_count,
+                    "knowledge_store_entry_count": int(knowledge_profile.get("entry_count", 0) or 0),
+                    "knowledge_store_control_count": knowledge_control_count,
+                    "knowledge_store_command_count": knowledge_command_count,
+                    "knowledge_store_vector_count": knowledge_vector_count,
+                    "knowledge_hotkey_count": hotkey_count,
+                    "semantic_memory_available": semantic_memory_available,
+                    "knowledge_coverage_score": knowledge_coverage_score,
+                    "knowledge_gap_level": knowledge_gap_level,
+                    "knowledge_gap_reasons": self._machine_dedupe(knowledge_gap_reasons, limit=8),
+                    "surface_node_count": surface_node_count,
+                    "surface_transition_count": surface_transition_count,
                     "path": str(item.get("path", "") or "").strip(),
-                    "reason_codes": reason_codes,
+                    "reason_codes": self._machine_dedupe(reason_codes, limit=10),
                     **plan_defaults,
                 }
             )
         targets.sort(
             key=lambda row: (
                 0 if str(row.get("status", "") or "") != "known" else 1,
+                float(row.get("knowledge_coverage_score", 1.0) or 1.0),
                 -float(row.get("usage_score", 0.0) or 0.0),
                 str(row.get("app_name", "") or "").lower(),
             )
@@ -9854,6 +10090,19 @@ class DesktopBackendService:
         unknown_count = len([row for row in selected if str(row.get("status", "") or "") == "unknown"])
         attention_count = len([row for row in selected if str(row.get("status", "") or "") == "attention"])
         known_count = len([row for row in selected if str(row.get("status", "") or "") == "known"])
+        knowledge_gap_counts = {
+            level: len([row for row in selected if str(row.get("knowledge_gap_level", "") or "") == level])
+            for level in ("cold", "thin", "partial", "strong")
+        }
+        low_knowledge_count = int(knowledge_gap_counts.get("cold", 0) or 0) + int(
+            knowledge_gap_counts.get("thin", 0) or 0
+        )
+        semantic_memory_ready_count = len(
+            [row for row in selected if bool(row.get("semantic_memory_available", False))]
+        )
+        hotkey_ready_count = len(
+            [row for row in selected if int(row.get("knowledge_hotkey_count", 0) or 0) > 0]
+        )
         return {
             "status": "success",
             "count": len(selected),
@@ -9862,6 +10111,13 @@ class DesktopBackendService:
                 "unknown_count": unknown_count,
                 "attention_count": attention_count,
                 "known_count": known_count,
+                "knowledge_gap_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(knowledge_gap_counts.items(), key=lambda entry: entry[0])
+                },
+                "low_knowledge_count": low_knowledge_count,
+                "semantic_memory_ready_count": semantic_memory_ready_count,
+                "hotkey_ready_count": hotkey_ready_count,
                 "inventory_total": int(app_inventory.get("total", 0) or 0),
                 "memory_total": int(app_memory.get("total", 0) or 0),
             },
@@ -9889,6 +10145,12 @@ class DesktopBackendService:
                 "preferred_wave_actions": self._machine_dedupe(combined_actions, limit=6),
                 "preferred_traversal_paths": self._machine_dedupe(combined_paths, limit=6),
                 "recommended_queries": self._machine_dedupe(combined_queries, limit=8),
+                "knowledge_gap_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(knowledge_gap_counts.items(), key=lambda entry: entry[0])
+                },
+                "semantic_memory_ready_count": semantic_memory_ready_count,
+                "hotkey_ready_count": hotkey_ready_count,
             },
         }
 
@@ -10495,6 +10757,21 @@ class DesktopBackendService:
                 if isinstance(selected_target.get("blocker_codes", []), list) and str(item).strip()
             ],
             "blocker_count": int(selected_target.get("blocker_count", 0) or 0),
+            "knowledge_gap_level": str(selected_target.get("knowledge_gap_level", "") or "").strip().lower(),
+            "knowledge_coverage_score": float(selected_target.get("knowledge_coverage_score", 0.0) or 0.0),
+            "knowledge_store_entry_count": int(selected_target.get("knowledge_store_entry_count", 0) or 0),
+            "knowledge_store_control_count": int(selected_target.get("knowledge_store_control_count", 0) or 0),
+            "knowledge_store_command_count": int(selected_target.get("knowledge_store_command_count", 0) or 0),
+            "knowledge_store_vector_count": int(selected_target.get("knowledge_store_vector_count", 0) or 0),
+            "knowledge_hotkey_count": int(selected_target.get("knowledge_hotkey_count", 0) or 0),
+            "semantic_memory_available": bool(selected_target.get("semantic_memory_available", False)),
+            "knowledge_gap_reasons": [
+                str(item).strip().lower()
+                for item in selected_target.get("knowledge_gap_reasons", [])
+                if isinstance(selected_target.get("knowledge_gap_reasons", []), list) and str(item).strip()
+            ][:10],
+            "surface_node_count": int(selected_target.get("surface_node_count", 0) or 0),
+            "surface_transition_count": int(selected_target.get("surface_transition_count", 0) or 0),
             "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
             "known_surface_count": int(memory_entry.get("known_surface_count", 0) or metrics.get("known_surface_count", 0) or 0),
             "wave_attempt_count": int(metrics.get("wave_attempt_count", 0) or 0),
@@ -14968,6 +15245,7 @@ class DesktopBackendService:
                 0 if bool(row.get("auto_learn_allowed", False)) else 1,
                 profile_rank.get(str(row.get("learning_profile", "") or "").strip().lower(), 9),
                 0 if str(row.get("status", "") or "").strip().lower() != "known" else 1,
+                float(row.get("knowledge_coverage_score", 1.0) or 1.0),
                 -float(row.get("prepare_priority_score", 0.0) or 0.0),
                 str(row.get("app_name", "") or "").strip().lower(),
             ),
@@ -14989,6 +15267,10 @@ class DesktopBackendService:
         ai_route_stack_name_counts: Dict[str, int] = {}
         ai_route_confident_count = 0
         ai_route_fallback_count = 0
+        knowledge_gap_counts: Dict[str, int] = {}
+        knowledge_low_coverage_count = 0
+        knowledge_semantic_ready_count = 0
+        knowledge_hotkey_ready_count = 0
         strategy_notes: List[str] = []
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
@@ -15043,6 +15325,14 @@ class DesktopBackendService:
                 ai_route_confident_count += 1
             if bool(item.get("ai_route_fallback_applied", False)):
                 ai_route_fallback_count += 1
+            knowledge_gap_level = str(item.get("knowledge_gap_level", "") or "cold").strip().lower() or "cold"
+            knowledge_gap_counts[knowledge_gap_level] = int(knowledge_gap_counts.get(knowledge_gap_level, 0) or 0) + 1
+            if knowledge_gap_level in {"cold", "thin"}:
+                knowledge_low_coverage_count += 1
+            if bool(item.get("semantic_memory_available", False)):
+                knowledge_semantic_ready_count += 1
+            if int(item.get("knowledge_hotkey_count", 0) or 0) > 0:
+                knowledge_hotkey_ready_count += 1
             note = str(item.get("strategy_notes", "") or "").strip()
             if note:
                 strategy_notes.append(note)
@@ -15131,6 +15421,13 @@ class DesktopBackendService:
                 "auto_learn_count": len(auto_targets),
                 "blocked_count": len(blocked_app_names),
                 "degraded_count": len(degraded_app_names),
+                "knowledge_gap_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(knowledge_gap_counts.items(), key=lambda entry: entry[0])
+                },
+                "knowledge_low_coverage_count": knowledge_low_coverage_count,
+                "knowledge_semantic_ready_count": knowledge_semantic_ready_count,
+                "knowledge_hotkey_ready_count": knowledge_hotkey_ready_count,
                 "execution_mode_counts": {
                     str(key): int(value)
                     for key, value in sorted(execution_mode_counts.items(), key=lambda entry: entry[0])
@@ -15286,6 +15583,13 @@ class DesktopBackendService:
                 "blocked_count": len(blocked_app_names),
                 "degraded_count": len(degraded_app_names),
                 "adaptive_learning_notes": self._machine_dedupe(strategy_notes, limit=4),
+                "knowledge_gap_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(knowledge_gap_counts.items(), key=lambda entry: entry[0])
+                },
+                "knowledge_low_coverage_count": knowledge_low_coverage_count,
+                "knowledge_semantic_ready_count": knowledge_semantic_ready_count,
+                "knowledge_hotkey_ready_count": knowledge_hotkey_ready_count,
                 "adaptive_app_profiles": [
                     {
                         "app_name": str(item.get("app_name", "") or "").strip(),
@@ -15297,6 +15601,21 @@ class DesktopBackendService:
                         "effective_max_surface_waves": int(item.get("effective_max_surface_waves", 0) or 0),
                         "effective_max_probe_controls": int(item.get("effective_max_probe_controls", 0) or 0),
                         "priority_band": str(item.get("prepare_priority_band", "") or "").strip().lower(),
+                        "knowledge_gap_level": str(item.get("knowledge_gap_level", "") or "").strip().lower(),
+                        "knowledge_coverage_score": float(item.get("knowledge_coverage_score", 0.0) or 0.0),
+                        "knowledge_store_entry_count": int(item.get("knowledge_store_entry_count", 0) or 0),
+                        "knowledge_store_control_count": int(item.get("knowledge_store_control_count", 0) or 0),
+                        "knowledge_store_command_count": int(item.get("knowledge_store_command_count", 0) or 0),
+                        "knowledge_store_vector_count": int(item.get("knowledge_store_vector_count", 0) or 0),
+                        "knowledge_hotkey_count": int(item.get("knowledge_hotkey_count", 0) or 0),
+                        "semantic_memory_available": bool(item.get("semantic_memory_available", False)),
+                        "surface_node_count": int(item.get("surface_node_count", 0) or 0),
+                        "surface_transition_count": int(item.get("surface_transition_count", 0) or 0),
+                        "knowledge_gap_reasons": [
+                            str(code).strip().lower()
+                            for code in item.get("knowledge_gap_reasons", [])
+                            if isinstance(item.get("knowledge_gap_reasons", []), list) and str(code).strip()
+                        ][:10],
                         "remediation_progress_status": str(item.get("remediation_progress_status", "") or "").strip().lower(),
                         "remediation_route_state": str(item.get("remediation_route_state", "") or "").strip().lower(),
                         "remediation_priority_band": str(item.get("remediation_priority_band", "") or "").strip().lower(),
@@ -15941,6 +16260,15 @@ class DesktopBackendService:
                     "app_learning_auto_target_count": int(learning_plan_summary.get("auto_learn_count", 0) or 0),
                     "app_learning_blocked_count": int(learning_plan_summary.get("blocked_count", 0) or 0),
                     "app_learning_degraded_count": int(learning_plan_summary.get("degraded_count", 0) or 0),
+                    "app_learning_knowledge_low_coverage_count": int(
+                        learning_plan_summary.get("knowledge_low_coverage_count", 0) or 0
+                    ),
+                    "app_learning_knowledge_semantic_ready_count": int(
+                        learning_plan_summary.get("knowledge_semantic_ready_count", 0) or 0
+                    ),
+                    "app_learning_knowledge_hotkey_ready_count": int(
+                        learning_plan_summary.get("knowledge_hotkey_ready_count", 0) or 0
+                    ),
                     "app_learning_strategy_profile": str(learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
                     "app_learning_remediation_retry_count": int(learning_plan_summary.get("remediation_retry_count", 0) or 0),
                     "app_learning_remediation_provider_blocked_count": int(
@@ -15956,6 +16284,24 @@ class DesktopBackendService:
                     else {},
                     "multimodal_memory_app_count": int(multimodal_summary.get("vision_memory_app_count", 0) or 0),
                     "multimodal_ocr_memory_app_count": int(multimodal_summary.get("ocr_memory_app_count", 0) or 0),
+                    "multimodal_knowledge_entry_count": int(
+                        multimodal_summary.get("knowledge_store_entry_count", 0) or 0
+                    ),
+                    "multimodal_knowledge_control_count": int(
+                        multimodal_summary.get("knowledge_store_control_count", 0) or 0
+                    ),
+                    "multimodal_knowledge_command_count": int(
+                        multimodal_summary.get("knowledge_store_command_count", 0) or 0
+                    ),
+                    "multimodal_knowledge_vector_count": int(
+                        multimodal_summary.get("knowledge_store_vector_count", 0) or 0
+                    ),
+                    "multimodal_knowledge_low_coverage_count": int(
+                        multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0
+                    ),
+                    "multimodal_knowledge_semantic_ready_count": int(
+                        multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0
+                    ),
                     "multimodal_local_runtime_ready_app_count": int(
                         multimodal_summary.get("local_runtime_ready_app_count", 0) or 0
                     ),
@@ -17436,6 +17782,15 @@ class DesktopBackendService:
                 "app_learning_auto_target_count": int(runtime_app_learning_plan_summary.get("auto_learn_count", 0) or 0),
                 "app_learning_blocked_count": int(runtime_app_learning_plan_summary.get("blocked_count", 0) or 0),
                 "app_learning_degraded_count": int(runtime_app_learning_plan_summary.get("degraded_count", 0) or 0),
+                "app_learning_knowledge_low_coverage_count": int(
+                    runtime_app_learning_plan_summary.get("knowledge_low_coverage_count", 0) or 0
+                ),
+                "app_learning_knowledge_semantic_ready_count": int(
+                    runtime_app_learning_plan_summary.get("knowledge_semantic_ready_count", 0) or 0
+                ),
+                "app_learning_knowledge_hotkey_ready_count": int(
+                    runtime_app_learning_plan_summary.get("knowledge_hotkey_ready_count", 0) or 0
+                ),
                 "app_learning_setup_aligned_count": int(
                     runtime_app_learning_plan_summary.get("setup_aligned_app_count", 0) or 0
                 ),
@@ -17461,6 +17816,24 @@ class DesktopBackendService:
                 else {},
                 "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
                 "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
+                "multimodal_knowledge_entry_count": int(
+                    final_multimodal_summary.get("knowledge_store_entry_count", 0) or 0
+                ),
+                "multimodal_knowledge_control_count": int(
+                    final_multimodal_summary.get("knowledge_store_control_count", 0) or 0
+                ),
+                "multimodal_knowledge_command_count": int(
+                    final_multimodal_summary.get("knowledge_store_command_count", 0) or 0
+                ),
+                "multimodal_knowledge_vector_count": int(
+                    final_multimodal_summary.get("knowledge_store_vector_count", 0) or 0
+                ),
+                "multimodal_knowledge_low_coverage_count": int(
+                    final_multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0
+                ),
+                "multimodal_knowledge_semantic_ready_count": int(
+                    final_multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0
+                ),
                 "multimodal_local_runtime_ready_app_count": int(
                     final_multimodal_summary.get("local_runtime_ready_app_count", 0) or 0
                 ),
@@ -17786,6 +18159,30 @@ class DesktopBackendService:
                 category=category,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_memory_semantic_search(
+        self,
+        *,
+        query: str,
+        app_name: str = "",
+        profile_id: str = "",
+        limit: int = 8,
+        entity_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.app_memory_semantic_search(
+                query=query,
+                app_name=app_name,
+                profile_id=profile_id,
+                limit=limit,
+                entity_types=entity_types,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory semantic payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -53253,6 +53650,28 @@ class JarvisAPIHandler(BaseHTTPRequestHandler):
                     app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
                     profile_id=str(query.get("profile_id", [""])[0] or "").strip(),
                     category=str(query.get("category", [""])[0] or "").strip(),
+                )
+                self._send_json(200 if payload.get("status") == "success" else 400, payload)
+                return
+            if path == "/runtime/desktop-app-memory/semantic-search":
+                limit = self._parse_int(str(query.get("limit", ["8"])[0]), 8, minimum=1, maximum=64)
+                entity_types = [
+                    str(item).strip()
+                    for item in query.get("entity_type", [])
+                    if str(item).strip()
+                ]
+                if not entity_types and str(query.get("entity_types", [""])[0] or "").strip():
+                    entity_types = [
+                        segment.strip()
+                        for segment in str(query.get("entity_types", [""])[0] or "").split(",")
+                        if segment.strip()
+                    ]
+                payload = self.server.service.desktop_app_memory_semantic_search(
+                    query=str(query.get("query", [""])[0] or "").strip(),
+                    app_name=str(query.get("app_name", [""])[0] or query.get("app", [""])[0] or "").strip(),
+                    profile_id=str(query.get("profile_id", [""])[0] or "").strip(),
+                    limit=limit,
+                    entity_types=entity_types or None,
                 )
                 self._send_json(200 if payload.get("status") == "success" else 400, payload)
                 return

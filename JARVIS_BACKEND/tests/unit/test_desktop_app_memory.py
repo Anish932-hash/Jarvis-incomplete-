@@ -1558,6 +1558,11 @@ def test_desktop_app_memory_populates_sqlite_knowledge_store_and_semantic_lookup
     assert int(snapshot["knowledge_store"]["entry_count"] or 0) >= 1
     assert int(snapshot["knowledge_store"]["control_count"] or 0) >= 2
     assert int(snapshot["knowledge_store"]["vector_count"] or 0) >= 2
+    assert snapshot["items"]
+    item_knowledge = dict(snapshot["items"][0].get("knowledge_store", {}))
+    assert int(item_knowledge.get("control_count", 0) or 0) >= 2
+    assert int(item_knowledge.get("command_count", 0) or 0) >= 2
+    assert bool(item_knowledge.get("semantic_memory_available", False)) is True
 
     matches = memory.semantic_lookup(query="save file", app_name="notepad", limit=4)
     assert matches["status"] == "success"

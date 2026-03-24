@@ -277,6 +277,22 @@ class DesktopVMManager:
                 ),
                 "route_resolution_status_counts": self._count_values(selected, "route_resolution_status"),
                 "remediation_kind_counts": self._count_values(selected, "remediation_kind"),
+                "structured_memory_low_coverage_guest_count": len(
+                    [
+                        row
+                        for row in selected
+                        if isinstance(row.get("provider_model_readiness", {}), dict)
+                        and int(row.get("provider_model_readiness", {}).get("structured_memory_low_coverage_count", 0) or 0) > 0
+                    ]
+                ),
+                "structured_memory_semantic_ready_guest_count": len(
+                    [
+                        row
+                        for row in selected
+                        if isinstance(row.get("provider_model_readiness", {}), dict)
+                        and int(row.get("provider_model_readiness", {}).get("structured_memory_semantic_ready_count", 0) or 0) > 0
+                    ]
+                ),
                 "setup_followup_guest_count": len(
                     [
                         row
@@ -889,6 +905,12 @@ class DesktopVMManager:
         multimodal_memory_pressure = int(multimodal_summary.get("vision_memory_app_count", 0) or 0) + int(
             multimodal_summary.get("weird_app_memory_app_count", 0) or 0
         )
+        structured_memory_entry_count = int(multimodal_summary.get("knowledge_store_entry_count", 0) or 0)
+        structured_memory_control_count = int(multimodal_summary.get("knowledge_store_control_count", 0) or 0)
+        structured_memory_command_count = int(multimodal_summary.get("knowledge_store_command_count", 0) or 0)
+        structured_memory_vector_count = int(multimodal_summary.get("knowledge_store_vector_count", 0) or 0)
+        structured_memory_low_coverage_count = int(multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0)
+        structured_memory_semantic_ready_count = int(multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0)
         expected_route_profile = cls._expected_route_profile(row, task=task)
         expected_model_preference = cls._expected_model_preference(row, task=task)
         runtime_band_preference = cls._runtime_band_preference(row)
@@ -982,6 +1004,7 @@ class DesktopVMManager:
         ai_route_confidence -= 0.05 if ai_route_fallback_applied else 0.0
         ai_route_confidence -= 0.08 if ai_route_status == "setup_constrained" else 0.0
         ai_route_confidence -= 0.18 if ai_route_status == "blocked" else 0.0
+        ai_route_confidence -= 0.04 if structured_memory_low_coverage_count > 0 and family != "terminal" else 0.0
         ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
 
         if readiness_status == "blocked":
@@ -1030,6 +1053,12 @@ class DesktopVMManager:
             "selected_ai_stack_names": selected_ai_stack_names,
             "ai_route_reason_codes": _dedupe_strings(ai_route_reason_codes, limit=10),
             "multimodal_memory_pressure": multimodal_memory_pressure,
+            "structured_memory_entry_count": structured_memory_entry_count,
+            "structured_memory_control_count": structured_memory_control_count,
+            "structured_memory_command_count": structured_memory_command_count,
+            "structured_memory_vector_count": structured_memory_vector_count,
+            "structured_memory_low_coverage_count": structured_memory_low_coverage_count,
+            "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
             "remote_endpoint_ready": remote_endpoint_ready,
             "execution_mode": execution_mode,
             "runtime_band_preference": runtime_band_preference,

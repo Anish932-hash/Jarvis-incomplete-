@@ -63,6 +63,12 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
                 "vision_loaded_model_count": 1,
                 "vision_memory_app_count": 2,
                 "weird_app_memory_app_count": 1,
+                "knowledge_store_entry_count": 4,
+                "knowledge_store_control_count": 18,
+                "knowledge_store_command_count": 9,
+                "knowledge_store_vector_count": 27,
+                "knowledge_low_coverage_app_count": 2,
+                "knowledge_semantic_ready_app_count": 3,
             }
         }
     }
@@ -79,9 +85,12 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["guest_learning_profile"] == "linux_desktop_explore"
     assert plan["items"][0]["expected_route_profile"] == "linux_vm_desktop_control"
     assert plan["summary"]["execution_mode_counts"]["hybrid_ready"] == 1
+    assert plan["summary"]["structured_memory_low_coverage_guest_count"] == 1
     assert plan["items"][0]["provider_model_readiness"]["vision_runtime_available"] is True
     assert plan["items"][0]["provider_model_readiness"]["vision_loaded_model_count"] == 1
     assert plan["items"][0]["provider_model_readiness"]["multimodal_memory_pressure"] == 3
+    assert plan["items"][0]["provider_model_readiness"]["structured_memory_control_count"] == 18
+    assert plan["items"][0]["provider_model_readiness"]["structured_memory_vector_count"] == 27
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_blocked_stack_count"] == 1
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
@@ -107,5 +116,6 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["expected_route_profile"] == "linux_vm_desktop_control"
     assert prepared["summary"]["provider_model_readiness"]["vision_runtime_available"] is True
     assert prepared["summary"]["provider_model_readiness"]["ai_runtime_status"] == "partial"
+    assert prepared["summary"]["provider_model_readiness"]["structured_memory_semantic_ready_count"] == 3
     assert prepared["summary"]["ai_route_status"] == "fallback"
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"

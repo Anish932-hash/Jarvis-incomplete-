@@ -1350,6 +1350,7 @@ class DesktopAppMemory:
         item["revalidation_targets"] = self._entry_revalidation_targets(row, limit=6)
         item["revalidation_summary"] = self._revalidation_summary(row)
         item["capability_profile"] = self._capability_profile_snapshot(row)
+        item["knowledge_store"] = self._knowledge_store_entry_summary(row)
         item["learning_health"] = self._learning_health_snapshot(row)
         history_rows = [dict(entry) for entry in row.get("survey_history", []) if isinstance(entry, dict)]
         item["survey_history"] = history_rows[-self.max_history_per_entry :]
@@ -1367,6 +1368,56 @@ class DesktopAppMemory:
             if str(action_name).strip() and isinstance(details, dict)
         ][:12]
         return item
+
+    @classmethod
+    def _knowledge_store_entry_summary(cls, row: Dict[str, Any]) -> Dict[str, Any]:
+        controls = row.get("controls", {}) if isinstance(row.get("controls", {}), dict) else {}
+        commands = row.get("learned_commands", {}) if isinstance(row.get("learned_commands", {}), dict) else {}
+        shortcuts = row.get("shortcut_actions", {}) if isinstance(row.get("shortcut_actions", {}), dict) else {}
+        harvested_hotkeys = row.get("harvested_hotkey_counts", {}) if isinstance(row.get("harvested_hotkey_counts", {}), dict) else {}
+        survey_count = cls._coerce_int(
+            dict(row.get("metrics", {})).get("survey_count", 0)
+            if isinstance(row.get("metrics", {}), dict)
+            else 0,
+            minimum=0,
+            maximum=10_000_000,
+            default=0,
+        )
+        control_count = len(controls)
+        command_count = len(commands) + len(shortcuts)
+        vector_count = control_count + command_count
+        hotkey_count = len(harvested_hotkeys) + len(shortcuts)
+        semantic_memory_available = vector_count > 0
+        if not row:
+            entry_count = 0
+        else:
+            entry_count = 1
+        coverage_score = 0.0
+        coverage_score += min(survey_count, 4) * 0.1
+        coverage_score += min(control_count, 12) * 0.035
+        coverage_score += min(command_count, 10) * 0.03
+        coverage_score += min(vector_count, 24) * 0.015
+        coverage_score += min(hotkey_count, 8) * 0.02
+        coverage_score = max(0.0, min(round(coverage_score, 4), 1.0))
+        if entry_count <= 0:
+            coverage_level = "cold"
+        elif coverage_score < 0.35:
+            coverage_level = "thin"
+        elif coverage_score < 0.7:
+            coverage_level = "partial"
+        else:
+            coverage_level = "strong"
+        return {
+            "status": "success",
+            "entry_count": entry_count,
+            "control_count": control_count,
+            "command_count": command_count,
+            "vector_count": vector_count,
+            "hotkey_count": hotkey_count,
+            "semantic_memory_available": semantic_memory_available,
+            "coverage_score": coverage_score,
+            "coverage_level": coverage_level,
+        }
 
     def _snapshot_summary(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         category_counts: Dict[str, int] = {}

@@ -8299,6 +8299,23 @@ class DesktopActionRouter:
             category=category,
         )
 
+    def app_memory_semantic_search(
+        self,
+        *,
+        query: str,
+        app_name: str = "",
+        profile_id: str = "",
+        limit: int = 8,
+        entity_types: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return self._app_memory.semantic_lookup(
+            query=query,
+            app_name=app_name,
+            profile_id=profile_id,
+            limit=limit,
+            entity_types=entity_types or [],
+        )
+
     def survey_app_memory(
         self,
         *,

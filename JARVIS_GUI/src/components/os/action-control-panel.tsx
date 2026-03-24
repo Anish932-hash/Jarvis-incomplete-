@@ -23388,6 +23388,13 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 {' • '}ocr commands:{Number(desktopLatestAppMemoryHarvestSummary.ocr_command_phrase_count ?? 0)}
                                                 {' • '}hotkeys:{Number(desktopLatestAppMemoryHarvestSummary.harvested_hotkey_count ?? 0)}
                                               </p>
+                                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                                knowledge:{String(asObjectRecord(desktopLatestAppMemory.knowledge_store).coverage_level ?? 'n/a')}
+                                                {' • '}score:{Number(asObjectRecord(desktopLatestAppMemory.knowledge_store).coverage_score ?? 0).toFixed(2)}
+                                                {' • '}db controls:{Number(asObjectRecord(desktopLatestAppMemory.knowledge_store).control_count ?? 0)}
+                                                {' • '}db commands:{Number(asObjectRecord(desktopLatestAppMemory.knowledge_store).command_count ?? 0)}
+                                                {' • '}vectors:{Number(asObjectRecord(desktopLatestAppMemory.knowledge_store).vector_count ?? 0)}
+                                              </p>
                                               {Array.isArray(desktopLatestAppMemory.surface_fingerprints) &&
                                               desktopLatestAppMemory.surface_fingerprints.length > 0 ? (
                                                 <p className="mt-1 text-[10px] text-muted-foreground">

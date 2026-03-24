@@ -16339,6 +16339,30 @@ class FakeDesktopService:
         if category:
             rows = [row for row in rows if str(row.get("category", "")).lower() == category.lower()]
         selected = rows[: max(1, int(limit))]
+        for row in selected:
+            row.setdefault(
+                "knowledge_store",
+                {
+                    "status": "success",
+                    "entry_count": 1,
+                    "control_count": int(row.get("discovered_control_count", 0) or 0),
+                    "command_count": len(row.get("learned_commands", []))
+                    if isinstance(row.get("learned_commands", []), list)
+                    else 0,
+                    "vector_count": int(row.get("discovered_control_count", 0) or 0)
+                    + (
+                        len(row.get("learned_commands", []))
+                        if isinstance(row.get("learned_commands", []), list)
+                        else 0
+                    ),
+                    "hotkey_count": len(row.get("shortcut_actions", []))
+                    if isinstance(row.get("shortcut_actions", []), list)
+                    else 0,
+                    "semantic_memory_available": True,
+                    "coverage_score": 0.72,
+                    "coverage_level": "strong",
+                },
+            )
         return {
             "status": "success",
             "count": len(selected),
@@ -16351,6 +16375,64 @@ class FakeDesktopService:
                 "discovered_control_total": sum(int(row.get("discovered_control_count", 0) or 0) for row in rows),
                 "wave_survey_total": sum(int(dict(row.get("metrics", {})).get("wave_survey_count", 0) or 0) for row in rows),
             },
+            "knowledge_store": {
+                "status": "success",
+                "entry_count": len(rows),
+                "control_count": sum(int(row.get("discovered_control_count", 0) or 0) for row in rows),
+                "command_count": sum(
+                    len(row.get("learned_commands", []))
+                    if isinstance(row.get("learned_commands", []), list)
+                    else 0
+                    for row in rows
+                ),
+                "vector_count": sum(
+                    int(row.get("discovered_control_count", 0) or 0)
+                    + (
+                        len(row.get("learned_commands", []))
+                        if isinstance(row.get("learned_commands", []), list)
+                        else 0
+                    )
+                    for row in rows
+                ),
+            },
+        }
+
+    def desktop_app_memory_semantic_search(
+        self,
+        *,
+        query: str,
+        app_name: str = "",
+        profile_id: str = "",
+        limit: int = 8,
+        entity_types: list[str] | None = None,
+    ) -> Dict[str, Any]:
+        clean_query = str(query or "").strip().lower()
+        rows: list[dict[str, object]] = []
+        if clean_query:
+            rows.append(
+                {
+                    "entity_key": "command:notepad:save",
+                    "entity_type": "command",
+                    "app_name": app_name or "notepad",
+                    "profile_id": profile_id or (app_name or "notepad"),
+                    "label": "Save",
+                    "control_type": "command",
+                    "semantic_role": "save",
+                    "container_role": "command",
+                    "source": "learned_command",
+                    "hotkeys": ["Ctrl+S"],
+                    "text_payload": "notepad save file ctrl+s",
+                    "similarity": 0.96,
+                    "token_overlap": 2,
+                }
+            )
+        if entity_types:
+            allowed = {str(item).strip().lower() for item in entity_types if str(item).strip()}
+            rows = [row for row in rows if str(row.get("entity_type", "")).lower() in allowed]
+        return {
+            "status": "success",
+            "count": min(len(rows), max(1, int(limit))),
+            "items": rows[: max(1, int(limit))],
         }
 
     def survey_desktop_app_memory(
@@ -25701,6 +25783,18 @@ def test_desktop_app_memory_routes_status_survey_and_reset(api_server: tuple[str
     assert memory["status"] == "success"
     assert memory["count"] == 1
     assert memory["items"][0]["profile_id"] == "notepad"
+    assert memory["knowledge_store"]["status"] == "success"
+    assert memory["items"][0]["knowledge_store"]["semantic_memory_available"] is True
+
+    status, semantic = request_json(
+        "GET",
+        f"{base_url}/runtime/desktop-app-memory/semantic-search?app_name=notepad&query=save%20file&entity_type=command&limit=2",
+    )
+    assert status == 200
+    assert semantic["status"] == "success"
+    assert semantic["count"] >= 1
+    assert semantic["items"][0]["label"] == "Save"
+    assert semantic["items"][0]["entity_type"] == "command"
 
     status, survey = request_json(
         "POST",
