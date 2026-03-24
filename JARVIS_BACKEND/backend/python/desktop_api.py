@@ -8643,6 +8643,11 @@ class DesktopBackendService:
                 app_memory=app_memory,
                 task=clean_task,
             )
+            ai_runtime_profile = self._desktop_machine_ai_runtime_profile(
+                task=clean_task,
+                multimodal_memory=multimodal_memory if isinstance(multimodal_memory, dict) else {},
+                model_limit=bounded_model_limit,
+            )
             app_learning_plan = self._desktop_machine_app_learning_plan_payload(
                 app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
                 app_memory=app_memory if isinstance(app_memory, dict) else {},
@@ -8676,6 +8681,40 @@ class DesktopBackendService:
                 payload["app_learning_plan"] = app_learning_plan
                 payload["app_control_development"] = app_learning_plan
                 payload["multimodal_memory"] = multimodal_memory if isinstance(multimodal_memory, dict) else {}
+                payload["ai_runtime_profile"] = ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {}
+                payload["ai_route_preview"] = self._desktop_machine_ai_route_plan(
+                    profile=payload,
+                    task=clean_task,
+                    runtime_strategy={
+                        "runtime_band_preference": (
+                            "hybrid"
+                            if bool(
+                                isinstance(ai_runtime_profile, dict)
+                                and isinstance(ai_runtime_profile.get("summary", {}), dict)
+                                and ai_runtime_profile.get("summary", {}).get("reasoning_runtime_ready", False)
+                            )
+                            else "accessibility"
+                        ),
+                        "preferred_probe_mode": (
+                            "hybrid_verify"
+                            if bool(
+                                isinstance(multimodal_memory, dict)
+                                and isinstance(multimodal_memory.get("summary", {}), dict)
+                                and multimodal_memory.get("summary", {}).get("vision_runtime_available", False)
+                            )
+                            else "accessibility_first"
+                        ),
+                        "prefer_native_stabilization": bool(
+                            isinstance(multimodal_memory, dict)
+                            and isinstance(multimodal_memory.get("summary", {}), dict)
+                            and (
+                                int(multimodal_memory.get("summary", {}).get("native_stabilization_app_count", 0) or 0) > 0
+                                or int(multimodal_memory.get("summary", {}).get("weird_app_memory_app_count", 0) or 0) > 0
+                            )
+                        ),
+                    },
+                    target_row={"required_tasks": ["reasoning", "vision", "control"]},
+                ).get("ai_route_plan", {})
                 if isinstance(payload.get("recommendations", []), list):
                     existing_codes = {
                         str(item.get("code", "") or "").strip().lower()
@@ -8697,6 +8736,14 @@ class DesktopBackendService:
                                 dict(item)
                                 for item in vm_inventory.get("recommendations", [])
                                 if isinstance(vm_inventory.get("recommendations", []), list) and isinstance(item, dict)
+                            ]
+                        )
+                    if isinstance(ai_runtime_profile, dict):
+                        recommendation_sources.append(
+                            [
+                                dict(item)
+                                for item in ai_runtime_profile.get("recommendations", [])
+                                if isinstance(ai_runtime_profile.get("recommendations", []), list) and isinstance(item, dict)
                             ]
                         )
                     for source_rows in recommendation_sources:
@@ -8828,6 +8875,530 @@ class DesktopBackendService:
             else [],
             "recommendations": recommendations,
             "next_actions": next_actions[:6],
+        }
+
+    @staticmethod
+    def _desktop_machine_ai_runtime_stack_names(task: str = "") -> List[str]:
+        clean_task = str(task or "").strip().lower()
+        stacks = ["desktop_agent", "perception", "memory"]
+        if any(token in clean_task for token in ("voice", "speech", "stt", "tts", "wakeword")):
+            stacks.append("voice")
+        return stacks
+
+    def _desktop_machine_ai_runtime_profile(
+        self,
+        *,
+        task: str = "",
+        multimodal_memory: Optional[Dict[str, Any]] = None,
+        model_limit: int = 160,
+    ) -> Dict[str, Any]:
+        clean_task = str(task or "").strip().lower()
+        bounded_limit = max(4, min(int(model_limit or 160), 48))
+        multimodal_payload = dict(multimodal_memory) if isinstance(multimodal_memory, dict) else {}
+        multimodal_summary = (
+            dict(multimodal_payload.get("summary", {}))
+            if isinstance(multimodal_payload.get("summary", {}), dict)
+            else {}
+        )
+        runtime_supervisors = self.model_runtime_supervisors(limit=min(12, bounded_limit))
+        reasoning_runtime = (
+            dict(runtime_supervisors.get("reasoning", {}))
+            if isinstance(runtime_supervisors, dict) and isinstance(runtime_supervisors.get("reasoning", {}), dict)
+            else {}
+        )
+        vision_runtime = (
+            dict(runtime_supervisors.get("vision", {}))
+            if isinstance(runtime_supervisors, dict) and isinstance(runtime_supervisors.get("vision", {}), dict)
+            else {}
+        )
+        reasoning_runtime_status = self._machine_text(reasoning_runtime.get("status", "")) or "unknown"
+        vision_runtime_status = self._machine_text(
+            vision_runtime.get("status", multimodal_summary.get("vision_runtime_status", ""))
+        ) or "unknown"
+        reasoning_runtime_ready = bool(
+            reasoning_runtime.get("ready", False)
+            or reasoning_runtime.get("bridge_ready", False)
+            or reasoning_runtime_status in {"success", "ready", "running", "warm"}
+        )
+        vision_runtime_ready = bool(
+            vision_runtime.get("ready", False)
+            or vision_runtime.get("loaded_count", 0)
+            or multimodal_summary.get("vision_loaded_model_count", 0)
+        )
+        stack_rows: List[Dict[str, Any]] = []
+        recovery_rows: List[Dict[str, Any]] = []
+        recommendations: List[Dict[str, Any]] = []
+        next_actions: List[Dict[str, Any]] = []
+        provider_blocker_count = 0
+        blocked_task_count = 0
+        action_required_task_count = 0
+        local_runtime_ready_count = 0
+        auto_recovery_action_count = 0
+        manual_recovery_action_count = 0
+        stack_score_map: Dict[str, float] = {}
+        task_provider_counts: Dict[str, int] = {}
+
+        for stack_name in self._desktop_machine_ai_runtime_stack_names(clean_task):
+            privacy_mode = stack_name in {"memory", "voice"}
+            status_payload = self.coworker_stack_status(
+                stack_name=stack_name,
+                requires_offline=False,
+                privacy_mode=privacy_mode,
+                mission_profile="balanced",
+                refresh_provider_credentials=False,
+            )
+            status_payload = dict(status_payload) if isinstance(status_payload, dict) else {"status": "error"}
+            summary = (
+                dict(status_payload.get("summary", {}))
+                if isinstance(status_payload.get("summary", {}), dict)
+                else {}
+            )
+            recovery_plan = self.coworker_stack_recovery_plan(
+                stack_name=stack_name,
+                requires_offline=False,
+                privacy_mode=privacy_mode,
+                mission_profile="balanced",
+                refresh_provider_credentials=False,
+            )
+            recovery_plan = dict(recovery_plan) if isinstance(recovery_plan, dict) else {"status": "error"}
+            recovery_summary = (
+                dict(recovery_plan.get("summary", {}))
+                if isinstance(recovery_plan.get("summary", {}), dict)
+                else {}
+            )
+            provider_blocker_count += int(summary.get("provider_blocker_count", 0) or 0)
+            blocked_task_count += int(summary.get("blocked_task_count", 0) or 0)
+            action_required_task_count += int(summary.get("action_required_count", 0) or 0)
+            local_runtime_ready_count += int(summary.get("local_runtime_ready_count", 0) or 0)
+            auto_recovery_action_count += int(recovery_summary.get("auto_runnable_count", 0) or 0)
+            manual_recovery_action_count += int(recovery_summary.get("manual_action_count", 0) or 0)
+            stack_score_map[stack_name] = round(float(summary.get("score", 0.0) or 0.0), 2)
+            stack_row = {
+                "stack_name": stack_name,
+                "status": self._machine_text(status_payload.get("status", "")) or "unknown",
+                "score": round(float(summary.get("score", 0.0) or 0.0), 2),
+                "ready_task_count": int(summary.get("ready_task_count", 0) or 0),
+                "action_required_count": int(summary.get("action_required_count", 0) or 0),
+                "blocked_task_count": int(summary.get("blocked_task_count", 0) or 0),
+                "local_runtime_ready_count": int(summary.get("local_runtime_ready_count", 0) or 0),
+                "provider_blocker_count": int(summary.get("provider_blocker_count", 0) or 0),
+                "desktop_coworker_ready": bool(summary.get("desktop_coworker_ready", False)),
+                "recovery_action_count": int(recovery_summary.get("action_count", 0) or 0),
+                "recovery_auto_runnable_count": int(recovery_summary.get("auto_runnable_count", 0) or 0),
+                "recovery_manual_action_count": int(recovery_summary.get("manual_action_count", 0) or 0),
+                "recovery_ready": bool(recovery_summary.get("recovery_ready", False)),
+            }
+            stack_rows.append(stack_row)
+            recovery_rows.append(
+                {
+                    "stack_name": stack_name,
+                    "status": self._machine_text(recovery_plan.get("status", "")) or "unknown",
+                    "summary": recovery_summary,
+                    "actions": [
+                        dict(item)
+                        for item in recovery_plan.get("actions", [])
+                        if isinstance(recovery_plan.get("actions", []), list) and isinstance(item, dict)
+                    ][:8],
+                }
+            )
+            for task_row in status_payload.get("tasks", []):
+                if not isinstance(status_payload.get("tasks", []), list) or not isinstance(task_row, dict):
+                    continue
+                provider_name = self._machine_text(task_row.get("provider", ""))
+                if provider_name:
+                    task_provider_counts[provider_name] = int(task_provider_counts.get(provider_name, 0) or 0) + 1
+            for message in status_payload.get("recommendations", []):
+                if not isinstance(status_payload.get("recommendations", []), list):
+                    continue
+                clean_message = str(message or "").strip()
+                if not clean_message:
+                    continue
+                recommendations.append(
+                    {
+                        "code": f"{stack_name}_runtime_recommendation",
+                        "severity": "medium",
+                        "summary": clean_message,
+                        "stack_name": stack_name,
+                    }
+                )
+            for item in recovery_plan.get("actions", []):
+                if not isinstance(recovery_plan.get("actions", []), list) or not isinstance(item, dict):
+                    continue
+                if len(next_actions) >= 8:
+                    break
+                next_actions.append(
+                    {
+                        "id": str(item.get("id", "") or "").strip(),
+                        "kind": "ai_runtime_recovery",
+                        "action": self._machine_text(item.get("kind", "") or item.get("id", "")),
+                        "stack_name": stack_name,
+                        "target": str(item.get("task", "") or item.get("provider", "") or stack_name).strip(),
+                        "auto_runnable": bool(item.get("auto_runnable", False)),
+                        "summary": str(item.get("summary", "") or item.get("title", "") or "").strip(),
+                    }
+                )
+
+        if not reasoning_runtime_ready:
+            recommendations.append(
+                {
+                    "code": "warm_local_reasoning_runtime",
+                    "severity": "medium",
+                    "summary": "Warm the local reasoning runtime so autonomous setup and app-control planning can stay on stronger local routes.",
+                }
+            )
+            next_actions.append(
+                {
+                    "kind": "ai_runtime_runtime",
+                    "action": "warm_local_reasoning_runtime",
+                    "target": "reasoning",
+                    "auto_runnable": True,
+                    "summary": "Warm the local reasoning runtime before deeper autonomous setup and control passes.",
+                }
+            )
+
+        status_name = "success"
+        if blocked_task_count > 0 and local_runtime_ready_count <= 0:
+            status_name = "error"
+        elif blocked_task_count > 0 or action_required_task_count > 0:
+            status_name = "partial"
+        ready_stack_count = len(
+            [
+                row
+                for row in stack_rows
+                if bool(row.get("desktop_coworker_ready", False))
+                or (
+                    str(row.get("status", "") or "").strip().lower() == "success"
+                    and int(row.get("blocked_task_count", 0) or 0) <= 0
+                )
+            ]
+        )
+        partial_stack_count = len(
+            [row for row in stack_rows if str(row.get("status", "") or "").strip().lower() == "partial"]
+        )
+        blocked_stack_count = len(
+            [
+                row
+                for row in stack_rows
+                if int(row.get("blocked_task_count", 0) or 0) > 0
+                or str(row.get("status", "") or "").strip().lower() == "error"
+            ]
+        )
+        summary = {
+            "stack_count": len(stack_rows),
+            "ready_stack_count": ready_stack_count,
+            "partial_stack_count": partial_stack_count,
+            "blocked_stack_count": blocked_stack_count,
+            "blocked_task_count": blocked_task_count,
+            "action_required_task_count": action_required_task_count,
+            "provider_blocker_count": provider_blocker_count,
+            "local_runtime_ready_count": local_runtime_ready_count,
+            "auto_recovery_action_count": auto_recovery_action_count,
+            "manual_recovery_action_count": manual_recovery_action_count,
+            "reasoning_runtime_status": reasoning_runtime_status,
+            "reasoning_runtime_ready": reasoning_runtime_ready,
+            "vision_runtime_status": vision_runtime_status,
+            "vision_runtime_ready": vision_runtime_ready,
+            "multimodal_runtime_ready": bool(multimodal_summary.get("vision_runtime_available", False))
+            and int(multimodal_summary.get("vision_loaded_model_count", 0) or 0) > 0,
+            "provider_counts": {
+                str(key): int(value)
+                for key, value in sorted(task_provider_counts.items(), key=lambda entry: (-entry[1], entry[0]))
+            },
+            "stack_scores": {str(key): float(value) for key, value in sorted(stack_score_map.items(), key=lambda entry: entry[0])},
+        }
+        deduped_recommendations: List[Dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        for row in recommendations:
+            if not isinstance(row, dict):
+                continue
+            code = self._machine_text(row.get("code", "") or row.get("summary", ""))
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            deduped_recommendations.append(row)
+            if len(deduped_recommendations) >= 8:
+                break
+        return {
+            "status": status_name,
+            "task": clean_task,
+            "summary": summary,
+            "stacks": stack_rows,
+            "recovery_plans": recovery_rows,
+            "runtime_supervisors": runtime_supervisors if isinstance(runtime_supervisors, dict) else {},
+            "reasoning_runtime": reasoning_runtime,
+            "vision_runtime": vision_runtime,
+            "recommendations": deduped_recommendations,
+            "next_actions": next_actions[:8],
+        }
+
+    def _desktop_machine_ai_runtime_setup_actions(
+        self,
+        *,
+        ai_runtime_profile: Dict[str, Any],
+        task: str = "",
+        limit: int = 6,
+    ) -> List[Dict[str, Any]]:
+        payload = dict(ai_runtime_profile) if isinstance(ai_runtime_profile, dict) else {}
+        summary = dict(payload.get("summary", {})) if isinstance(payload.get("summary", {}), dict) else {}
+        items: List[Dict[str, Any]] = []
+        recovery_rows = [
+            dict(item)
+            for item in payload.get("recovery_plans", [])
+            if isinstance(payload.get("recovery_plans", []), list) and isinstance(item, dict)
+        ]
+        for row in recovery_rows:
+            stack_name = self._machine_text(row.get("stack_name", ""))
+            if not stack_name:
+                continue
+            recovery_summary = dict(row.get("summary", {})) if isinstance(row.get("summary", {}), dict) else {}
+            action_rows = [
+                dict(item)
+                for item in row.get("actions", [])
+                if isinstance(row.get("actions", []), list) and isinstance(item, dict)
+            ]
+            selected_action_ids = [
+                str(item.get("id", "") or "").strip().lower()
+                for item in action_rows
+                if bool(item.get("auto_runnable", False))
+                and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+                and str(item.get("id", "") or "").strip()
+            ]
+            if not selected_action_ids and int(recovery_summary.get("action_count", 0) or 0) <= 0:
+                continue
+            status_name = "ready" if selected_action_ids else "attention"
+            items.append(
+                {
+                    "id": f"ai_runtime:{stack_name}",
+                    "setup_action_code": f"recover_{stack_name}_stack",
+                    "kind": "ai_runtime_recovery",
+                    "title": f"Recover {stack_name.replace('_', ' ')} runtime stack",
+                    "status": status_name,
+                    "auto_runnable": bool(selected_action_ids),
+                    "required": int(recovery_summary.get("current_blocked_task_count", 0) or 0) > 0,
+                    "stack_name": stack_name,
+                    "mission_profile": "balanced",
+                    "selected_action_ids": selected_action_ids,
+                    "action_count": int(recovery_summary.get("action_count", 0) or 0),
+                    "summary": (
+                        str(action_rows[0].get("summary", "") or action_rows[0].get("title", "") or "").strip()
+                        if action_rows
+                        else ""
+                    ),
+                    "source": "ai_runtime_profile",
+                }
+            )
+            if len(items) >= max(1, min(int(limit or 6), 12)):
+                break
+        reasoning_runtime_ready = bool(summary.get("reasoning_runtime_ready", False))
+        if not reasoning_runtime_ready and len(items) < max(1, min(int(limit or 6), 12)):
+            items.append(
+                {
+                    "id": "ai_runtime:warm_reasoning",
+                    "setup_action_code": "warm_local_reasoning_runtime",
+                    "kind": "ai_runtime_runtime",
+                    "title": "Warm local reasoning runtime",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "required": False,
+                    "task": self._machine_text(task or "reasoning") or "reasoning",
+                    "source": "ai_runtime_profile",
+                }
+            )
+        return items
+
+    def _desktop_machine_ai_runtime_setup_action_summary(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        status_counts: Dict[str, int] = {}
+        code_counts: Dict[str, int] = {}
+        auto_runnable_count = 0
+        ready_count = 0
+        attention_count = 0
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            status_name = self._machine_text(row.get("status", "")) or "unknown"
+            status_counts[status_name] = int(status_counts.get(status_name, 0) or 0) + 1
+            if bool(row.get("auto_runnable", False)):
+                auto_runnable_count += 1
+            if status_name in {"ready", "planned"}:
+                ready_count += 1
+            elif status_name in {"attention", "manual", "blocked"}:
+                attention_count += 1
+            code = self._machine_text(row.get("setup_action_code", "") or row.get("id", ""))
+            if code:
+                code_counts[code] = int(code_counts.get(code, 0) or 0) + 1
+        return {
+            "count": len(items),
+            "auto_runnable_count": auto_runnable_count,
+            "ready_count": ready_count,
+            "attention_count": attention_count,
+            "status_counts": {
+                str(key): int(value)
+                for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_codes": {
+                str(key): int(value)
+                for key, value in sorted(code_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+            },
+        }
+
+    def _desktop_machine_execute_ai_runtime_setup_plan(
+        self,
+        *,
+        ai_runtime_profile: Dict[str, Any],
+        task: str = "",
+        selected_action_codes: Optional[List[str]] = None,
+        dry_run: bool = False,
+        force_reload: bool = False,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        setup_actions = self._desktop_machine_ai_runtime_setup_actions(
+            ai_runtime_profile=ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {},
+            task=task,
+            limit=8,
+        )
+        selected_code_set = {
+            self._machine_text(item)
+            for item in (selected_action_codes or [])
+            if self._machine_text(item)
+        }
+        runnable_actions = [
+            dict(item)
+            for item in setup_actions
+            if isinstance(item, dict)
+            and bool(item.get("auto_runnable", False))
+            and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+        ]
+        if selected_code_set:
+            runnable_actions = [
+                item
+                for item in runnable_actions
+                if self._machine_text(item.get("setup_action_code", "") or item.get("id", "")) in selected_code_set
+            ]
+        if not runnable_actions:
+            refreshed_profile = self._desktop_machine_ai_runtime_profile(
+                task=task,
+                multimodal_memory=self._desktop_machine_multimodal_memory_snapshot(task=task),
+                model_limit=160,
+            )
+            return {
+                "status": "planned" if bool(dry_run) else "skipped",
+                "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+                "selected_action_codes": [],
+                "selected_action_count": 0,
+                "executed_action_codes": [],
+                "executed_action_count": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "items": [],
+                "ai_runtime_profile": refreshed_profile,
+                "next_actions": list(refreshed_profile.get("next_actions", []))[:6]
+                if isinstance(refreshed_profile.get("next_actions", []), list)
+                else [],
+                "message": "No auto-runnable AI runtime actions are currently required.",
+            }
+        selected_codes = [
+            self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            for item in runnable_actions
+            if self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+        ]
+        if bool(dry_run):
+            refreshed_profile = self._desktop_machine_ai_runtime_profile(
+                task=task,
+                multimodal_memory=self._desktop_machine_multimodal_memory_snapshot(task=task),
+                model_limit=160,
+            )
+            return {
+                "status": "planned",
+                "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+                "selected_action_codes": selected_codes,
+                "selected_action_count": len(selected_codes),
+                "executed_action_codes": [],
+                "executed_action_count": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "items": [
+                    {
+                        "action_id": str(item.get("id", "") or "").strip().lower(),
+                        "setup_action_code": self._machine_text(item.get("setup_action_code", "") or item.get("id", "")),
+                        "status": "planned",
+                        "title": str(item.get("title", "") or "ai runtime action").strip(),
+                    }
+                    for item in runnable_actions
+                ],
+                "ai_runtime_profile": refreshed_profile,
+                "next_actions": list(refreshed_profile.get("next_actions", []))[:6]
+                if isinstance(refreshed_profile.get("next_actions", []), list)
+                else [],
+                "message": "Planned AI runtime recovery actions for onboarding.",
+            }
+        items: List[Dict[str, Any]] = []
+        executed_codes: List[str] = []
+        success_count = 0
+        error_count = 0
+        for row in runnable_actions:
+            setup_action_code = self._machine_text(row.get("setup_action_code", "") or row.get("id", ""))
+            action_id = str(row.get("id", "") or setup_action_code).strip().lower()
+            action_kind = self._machine_text(row.get("kind", "")) or "ai_runtime_recovery"
+            if action_kind == "ai_runtime_recovery":
+                result_payload = self.recover_coworker_stack(
+                    stack_name=str(row.get("stack_name", "desktop_agent") or "desktop_agent").strip().lower(),
+                    action_ids=[
+                        str(item).strip().lower()
+                        for item in row.get("selected_action_ids", [])
+                        if isinstance(row.get("selected_action_ids", []), list) and str(item).strip()
+                    ] or None,
+                    requires_offline=False,
+                    privacy_mode=str(row.get("stack_name", "") or "").strip().lower() in {"memory", "voice"},
+                    mission_profile=str(row.get("mission_profile", "balanced") or "balanced").strip().lower() or "balanced",
+                    continue_on_error=True,
+                )
+            else:
+                result_payload = self.warm_reasoning_runtime(force_reload=bool(force_reload))
+            result_payload = dict(result_payload) if isinstance(result_payload, dict) else {}
+            result_status = self._machine_text(result_payload.get("status", "")) or "unknown"
+            executed_codes.append(setup_action_code)
+            if result_status in {"success", "partial", "completed"}:
+                success_count += 1
+            elif result_status == "error":
+                error_count += 1
+            items.append(
+                {
+                    "action_id": action_id,
+                    "setup_action_code": setup_action_code,
+                    "status": result_status,
+                    "title": str(row.get("title", "") or "ai runtime action").strip(),
+                    "result": result_payload,
+                }
+            )
+        refreshed_profile = self._desktop_machine_ai_runtime_profile(
+            task=task,
+            multimodal_memory=self._desktop_machine_multimodal_memory_snapshot(task=task),
+            model_limit=160,
+        )
+        status_name = "success"
+        if error_count > 0 and success_count > 0:
+            status_name = "partial"
+        elif error_count > 0:
+            status_name = "error"
+        return {
+            "status": status_name,
+            "source": str(source or "machine_onboarding").strip().lower() or "machine_onboarding",
+            "selected_action_codes": selected_codes,
+            "selected_action_count": len(selected_codes),
+            "executed_action_codes": executed_codes,
+            "executed_action_count": len(executed_codes),
+            "success_count": success_count,
+            "error_count": error_count,
+            "items": items,
+            "ai_runtime_profile": refreshed_profile,
+            "next_actions": list(refreshed_profile.get("next_actions", []))[:6]
+            if isinstance(refreshed_profile.get("next_actions", []), list)
+            else [],
+            "message": "Prepared AI runtime recovery and model lanes for onboarding-guided control.",
         }
 
     def _desktop_machine_multimodal_setup_actions(
@@ -9842,6 +10413,46 @@ class DesktopBackendService:
             "setup_followup_count": int(adaptive_learning_runtime.get("setup_followup_count", 0) or 0),
             "provider_blocked": bool(adaptive_learning_runtime.get("provider_blocked", False)),
             "runtime_blocker_count": int(adaptive_learning_runtime.get("blocker_count", 0) or 0),
+            "ai_runtime_status": str(selected_target.get("ai_runtime_status", "") or "").strip().lower(),
+            "ai_runtime_ready_stack_count": int(selected_target.get("ai_runtime_ready_stack_count", 0) or 0),
+            "ai_runtime_blocked_stack_count": int(selected_target.get("ai_runtime_blocked_stack_count", 0) or 0),
+            "ai_runtime_action_required_task_count": int(
+                selected_target.get("ai_runtime_action_required_task_count", 0) or 0
+            ),
+            "ai_runtime_reasoning_ready": bool(selected_target.get("ai_runtime_reasoning_ready", False)),
+            "ai_runtime_vision_ready": bool(selected_target.get("ai_runtime_vision_ready", False)),
+            "ai_runtime_setup_action_count": int(selected_target.get("ai_runtime_setup_action_count", 0) or 0),
+            "ai_route_status": str(selected_target.get("ai_route_status", "") or "").strip().lower(),
+            "ai_route_confidence": float(selected_target.get("ai_route_confidence", 0.0) or 0.0),
+            "ai_route_confidence_band": str(selected_target.get("ai_route_confidence_band", "") or "").strip().lower(),
+            "ai_route_fallback_applied": bool(selected_target.get("ai_route_fallback_applied", False)),
+            "selected_ai_runtime_band": str(selected_target.get("selected_ai_runtime_band", "") or "").strip().lower(),
+            "selected_ai_route_profile": str(selected_target.get("selected_ai_route_profile", "") or "").strip().lower(),
+            "selected_ai_model_preference": str(
+                selected_target.get("selected_ai_model_preference", "") or ""
+            ).strip().lower(),
+            "selected_ai_provider_source": str(
+                selected_target.get("selected_ai_provider_source", "") or ""
+            ).strip().lower(),
+            "selected_ai_reasoning_stack": str(
+                selected_target.get("selected_ai_reasoning_stack", "") or ""
+            ).strip().lower(),
+            "selected_ai_vision_stack": str(
+                selected_target.get("selected_ai_vision_stack", "") or ""
+            ).strip().lower(),
+            "selected_ai_memory_stack": str(
+                selected_target.get("selected_ai_memory_stack", "") or ""
+            ).strip().lower(),
+            "selected_ai_stack_names": [
+                str(item).strip().lower()
+                for item in selected_target.get("selected_ai_stack_names", [])
+                if isinstance(selected_target.get("selected_ai_stack_names", []), list) and str(item).strip()
+            ][:6],
+            "ai_route_reason_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("ai_route_reason_codes", [])
+                if isinstance(selected_target.get("ai_route_reason_codes", []), list) and str(item).strip()
+            ][:10],
             "preferred_probe_mode": str(
                 adaptive_learning_runtime.get("preferred_probe_mode", "")
                 or adaptive_runtime_strategy.get("preferred_probe_mode", "")
@@ -10023,6 +10634,14 @@ class DesktopBackendService:
                 runtime_strategy=adaptive_runtime_strategy,
             )
         )
+        selected_target.update(
+            self._desktop_machine_ai_route_plan(
+                profile=profile,
+                task=clean_task,
+                runtime_strategy=adaptive_runtime_strategy,
+                target_row=selected_target,
+            )
+        )
 
         launch_result: Dict[str, Any]
         if ensure_app_launch:
@@ -10153,6 +10772,20 @@ class DesktopBackendService:
                 else [],
                 "execution_mode": str(selected_target.get("execution_mode", "") or "").strip().lower(),
                 "readiness_status": str(selected_target.get("readiness_status", "") or "").strip().lower(),
+                "ai_route_status": str(selected_target.get("ai_route_status", "") or "").strip().lower(),
+                "ai_route_confidence": float(selected_target.get("ai_route_confidence", 0.0) or 0.0),
+                "selected_ai_runtime_band": str(
+                    selected_target.get("selected_ai_runtime_band", "") or ""
+                ).strip().lower(),
+                "selected_ai_route_profile": str(
+                    selected_target.get("selected_ai_route_profile", "") or ""
+                ).strip().lower(),
+                "selected_ai_model_preference": str(
+                    selected_target.get("selected_ai_model_preference", "") or ""
+                ).strip().lower(),
+                "selected_ai_provider_source": str(
+                    selected_target.get("selected_ai_provider_source", "") or ""
+                ).strip().lower(),
             },
         )
         memory_snapshot = self.desktop_app_memory_status(app_name=effective_app_name, limit=24)
@@ -10195,6 +10828,43 @@ class DesktopBackendService:
                     "blocker_codes": list(selected_target.get("blocker_codes", []))
                     if isinstance(selected_target.get("blocker_codes", []), list)
                     else [],
+                    "ai_runtime_status": str(selected_target.get("ai_runtime_status", "") or "").strip().lower(),
+                    "ai_runtime_ready_stack_count": int(selected_target.get("ai_runtime_ready_stack_count", 0) or 0),
+                    "ai_runtime_blocked_stack_count": int(selected_target.get("ai_runtime_blocked_stack_count", 0) or 0),
+                    "ai_runtime_action_required_task_count": int(
+                        selected_target.get("ai_runtime_action_required_task_count", 0) or 0
+                    ),
+                    "ai_runtime_reasoning_ready": bool(selected_target.get("ai_runtime_reasoning_ready", False)),
+                    "ai_runtime_vision_ready": bool(selected_target.get("ai_runtime_vision_ready", False)),
+                    "ai_runtime_setup_action_codes": list(selected_target.get("ai_runtime_setup_action_codes", []))
+                    if isinstance(selected_target.get("ai_runtime_setup_action_codes", []), list)
+                    else [],
+                    "ai_runtime_setup_action_count": int(
+                        selected_target.get("ai_runtime_setup_action_count", 0) or 0
+                    ),
+                    "ai_route_status": str(selected_target.get("ai_route_status", "") or "").strip().lower(),
+                    "ai_route_confidence": float(selected_target.get("ai_route_confidence", 0.0) or 0.0),
+                    "ai_route_confidence_band": str(
+                        selected_target.get("ai_route_confidence_band", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_runtime_band": str(
+                        selected_target.get("selected_ai_runtime_band", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_route_profile": str(
+                        selected_target.get("selected_ai_route_profile", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_model_preference": str(
+                        selected_target.get("selected_ai_model_preference", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_provider_source": str(
+                        selected_target.get("selected_ai_provider_source", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_reasoning_stack": str(
+                        selected_target.get("selected_ai_reasoning_stack", "") or ""
+                    ).strip().lower(),
+                    "selected_ai_vision_stack": str(
+                        selected_target.get("selected_ai_vision_stack", "") or ""
+                    ).strip().lower(),
                 },
                 "resolved_target": resolved,
                 "launch": launch_result,
@@ -11079,6 +11749,7 @@ class DesktopBackendService:
         task_preference_plan: Dict[str, Any],
         model_selection: Dict[str, Any],
         model_setup_mission: Optional[Dict[str, Any]] = None,
+        ai_runtime_setup_actions: Optional[List[Dict[str, Any]]] = None,
         multimodal_setup_actions: Optional[List[Dict[str, Any]]] = None,
         launch_seed_plan: Dict[str, Any],
         app_learning_plan: Dict[str, Any],
@@ -11095,6 +11766,7 @@ class DesktopBackendService:
         workspace_scaffold: Optional[Dict[str, Any]] = None,
         launch_seed_results: Optional[Dict[str, Any]] = None,
         model_install_result: Optional[Dict[str, Any]] = None,
+        ai_runtime_setup_result: Optional[Dict[str, Any]] = None,
         multimodal_setup_result: Optional[Dict[str, Any]] = None,
         app_learning_result: Optional[Dict[str, Any]] = None,
         app_control_prepare_result: Optional[Dict[str, Any]] = None,
@@ -11179,6 +11851,10 @@ class DesktopBackendService:
 
         setup_action_rows = [
             dict(item)
+            for item in (ai_runtime_setup_actions or [])
+            if isinstance(ai_runtime_setup_actions or [], list) and isinstance(item, dict)
+        ] + [
+            dict(item)
             for item in (multimodal_setup_actions or [])
             if isinstance(multimodal_setup_actions or [], list) and isinstance(item, dict)
         ] + self._desktop_machine_model_setup_actions(
@@ -11197,6 +11873,13 @@ class DesktopBackendService:
             limit=12,
         )
         setup_action_result_map: Dict[str, Dict[str, Any]] = {}
+        ai_runtime_result_map: Dict[str, Dict[str, Any]] = {
+            self._machine_text(item.get("setup_action_code", "") or item.get("action_id", "")): dict(item)
+            for item in (ai_runtime_setup_result or {}).get("items", [])
+            if isinstance((ai_runtime_setup_result or {}).get("items", []), list)
+            and isinstance(item, dict)
+            and self._machine_text(item.get("setup_action_code", "") or item.get("action_id", ""))
+        }
         multimodal_result_map: Dict[str, Dict[str, Any]] = {
             self._machine_text(item.get("setup_action_code", "") or item.get("action_code", "")): dict(item)
             for item in (multimodal_setup_result or {}).get("items", [])
@@ -11250,6 +11933,14 @@ class DesktopBackendService:
             if action_kind == "scaffold_workspace":
                 status_name = workspace_status or ("ready" if workspace_scaffold_enabled else "skipped")
                 auto_runnable = bool(workspace_scaffold_enabled and auto_runnable)
+            elif action_kind in {"ai_runtime_recovery", "ai_runtime_runtime"}:
+                ai_runtime_result = ai_runtime_result_map.get(setup_action_code, {})
+                if ai_runtime_result:
+                    result_status = self._machine_text(ai_runtime_result.get("status", ""))
+                    if result_status:
+                        status_name = (
+                            "success" if result_status in {"success", "partial", "completed"} else result_status
+                        )
             elif action_kind in {"multimodal_runtime", "multimodal_revalidation"}:
                 multimodal_result = multimodal_result_map.get(setup_action_code, {})
                 if multimodal_result:
@@ -13013,6 +13704,36 @@ class DesktopBackendService:
         model_selection: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         required_tasks = self._desktop_machine_prepare_required_tasks(profile=profile, target_row=target_row)
+        ai_runtime_profile = (
+            dict(profile.get("ai_runtime_profile", {}))
+            if isinstance(profile.get("ai_runtime_profile", {}), dict)
+            else {}
+        )
+        ai_runtime_summary = (
+            dict(ai_runtime_profile.get("summary", {}))
+            if isinstance(ai_runtime_profile.get("summary", {}), dict)
+            else {}
+        )
+        ai_runtime_setup_actions = self._desktop_machine_ai_runtime_setup_actions(
+            ai_runtime_profile=ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {},
+            task=str(target_row.get("prepare_query", "") or target_row.get("app_name", "") or "").strip().lower(),
+            limit=6,
+        )
+        ai_runtime_setup_action_codes = self._machine_dedupe(
+            [
+                self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+                for item in ai_runtime_setup_actions
+                if isinstance(item, dict)
+                and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            ],
+            limit=8,
+        )
+        ai_runtime_status = self._machine_text(ai_runtime_profile.get("status", "")) or "unknown"
+        ai_runtime_ready_stack_count = int(ai_runtime_summary.get("ready_stack_count", 0) or 0)
+        ai_runtime_blocked_stack_count = int(ai_runtime_summary.get("blocked_stack_count", 0) or 0)
+        ai_runtime_action_required_task_count = int(ai_runtime_summary.get("action_required_task_count", 0) or 0)
+        ai_runtime_reasoning_ready = bool(ai_runtime_summary.get("reasoning_runtime_ready", False))
+        ai_runtime_vision_ready = bool(ai_runtime_summary.get("vision_runtime_ready", False))
         models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
         local_inventory = models.get("local_inventory", {}) if isinstance(models.get("local_inventory", {}), dict) else {}
         task_preferences = (
@@ -13155,6 +13876,22 @@ class DesktopBackendService:
                 and task_name not in remote_ready_tasks
             ):
                 blocker_codes.append(f"limited_{task_name}_coverage")
+        if (
+            "reasoning" in required_tasks
+            and not ai_runtime_reasoning_ready
+            and "reasoning" not in local_ready_tasks
+            and "reasoning" not in install_ready_tasks
+            and "reasoning" not in remote_ready_tasks
+        ):
+            blocker_codes.append("ai_runtime_reasoning_unavailable")
+        if (
+            any(task_name in {"vision", "ocr"} for task_name in required_tasks)
+            and not ai_runtime_vision_ready
+            and "vision" not in local_ready_tasks
+            and "vision" not in install_ready_tasks
+            and "vision" not in remote_ready_tasks
+        ):
+            blocker_codes.append("ai_runtime_vision_unavailable")
         blocker_codes = self._machine_dedupe(blocker_codes, limit=8)
         readiness_status = "ready"
         if blocker_codes:
@@ -13241,6 +13978,7 @@ class DesktopBackendService:
                     missing_provider_names=missing_provider_names,
                     attention_provider_names=attention_provider_names,
                 ),
+                *ai_runtime_setup_action_codes,
                 *remediation_related_setup_action_codes,
             ],
             limit=8,
@@ -13262,6 +14000,14 @@ class DesktopBackendService:
             "auto_prepare_allowed": bool(auto_prepare_allowed),
             "blocker_codes": blocker_codes,
             "blocker_count": len(blocker_codes),
+            "ai_runtime_status": ai_runtime_status,
+            "ai_runtime_ready_stack_count": ai_runtime_ready_stack_count,
+            "ai_runtime_blocked_stack_count": ai_runtime_blocked_stack_count,
+            "ai_runtime_action_required_task_count": ai_runtime_action_required_task_count,
+            "ai_runtime_reasoning_ready": bool(ai_runtime_reasoning_ready),
+            "ai_runtime_vision_ready": bool(ai_runtime_vision_ready),
+            "ai_runtime_setup_action_codes": ai_runtime_setup_action_codes,
+            "ai_runtime_setup_action_count": len(ai_runtime_setup_action_codes),
             "prepare_priority_score": round(priority_score, 3),
             "prepare_priority_band": priority_band,
             "prepare_priority_reasons": self._machine_dedupe(
@@ -13728,6 +14474,11 @@ class DesktopBackendService:
             ],
             limit=10,
         )
+        ai_runtime_status = str(target_row.get("ai_runtime_status", "") or "").strip().lower()
+        ai_runtime_blocked_stack_count = int(target_row.get("ai_runtime_blocked_stack_count", 0) or 0)
+        ai_runtime_action_required_task_count = int(target_row.get("ai_runtime_action_required_task_count", 0) or 0)
+        ai_runtime_reasoning_ready = bool(target_row.get("ai_runtime_reasoning_ready", False))
+        ai_runtime_vision_ready = bool(target_row.get("ai_runtime_vision_ready", False))
         reason_codes: List[str] = []
         runtime_band_preference = "accessibility"
         preferred_probe_mode = "accessibility_first"
@@ -13796,6 +14547,23 @@ class DesktopBackendService:
             reason_codes.append("remote_ready_tasks")
         if blocker_codes:
             reason_codes.extend(blocker_codes[:4])
+        if ai_runtime_status and ai_runtime_status != "success":
+            reason_codes.append(f"ai_runtime_{ai_runtime_status}")
+        if ai_runtime_blocked_stack_count > 0:
+            reason_codes.append("ai_runtime_stack_attention")
+            preferred_native_recovery_mode = "reacquire_window"
+        if ai_runtime_action_required_task_count > 0:
+            reason_codes.append("ai_runtime_followup_pending")
+        if not ai_runtime_reasoning_ready and runtime_band_preference in {"local", "hybrid"}:
+            reason_codes.append("ai_reasoning_runtime_gap")
+        if not ai_runtime_vision_ready and preferred_probe_mode in {"local_vision_assist", "hybrid_verify"}:
+            reason_codes.append("ai_vision_runtime_gap")
+            if execution_mode == "remote_assist":
+                runtime_band_preference = "api"
+                preferred_probe_mode = "api_vision_assist"
+            elif execution_mode == "degraded":
+                runtime_band_preference = "accessibility"
+                preferred_probe_mode = "accessibility_first"
 
         return {
             "strategy_profile": strategy_profile,
@@ -13848,6 +14616,263 @@ class DesktopBackendService:
             "expected_route_profile": expected_route_profile,
             "expected_model_preference": expected_model_preference,
             "expected_provider_source": expected_provider_source,
+        }
+
+    def _desktop_machine_ai_route_plan(
+        self,
+        *,
+        profile: Dict[str, Any],
+        task: str = "",
+        runtime_strategy: Optional[Dict[str, Any]] = None,
+        target_row: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = dict(profile) if isinstance(profile, dict) else {}
+        strategy = dict(runtime_strategy) if isinstance(runtime_strategy, dict) else {}
+        target = dict(target_row) if isinstance(target_row, dict) else {}
+        ai_runtime_profile = (
+            dict(payload.get("ai_runtime_profile", {}))
+            if isinstance(payload.get("ai_runtime_profile", {}), dict)
+            else {}
+        )
+        ai_runtime_summary = (
+            dict(ai_runtime_profile.get("summary", {}))
+            if isinstance(ai_runtime_profile.get("summary", {}), dict)
+            else {}
+        )
+        multimodal_summary = (
+            dict(payload.get("multimodal_memory", {}).get("summary", {}))
+            if isinstance(payload.get("multimodal_memory", {}), dict)
+            and isinstance(payload.get("multimodal_memory", {}).get("summary", {}), dict)
+            else {}
+        )
+        providers_summary = (
+            dict(payload.get("providers", {}).get("summary", {}))
+            if isinstance(payload.get("providers", {}), dict)
+            and isinstance(payload.get("providers", {}).get("summary", {}), dict)
+            else {}
+        )
+        expected_route = self._desktop_machine_expected_runtime_route(runtime_strategy=strategy)
+        preferred_probe_mode = (
+            str(strategy.get("preferred_probe_mode", "") or "").strip().lower()
+            or str(expected_route.get("expected_route_profile", "") or "").strip().lower()
+            or "accessibility_first"
+        )
+        runtime_band_preference = (
+            str(strategy.get("runtime_band_preference", "") or "").strip().lower()
+            or "accessibility"
+        )
+        selected_runtime_band = runtime_band_preference
+        expected_model_preference = (
+            str(expected_route.get("expected_model_preference", "") or "").strip().lower()
+            or "accessibility"
+        )
+        expected_provider_source = (
+            str(expected_route.get("expected_provider_source", "") or "").strip().lower()
+            or "accessibility_only"
+        )
+        readiness_status = str(target.get("readiness_status", "") or "").strip().lower()
+        ai_runtime_status = str(ai_runtime_profile.get("status", "") or "").strip().lower() or "unknown"
+        ai_reasoning_ready = bool(ai_runtime_summary.get("reasoning_runtime_ready", False))
+        ai_vision_ready = bool(ai_runtime_summary.get("vision_runtime_ready", False))
+        ai_runtime_ready_stack_count = int(ai_runtime_summary.get("ready_stack_count", 0) or 0)
+        ai_runtime_blocked_stack_count = int(ai_runtime_summary.get("blocked_stack_count", 0) or 0)
+        ai_runtime_action_required_task_count = int(ai_runtime_summary.get("action_required_task_count", 0) or 0)
+        verified_provider_count = int(providers_summary.get("verified_count", 0) or 0)
+        local_vision_runtime_ready = bool(multimodal_summary.get("vision_runtime_available", False)) and int(
+            multimodal_summary.get("vision_loaded_model_count", 0) or 0
+        ) > 0
+        required_tasks = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in target.get("required_tasks", [])
+                if isinstance(target.get("required_tasks", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        related_setup_action_count = int(target.get("related_setup_action_count", 0) or 0)
+        reason_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in strategy.get("reason_codes", [])
+                if isinstance(strategy.get("reason_codes", []), list) and str(item).strip()
+            ],
+            limit=12,
+        )
+        route_status = "matched"
+        fallback_applied = False
+
+        if readiness_status == "blocked":
+            selected_runtime_band = "accessibility"
+            route_status = "blocked"
+            fallback_applied = True
+            reason_codes.append("readiness_blocked")
+
+        if "reasoning" in required_tasks and not ai_reasoning_ready and selected_runtime_band in {"local", "hybrid"}:
+            fallback_applied = True
+            reason_codes.append("ai_reasoning_runtime_gap")
+            if selected_runtime_band == "local":
+                selected_runtime_band = "hybrid" if verified_provider_count > 0 else "accessibility"
+            elif verified_provider_count <= 0:
+                selected_runtime_band = "accessibility"
+
+        if "vision" in required_tasks and not ai_vision_ready and selected_runtime_band in {"local", "hybrid"}:
+            fallback_applied = True
+            reason_codes.append("ai_vision_runtime_gap")
+            if verified_provider_count > 0:
+                selected_runtime_band = "api"
+            else:
+                selected_runtime_band = "accessibility"
+
+        if "vision" in required_tasks and not local_vision_runtime_ready and selected_runtime_band == "local":
+            fallback_applied = True
+            reason_codes.append("local_vision_runtime_cold")
+            selected_runtime_band = "hybrid" if verified_provider_count > 0 else "accessibility"
+
+        if ai_runtime_blocked_stack_count > 0:
+            reason_codes.append("ai_runtime_stack_attention")
+            if route_status == "matched":
+                route_status = "fallback" if fallback_applied else "setup_constrained"
+
+        if ai_runtime_action_required_task_count > 0 or related_setup_action_count > 0:
+            reason_codes.append("setup_followup_pending")
+            if route_status == "matched":
+                route_status = "setup_constrained"
+
+        if route_status == "matched" and fallback_applied:
+            route_status = "fallback"
+
+        selected_probe_mode = preferred_probe_mode
+        if selected_runtime_band == "accessibility":
+            selected_probe_mode = "accessibility_first"
+        elif selected_runtime_band == "api":
+            selected_probe_mode = "api_vision_assist"
+        elif selected_runtime_band == "hybrid":
+            selected_probe_mode = "hybrid_verify"
+        elif selected_runtime_band == "local":
+            selected_probe_mode = "local_vision_assist"
+
+        selected_route_profile = selected_probe_mode
+        if bool(strategy.get("prefer_native_stabilization", False)) and selected_probe_mode not in {
+            "",
+            "accessibility_first",
+        }:
+            selected_route_profile = f"{selected_probe_mode}_native_stabilized"
+
+        selected_model_preference = "accessibility"
+        selected_provider_source = "accessibility_only"
+        if selected_runtime_band == "local":
+            selected_model_preference = "local_runtime"
+            selected_provider_source = "local_runtime"
+        elif selected_runtime_band == "hybrid":
+            selected_model_preference = "hybrid_runtime"
+            selected_provider_source = "local_runtime_plus_ocr"
+        elif selected_runtime_band == "api":
+            selected_model_preference = "api_assist"
+            selected_provider_source = "api_assist_plus_ocr"
+
+        stack_rows = [
+            dict(item)
+            for item in ai_runtime_profile.get("stacks", [])
+            if isinstance(ai_runtime_profile.get("stacks", []), list) and isinstance(item, dict)
+        ]
+        stack_by_name = {
+            str(item.get("stack_name", "") or "").strip().lower(): item
+            for item in stack_rows
+            if str(item.get("stack_name", "") or "").strip()
+        }
+
+        def _select_stack(preferred_names: List[str], *, require_ready: bool = False) -> str:
+            normalized_names = [str(name or "").strip().lower() for name in preferred_names if str(name or "").strip()]
+            candidates = stack_rows[:]
+            if require_ready:
+                ready_rows = [
+                    row
+                    for row in candidates
+                    if bool(row.get("desktop_coworker_ready", False))
+                    or int(row.get("ready_task_count", 0) or 0) > 0
+                    or int(row.get("local_runtime_ready_count", 0) or 0) > 0
+                ]
+                if ready_rows:
+                    candidates = ready_rows
+            for name in normalized_names:
+                if name in stack_by_name and stack_by_name[name] in candidates:
+                    return name
+            ranked = sorted(
+                candidates,
+                key=lambda row: (
+                    0 if bool(row.get("desktop_coworker_ready", False)) else 1,
+                    -int(row.get("local_runtime_ready_count", 0) or 0),
+                    -int(row.get("ready_task_count", 0) or 0),
+                    -float(row.get("score", 0.0) or 0.0),
+                    str(row.get("stack_name", "") or "").strip().lower(),
+                ),
+            )
+            return str(ranked[0].get("stack_name", "") or "").strip().lower() if ranked else ""
+
+        selected_reasoning_stack = _select_stack(["desktop_agent", "memory", "perception"], require_ready=True)
+        selected_vision_stack = (
+            _select_stack(["perception", "desktop_agent"], require_ready=True)
+            if "vision" in required_tasks or selected_runtime_band in {"local", "hybrid", "api"}
+            else ""
+        )
+        selected_memory_stack = _select_stack(["memory", "desktop_agent"], require_ready=False)
+        selected_stack_names = self._machine_dedupe(
+            [selected_reasoning_stack, selected_vision_stack, selected_memory_stack],
+            limit=6,
+        )
+
+        confidence_score = 0.48
+        confidence_score += min(ai_runtime_ready_stack_count, 3) * 0.1
+        confidence_score -= min(ai_runtime_blocked_stack_count, 3) * 0.09
+        confidence_score -= min(ai_runtime_action_required_task_count, 4) * 0.05
+        confidence_score += 0.08 if route_status == "matched" else 0.0
+        confidence_score -= 0.06 if route_status == "fallback" else 0.0
+        confidence_score -= 0.1 if route_status == "setup_constrained" else 0.0
+        confidence_score -= 0.18 if route_status == "blocked" else 0.0
+        confidence_score -= 0.05 if fallback_applied else 0.0
+        confidence_score += 0.05 if selected_provider_source == expected_provider_source else -0.02
+        confidence_score = max(0.05, min(round(confidence_score, 2), 0.98))
+        confidence_band = "high" if confidence_score >= 0.72 else "medium" if confidence_score >= 0.45 else "low"
+
+        plan = {
+            "task": str(task or "").strip().lower(),
+            "ai_runtime_status": ai_runtime_status,
+            "route_status": route_status,
+            "fallback_applied": fallback_applied,
+            "expected_model_preference": expected_model_preference,
+            "expected_provider_source": expected_provider_source,
+            "expected_route_profile": str(expected_route.get("expected_route_profile", "") or "").strip().lower(),
+            "selected_runtime_band": selected_runtime_band,
+            "selected_route_profile": selected_route_profile,
+            "selected_model_preference": selected_model_preference,
+            "selected_provider_source": selected_provider_source,
+            "selected_reasoning_stack": selected_reasoning_stack,
+            "selected_vision_stack": selected_vision_stack,
+            "selected_memory_stack": selected_memory_stack,
+            "selected_stack_names": selected_stack_names,
+            "confidence_score": confidence_score,
+            "confidence_band": confidence_band,
+            "reason_codes": self._machine_dedupe(reason_codes, limit=12),
+        }
+        return {
+            "ai_route_plan": plan,
+            "ai_route_status": str(plan.get("route_status", "") or "").strip().lower(),
+            "ai_route_fallback_applied": bool(plan.get("fallback_applied", False)),
+            "ai_route_confidence": float(plan.get("confidence_score", 0.0) or 0.0),
+            "ai_route_confidence_band": str(plan.get("confidence_band", "") or "").strip().lower(),
+            "selected_ai_runtime_band": str(plan.get("selected_runtime_band", "") or "").strip().lower(),
+            "selected_ai_route_profile": str(plan.get("selected_route_profile", "") or "").strip().lower(),
+            "selected_ai_model_preference": str(plan.get("selected_model_preference", "") or "").strip().lower(),
+            "selected_ai_provider_source": str(plan.get("selected_provider_source", "") or "").strip().lower(),
+            "selected_ai_reasoning_stack": str(plan.get("selected_reasoning_stack", "") or "").strip().lower(),
+            "selected_ai_vision_stack": str(plan.get("selected_vision_stack", "") or "").strip().lower(),
+            "selected_ai_memory_stack": str(plan.get("selected_memory_stack", "") or "").strip().lower(),
+            "selected_ai_stack_names": list(plan.get("selected_stack_names", []))
+            if isinstance(plan.get("selected_stack_names", []), list)
+            else [],
+            "ai_route_reason_codes": list(plan.get("reason_codes", []))
+            if isinstance(plan.get("reason_codes", []), list)
+            else [],
         }
 
     def _desktop_machine_finalize_app_learning_plan(
@@ -13922,6 +14947,14 @@ class DesktopBackendService:
                     runtime_strategy=runtime_strategy,
                 )
             )
+            item_payload.update(
+                self._desktop_machine_ai_route_plan(
+                    profile=profile,
+                    task=clean_task,
+                    runtime_strategy=runtime_strategy,
+                    target_row=item_payload,
+                )
+            )
             annotated_targets.append(item_payload)
         profile_rank = {
             "deep_local_explore": 0,
@@ -13949,6 +14982,13 @@ class DesktopBackendService:
         expected_route_profile_counts: Dict[str, int] = {}
         expected_model_preference_counts: Dict[str, int] = {}
         expected_provider_source_counts: Dict[str, int] = {}
+        ai_route_status_counts: Dict[str, int] = {}
+        ai_route_runtime_band_counts: Dict[str, int] = {}
+        ai_route_profile_counts: Dict[str, int] = {}
+        ai_route_provider_source_counts: Dict[str, int] = {}
+        ai_route_stack_name_counts: Dict[str, int] = {}
+        ai_route_confident_count = 0
+        ai_route_fallback_count = 0
         strategy_notes: List[str] = []
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
@@ -13975,6 +15015,34 @@ class DesktopBackendService:
                 expected_provider_source_counts[expected_provider_source] = int(
                     expected_provider_source_counts.get(expected_provider_source, 0) or 0
                 ) + 1
+            ai_route_status = str(item.get("ai_route_status", "") or "").strip().lower()
+            if ai_route_status:
+                ai_route_status_counts[ai_route_status] = int(ai_route_status_counts.get(ai_route_status, 0) or 0) + 1
+            selected_ai_runtime_band = str(item.get("selected_ai_runtime_band", "") or "").strip().lower()
+            if selected_ai_runtime_band:
+                ai_route_runtime_band_counts[selected_ai_runtime_band] = int(
+                    ai_route_runtime_band_counts.get(selected_ai_runtime_band, 0) or 0
+                ) + 1
+            selected_ai_route_profile = str(item.get("selected_ai_route_profile", "") or "").strip().lower()
+            if selected_ai_route_profile:
+                ai_route_profile_counts[selected_ai_route_profile] = int(
+                    ai_route_profile_counts.get(selected_ai_route_profile, 0) or 0
+                ) + 1
+            selected_ai_provider_source = str(item.get("selected_ai_provider_source", "") or "").strip().lower()
+            if selected_ai_provider_source:
+                ai_route_provider_source_counts[selected_ai_provider_source] = int(
+                    ai_route_provider_source_counts.get(selected_ai_provider_source, 0) or 0
+                ) + 1
+            for stack_name in item.get("selected_ai_stack_names", []):
+                clean_stack_name = str(stack_name or "").strip().lower()
+                if clean_stack_name:
+                    ai_route_stack_name_counts[clean_stack_name] = int(
+                        ai_route_stack_name_counts.get(clean_stack_name, 0) or 0
+                    ) + 1
+            if float(item.get("ai_route_confidence", 0.0) or 0.0) >= 0.66:
+                ai_route_confident_count += 1
+            if bool(item.get("ai_route_fallback_applied", False)):
+                ai_route_fallback_count += 1
             note = str(item.get("strategy_notes", "") or "").strip()
             if note:
                 strategy_notes.append(note)
@@ -14091,6 +15159,28 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "ai_route_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_stack_name_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_stack_name_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_confident_count": ai_route_confident_count,
+                "ai_route_fallback_count": ai_route_fallback_count,
                 "remediation_feedback_count": len(feedback_map),
                 "remediation_retry_count": remediation_retry_count,
                 "remediation_provider_blocked_count": remediation_provider_blocked_count,
@@ -14163,6 +15253,28 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "ai_route_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_stack_name_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_stack_name_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_confident_count": ai_route_confident_count,
+                "ai_route_fallback_count": ai_route_fallback_count,
                 "remediation_feedback_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(feedback_status_counts.items(), key=lambda entry: entry[0])
@@ -14197,6 +15309,31 @@ class DesktopBackendService:
                         "expected_route_profile": str(item.get("expected_route_profile", "") or "").strip().lower(),
                         "expected_model_preference": str(item.get("expected_model_preference", "") or "").strip().lower(),
                         "expected_provider_source": str(item.get("expected_provider_source", "") or "").strip().lower(),
+                        "ai_route_status": str(item.get("ai_route_status", "") or "").strip().lower(),
+                        "ai_route_confidence": float(item.get("ai_route_confidence", 0.0) or 0.0),
+                        "ai_route_confidence_band": str(item.get("ai_route_confidence_band", "") or "").strip().lower(),
+                        "selected_ai_runtime_band": str(item.get("selected_ai_runtime_band", "") or "").strip().lower(),
+                        "selected_ai_route_profile": str(item.get("selected_ai_route_profile", "") or "").strip().lower(),
+                        "selected_ai_model_preference": str(item.get("selected_ai_model_preference", "") or "").strip().lower(),
+                        "selected_ai_provider_source": str(item.get("selected_ai_provider_source", "") or "").strip().lower(),
+                        "selected_ai_reasoning_stack": str(item.get("selected_ai_reasoning_stack", "") or "").strip().lower(),
+                        "selected_ai_vision_stack": str(item.get("selected_ai_vision_stack", "") or "").strip().lower(),
+                        "selected_ai_memory_stack": str(item.get("selected_ai_memory_stack", "") or "").strip().lower(),
+                        "selected_ai_stack_names": [
+                            str(stack_name).strip().lower()
+                            for stack_name in item.get("selected_ai_stack_names", [])
+                            if isinstance(item.get("selected_ai_stack_names", []), list) and str(stack_name).strip()
+                        ][:6],
+                        "ai_route_reason_codes": [
+                            str(code).strip().lower()
+                            for code in item.get("ai_route_reason_codes", [])
+                            if isinstance(item.get("ai_route_reason_codes", []), list) and str(code).strip()
+                        ][:10],
+                        "ai_route_plan": (
+                            dict(item.get("ai_route_plan", {}))
+                            if isinstance(item.get("ai_route_plan", {}), dict)
+                            else {}
+                        ),
                         "runtime_strategy": (
                             dict(item.get("adaptive_runtime_strategy", {}))
                             if isinstance(item.get("adaptive_runtime_strategy", {}), dict)
@@ -14240,6 +15377,29 @@ class DesktopBackendService:
                             ][:10],
                             "execution_mode": str(item.get("execution_mode", "") or "").strip().lower(),
                             "readiness_status": str(item.get("readiness_status", "") or "").strip().lower(),
+                            "ai_runtime_status": str(item.get("ai_runtime_status", "") or "").strip().lower(),
+                            "ai_runtime_ready_stack_count": int(item.get("ai_runtime_ready_stack_count", 0) or 0),
+                            "ai_runtime_blocked_stack_count": int(item.get("ai_runtime_blocked_stack_count", 0) or 0),
+                            "ai_runtime_action_required_task_count": int(
+                                item.get("ai_runtime_action_required_task_count", 0) or 0
+                            ),
+                            "ai_runtime_reasoning_ready": bool(item.get("ai_runtime_reasoning_ready", False)),
+                            "ai_runtime_vision_ready": bool(item.get("ai_runtime_vision_ready", False)),
+                            "ai_runtime_setup_action_codes": [
+                                str(code).strip().lower()
+                                for code in item.get("ai_runtime_setup_action_codes", [])
+                                if isinstance(item.get("ai_runtime_setup_action_codes", []), list)
+                                and str(code).strip()
+                            ][:10],
+                            "ai_runtime_setup_action_count": int(
+                                item.get("ai_runtime_setup_action_count", 0) or 0
+                            ),
+                            "ai_route_status": str(item.get("ai_route_status", "") or "").strip().lower(),
+                            "ai_route_confidence": float(item.get("ai_route_confidence", 0.0) or 0.0),
+                            "selected_ai_runtime_band": str(item.get("selected_ai_runtime_band", "") or "").strip().lower(),
+                            "selected_ai_route_profile": str(item.get("selected_ai_route_profile", "") or "").strip().lower(),
+                            "selected_ai_model_preference": str(item.get("selected_ai_model_preference", "") or "").strip().lower(),
+                            "selected_ai_provider_source": str(item.get("selected_ai_provider_source", "") or "").strip().lower(),
                         },
                     }
                     for item in selected_targets[:8]
@@ -14311,6 +15471,24 @@ class DesktopBackendService:
             dict(profile.get("multimodal_memory", {}))
             if isinstance(profile.get("multimodal_memory", {}), dict)
             else {}
+        )
+        ai_runtime_profile = (
+            dict(profile.get("ai_runtime_profile", {}))
+            if isinstance(profile.get("ai_runtime_profile", {}), dict)
+            else {}
+        )
+        ai_runtime_summary = (
+            dict(ai_runtime_profile.get("summary", {}))
+            if isinstance(ai_runtime_profile.get("summary", {}), dict)
+            else {}
+        )
+        ai_runtime_setup_actions = self._desktop_machine_ai_runtime_setup_actions(
+            ai_runtime_profile=ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {},
+            task=clean_task,
+            limit=6,
+        )
+        ai_runtime_setup_action_summary = self._desktop_machine_ai_runtime_setup_action_summary(
+            items=ai_runtime_setup_actions,
         )
         multimodal_summary = (
             dict(multimodal_memory.get("summary", {}))
@@ -14454,6 +15632,7 @@ class DesktopBackendService:
             task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
             model_selection=model_selection if isinstance(model_selection, dict) else {},
             model_setup_mission=model_setup_mission if isinstance(model_setup_mission, dict) else None,
+            ai_runtime_setup_actions=ai_runtime_setup_actions,
             multimodal_setup_actions=multimodal_setup_actions,
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
@@ -14487,6 +15666,13 @@ class DesktopBackendService:
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
             else []
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(ai_runtime_profile.get("next_actions", []))
+            if isinstance(ai_runtime_profile.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
@@ -14579,6 +15765,20 @@ class DesktopBackendService:
                 "count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
             },
             {
+                "id": "ai_runtime",
+                "kind": "ai_runtime",
+                "status": "skipped"
+                if int(ai_runtime_setup_action_summary.get("count", 0) or 0) <= 0
+                else "attention"
+                if int(ai_runtime_setup_action_summary.get("attention_count", 0) or 0) > 0
+                and int(ai_runtime_setup_action_summary.get("auto_runnable_count", 0) or 0) <= 0
+                else "ready",
+                "title": "Recover AI runtime stacks and warm local reasoning lanes",
+                "auto_runnable": bool(ai_runtime_setup_action_summary.get("auto_runnable_count", 0)),
+                "required": int(ai_runtime_setup_action_summary.get("count", 0) or 0) > 0,
+                "count": int(ai_runtime_setup_action_summary.get("count", 0) or 0),
+            },
+            {
                 "id": "multimodal_runtime",
                 "kind": "multimodal_runtime",
                 "status": "skipped"
@@ -14664,6 +15864,9 @@ class DesktopBackendService:
                 },
                 "profile_setup_actions": profile_setup_actions,
                 "profile_setup_action_summary": profile_setup_action_summary,
+                "ai_runtime_profile": ai_runtime_profile,
+                "ai_runtime_setup_actions": ai_runtime_setup_actions,
+                "ai_runtime_setup_action_summary": ai_runtime_setup_action_summary,
                 "multimodal_setup_actions": multimodal_setup_actions,
                 "multimodal_setup_action_summary": multimodal_setup_action_summary,
                 "task_preference_plan": task_preference_plan,
@@ -14682,6 +15885,35 @@ class DesktopBackendService:
                     "provider_missing_count": int(dict(provider_actions.get("summary", {})).get("missing_count", 0) or 0),
                     "provider_attention_count": int(dict(provider_actions.get("summary", {})).get("attention_count", 0) or 0),
                     "profile_setup_action_count": int(profile_setup_action_summary.get("count", 0) or 0),
+                    "ai_runtime_stack_count": int(ai_runtime_summary.get("stack_count", 0) or 0),
+                    "ai_runtime_ready_stack_count": int(ai_runtime_summary.get("ready_stack_count", 0) or 0),
+                    "ai_runtime_blocked_stack_count": int(ai_runtime_summary.get("blocked_stack_count", 0) or 0),
+                    "ai_runtime_action_required_task_count": int(
+                        ai_runtime_summary.get("action_required_task_count", 0) or 0
+                    ),
+                    "ai_runtime_reasoning_runtime_ready": bool(
+                        ai_runtime_summary.get("reasoning_runtime_ready", False)
+                    ),
+                    "ai_runtime_vision_runtime_ready": bool(
+                        ai_runtime_summary.get("vision_runtime_ready", False)
+                    ),
+                    "ai_runtime_setup_action_count": int(
+                        ai_runtime_setup_action_summary.get("count", 0) or 0
+                    ),
+                    "ai_runtime_setup_auto_runnable_count": int(
+                        ai_runtime_setup_action_summary.get("auto_runnable_count", 0) or 0
+                    ),
+                    "ai_runtime_setup_ready_count": int(
+                        ai_runtime_setup_action_summary.get("ready_count", 0) or 0
+                    ),
+                    "ai_runtime_setup_attention_count": int(
+                        ai_runtime_setup_action_summary.get("attention_count", 0) or 0
+                    ),
+                    "ai_runtime_setup_top_codes": dict(
+                        ai_runtime_setup_action_summary.get("top_codes", {})
+                    )
+                    if isinstance(ai_runtime_setup_action_summary.get("top_codes", {}), dict)
+                    else {},
                     "task_preference_count": int(task_preference_plan.get("count", 0) or 0)
                     if isinstance(task_preference_plan, dict)
                     else 0,
@@ -14994,10 +16226,25 @@ class DesktopBackendService:
         if not isinstance(plan, dict) or plan.get("status") != "success":
             return plan if isinstance(plan, dict) else {"status": "error", "message": "unable to build machine onboarding plan"}
         profile = dict(plan.get("profile", {})) if isinstance(plan.get("profile", {}), dict) else {}
+        ai_runtime_profile = (
+            dict(plan.get("ai_runtime_profile", {}))
+            if isinstance(plan.get("ai_runtime_profile", {}), dict)
+            else {}
+        )
         planned_multimodal_memory = (
             dict(plan.get("multimodal_memory", {}))
             if isinstance(plan.get("multimodal_memory", {}), dict)
             else {}
+        )
+        ai_runtime_setup_actions = [
+            dict(item)
+            for item in plan.get("ai_runtime_setup_actions", [])
+            if isinstance(plan.get("ai_runtime_setup_actions", []), list) and isinstance(item, dict)
+        ]
+        ai_runtime_setup_action_summary = (
+            dict(plan.get("ai_runtime_setup_action_summary", {}))
+            if isinstance(plan.get("ai_runtime_setup_action_summary", {}), dict)
+            else self._desktop_machine_ai_runtime_setup_action_summary(items=ai_runtime_setup_actions)
         )
         multimodal_setup_actions = [
             dict(item)
@@ -15153,6 +16400,7 @@ class DesktopBackendService:
         workspace_scaffold: Dict[str, Any] = {}
         launch_seed_results: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         model_install_result: Dict[str, Any] = {"status": "skipped", "selected_item_keys": effective_item_keys}
+        ai_runtime_setup_result: Dict[str, Any] = {"status": "skipped", "selected_action_codes": [], "selected_action_count": 0}
         multimodal_setup_result: Dict[str, Any] = {"status": "skipped", "selected_action_codes": [], "selected_action_count": 0}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
         app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
@@ -15256,6 +16504,30 @@ class DesktopBackendService:
                         model_install_result["continue_followup_actions_status"] = "skipped"
                 if isinstance(model_install_result.get("updated_mission", {}), dict):
                     queue_model_setup_mission = dict(model_install_result.get("updated_mission", {}))
+            ai_runtime_selected_action_codes = [
+                self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+                for item in ai_runtime_setup_actions
+                if isinstance(item, dict)
+                and bool(item.get("auto_runnable", False))
+                and self._machine_text(item.get("status", "")) in {"ready", "planned"}
+                and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+            ]
+            if ai_runtime_selected_action_codes:
+                ai_runtime_setup_result = self._desktop_machine_execute_ai_runtime_setup_plan(
+                    ai_runtime_profile=ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {},
+                    task=str(task or "").strip().lower(),
+                    selected_action_codes=ai_runtime_selected_action_codes,
+                    dry_run=False,
+                    force_reload=False,
+                    source="machine_onboarding",
+                )
+                refreshed_ai_profile = (
+                    dict(ai_runtime_setup_result.get("ai_runtime_profile", {}))
+                    if isinstance(ai_runtime_setup_result.get("ai_runtime_profile", {}), dict)
+                    else {}
+                )
+                if refreshed_ai_profile:
+                    profile["ai_runtime_profile"] = refreshed_ai_profile
             multimodal_selected_action_codes = [
                 self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
                 for item in multimodal_setup_actions
@@ -15889,6 +17161,7 @@ class DesktopBackendService:
             task_preference_plan=task_preference_plan if isinstance(task_preference_plan, dict) else {},
             model_selection=model_selection if isinstance(model_selection, dict) else {},
             model_setup_mission=queue_model_setup_mission if isinstance(queue_model_setup_mission, dict) else None,
+            ai_runtime_setup_actions=ai_runtime_setup_actions,
             multimodal_setup_actions=multimodal_setup_actions,
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
@@ -15905,6 +17178,7 @@ class DesktopBackendService:
             workspace_scaffold=workspace_scaffold if isinstance(workspace_scaffold, dict) else None,
             launch_seed_results=launch_seed_results if isinstance(launch_seed_results, dict) else None,
             model_install_result=model_install_result if isinstance(model_install_result, dict) else None,
+            ai_runtime_setup_result=ai_runtime_setup_result if isinstance(ai_runtime_setup_result, dict) else None,
             multimodal_setup_result=multimodal_setup_result if isinstance(multimodal_setup_result, dict) else None,
             app_learning_result=app_learning_result if isinstance(app_learning_result, dict) else None,
             app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
@@ -15937,6 +17211,13 @@ class DesktopBackendService:
             list(execution_queue.get("next_actions", []))
             if isinstance(execution_queue.get("next_actions", []), list)
             else []
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(ai_runtime_setup_result.get("next_actions", []))
+            if isinstance(ai_runtime_setup_result.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
@@ -15984,10 +17265,29 @@ class DesktopBackendService:
             if isinstance(final_profile.get("multimodal_memory", {}), dict)
             else dict(planned_multimodal_memory)
         )
+        final_ai_runtime_profile = (
+            dict(final_profile.get("ai_runtime_profile", {}))
+            if isinstance(final_profile.get("ai_runtime_profile", {}), dict)
+            else dict(ai_runtime_setup_result.get("ai_runtime_profile", {}))
+            if isinstance(ai_runtime_setup_result.get("ai_runtime_profile", {}), dict)
+            else dict(ai_runtime_profile)
+        )
         final_multimodal_summary = (
             dict(final_multimodal_memory.get("summary", {}))
             if isinstance(final_multimodal_memory.get("summary", {}), dict)
             else {}
+        )
+        final_ai_runtime_summary = (
+            dict(final_ai_runtime_profile.get("summary", {}))
+            if isinstance(final_ai_runtime_profile.get("summary", {}), dict)
+            else {}
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(final_ai_runtime_profile.get("next_actions", []))
+            if isinstance(final_ai_runtime_profile.get("next_actions", []), list)
+            else [],
+            limit=8,
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
@@ -16002,6 +17302,7 @@ class DesktopBackendService:
             str(workspace_scaffold.get("status", "") or "").strip().lower(),
             str(launch_seed_results.get("status", "") or "").strip().lower(),
             str(model_install_result.get("status", "") or "").strip().lower(),
+            str(ai_runtime_setup_result.get("status", "") or "").strip().lower(),
             str(multimodal_setup_result.get("status", "") or "").strip().lower(),
             str(app_learning_result.get("status", "") or "").strip().lower(),
             str(app_control_prepare_result.get("status", "") or "").strip().lower(),
@@ -16021,6 +17322,10 @@ class DesktopBackendService:
             "plan": plan,
             "profile_setup_actions": profile_setup_actions,
             "profile_setup_action_summary": profile_setup_action_summary,
+            "ai_runtime_profile": final_ai_runtime_profile,
+            "ai_runtime_setup_actions": ai_runtime_setup_actions,
+            "ai_runtime_setup_action_summary": ai_runtime_setup_action_summary,
+            "ai_runtime_setup_result": ai_runtime_setup_result,
             "multimodal_setup_actions": multimodal_setup_actions,
             "multimodal_setup_action_summary": multimodal_setup_action_summary,
             "provider_updates": provider_updates,
@@ -16046,6 +17351,39 @@ class DesktopBackendService:
             "summary": {
                 "provider_update_count": int(provider_updates.get("count", 0) or 0),
                 "profile_setup_action_count": int(profile_setup_action_summary.get("count", 0) or 0),
+                "ai_runtime_stack_count": int(final_ai_runtime_summary.get("stack_count", 0) or 0),
+                "ai_runtime_ready_stack_count": int(final_ai_runtime_summary.get("ready_stack_count", 0) or 0),
+                "ai_runtime_blocked_stack_count": int(final_ai_runtime_summary.get("blocked_stack_count", 0) or 0),
+                "ai_runtime_action_required_task_count": int(
+                    final_ai_runtime_summary.get("action_required_task_count", 0) or 0
+                ),
+                "ai_runtime_reasoning_runtime_ready": bool(
+                    final_ai_runtime_summary.get("reasoning_runtime_ready", False)
+                ),
+                "ai_runtime_vision_runtime_ready": bool(
+                    final_ai_runtime_summary.get("vision_runtime_ready", False)
+                ),
+                "ai_runtime_setup_action_count": int(
+                    ai_runtime_setup_action_summary.get("count", 0) or 0
+                ),
+                "ai_runtime_setup_auto_runnable_count": int(
+                    ai_runtime_setup_action_summary.get("auto_runnable_count", 0) or 0
+                ),
+                "ai_runtime_setup_ready_count": int(
+                    ai_runtime_setup_action_summary.get("ready_count", 0) or 0
+                ),
+                "ai_runtime_setup_attention_count": int(
+                    ai_runtime_setup_action_summary.get("attention_count", 0) or 0
+                ),
+                "ai_runtime_setup_executed_count": int(
+                    ai_runtime_setup_result.get("executed_action_count", 0) or 0
+                ),
+                "ai_runtime_setup_success_count": int(
+                    ai_runtime_setup_result.get("success_count", 0) or 0
+                ),
+                "ai_runtime_setup_error_count": int(
+                    ai_runtime_setup_result.get("error_count", 0) or 0
+                ),
                 "task_preference_count": int(task_preference_update.get("count", 0) or 0),
                 "launch_seed_count": int(launch_seed_results.get("count", 0) or 0),
                 "selected_model_count": len(effective_item_keys),

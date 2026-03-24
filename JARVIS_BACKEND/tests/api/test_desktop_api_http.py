@@ -13530,6 +13530,25 @@ class FakeDesktopService:
                     }
                 ],
             },
+            "ai_runtime_profile": {
+                "status": "partial",
+                "summary": {
+                    "stack_count": 3,
+                    "ready_stack_count": 2,
+                    "blocked_stack_count": 1,
+                    "action_required_task_count": 1,
+                    "reasoning_runtime_ready": False,
+                    "vision_runtime_ready": True,
+                },
+                "next_actions": [
+                    {
+                        "kind": "ai_runtime_runtime",
+                        "action": "warm_local_reasoning_runtime",
+                        "target": "reasoning",
+                        "auto_runnable": True,
+                    }
+                ],
+            },
             "recommendations": [{"code": "configure_huggingface_token", "severity": "high"}],
             "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
             "change_detection": {"changed": False, "areas": [], "requires_revalidation": False},
@@ -13694,7 +13713,12 @@ class FakeDesktopService:
                             "expected_route_profile": "linux_vm_desktop_control",
                             "expected_model_preference": "hybrid_runtime",
                             "route_resolution_status": "matched",
-                            "setup_followup_codes": [],
+                            "setup_followup_codes": ["warm_local_reasoning_runtime"],
+                            "ai_runtime_status": "partial",
+                            "ai_runtime_ready_stack_count": 2,
+                            "ai_runtime_blocked_stack_count": 1,
+                            "ai_runtime_action_required_task_count": 1,
+                            "ai_reasoning_ready": False,
                         },
                         "recommended_traversal_roles": ["menu", "sidebar", "terminal"],
                         "preferred_wave_actions": ["open_system_settings", "open_terminal"],
@@ -13712,6 +13736,12 @@ class FakeDesktopService:
                     "runtime_band_counts": {"hybrid": 1},
                     "expected_route_profile_counts": {"linux_vm_desktop_control": 1},
                     "expected_model_preference_counts": {"hybrid_runtime": 1},
+                    "ai_route_status_counts": {"setup_constrained": 1},
+                    "ai_route_runtime_band_counts": {"api": 1},
+                    "ai_route_profile_counts": {"api_vm_assist": 1},
+                    "ai_route_provider_source_counts": {"api_assist_plus_ocr": 1},
+                    "ai_route_confident_count": 1,
+                    "ai_route_fallback_count": 1,
                     "route_resolution_status_counts": {"matched": 1},
                     "remediation_kind_counts": {"observe": 1},
                     "setup_followup_guest_count": 0,
@@ -13768,6 +13798,11 @@ class FakeDesktopService:
                 "runtime_band_preference": "hybrid",
                 "expected_route_profile": "linux_vm_desktop_control",
                 "expected_model_preference": "hybrid_runtime",
+                "ai_route_status": "setup_constrained",
+                "ai_route_confidence": 0.71,
+                "selected_ai_runtime_band": "api",
+                "selected_ai_route_profile": "api_vm_assist",
+                "selected_ai_provider_source": "api_assist_plus_ocr",
                 "route_resolution_status": "matched",
                 "remediation_kind": "observe",
                 "provider_model_readiness": {
@@ -13776,7 +13811,21 @@ class FakeDesktopService:
                     "expected_route_profile": "linux_vm_desktop_control",
                     "expected_model_preference": "hybrid_runtime",
                     "route_resolution_status": "matched",
-                    "setup_followup_codes": [],
+                    "setup_followup_codes": ["warm_local_reasoning_runtime"],
+                    "ai_runtime_status": "partial",
+                    "ai_runtime_ready_stack_count": 2,
+                    "ai_runtime_blocked_stack_count": 1,
+                    "ai_runtime_action_required_task_count": 1,
+                    "ai_reasoning_ready": False,
+                    "ai_route_status": "setup_constrained",
+                    "ai_route_fallback_applied": True,
+                    "ai_route_confidence": 0.71,
+                    "selected_ai_runtime_band": "api",
+                    "selected_ai_route_profile": "api_vm_assist",
+                    "selected_ai_model_preference": "api_assist",
+                    "selected_ai_provider_source": "api_assist_plus_ocr",
+                    "selected_ai_reasoning_stack": "",
+                    "selected_ai_vision_stack": "perception",
                 },
                 "recommended_traversal_roles": ["menu", "sidebar", "terminal"],
                 "preferred_wave_actions": ["open_system_settings", "open_terminal"],
@@ -13903,6 +13952,36 @@ class FakeDesktopService:
                 "count": 1,
                 "severity_counts": {"high": 1},
                 "top_codes": {"configure_huggingface_token": 1},
+            },
+            "ai_runtime_profile": {
+                "status": "partial",
+                "summary": {
+                    "stack_count": 3,
+                    "ready_stack_count": 2,
+                    "blocked_stack_count": 1,
+                    "action_required_task_count": 1,
+                    "reasoning_runtime_ready": False,
+                    "vision_runtime_ready": True,
+                },
+            },
+            "ai_runtime_setup_actions": [
+                {
+                    "id": "ai_runtime:warm_reasoning",
+                    "setup_action_code": "warm_local_reasoning_runtime",
+                    "kind": "ai_runtime_runtime",
+                    "title": "Warm local reasoning runtime",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "required": False,
+                    "source": "ai_runtime_profile",
+                }
+            ],
+            "ai_runtime_setup_action_summary": {
+                "count": 1,
+                "auto_runnable_count": 1,
+                "ready_count": 1,
+                "attention_count": 0,
+                "top_codes": {"warm_local_reasoning_runtime": 1},
             },
             "multimodal_setup_actions": [
                 {
@@ -14183,6 +14262,16 @@ class FakeDesktopService:
                     "required": False,
                 },
                 {
+                    "id": "ai_runtime:warm_reasoning",
+                    "stage": "setup_action",
+                    "kind": "ai_runtime_runtime",
+                    "status": "ready",
+                    "title": "Warm local reasoning runtime",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "warm_local_reasoning_runtime",
+                },
+                {
                     "id": "multimodal:warm_local_vision_runtime",
                     "stage": "setup_action",
                     "kind": "multimodal_runtime",
@@ -14235,20 +14324,21 @@ class FakeDesktopService:
                 },
             ],
             "execution_queue_summary": {
-                "count": 6,
-                "auto_runnable_count": 5,
-                "ready_count": 4,
+                "count": 7,
+                "auto_runnable_count": 6,
+                "ready_count": 5,
                 "success_count": 0,
                 "manual_count": 2,
                 "blocked_count": 0,
                 "error_count": 0,
-                "setup_action_count": 2,
-                "setup_action_auto_runnable_count": 2,
+                "setup_action_count": 3,
+                "setup_action_auto_runnable_count": 3,
                 "setup_action_success_count": 0,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
                 "setup_action_code_counts": {
                     "verify_provider:huggingface": 1,
+                    "warm_local_reasoning_runtime": 1,
                     "warm_local_vision_runtime": 1,
                 },
                 "stage_counts": {
@@ -14256,7 +14346,7 @@ class FakeDesktopService:
                     "launch_seed": 1,
                     "model": 1,
                     "provider": 1,
-                    "setup_action": 2,
+                    "setup_action": 3,
                     "task_preferences": 1,
                 },
             },
@@ -14281,6 +14371,17 @@ class FakeDesktopService:
             "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
             "summary": {
                 "profile_setup_action_count": 1,
+                "ai_runtime_stack_count": 3,
+                "ai_runtime_ready_stack_count": 2,
+                "ai_runtime_blocked_stack_count": 1,
+                "ai_runtime_action_required_task_count": 1,
+                "ai_runtime_reasoning_runtime_ready": False,
+                "ai_runtime_vision_runtime_ready": True,
+                "ai_runtime_setup_action_count": 1,
+                "ai_runtime_setup_auto_runnable_count": 1,
+                "ai_runtime_setup_ready_count": 1,
+                "ai_runtime_setup_attention_count": 0,
+                "ai_runtime_setup_top_codes": {"warm_local_reasoning_runtime": 1},
                 "task_preference_count": 1,
                 "selected_model_count": 1,
                 "setup_execution_selected_action_count": 1,
@@ -14390,6 +14491,15 @@ class FakeDesktopService:
                     "source": "machine_onboarding",
                     "summary": {
                         "profile_setup_action_count": 1,
+                        "ai_runtime_stack_count": 3,
+                        "ai_runtime_ready_stack_count": 3,
+                        "ai_runtime_blocked_stack_count": 0,
+                        "ai_runtime_action_required_task_count": 0,
+                        "ai_runtime_setup_action_count": 1,
+                        "ai_runtime_setup_auto_runnable_count": 1,
+                        "ai_runtime_setup_executed_count": 1,
+                        "ai_runtime_setup_success_count": 1,
+                        "ai_runtime_setup_error_count": 0,
                         "selected_model_count": 1,
                         "launch_seed_count": 2,
                         "app_learning_target_count": 2,
@@ -14430,7 +14540,7 @@ class FakeDesktopService:
                         "continuation_setup_followup_count": 0,
                         "vm_setup_followup_guest_count": 0,
                         "top_route_remediation_kinds": {"route_tuning": 1},
-                        "execution_action_count": 6,
+                        "execution_action_count": 7,
                         "execution_success_count": 4,
                         "execution_manual_count": 1,
                         "execution_blocked_count": 0,
@@ -14501,6 +14611,15 @@ class FakeDesktopService:
                 "source": "machine_onboarding",
                     "summary": {
                         "profile_setup_action_count": 1,
+                        "ai_runtime_stack_count": 3,
+                        "ai_runtime_ready_stack_count": 3,
+                        "ai_runtime_blocked_stack_count": 0,
+                        "ai_runtime_action_required_task_count": 0,
+                        "ai_runtime_setup_action_count": 1,
+                        "ai_runtime_setup_auto_runnable_count": 1,
+                        "ai_runtime_setup_executed_count": 1,
+                        "ai_runtime_setup_success_count": 1,
+                        "ai_runtime_setup_error_count": 0,
                         "selected_model_count": 1,
                     "setup_execution_selected_action_count": 1,
                     "setup_execution_continued_action_count": 1,
@@ -14561,9 +14680,12 @@ class FakeDesktopService:
                     "manual_count": 1,
                     "blocked_count": 0,
                     "error_count": 0,
-                    "setup_action_count": 1,
-                    "setup_action_success_count": 1,
-                    "setup_action_code_counts": {"verify_provider:huggingface": 1},
+                    "setup_action_count": 2,
+                    "setup_action_success_count": 2,
+                    "setup_action_code_counts": {
+                        "verify_provider:huggingface": 1,
+                        "warm_local_reasoning_runtime": 1,
+                    },
                 },
                 "next_actions": [
                     {
@@ -14621,6 +14743,15 @@ class FakeDesktopService:
                 "setup_action_manual_total": 0,
                 "setup_action_blocked_total": 0,
                 "profile_setup_action_total": 1,
+                "ai_runtime_stack_total": 3,
+                "ai_runtime_ready_stack_total": 3,
+                "ai_runtime_blocked_stack_total": 0,
+                "ai_runtime_action_required_task_total": 0,
+                "ai_runtime_setup_action_total": 1,
+                "ai_runtime_setup_auto_runnable_total": 1,
+                "ai_runtime_setup_executed_total": 1,
+                "ai_runtime_setup_success_total": 1,
+                "ai_runtime_setup_error_total": 0,
                 "setup_execution_selected_action_total": 1,
                 "setup_execution_continued_action_total": 1,
                 "setup_execution_remaining_ready_total": 0,
@@ -14779,6 +14910,36 @@ class FakeDesktopService:
                 "severity_counts": {"high": 1},
                 "top_codes": {"configure_huggingface_token": 1},
             },
+            "ai_runtime_profile": {
+                "status": "partial",
+                "summary": {
+                    "stack_count": 3,
+                    "ready_stack_count": 2,
+                    "blocked_stack_count": 1,
+                    "action_required_task_count": 1,
+                    "reasoning_runtime_ready": False,
+                    "vision_runtime_ready": True,
+                },
+            },
+            "ai_runtime_setup_actions": [
+                {
+                    "id": "ai_runtime:warm_reasoning",
+                    "setup_action_code": "warm_local_reasoning_runtime",
+                    "kind": "ai_runtime_runtime",
+                    "title": "Warm local reasoning runtime",
+                    "status": "ready",
+                    "auto_runnable": True,
+                    "required": False,
+                    "source": "ai_runtime_profile",
+                }
+            ],
+            "ai_runtime_setup_action_summary": {
+                "count": 1,
+                "auto_runnable_count": 1,
+                "ready_count": 1,
+                "attention_count": 0,
+                "top_codes": {"warm_local_reasoning_runtime": 1},
+            },
             "multimodal_setup_actions": [
                 {
                     "id": "multimodal:warm_local_vision_runtime",
@@ -14821,6 +14982,35 @@ class FakeDesktopService:
                     "final_ready_action_ids": [],
                 },
                 "selected_item_keys": list(selected_model_item_keys or ["reasoning-qwen3.5-9b"]),
+            },
+            "ai_runtime_setup_result": {
+                "status": "success",
+                "selected_action_codes": ["warm_local_reasoning_runtime"],
+                "selected_action_count": 1,
+                "executed_action_codes": ["warm_local_reasoning_runtime"],
+                "executed_action_count": 1,
+                "success_count": 1,
+                "error_count": 0,
+                "items": [
+                    {
+                        "action_id": "ai_runtime:warm_reasoning",
+                        "setup_action_code": "warm_local_reasoning_runtime",
+                        "status": "success",
+                        "title": "Warm local reasoning runtime",
+                    }
+                ],
+                "ai_runtime_profile": {
+                    "status": "success",
+                    "summary": {
+                        "stack_count": 3,
+                        "ready_stack_count": 3,
+                        "blocked_stack_count": 0,
+                        "action_required_task_count": 0,
+                        "reasoning_runtime_ready": True,
+                        "vision_runtime_ready": True,
+                    },
+                },
+                "next_actions": [],
             },
             "multimodal_setup_result": {
                 "status": "success",
@@ -15147,6 +15337,16 @@ class FakeDesktopService:
                     "required": False,
                 },
                 {
+                    "id": "ai_runtime:warm_reasoning",
+                    "stage": "setup_action",
+                    "kind": "ai_runtime_runtime",
+                    "status": "success",
+                    "title": "Warm local reasoning runtime",
+                    "auto_runnable": True,
+                    "required": False,
+                    "setup_action_code": "warm_local_reasoning_runtime",
+                },
+                {
                     "id": "multimodal:warm_local_vision_runtime",
                     "stage": "setup_action",
                     "kind": "multimodal_runtime",
@@ -15199,20 +15399,21 @@ class FakeDesktopService:
                 },
             ],
             "execution_queue_summary": {
-                "count": 7,
-                "auto_runnable_count": 6,
+                "count": 8,
+                "auto_runnable_count": 7,
                 "ready_count": 0,
-                "success_count": 7,
+                "success_count": 8,
                 "manual_count": 0,
                 "blocked_count": 0,
                 "error_count": 0,
-                "setup_action_count": 2,
-                "setup_action_auto_runnable_count": 2,
-                "setup_action_success_count": 2,
+                "setup_action_count": 3,
+                "setup_action_auto_runnable_count": 3,
+                "setup_action_success_count": 3,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
                 "setup_action_code_counts": {
                     "verify_provider:huggingface": 1,
+                    "warm_local_reasoning_runtime": 1,
                     "warm_local_vision_runtime": 1,
                 },
                 "stage_counts": {
@@ -15220,7 +15421,7 @@ class FakeDesktopService:
                     "launch_seed": 1,
                     "model": 1,
                     "provider": 1,
-                    "setup_action": 2,
+                    "setup_action": 3,
                     "task_preferences": 1,
                 },
             },
@@ -15228,6 +15429,17 @@ class FakeDesktopService:
             "final_profile": {
                 "status": "success",
                 "machine_id": "machine-demo-01",
+                "ai_runtime_profile": {
+                    "status": "success",
+                    "summary": {
+                        "stack_count": 3,
+                        "ready_stack_count": 3,
+                        "blocked_stack_count": 0,
+                        "action_required_task_count": 0,
+                        "reasoning_runtime_ready": True,
+                        "vision_runtime_ready": True,
+                    },
+                },
                 "multimodal_memory": {
                     "status": "success",
                     "summary": {
@@ -15270,6 +15482,19 @@ class FakeDesktopService:
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
                 "profile_setup_action_count": 1,
+                "ai_runtime_stack_count": 3,
+                "ai_runtime_ready_stack_count": 3,
+                "ai_runtime_blocked_stack_count": 0,
+                "ai_runtime_action_required_task_count": 0,
+                "ai_runtime_reasoning_runtime_ready": True,
+                "ai_runtime_vision_runtime_ready": True,
+                "ai_runtime_setup_action_count": 1,
+                "ai_runtime_setup_auto_runnable_count": 1,
+                "ai_runtime_setup_ready_count": 1,
+                "ai_runtime_setup_attention_count": 0,
+                "ai_runtime_setup_executed_count": 1,
+                "ai_runtime_setup_success_count": 1,
+                "ai_runtime_setup_error_count": 0,
                 "task_preference_count": 1,
                 "selected_model_count": len(list(selected_model_item_keys or ["reasoning-qwen3.5-9b"])),
                 "setup_execution_mode": "mission",
@@ -15348,20 +15573,21 @@ class FakeDesktopService:
                 "continuation_provider_blocked_count": 0,
                 "continuation_setup_followup_count": 0,
                 "continuation_focus_app_count": 1 if auto_prepare_app_controls else 0,
-                "execution_action_count": 7,
-                "execution_auto_runnable_count": 6,
+                "execution_action_count": 8,
+                "execution_auto_runnable_count": 7,
                 "execution_ready_count": 0,
-                "execution_success_count": 7,
+                "execution_success_count": 8,
                 "execution_manual_count": 0,
                 "execution_blocked_count": 0,
                 "execution_error_count": 0,
-                "setup_action_count": 2,
-                "setup_action_auto_runnable_count": 2,
-                "setup_action_success_count": 2,
+                "setup_action_count": 3,
+                "setup_action_auto_runnable_count": 3,
+                "setup_action_success_count": 3,
                 "setup_action_manual_count": 0,
                 "setup_action_blocked_count": 0,
                 "top_setup_action_codes": {
                     "verify_provider:huggingface": 1,
+                    "warm_local_reasoning_runtime": 1,
                     "warm_local_vision_runtime": 1,
                 },
             },
@@ -15464,6 +15690,12 @@ class FakeDesktopService:
                     "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
                     "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
                     "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "ai_route_status_counts": {"fallback": 1, "matched": 1},
+                    "ai_route_runtime_band_counts": {"accessibility": 1, "hybrid": 1},
+                    "ai_route_profile_counts": {"accessibility_first": 1, "local_vision_assist_native_stabilized": 1},
+                    "ai_route_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "ai_route_confident_count": 1,
+                    "ai_route_fallback_count": 1,
                     "remediation_feedback_count": 2,
                     "remediation_retry_count": 1,
                     "remediation_provider_blocked_count": 1,
@@ -15490,6 +15722,18 @@ class FakeDesktopService:
                         "expected_route_profile": "local_vision_assist",
                         "expected_model_preference": "hybrid_runtime",
                         "expected_provider_source": "local_runtime_plus_ocr",
+                        "ai_route_status": "matched",
+                        "ai_route_confidence": 0.82,
+                        "ai_route_confidence_band": "high",
+                        "selected_ai_runtime_band": "hybrid",
+                        "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                        "selected_ai_model_preference": "hybrid_runtime",
+                        "selected_ai_provider_source": "local_runtime_plus_ocr",
+                        "selected_ai_reasoning_stack": "desktop_agent",
+                        "selected_ai_vision_stack": "perception",
+                        "selected_ai_memory_stack": "memory",
+                        "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                        "ai_route_reason_codes": ["hybrid_runtime_priority"],
                         "adaptive_runtime_strategy": {
                             "strategy_profile": "balanced_hybrid_guided_explore",
                             "runtime_band_preference": "hybrid",
@@ -15529,6 +15773,18 @@ class FakeDesktopService:
                         "expected_route_profile": "accessibility_first",
                         "expected_model_preference": "accessibility",
                         "expected_provider_source": "accessibility_only",
+                        "ai_route_status": "fallback",
+                        "ai_route_confidence": 0.38,
+                        "ai_route_confidence_band": "low",
+                        "selected_ai_runtime_band": "accessibility",
+                        "selected_ai_route_profile": "accessibility_first",
+                        "selected_ai_model_preference": "accessibility",
+                        "selected_ai_provider_source": "accessibility_only",
+                        "selected_ai_reasoning_stack": "",
+                        "selected_ai_vision_stack": "",
+                        "selected_ai_memory_stack": "memory",
+                        "selected_ai_stack_names": ["memory"],
+                        "ai_route_reason_codes": ["provider_missing_huggingface", "setup_followup_pending"],
                         "adaptive_runtime_strategy": {
                             "strategy_profile": "degraded_cautious_revalidate",
                             "runtime_band_preference": "accessibility",
@@ -15576,6 +15832,12 @@ class FakeDesktopService:
                     "expected_route_profile_counts": {"accessibility_first": 1, "local_vision_assist": 1},
                     "expected_model_preference_counts": {"accessibility": 1, "hybrid_runtime": 1},
                     "expected_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "ai_route_status_counts": {"fallback": 1, "matched": 1},
+                    "ai_route_runtime_band_counts": {"accessibility": 1, "hybrid": 1},
+                    "ai_route_profile_counts": {"accessibility_first": 1, "local_vision_assist_native_stabilized": 1},
+                    "ai_route_provider_source_counts": {"accessibility_only": 1, "local_runtime_plus_ocr": 1},
+                    "ai_route_confident_count": 1,
+                    "ai_route_fallback_count": 1,
                     "remediation_feedback_status_counts": {"persistent": 1, "resolved": 1},
                     "remediation_retry_count": 1,
                     "remediation_provider_blocked_count": 1,
@@ -15591,6 +15853,18 @@ class FakeDesktopService:
                             "expected_route_profile": "local_vision_assist",
                             "expected_model_preference": "hybrid_runtime",
                             "expected_provider_source": "local_runtime_plus_ocr",
+                            "ai_route_status": "matched",
+                            "ai_route_confidence": 0.82,
+                            "ai_route_confidence_band": "high",
+                            "selected_ai_runtime_band": "hybrid",
+                            "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                            "selected_ai_model_preference": "hybrid_runtime",
+                            "selected_ai_provider_source": "local_runtime_plus_ocr",
+                            "selected_ai_reasoning_stack": "desktop_agent",
+                            "selected_ai_vision_stack": "perception",
+                            "selected_ai_memory_stack": "memory",
+                            "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                            "ai_route_reason_codes": ["hybrid_runtime_priority"],
                             "runtime_strategy": {
                                 "strategy_profile": "balanced_hybrid_guided_explore",
                                 "runtime_band_preference": "hybrid",
@@ -15617,6 +15891,12 @@ class FakeDesktopService:
                                 "blocker_codes": [],
                                 "execution_mode": "hybrid_ready",
                                 "readiness_status": "ready",
+                                "ai_route_status": "matched",
+                                "ai_route_confidence": 0.82,
+                                "selected_ai_runtime_band": "hybrid",
+                                "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                                "selected_ai_model_preference": "hybrid_runtime",
+                                "selected_ai_provider_source": "local_runtime_plus_ocr",
                             },
                         },
                         {
@@ -15629,6 +15909,18 @@ class FakeDesktopService:
                             "expected_route_profile": "accessibility_first",
                             "expected_model_preference": "accessibility",
                             "expected_provider_source": "accessibility_only",
+                            "ai_route_status": "fallback",
+                            "ai_route_confidence": 0.38,
+                            "ai_route_confidence_band": "low",
+                            "selected_ai_runtime_band": "accessibility",
+                            "selected_ai_route_profile": "accessibility_first",
+                            "selected_ai_model_preference": "accessibility",
+                            "selected_ai_provider_source": "accessibility_only",
+                            "selected_ai_reasoning_stack": "",
+                            "selected_ai_vision_stack": "",
+                            "selected_ai_memory_stack": "memory",
+                            "selected_ai_stack_names": ["memory"],
+                            "ai_route_reason_codes": ["provider_missing_huggingface", "setup_followup_pending"],
                             "runtime_strategy": {
                                 "strategy_profile": "degraded_cautious_revalidate",
                                 "runtime_band_preference": "accessibility",
@@ -15655,6 +15947,12 @@ class FakeDesktopService:
                                 "blocker_codes": ["provider_missing_huggingface"],
                                 "execution_mode": "degraded",
                                 "readiness_status": "degraded",
+                                "ai_route_status": "fallback",
+                                "ai_route_confidence": 0.38,
+                                "selected_ai_runtime_band": "accessibility",
+                                "selected_ai_route_profile": "accessibility_first",
+                                "selected_ai_model_preference": "accessibility",
+                                "selected_ai_provider_source": "accessibility_only",
                             },
                         },
                     ],
@@ -15831,6 +16129,18 @@ class FakeDesktopService:
                 "expected_route_profile": "local_vision_assist",
                 "expected_model_preference": "hybrid_runtime",
                 "expected_provider_source": "local_runtime_plus_ocr",
+                "ai_route_status": "matched",
+                "ai_route_confidence": 0.84,
+                "ai_route_confidence_band": "high",
+                "selected_ai_runtime_band": "hybrid",
+                "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                "selected_ai_model_preference": "hybrid_runtime",
+                "selected_ai_provider_source": "local_runtime_plus_ocr",
+                "selected_ai_reasoning_stack": "desktop_agent",
+                "selected_ai_vision_stack": "perception",
+                "selected_ai_memory_stack": "memory",
+                "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                "ai_route_reason_codes": ["hybrid_runtime_priority", "local_ready_tasks"],
             },
             "resolved_target": {
                 "status": "success",
@@ -15912,9 +16222,17 @@ class FakeDesktopService:
                 "required_tasks": ["reasoning", "vision"],
                 "related_setup_action_codes": ["configure_huggingface_token", "install_local_vision_model"],
                 "related_setup_action_count": 2,
+                "ai_route_status": "matched",
+                "ai_route_confidence": 0.84,
+                "selected_ai_runtime_band": "hybrid",
+                "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                "selected_ai_model_preference": "hybrid_runtime",
+                "selected_ai_provider_source": "local_runtime_plus_ocr",
                 "wave_attempt_count": 4,
                 "discovered_control_count": 6,
                 "probe_success_count": 2,
+                "selected_ai_reasoning_stack": "desktop_agent",
+                "selected_ai_vision_stack": "perception",
             },
             "adaptive_runtime_strategy": {
                 "strategy_profile": "balanced_hybrid_guided_explore",
@@ -25436,6 +25754,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert profile["machine_id"] == "machine-demo-01"
     assert profile["verify_providers"] is True
     assert profile["virtual_machines"]["summary"]["ready_guest_count"] == 1
+    assert profile["ai_runtime_profile"]["summary"]["ready_stack_count"] == 2
+    assert profile["ai_runtime_profile"]["summary"]["blocked_stack_count"] == 1
     assert profile["multimodal_memory"]["summary"]["vision_memory_app_count"] == 2
     assert profile["multimodal_memory"]["summary"]["vision_runtime_status"] == "success"
     assert profile["multimodal_memory"]["summary"]["vision_runtime_available"] is True
@@ -25585,6 +25905,9 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["actual_model_preference"] == "hybrid_runtime"
     assert prepared["summary"]["route_alignment_status"] == "matched"
     assert prepared["summary"]["route_resolution_status"] == "matched"
+    assert prepared["summary"]["ai_route_status"] == "matched"
+    assert prepared["summary"]["selected_ai_route_profile"] == "local_vision_assist_native_stabilized"
+    assert prepared["summary"]["selected_ai_reasoning_stack"] == "desktop_agent"
     assert prepared["summary"]["related_setup_action_count"] == 2
     assert prepared["summary"]["setup_followup_count"] == 2
     assert prepared["summary"]["remediation_progress_status"] == "resolved"
@@ -25611,11 +25934,16 @@ def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple
     assert plan["plan"]["summary"]["runtime_band_counts"]["hybrid"] == 1
     assert plan["plan"]["summary"]["expected_route_profile_counts"]["local_vision_assist"] == 1
     assert plan["plan"]["summary"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
+    assert plan["plan"]["summary"]["ai_route_status_counts"]["matched"] == 1
+    assert plan["plan"]["summary"]["ai_route_status_counts"]["fallback"] == 1
+    assert plan["plan"]["summary"]["ai_route_fallback_count"] == 1
     assert plan["plan"]["summary"]["remediation_retry_count"] == 1
     assert plan["plan"]["summary"]["remediation_feedback_status_counts"]["persistent"] == 1
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["runtime_band_preference"] == "hybrid"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["expected_route_profile"] == "local_vision_assist"
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["selected_ai_route_profile"] == "local_vision_assist_native_stabilized"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["provider_model_readiness"]["required_tasks"][0] == "vision"
+    assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][0]["provider_model_readiness"]["selected_ai_runtime_band"] == "hybrid"
     assert plan["plan"]["campaign_defaults"]["adaptive_app_profiles"][1]["remediation_retry_recommended"] is True
     assert service.machine_app_learning_plan_calls[-1]["refresh_apps"] is True
 
@@ -25653,6 +25981,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["app_control_prepare_plan"]["count"] == 2
     assert plan["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert plan["summary"]["app_learning_degraded_count"] == 1
+    assert plan["summary"]["ai_runtime_stack_count"] == 3
+    assert plan["summary"]["ai_runtime_setup_action_count"] == 1
+    assert plan["summary"]["ai_runtime_setup_auto_runnable_count"] == 1
     assert plan["summary"]["multimodal_memory_app_count"] == 2
     assert plan["summary"]["multimodal_vision_runtime_status"] == "success"
     assert plan["summary"]["multimodal_revalidation_target_count"] == 3
@@ -25683,12 +26014,12 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["summary"]["route_remediation_count"] == 1
     assert plan["summary"]["route_remediation_setup_followup_count"] == 1
     assert plan["summary"]["route_remediation_provider_blocked_count"] == 1
-    assert len(plan["execution_queue"]) == 7
+    assert len(plan["execution_queue"]) == 8
     assert plan["execution_queue_summary"]["manual_count"] == 2
-    assert plan["execution_queue_summary"]["setup_action_count"] == 2
-    assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 2
+    assert plan["execution_queue_summary"]["setup_action_count"] == 3
+    assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 3
     assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
-    assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 2
+    assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 3
     assert plan["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_plan_calls[-1]["continuation_limit"] == 5
     assert service.machine_onboarding_plan_calls[-1]["vm_prepare_limit"] == 2
@@ -25726,6 +26057,12 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["model_install"]["continued_action_count"] == 1
     assert launched["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert launched["summary"]["app_learning_degraded_count"] == 1
+    assert launched["summary"]["ai_runtime_stack_count"] == 3
+    assert launched["summary"]["ai_runtime_setup_action_count"] == 1
+    assert launched["summary"]["ai_runtime_setup_executed_count"] == 1
+    assert launched["summary"]["ai_runtime_setup_success_count"] == 1
+    assert launched["ai_runtime_setup_result"]["status"] == "success"
+    assert launched["ai_runtime_setup_result"]["executed_action_codes"] == ["warm_local_reasoning_runtime"]
     assert launched["summary"]["multimodal_memory_app_count"] == 2
     assert launched["summary"]["multimodal_vision_runtime_status"] == "success"
     assert launched["summary"]["multimodal_revalidation_target_count"] == 3
@@ -25766,11 +26103,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["app_control_prepare"]["summary"]["execution_mode_counts"]["degraded"] == 1
     assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
     assert launched["task_preference_plan"]["count"] == 1
-    assert launched["execution_queue_summary"]["success_count"] == 7
-    assert launched["execution_queue_summary"]["setup_action_success_count"] == 2
-    assert launched["summary"]["execution_action_count"] == 7
-    assert launched["summary"]["execution_success_count"] == 7
-    assert launched["summary"]["setup_action_count"] == 2
+    assert launched["execution_queue_summary"]["success_count"] == 8
+    assert launched["execution_queue_summary"]["setup_action_success_count"] == 3
+    assert launched["summary"]["execution_action_count"] == 8
+    assert launched["summary"]["execution_success_count"] == 8
+    assert launched["summary"]["setup_action_count"] == 3
     assert service.machine_onboarding_launch_calls[-1]["auto_continue_unresolved"] is True
     assert service.machine_onboarding_launch_calls[-1]["continuation_limit"] == 4
     assert service.machine_onboarding_launch_calls[-1]["auto_prepare_app_controls"] is True
@@ -25791,6 +26128,10 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["vm_ready_guest_total"] == 1
     assert history["summary"]["vm_setup_followup_guest_total"] == 0
     assert history["summary"]["execution_action_total"] == 7
+    assert history["summary"]["ai_runtime_stack_total"] == 3
+    assert history["summary"]["ai_runtime_setup_action_total"] == 1
+    assert history["summary"]["ai_runtime_setup_executed_total"] == 1
+    assert history["summary"]["ai_runtime_setup_success_total"] == 1
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1
     assert history["summary"]["multimodal_memory_app_total"] == 2
@@ -25815,6 +26156,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["continuation_retry_total"] == 1
     assert history["summary"]["setup_action_total"] == 2
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
+    assert history["latest_run"]["summary"]["ai_runtime_setup_action_count"] == 1
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["route_remediation_count"] == 1

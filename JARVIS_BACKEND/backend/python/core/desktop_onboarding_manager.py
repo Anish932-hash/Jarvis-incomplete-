@@ -62,6 +62,15 @@ class DesktopOnboardingManager:
         setup_action_manual_total = 0
         setup_action_blocked_total = 0
         profile_setup_action_total = 0
+        ai_runtime_stack_total = 0
+        ai_runtime_ready_stack_total = 0
+        ai_runtime_blocked_stack_total = 0
+        ai_runtime_action_required_task_total = 0
+        ai_runtime_setup_action_total = 0
+        ai_runtime_setup_auto_runnable_total = 0
+        ai_runtime_setup_executed_total = 0
+        ai_runtime_setup_success_total = 0
+        ai_runtime_setup_error_total = 0
         setup_execution_selected_action_total = 0
         setup_execution_continued_action_total = 0
         setup_execution_remaining_ready_total = 0
@@ -137,6 +146,19 @@ class DesktopOnboardingManager:
             setup_action_manual_total += int(summary.get("setup_action_manual_count", 0) or 0)
             setup_action_blocked_total += int(summary.get("setup_action_blocked_count", 0) or 0)
             profile_setup_action_total += int(summary.get("profile_setup_action_count", 0) or 0)
+            ai_runtime_stack_total += int(summary.get("ai_runtime_stack_count", 0) or 0)
+            ai_runtime_ready_stack_total += int(summary.get("ai_runtime_ready_stack_count", 0) or 0)
+            ai_runtime_blocked_stack_total += int(summary.get("ai_runtime_blocked_stack_count", 0) or 0)
+            ai_runtime_action_required_task_total += int(
+                summary.get("ai_runtime_action_required_task_count", 0) or 0
+            )
+            ai_runtime_setup_action_total += int(summary.get("ai_runtime_setup_action_count", 0) or 0)
+            ai_runtime_setup_auto_runnable_total += int(
+                summary.get("ai_runtime_setup_auto_runnable_count", 0) or 0
+            )
+            ai_runtime_setup_executed_total += int(summary.get("ai_runtime_setup_executed_count", 0) or 0)
+            ai_runtime_setup_success_total += int(summary.get("ai_runtime_setup_success_count", 0) or 0)
+            ai_runtime_setup_error_total += int(summary.get("ai_runtime_setup_error_count", 0) or 0)
             setup_execution_selected_action_total += int(summary.get("setup_execution_selected_action_count", 0) or 0)
             setup_execution_continued_action_total += int(summary.get("setup_execution_continued_action_count", 0) or 0)
             setup_execution_remaining_ready_total += int(summary.get("setup_execution_remaining_ready_count", 0) or 0)
@@ -253,6 +275,15 @@ class DesktopOnboardingManager:
                 "setup_action_manual_total": setup_action_manual_total,
                 "setup_action_blocked_total": setup_action_blocked_total,
                 "profile_setup_action_total": profile_setup_action_total,
+                "ai_runtime_stack_total": ai_runtime_stack_total,
+                "ai_runtime_ready_stack_total": ai_runtime_ready_stack_total,
+                "ai_runtime_blocked_stack_total": ai_runtime_blocked_stack_total,
+                "ai_runtime_action_required_task_total": ai_runtime_action_required_task_total,
+                "ai_runtime_setup_action_total": ai_runtime_setup_action_total,
+                "ai_runtime_setup_auto_runnable_total": ai_runtime_setup_auto_runnable_total,
+                "ai_runtime_setup_executed_total": ai_runtime_setup_executed_total,
+                "ai_runtime_setup_success_total": ai_runtime_setup_success_total,
+                "ai_runtime_setup_error_total": ai_runtime_setup_error_total,
                 "setup_execution_selected_action_total": setup_execution_selected_action_total,
                 "setup_execution_continued_action_total": setup_execution_continued_action_total,
                 "setup_execution_remaining_ready_total": setup_execution_remaining_ready_total,

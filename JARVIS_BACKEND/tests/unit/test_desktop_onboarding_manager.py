@@ -28,6 +28,15 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "setup_action_success_count": 1,
                 "setup_action_manual_count": 1,
                 "setup_action_blocked_count": 1,
+                "ai_runtime_stack_count": 3,
+                "ai_runtime_ready_stack_count": 2,
+                "ai_runtime_blocked_stack_count": 1,
+                "ai_runtime_action_required_task_count": 2,
+                "ai_runtime_setup_action_count": 2,
+                "ai_runtime_setup_auto_runnable_count": 1,
+                "ai_runtime_setup_executed_count": 1,
+                "ai_runtime_setup_success_count": 1,
+                "ai_runtime_setup_error_count": 0,
                 "setup_execution_selected_action_count": 2,
                 "setup_execution_continued_action_count": 1,
                 "setup_execution_remaining_ready_count": 1,
@@ -115,6 +124,15 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["setup_action_manual_total"] == 1
     assert history["summary"]["setup_action_blocked_total"] == 1
     assert history["summary"]["profile_setup_action_total"] == 2
+    assert history["summary"]["ai_runtime_stack_total"] == 3
+    assert history["summary"]["ai_runtime_ready_stack_total"] == 2
+    assert history["summary"]["ai_runtime_blocked_stack_total"] == 1
+    assert history["summary"]["ai_runtime_action_required_task_total"] == 2
+    assert history["summary"]["ai_runtime_setup_action_total"] == 2
+    assert history["summary"]["ai_runtime_setup_auto_runnable_total"] == 1
+    assert history["summary"]["ai_runtime_setup_executed_total"] == 1
+    assert history["summary"]["ai_runtime_setup_success_total"] == 1
+    assert history["summary"]["ai_runtime_setup_error_total"] == 0
     assert history["summary"]["setup_execution_selected_action_total"] == 2
     assert history["summary"]["setup_execution_continued_action_total"] == 1
     assert history["summary"]["setup_execution_remaining_ready_total"] == 1

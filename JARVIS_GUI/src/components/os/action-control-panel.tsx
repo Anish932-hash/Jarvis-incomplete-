@@ -2518,6 +2518,14 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     () => asObjectRecord(desktopMachineMultimodalMemory.summary),
     [desktopMachineMultimodalMemory]
   );
+  const desktopMachineAiRuntimeProfile = useMemo(
+    () => asObjectRecord(desktopMachineProfile.ai_runtime_profile),
+    [desktopMachineProfile]
+  );
+  const desktopMachineAiRuntimeSummary = useMemo(
+    () => asObjectRecord(desktopMachineAiRuntimeProfile.summary),
+    [desktopMachineAiRuntimeProfile]
+  );
   const desktopMachineChangeAreas = useMemo(
     () =>
       Array.isArray(desktopMachineChangeDetection.areas)
@@ -2624,6 +2632,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineVmControlPlanSummary]
   );
+  const desktopMachineVmControlAiRouteStatusCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.ai_route_status_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlAiRouteBandCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.ai_route_runtime_band_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
   const desktopMachineVmControlRemediationKindCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.remediation_kind_counts)).sort(
@@ -2675,6 +2697,19 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   );
   const desktopMachineOnboardingProfileSetupSummary = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlan.profile_setup_action_summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingAiRuntimeSetupSummary = useMemo(
+    () => asObjectRecord(desktopMachineOnboardingPlan.ai_runtime_setup_action_summary),
+    [desktopMachineOnboardingPlan]
+  );
+  const desktopMachineOnboardingAiRuntimeSetupActions = useMemo(
+    () =>
+      Array.isArray(desktopMachineOnboardingPlan.ai_runtime_setup_actions)
+        ? desktopMachineOnboardingPlan.ai_runtime_setup_actions.filter(
+            (item): item is Record<string, unknown> => isObjectRecord(item)
+          )
+        : [],
     [desktopMachineOnboardingPlan]
   );
   const desktopMachineOnboardingMultimodalSetupSummary = useMemo(
@@ -2820,6 +2855,13 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineOnboardingProfileSetupSummary]
   );
+  const desktopMachineOnboardingAiRuntimeSetupTopCodes = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineOnboardingAiRuntimeSetupSummary.top_codes)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineOnboardingAiRuntimeSetupSummary]
+  );
   const desktopMachineOnboardingMultimodalSetupTopCodes = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineOnboardingMultimodalSetupSummary.top_codes)).sort(
@@ -2880,6 +2922,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   );
   const desktopMachineOnboardingLaunchModelInstall = useMemo(
     () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).model_install),
+    [desktopMachineOnboardingLaunchState]
+  );
+  const desktopMachineOnboardingLaunchAiRuntimeSetup = useMemo(
+    () => asObjectRecord(asObjectRecord(desktopMachineOnboardingLaunchState).ai_runtime_setup_result),
     [desktopMachineOnboardingLaunchState]
   );
   const desktopMachineOnboardingLaunchMultimodalSetup = useMemo(
@@ -2984,6 +3030,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopMachineAppLearningExpectedProviderCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineAppLearningSummary.expected_provider_source_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningAiRouteStatusCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.ai_route_status_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningAiRouteBandCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.ai_route_runtime_band_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningAiRouteProfileCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.ai_route_profile_counts)).sort(
         (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
       ),
     [desktopMachineAppLearningSummary]
@@ -21520,6 +21587,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {(Number(desktopMachineAiRuntimeSummary.stack_count ?? 0) > 0 ||
+                                          String(desktopMachineAiRuntimeProfile.status ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            ai runtime:{String(desktopMachineAiRuntimeProfile.status ?? 'n/a')}
+                                            {' • '}ready stacks:{Number(desktopMachineAiRuntimeSummary.ready_stack_count ?? 0)}
+                                            {' • '}blocked:{Number(desktopMachineAiRuntimeSummary.blocked_stack_count ?? 0)}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachineAiRuntimeSummary.reasoning_runtime_ready ?? '').trim() ||
+                                          String(desktopMachineAiRuntimeSummary.vision_runtime_ready ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            reasoning ready:{String(Boolean(desktopMachineAiRuntimeSummary.reasoning_runtime_ready))}
+                                            {' • '}vision ready:{String(Boolean(desktopMachineAiRuntimeSummary.vision_runtime_ready))}
+                                            {' • '}runtime followups:{Number(
+                                              desktopMachineAiRuntimeSummary.action_required_task_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {Array.isArray(desktopMachineProfile.recommendations) && desktopMachineProfile.recommendations.length > 0 ? (
                                           <p className="mt-1">
                                             recommendations:{' '}
@@ -21728,6 +21813,39 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachineAppLearningAiRouteStatusCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            ai route states:{' '}
+                                            {desktopMachineAppLearningAiRouteStatusCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {' • '}confident:{Number(
+                                              desktopMachineAppLearningSummary.ai_route_confident_count ?? 0
+                                            )}
+                                            {' • '}fallbacks:{Number(
+                                              desktopMachineAppLearningSummary.ai_route_fallback_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningAiRouteBandCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            ai route bands:{' '}
+                                            {desktopMachineAppLearningAiRouteBandCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningAiRouteProfileCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            ai route profiles:{' '}
+                                            {desktopMachineAppLearningAiRouteProfileCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineAppLearningAdaptiveProfiles.length > 0 ? (
                                           <p className="mt-1">
                                             adaptive apps:{' '}
@@ -21835,6 +21953,30 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .join(' • ')}
                                           </p>
                                         ) : null}
+                                        {desktopMachineVmControlAiRouteStatusCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm ai routes:{' '}
+                                            {desktopMachineVmControlAiRouteStatusCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {' • '}fallbacks:{Number(
+                                              desktopMachineVmControlPlanSummary.ai_route_fallback_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlAiRouteBandCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm ai bands:{' '}
+                                            {desktopMachineVmControlAiRouteBandCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {' • '}confident:{Number(
+                                              desktopMachineVmControlPlanSummary.ai_route_confident_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {(Number(desktopMachineOnboardingSummary.vm_setup_followup_guest_count ?? 0) > 0 ||
                                           desktopMachineVmControlRemediationKindCounts.length > 0) ? (
                                           <p className="mt-1">
@@ -21875,10 +22017,60 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           )}
                                           {' • '}queued followups:{Number(
                                             desktopMachineOnboardingSummary.setup_action_count ??
-                                              desktopMachineOnboardingExecutionSummary.setup_action_count ??
+                                            desktopMachineOnboardingExecutionSummary.setup_action_count ??
                                               0
                                           )}
                                         </p>
+                                        {(Number(desktopMachineOnboardingSummary.ai_runtime_stack_count ?? 0) > 0 ||
+                                          Number(desktopMachineAiRuntimeSummary.stack_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            ai runtime stacks:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_stack_count ??
+                                                desktopMachineAiRuntimeSummary.stack_count ??
+                                                0
+                                            )}
+                                            {' • '}ready:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_ready_stack_count ??
+                                                desktopMachineAiRuntimeSummary.ready_stack_count ??
+                                                0
+                                            )}
+                                            {' • '}blocked:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_blocked_stack_count ??
+                                                desktopMachineAiRuntimeSummary.blocked_stack_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingSummary.ai_runtime_setup_action_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingAiRuntimeSetupSummary.count ?? 0) > 0 ||
+                                          desktopMachineOnboardingAiRuntimeSetupActions.length > 0) ? (
+                                          <p className="mt-1">
+                                            ai runtime setup:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_setup_action_count ??
+                                                desktopMachineOnboardingAiRuntimeSetupSummary.count ??
+                                                0
+                                            )}
+                                            {' • '}auto:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_setup_auto_runnable_count ??
+                                                desktopMachineOnboardingAiRuntimeSetupSummary.auto_runnable_count ??
+                                                0
+                                            )}
+                                            {' • '}ready:{Number(
+                                              desktopMachineOnboardingSummary.ai_runtime_setup_ready_count ??
+                                                desktopMachineOnboardingAiRuntimeSetupSummary.ready_count ??
+                                                0
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineOnboardingAiRuntimeSetupTopCodes.length > 0 ? (
+                                          <p className="mt-1">
+                                            ai runtime codes:{' '}
+                                            {desktopMachineOnboardingAiRuntimeSetupTopCodes
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {(Number(desktopMachineOnboardingSummary.multimodal_setup_action_count ?? 0) > 0 ||
                                           Number(desktopMachineOnboardingMultimodalSetupSummary.count ?? 0) > 0) ? (
                                           <p className="mt-1">
@@ -22302,6 +22494,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             )}
                                           </p>
                                         ) : null}
+                                        {(String(desktopMachineOnboardingLaunchAiRuntimeSetup.status ?? '').trim() ||
+                                          Number(desktopMachineOnboardingLaunchAiRuntimeSetup.executed_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1 text-primary/80">
+                                            last ai runtime:{String(
+                                              desktopMachineOnboardingLaunchAiRuntimeSetup.status ?? 'n/a'
+                                            )}
+                                            {' • '}selected:{Number(
+                                              desktopMachineOnboardingLaunchAiRuntimeSetup.selected_action_count ?? 0
+                                            )}
+                                            {' • '}executed:{Number(
+                                              desktopMachineOnboardingLaunchAiRuntimeSetup.executed_action_count ?? 0
+                                            )}
+                                            {' • '}success:{Number(
+                                              desktopMachineOnboardingLaunchAiRuntimeSetup.success_count ?? 0
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {(String(desktopMachineOnboardingLaunchMultimodalSetup.status ?? '').trim() ||
                                           Number(desktopMachineOnboardingLaunchMultimodalSetup.executed_action_count ?? 0) > 0) ? (
                                           <p className="mt-1 text-primary/80">
@@ -22421,6 +22630,46 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               'n/a'
                                           )}
                                         </p>
+                                        {(String(desktopMachinePrepareSummary.ai_runtime_status ?? '').trim() ||
+                                          Number(desktopMachinePrepareSummary.ai_runtime_blocked_stack_count ?? 0) > 0 ||
+                                          Number(desktopMachinePrepareSummary.ai_runtime_setup_action_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            ai runtime:{String(desktopMachinePrepareSummary.ai_runtime_status ?? 'n/a')}
+                                            {' • '}blocked stacks:{Number(
+                                              desktopMachinePrepareSummary.ai_runtime_blocked_stack_count ?? 0
+                                            )}
+                                            {' • '}reasoning ready:{String(
+                                              Boolean(desktopMachinePrepareSummary.ai_runtime_reasoning_ready)
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachinePrepareSummary.ai_route_status ?? '').trim() ||
+                                          String(desktopMachinePrepareSummary.selected_ai_route_profile ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            ai lane:{String(
+                                              desktopMachinePrepareSummary.selected_ai_route_profile ??
+                                                desktopMachinePrepareSummary.selected_ai_runtime_band ??
+                                                'n/a'
+                                            )}
+                                            {' • '}state:{String(desktopMachinePrepareSummary.ai_route_status ?? 'n/a')}
+                                            {' • '}confidence:{Number(
+                                              desktopMachinePrepareSummary.ai_route_confidence ?? 0
+                                            ).toFixed(2)}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachinePrepareSummary.selected_ai_provider_source ?? '').trim() ||
+                                          String(desktopMachinePrepareSummary.selected_ai_reasoning_stack ?? '').trim() ||
+                                          String(desktopMachinePrepareSummary.selected_ai_vision_stack ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            ai provider:{String(desktopMachinePrepareSummary.selected_ai_provider_source ?? 'n/a')}
+                                            {' • '}reasoning stack:{String(
+                                              desktopMachinePrepareSummary.selected_ai_reasoning_stack ?? 'n/a'
+                                            )}
+                                            {' • '}vision stack:{String(
+                                              desktopMachinePrepareSummary.selected_ai_vision_stack ?? 'n/a'
+                                            )}
+                                          </p>
+                                        ) : null}
                                         {(String(desktopMachinePrepareSummary.multimodal_setup_status ?? '').trim() ||
                                           Number(desktopMachinePrepareSummary.multimodal_setup_executed_count ?? 0) > 0) ? (
                                           <p className="mt-1">

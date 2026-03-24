@@ -265,6 +265,16 @@ class DesktopVMManager:
                 "runtime_band_counts": self._count_values(selected, "runtime_band_preference"),
                 "expected_route_profile_counts": self._count_values(selected, "expected_route_profile"),
                 "expected_model_preference_counts": self._count_values(selected, "expected_model_preference"),
+                "ai_route_status_counts": self._count_values(selected, "ai_route_status"),
+                "ai_route_runtime_band_counts": self._count_values(selected, "selected_ai_runtime_band"),
+                "ai_route_profile_counts": self._count_values(selected, "selected_ai_route_profile"),
+                "ai_route_provider_source_counts": self._count_values(selected, "selected_ai_provider_source"),
+                "ai_route_confident_count": len(
+                    [row for row in selected if float(row.get("ai_route_confidence", 0.0) or 0.0) >= 0.66]
+                ),
+                "ai_route_fallback_count": len(
+                    [row for row in selected if bool(row.get("ai_route_fallback_applied", False))]
+                ),
                 "route_resolution_status_counts": self._count_values(selected, "route_resolution_status"),
                 "remediation_kind_counts": self._count_values(selected, "remediation_kind"),
                 "setup_followup_guest_count": len(
@@ -378,6 +388,11 @@ class DesktopVMManager:
                 "runtime_band_preference": _norm_text(target.get("runtime_band_preference", "")),
                 "expected_route_profile": _norm_text(target.get("expected_route_profile", "")),
                 "expected_model_preference": _norm_text(target.get("expected_model_preference", "")),
+                "ai_route_status": _norm_text(target.get("ai_route_status", "")),
+                "ai_route_confidence": float(target.get("ai_route_confidence", 0.0) or 0.0),
+                "selected_ai_runtime_band": _norm_text(target.get("selected_ai_runtime_band", "")),
+                "selected_ai_route_profile": _norm_text(target.get("selected_ai_route_profile", "")),
+                "selected_ai_provider_source": _norm_text(target.get("selected_ai_provider_source", "")),
                 "route_resolution_status": _norm_text(target.get("route_resolution_status", "")),
                 "remediation_kind": _norm_text(target.get("remediation_kind", "")),
                 "remediation_action_code": _clean_text(target.get("remediation_action_code", "")),
@@ -856,10 +871,21 @@ class DesktopVMManager:
             and isinstance(machine_profile.get("multimodal_memory", {}).get("summary", {}), dict)
             else {}
         )
+        ai_runtime_summary = (
+            dict(machine_profile.get("ai_runtime_profile", {}).get("summary", {}))
+            if isinstance(machine_profile.get("ai_runtime_profile", {}), dict)
+            and isinstance(machine_profile.get("ai_runtime_profile", {}).get("summary", {}), dict)
+            else {}
+        )
         local_model_count = int(local_inventory.get("count", 0) or 0)
         vision_runtime_available = bool(multimodal_summary.get("vision_runtime_available", False))
         vision_loaded_model_count = int(multimodal_summary.get("vision_loaded_model_count", 0) or 0)
         local_vision_ready = vision_runtime_available and vision_loaded_model_count > 0
+        ai_runtime_status = _norm_text(machine_profile.get("ai_runtime_profile", {}).get("status", ""))
+        ai_reasoning_ready = bool(ai_runtime_summary.get("reasoning_runtime_ready", False))
+        ai_runtime_ready_stack_count = int(ai_runtime_summary.get("ready_stack_count", 0) or 0)
+        ai_runtime_blocked_stack_count = int(ai_runtime_summary.get("blocked_stack_count", 0) or 0)
+        ai_runtime_action_required_task_count = int(ai_runtime_summary.get("action_required_task_count", 0) or 0)
         multimodal_memory_pressure = int(multimodal_summary.get("vision_memory_app_count", 0) or 0) + int(
             multimodal_summary.get("weird_app_memory_app_count", 0) or 0
         )
@@ -891,7 +917,73 @@ class DesktopVMManager:
             setup_followup_codes.append("warm_local_vision_runtime")
         if expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and local_model_count <= 0 and verified_provider_count <= 0:
             setup_followup_codes.append("configure_multimodal_runtime")
+        if "reasoning" in required_tasks and not ai_reasoning_ready:
+            setup_followup_codes.append("warm_local_reasoning_runtime")
+        if ai_runtime_blocked_stack_count > 0:
+            setup_followup_codes.append("recover_desktop_agent_stack")
         setup_followup_codes = _dedupe_strings(setup_followup_codes, limit=8)
+
+        selected_ai_runtime_band = runtime_band_preference
+        ai_route_status = "matched"
+        ai_route_fallback_applied = False
+        ai_route_reason_codes: List[str] = []
+        if readiness_status == "blocked":
+            selected_ai_runtime_band = "accessibility"
+            ai_route_status = "blocked"
+            ai_route_fallback_applied = True
+            ai_route_reason_codes.append("readiness_blocked")
+        if "reasoning" in required_tasks and not ai_reasoning_ready and selected_ai_runtime_band in {"local", "hybrid"}:
+            ai_route_fallback_applied = True
+            ai_route_reason_codes.append("ai_reasoning_runtime_gap")
+            if selected_ai_runtime_band == "local":
+                selected_ai_runtime_band = "hybrid" if verified_provider_count > 0 else "accessibility"
+            elif verified_provider_count <= 0:
+                selected_ai_runtime_band = "accessibility"
+        if "vision" in required_tasks and not local_vision_ready and selected_ai_runtime_band in {"local", "hybrid"}:
+            ai_route_fallback_applied = True
+            ai_route_reason_codes.append("ai_vision_runtime_gap")
+            selected_ai_runtime_band = "api" if verified_provider_count > 0 else "accessibility"
+        if ai_runtime_blocked_stack_count > 0:
+            ai_route_reason_codes.append("ai_runtime_stack_attention")
+            if ai_route_status == "matched":
+                ai_route_status = "fallback" if ai_route_fallback_applied else "setup_constrained"
+        if setup_followup_codes and ai_route_status == "matched":
+            ai_route_status = "setup_constrained"
+        elif ai_route_status == "matched" and ai_route_fallback_applied:
+            ai_route_status = "fallback"
+
+        selected_ai_model_preference = "accessibility"
+        selected_ai_provider_source = "accessibility_only"
+        selected_ai_route_profile = "accessibility_first"
+        if selected_ai_runtime_band == "local":
+            selected_ai_model_preference = "local_runtime"
+            selected_ai_provider_source = "local_runtime"
+            selected_ai_route_profile = expected_route_profile or "vm_local_control"
+        elif selected_ai_runtime_band == "hybrid":
+            selected_ai_model_preference = "hybrid_runtime"
+            selected_ai_provider_source = "local_runtime_plus_ocr"
+            selected_ai_route_profile = expected_route_profile or "vm_hybrid_control"
+        elif selected_ai_runtime_band == "api":
+            selected_ai_model_preference = "api_assist"
+            selected_ai_provider_source = "api_assist_plus_ocr"
+            selected_ai_route_profile = "api_vm_assist"
+
+        selected_ai_reasoning_stack = "desktop_agent" if ai_reasoning_ready else ""
+        selected_ai_vision_stack = "perception" if local_vision_ready and family != "terminal" else ""
+        selected_ai_memory_stack = "memory" if ai_runtime_ready_stack_count > 0 else ""
+        selected_ai_stack_names = _dedupe_strings(
+            [selected_ai_reasoning_stack, selected_ai_vision_stack, selected_ai_memory_stack],
+            limit=6,
+        )
+        ai_route_confidence = 0.48
+        ai_route_confidence += min(ai_runtime_ready_stack_count, 3) * 0.09
+        ai_route_confidence -= min(ai_runtime_blocked_stack_count, 3) * 0.1
+        ai_route_confidence -= min(ai_runtime_action_required_task_count, 4) * 0.05
+        ai_route_confidence -= 0.05 if ai_route_fallback_applied else 0.0
+        ai_route_confidence -= 0.08 if ai_route_status == "setup_constrained" else 0.0
+        ai_route_confidence -= 0.18 if ai_route_status == "blocked" else 0.0
+        ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
+
         if readiness_status == "blocked":
             execution_mode = "blocked"
             route_resolution_status = "blocked"
@@ -920,6 +1012,23 @@ class DesktopVMManager:
             "local_model_count": local_model_count,
             "vision_runtime_available": vision_runtime_available,
             "vision_loaded_model_count": vision_loaded_model_count,
+            "ai_runtime_status": ai_runtime_status or "unknown",
+            "ai_runtime_ready_stack_count": ai_runtime_ready_stack_count,
+            "ai_runtime_blocked_stack_count": ai_runtime_blocked_stack_count,
+            "ai_runtime_action_required_task_count": ai_runtime_action_required_task_count,
+            "ai_reasoning_ready": ai_reasoning_ready,
+            "ai_route_status": ai_route_status,
+            "ai_route_fallback_applied": ai_route_fallback_applied,
+            "ai_route_confidence": ai_route_confidence,
+            "selected_ai_runtime_band": selected_ai_runtime_band,
+            "selected_ai_route_profile": selected_ai_route_profile,
+            "selected_ai_model_preference": selected_ai_model_preference,
+            "selected_ai_provider_source": selected_ai_provider_source,
+            "selected_ai_reasoning_stack": selected_ai_reasoning_stack,
+            "selected_ai_vision_stack": selected_ai_vision_stack,
+            "selected_ai_memory_stack": selected_ai_memory_stack,
+            "selected_ai_stack_names": selected_ai_stack_names,
+            "ai_route_reason_codes": _dedupe_strings(ai_route_reason_codes, limit=10),
             "multimodal_memory_pressure": multimodal_memory_pressure,
             "remote_endpoint_ready": remote_endpoint_ready,
             "execution_mode": execution_mode,
@@ -1000,6 +1109,13 @@ class DesktopVMManager:
             "expected_route_profile": _norm_text(provider_model_readiness.get("expected_route_profile", "")),
             "expected_model_preference": _norm_text(provider_model_readiness.get("expected_model_preference", "")),
             "route_resolution_status": _norm_text(provider_model_readiness.get("route_resolution_status", "")),
+            "ai_route_status": _norm_text(provider_model_readiness.get("ai_route_status", "")),
+            "ai_route_fallback_applied": bool(provider_model_readiness.get("ai_route_fallback_applied", False)),
+            "ai_route_confidence": float(provider_model_readiness.get("ai_route_confidence", 0.0) or 0.0),
+            "selected_ai_runtime_band": _norm_text(provider_model_readiness.get("selected_ai_runtime_band", "")),
+            "selected_ai_route_profile": _norm_text(provider_model_readiness.get("selected_ai_route_profile", "")),
+            "selected_ai_model_preference": _norm_text(provider_model_readiness.get("selected_ai_model_preference", "")),
+            "selected_ai_provider_source": _norm_text(provider_model_readiness.get("selected_ai_provider_source", "")),
             "provider_model_readiness": provider_model_readiness,
             "recommended_traversal_roles": cls._recommended_traversal_roles(base),
             "preferred_wave_actions": cls._preferred_wave_actions(base),
