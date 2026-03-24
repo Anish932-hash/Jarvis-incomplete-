@@ -2420,6 +2420,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
     }
     return {};
   }, [desktopAppMemoryCampaignRows, desktopAppMemoryCampaigns]);
+  const desktopLatestAppMemoryCampaignAiRouteStates = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopLatestAppMemoryCampaign.ai_route_status_counts)).sort(
+        ([left], [right]) => left.localeCompare(right)
+      ),
+    [desktopLatestAppMemoryCampaign]
+  );
+  const desktopLatestAppMemoryCampaignAiRouteBands = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopLatestAppMemoryCampaign.ai_route_runtime_band_counts)).sort(
+        ([left], [right]) => left.localeCompare(right)
+      ),
+    [desktopLatestAppMemoryCampaign]
+  );
+  const desktopLatestAppMemoryCampaignAiRouteProfiles = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopLatestAppMemoryCampaign.ai_route_profile_counts)).sort(
+        ([left], [right]) => left.localeCompare(right)
+      ),
+    [desktopLatestAppMemoryCampaign]
+  );
   const desktopAppMemoryPreferredTraversalPaths = useMemo(() => {
     const batchTargeting = asObjectRecord(desktopAppMemoryBatchState?.targeting);
     const daemonLastSummary = asObjectRecord(desktopAppMemoryDaemon.last_summary);
@@ -23681,6 +23702,33 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}linked surfaces:{Number(desktopLatestAppMemoryCampaign.learned_surface_count ?? 0)}
                                               {' • '}known hits:{Number(desktopLatestAppMemoryCampaign.known_surface_count ?? 0)}
                                             </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              ai states:
+                                              {desktopLatestAppMemoryCampaignAiRouteStates.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaignAiRouteStates
+                                                    .slice(0, 3)
+                                                    .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                              {' • '}bands:
+                                              {desktopLatestAppMemoryCampaignAiRouteBands.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaignAiRouteBands
+                                                    .slice(0, 3)
+                                                    .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                            </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              ai profiles:
+                                              {desktopLatestAppMemoryCampaignAiRouteProfiles.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaignAiRouteProfiles
+                                                    .slice(0, 2)
+                                                    .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                              {' • '}confident:{Number(desktopLatestAppMemoryCampaign.ai_route_confident_count ?? 0)}
+                                              {' • '}fallback:{Number(desktopLatestAppMemoryCampaign.ai_route_fallback_count ?? 0)}
+                                            </p>
                                             {desktopAppMemoryCampaignRows.length > 0 ? (
                                               <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
                                                 <p className="font-semibold uppercase tracking-wider text-primary/75">
@@ -23741,6 +23789,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                         {Array.isArray(campaign.target_apps) && campaign.target_apps.length > 0
                                                           ? ` ${campaign.target_apps.slice(0, 3).map((item) => String(item)).join(' • ')}`
                                                           : ' n/a'}
+                                                      </p>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        ai:
+                                                        {Object.keys(asObjectRecord(campaign.ai_route_status_counts)).length > 0
+                                                          ? ` ${Object.entries(asObjectRecord(campaign.ai_route_status_counts))
+                                                              .slice(0, 2)
+                                                              .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                              .join(' • ')}`
+                                                          : ' n/a'}
+                                                        {' • '}bands:
+                                                        {Object.keys(asObjectRecord(campaign.ai_route_runtime_band_counts)).length > 0
+                                                          ? ` ${Object.entries(asObjectRecord(campaign.ai_route_runtime_band_counts))
+                                                              .slice(0, 2)
+                                                              .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                              .join(' • ')}`
+                                                          : ' n/a'}
+                                                        {' • '}fallback:{Number(campaign.ai_route_fallback_count ?? 0)}
                                                       </p>
                                                     </div>
                                                   ))}

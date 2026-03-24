@@ -253,6 +253,20 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
                         "runtime_band_preference": "hybrid",
                         "preferred_probe_mode": "local_vision_assist",
                     },
+                    "provider_model_readiness": {
+                        "ai_route_status": "matched",
+                        "ai_route_confidence": 0.84,
+                        "ai_route_confidence_band": "high",
+                        "selected_ai_runtime_band": "hybrid",
+                        "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                        "selected_ai_model_preference": "hybrid_runtime",
+                        "selected_ai_provider_source": "local_runtime_plus_ocr",
+                        "selected_ai_reasoning_stack": "desktop_agent",
+                        "selected_ai_vision_stack": "perception",
+                        "selected_ai_memory_stack": "memory",
+                        "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                        "ai_route_reason_codes": ["hybrid_runtime_priority"],
+                    },
                 }
             ],
         )
@@ -271,6 +285,13 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert created["campaign"]["expected_route_profile_counts"]["local_vision_assist"] == 1
         assert created["campaign"]["expected_model_preference_counts"]["hybrid_runtime"] == 1
         assert created["campaign"]["expected_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+        assert created["campaign"]["ai_route_status_counts"]["matched"] == 1
+        assert created["campaign"]["ai_route_runtime_band_counts"]["hybrid"] == 1
+        assert created["campaign"]["ai_route_profile_counts"]["local_vision_assist_native_stabilized"] == 1
+        assert created["campaign"]["ai_route_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+        assert created["campaign"]["ai_route_stack_name_counts"]["desktop_agent"] == 1
+        assert created["campaign"]["ai_route_confident_count"] == 1
+        assert created["campaign"]["ai_route_fallback_count"] == 0
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
@@ -290,6 +311,13 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert executed["campaign"]["route_profile_counts"]["local_vision_assist"] == 1
         assert executed["campaign"]["model_preference_counts"]["hybrid_runtime"] == 1
         assert executed["campaign"]["provider_source_counts"]["local_runtime_plus_ocr"] == 1
+        assert executed["campaign"]["ai_route_status_counts"]["matched"] == 1
+        assert executed["campaign"]["ai_route_runtime_band_counts"]["hybrid"] == 1
+        assert executed["campaign"]["ai_route_profile_counts"]["local_vision_assist_native_stabilized"] == 1
+        assert executed["campaign"]["ai_route_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+        assert executed["campaign"]["ai_route_stack_name_counts"]["desktop_agent"] == 1
+        assert executed["campaign"]["ai_route_confident_count"] == 1
+        assert executed["campaign"]["ai_route_fallback_count"] == 0
         assert int(executed["campaign"].get("route_fallback_app_count", 0) or 0) == 0
         assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))

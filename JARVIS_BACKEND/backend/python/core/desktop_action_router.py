@@ -8816,9 +8816,16 @@ class DesktopActionRouter:
         runtime_provider_source_counts: Dict[str, int] = {}
         route_resolution_counts: Dict[str, int] = {}
         route_reason_counts: Dict[str, int] = {}
+        ai_route_status_counts: Dict[str, int] = {}
+        ai_route_runtime_band_counts: Dict[str, int] = {}
+        ai_route_profile_counts: Dict[str, int] = {}
+        ai_route_provider_source_counts: Dict[str, int] = {}
+        ai_route_stack_name_counts: Dict[str, int] = {}
         route_fallback_app_count = 0
         setup_constrained_app_count = 0
         provider_blocked_app_count = 0
+        ai_route_confident_count = 0
+        ai_route_fallback_count = 0
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -9009,6 +9016,99 @@ class DesktopActionRouter:
                     )
                     if str(item).strip()
                 ]
+                matched_selected_runtime_band = str(
+                    matched_readiness.get("selected_ai_runtime_band", "")
+                    or matched_adaptive_profile.get("runtime_band_preference", "")
+                    or matched_runtime_strategy.get("runtime_band_preference", "")
+                    or ""
+                ).strip().lower()
+                matched_route_profile = str(
+                    matched_readiness.get("selected_ai_route_profile", "")
+                    or matched_runtime_strategy.get("preferred_probe_mode", "")
+                    or ""
+                ).strip().lower()
+                matched_model_preference = str(
+                    matched_readiness.get("selected_ai_model_preference", "") or ""
+                ).strip().lower()
+                if not matched_model_preference:
+                    matched_model_preference = (
+                        "hybrid_runtime"
+                        if matched_selected_runtime_band == "hybrid"
+                        else "local_runtime"
+                        if matched_selected_runtime_band == "local"
+                        else "api_assist"
+                        if matched_selected_runtime_band == "api"
+                        else "accessibility"
+                    )
+                matched_provider_source = str(
+                    matched_readiness.get("selected_ai_provider_source", "") or ""
+                ).strip().lower()
+                if not matched_provider_source:
+                    matched_provider_source = (
+                        "local_runtime_plus_ocr"
+                        if matched_selected_runtime_band == "hybrid"
+                        else "local_runtime"
+                        if matched_selected_runtime_band == "local"
+                        else "api_assist_plus_ocr"
+                        if matched_selected_runtime_band == "api"
+                        else "accessibility_only"
+                    )
+                matched_ai_reasoning_stack = str(
+                    matched_readiness.get("selected_ai_reasoning_stack", "") or ""
+                ).strip().lower()
+                matched_ai_vision_stack = str(
+                    matched_readiness.get("selected_ai_vision_stack", "") or ""
+                ).strip().lower()
+                matched_ai_memory_stack = str(
+                    matched_readiness.get("selected_ai_memory_stack", "") or ""
+                ).strip().lower()
+                matched_ai_stack_names = self._dedupe_strings(
+                    [
+                        str(item).strip().lower()
+                        for item in (
+                            matched_readiness.get("selected_ai_stack_names", [])
+                            if isinstance(matched_readiness.get("selected_ai_stack_names", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ]
+                )[:6]
+                if not matched_ai_stack_names:
+                    matched_ai_stack_names = self._dedupe_strings(
+                        [matched_ai_reasoning_stack, matched_ai_vision_stack, matched_ai_memory_stack]
+                    )[:6]
+                matched_ai_route_confidence_value = matched_readiness.get("ai_route_confidence", 0.0)
+                try:
+                    matched_ai_route_confidence = max(
+                        0.0,
+                        min(float(matched_ai_route_confidence_value or 0.0), 1.0),
+                    )
+                except (TypeError, ValueError):
+                    matched_ai_route_confidence = 0.0
+                matched_ai_route_confidence_band = str(
+                    matched_readiness.get("ai_route_confidence_band", "") or ""
+                ).strip().lower()
+                if not matched_ai_route_confidence_band:
+                    if matched_ai_route_confidence >= 0.66:
+                        matched_ai_route_confidence_band = "high"
+                    elif matched_ai_route_confidence >= 0.45:
+                        matched_ai_route_confidence_band = "medium"
+                    elif matched_ai_route_confidence > 0.0:
+                        matched_ai_route_confidence_band = "low"
+                matched_ai_route_status = str(
+                    matched_readiness.get("ai_route_status", "") or ""
+                ).strip().lower()
+                matched_ai_reason_codes = self._dedupe_strings(
+                    [
+                        str(item).strip().lower()
+                        for item in (
+                            matched_readiness.get("ai_route_reason_codes", [])
+                            if isinstance(matched_readiness.get("ai_route_reason_codes", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ]
+                )[:10]
                 adaptive_learning_runtime = {
                     "status": "success",
                     "learning_profile": str(matched_adaptive_profile.get("learning_profile", "") or "").strip().lower(),
@@ -9018,70 +9118,21 @@ class DesktopActionRouter:
                         or matched_runtime_strategy.get("strategy_profile", "")
                         or ""
                     ).strip().lower(),
-                    "selected_runtime_band": str(
-                        matched_adaptive_profile.get("runtime_band_preference", "")
-                        or matched_runtime_strategy.get("runtime_band_preference", "")
-                        or ""
-                    ).strip().lower(),
-                    "route_profile": str(
-                        matched_runtime_strategy.get("preferred_probe_mode", "")
-                        or ""
-                    ).strip().lower(),
-                    "model_preference": (
-                        "hybrid_runtime"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "hybrid"
-                        else "local_runtime"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "local"
-                        else "api_assist"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "api"
-                        else "accessibility"
-                    ),
-                    "runtime_provider_source": (
-                        "local_runtime_plus_ocr"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "hybrid"
-                        else "local_runtime"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "local"
-                        else "api_assist_plus_ocr"
-                        if str(
-                            matched_adaptive_profile.get("runtime_band_preference", "")
-                            or matched_runtime_strategy.get("runtime_band_preference", "")
-                            or ""
-                        ).strip().lower()
-                        == "api"
-                        else "accessibility_only"
-                    ),
+                    "selected_runtime_band": matched_selected_runtime_band,
+                    "route_profile": matched_route_profile,
+                    "model_preference": matched_model_preference,
+                    "runtime_provider_source": matched_provider_source,
                     "preferred_probe_mode": str(matched_runtime_strategy.get("preferred_probe_mode", "") or "").strip().lower(),
                     "preferred_wave_mode": str(matched_runtime_strategy.get("preferred_wave_mode", "") or "").strip().lower(),
                     "preferred_target_mode": str(matched_runtime_strategy.get("preferred_target_mode", "") or "").strip().lower(),
                     "preferred_verification_mode": str(matched_runtime_strategy.get("preferred_verification_mode", "") or "").strip().lower(),
                     "native_recovery_mode": str(matched_runtime_strategy.get("preferred_native_recovery_mode", "") or "").strip().lower(),
                     "adaptive_route_applied": bool(matched_runtime_strategy),
-                    "route_resolution_status": "setup_waiting" if matched_setup_actions else ("blocked" if matched_blockers else "matched"),
+                    "route_fallback_applied": bool(matched_readiness.get("ai_route_fallback_applied", False)),
+                    "route_resolution_status": (
+                        matched_ai_route_status
+                        or ("setup_waiting" if matched_setup_actions else ("blocked" if matched_blockers else "matched"))
+                    ),
                     "setup_followup_required": bool(matched_setup_actions),
                     "setup_followup_count": len(matched_setup_actions),
                     "blocker_count": len(matched_blockers),
@@ -9091,6 +9142,20 @@ class DesktopActionRouter:
                     ),
                     "local_runtime_eligible": True,
                     "api_runtime_eligible": True,
+                    "ai_route_status": matched_ai_route_status
+                    or ("setup_waiting" if matched_setup_actions else ("blocked" if matched_blockers else "matched")),
+                    "ai_route_confidence": matched_ai_route_confidence,
+                    "ai_route_confidence_band": matched_ai_route_confidence_band,
+                    "ai_route_fallback_applied": bool(matched_readiness.get("ai_route_fallback_applied", False)),
+                    "selected_ai_runtime_band": matched_selected_runtime_band,
+                    "selected_ai_route_profile": matched_route_profile,
+                    "selected_ai_model_preference": matched_model_preference,
+                    "selected_ai_provider_source": matched_provider_source,
+                    "selected_ai_reasoning_stack": matched_ai_reasoning_stack,
+                    "selected_ai_vision_stack": matched_ai_vision_stack,
+                    "selected_ai_memory_stack": matched_ai_memory_stack,
+                    "selected_ai_stack_names": matched_ai_stack_names,
+                    "ai_route_reason_codes": matched_ai_reason_codes,
                 }
             runtime_strategy_profile = str(
                 adaptive_learning_runtime.get("strategy_profile", "")
@@ -9122,6 +9187,72 @@ class DesktopActionRouter:
                 route_resolution_counts[route_resolution_status] = int(
                     route_resolution_counts.get(route_resolution_status, 0) or 0
                 ) + 1
+            ai_route_status = str(
+                adaptive_learning_runtime.get("ai_route_status", "")
+                or route_resolution_status
+                or ""
+            ).strip().lower()
+            if ai_route_status:
+                ai_route_status_counts[ai_route_status] = int(
+                    ai_route_status_counts.get(ai_route_status, 0) or 0
+                ) + 1
+            ai_runtime_band = str(
+                adaptive_learning_runtime.get("selected_ai_runtime_band", "")
+                or runtime_band
+                or ""
+            ).strip().lower()
+            if ai_runtime_band:
+                ai_route_runtime_band_counts[ai_runtime_band] = int(
+                    ai_route_runtime_band_counts.get(ai_runtime_band, 0) or 0
+                ) + 1
+            ai_route_profile = str(
+                adaptive_learning_runtime.get("selected_ai_route_profile", "")
+                or route_profile
+                or ""
+            ).strip().lower()
+            if ai_route_profile:
+                ai_route_profile_counts[ai_route_profile] = int(
+                    ai_route_profile_counts.get(ai_route_profile, 0) or 0
+                ) + 1
+            ai_provider_source = str(
+                adaptive_learning_runtime.get("selected_ai_provider_source", "")
+                or runtime_provider_source
+                or ""
+            ).strip().lower()
+            if ai_provider_source:
+                ai_route_provider_source_counts[ai_provider_source] = int(
+                    ai_route_provider_source_counts.get(ai_provider_source, 0) or 0
+                ) + 1
+            ai_stack_names = self._dedupe_strings(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in adaptive_learning_runtime.get("selected_ai_stack_names", [])
+                        if isinstance(adaptive_learning_runtime.get("selected_ai_stack_names", []), list) and str(item).strip()
+                    ],
+                    str(adaptive_learning_runtime.get("selected_ai_reasoning_stack", "") or "").strip().lower(),
+                    str(adaptive_learning_runtime.get("selected_ai_vision_stack", "") or "").strip().lower(),
+                    str(adaptive_learning_runtime.get("selected_ai_memory_stack", "") or "").strip().lower(),
+                ]
+            )[:6]
+            for stack_name in ai_stack_names:
+                ai_route_stack_name_counts[stack_name] = int(
+                    ai_route_stack_name_counts.get(stack_name, 0) or 0
+                ) + 1
+            ai_route_confidence_value = adaptive_learning_runtime.get("ai_route_confidence", 0.0)
+            try:
+                ai_route_confidence = max(0.0, min(float(ai_route_confidence_value or 0.0), 1.0))
+            except (TypeError, ValueError):
+                ai_route_confidence = 0.0
+            if ai_route_confidence >= 0.66:
+                ai_route_confident_count += 1
+            if bool(
+                adaptive_learning_runtime.get(
+                    "ai_route_fallback_applied",
+                    adaptive_learning_runtime.get("route_fallback_applied", False),
+                )
+            ):
+                ai_route_fallback_count += 1
             if bool(adaptive_learning_runtime.get("setup_followup_required", False)):
                 setup_constrained_app_count += 1
             if bool(adaptive_learning_runtime.get("provider_blocked", False)):
@@ -9335,6 +9466,26 @@ class DesktopActionRouter:
                     str(key): int(value)
                     for key, value in sorted(runtime_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "ai_route_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_stack_name_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_stack_name_counts.items(), key=lambda entry: entry[0])
+                },
                 "route_resolution_counts": {
                     str(key): int(value)
                     for key, value in sorted(route_resolution_counts.items(), key=lambda entry: entry[0])
@@ -9344,6 +9495,8 @@ class DesktopActionRouter:
                     for key, value in sorted(route_reason_counts.items(), key=lambda entry: (-int(entry[1]), str(entry[0])))[:8]
                 },
                 "route_fallback_app_count": int(route_fallback_app_count),
+                "ai_route_confident_count": int(ai_route_confident_count),
+                "ai_route_fallback_count": int(ai_route_fallback_count),
                 "setup_constrained_app_count": int(setup_constrained_app_count),
                 "provider_blocked_app_count": int(provider_blocked_app_count),
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
@@ -10705,6 +10858,39 @@ class DesktopActionRouter:
             ]
         )[:10]
         readiness_status = str(readiness_payload.get("readiness_status", "") or "").strip().lower()
+        ai_route_status = str(readiness_payload.get("ai_route_status", "") or "").strip().lower()
+        ai_route_confidence_value = readiness_payload.get("ai_route_confidence", 0.0)
+        try:
+            ai_route_confidence = max(0.0, min(float(ai_route_confidence_value or 0.0), 1.0))
+        except (TypeError, ValueError):
+            ai_route_confidence = 0.0
+        ai_route_confidence_band = str(readiness_payload.get("ai_route_confidence_band", "") or "").strip().lower()
+        ai_route_fallback_applied = bool(readiness_payload.get("ai_route_fallback_applied", False))
+        selected_ai_runtime_band = str(readiness_payload.get("selected_ai_runtime_band", "") or "").strip().lower()
+        selected_ai_route_profile = str(readiness_payload.get("selected_ai_route_profile", "") or "").strip().lower()
+        selected_ai_model_preference = str(readiness_payload.get("selected_ai_model_preference", "") or "").strip().lower()
+        selected_ai_provider_source = str(readiness_payload.get("selected_ai_provider_source", "") or "").strip().lower()
+        selected_ai_reasoning_stack = str(readiness_payload.get("selected_ai_reasoning_stack", "") or "").strip().lower()
+        selected_ai_vision_stack = str(readiness_payload.get("selected_ai_vision_stack", "") or "").strip().lower()
+        selected_ai_memory_stack = str(readiness_payload.get("selected_ai_memory_stack", "") or "").strip().lower()
+        ai_route_reason_codes = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("ai_route_reason_codes", [])
+                if isinstance(readiness_payload.get("ai_route_reason_codes", []), list) and str(item).strip()
+            ]
+        )[:10]
+        selected_ai_stack_names = self._dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in readiness_payload.get("selected_ai_stack_names", [])
+                if isinstance(readiness_payload.get("selected_ai_stack_names", []), list) and str(item).strip()
+            ]
+        )[:6]
+        if not selected_ai_stack_names:
+            selected_ai_stack_names = self._dedupe_strings(
+                [selected_ai_reasoning_stack, selected_ai_vision_stack, selected_ai_memory_stack]
+            )[:6]
         if not strategy and not clean_learning_profile and not clean_execution_mode and not readiness_payload:
             return base_route
 
@@ -10958,6 +11144,28 @@ class DesktopActionRouter:
             route_resolution_status = "fallback"
         elif setup_followup_required:
             route_resolution_status = "setup_waiting"
+        if selected_ai_runtime_band:
+            selected_runtime_band = selected_ai_runtime_band
+        if selected_ai_model_preference:
+            model_preference = selected_ai_model_preference
+        if selected_ai_provider_source:
+            runtime_provider_source = selected_ai_provider_source
+        if selected_ai_route_profile:
+            route_profile = selected_ai_route_profile
+            if selected_ai_route_profile.endswith("_native_stabilized"):
+                needs_native_stabilization = True
+                if native_recovery_mode == "none" and preferred_native_recovery_mode:
+                    native_recovery_mode = preferred_native_recovery_mode
+        if ai_route_status:
+            route_resolution_status = ai_route_status
+        route_fallback_applied = bool(route_fallback_applied or ai_route_fallback_applied)
+        if not ai_route_confidence_band:
+            if ai_route_confidence >= 0.66:
+                ai_route_confidence_band = "high"
+            elif ai_route_confidence >= 0.45:
+                ai_route_confidence_band = "medium"
+            elif ai_route_confidence > 0.0:
+                ai_route_confidence_band = "low"
         route_selection_reason_codes = self._dedupe_strings(
             [
                 *(["local_runtime_unavailable"] if runtime_band_preference in {"local", "hybrid"} and not local_runtime_eligible else []),
@@ -10976,6 +11184,7 @@ class DesktopActionRouter:
                 *(["native_stabilization_enabled"] if needs_native_stabilization else []),
                 *(["provider_source_" + runtime_provider_source] if runtime_provider_source else []),
                 *(["route_resolution_" + route_resolution_status] if route_resolution_status else []),
+                *ai_route_reason_codes,
             ]
         )[:10]
 
@@ -11005,6 +11214,24 @@ class DesktopActionRouter:
                 "provider_blocked": provider_blocked,
                 "local_runtime_eligible": local_runtime_eligible,
                 "api_runtime_eligible": actual_api_ready,
+                "ai_route_status": ai_route_status or route_resolution_status,
+                "ai_route_confidence": ai_route_confidence,
+                "ai_route_confidence_band": ai_route_confidence_band,
+                "ai_route_fallback_applied": route_fallback_applied,
+                "selected_ai_runtime_band": selected_ai_runtime_band or selected_runtime_band,
+                "selected_ai_route_profile": selected_ai_route_profile or route_profile,
+                "selected_ai_model_preference": selected_ai_model_preference or model_preference,
+                "selected_ai_provider_source": selected_ai_provider_source or runtime_provider_source,
+                "selected_ai_reasoning_stack": selected_ai_reasoning_stack,
+                "selected_ai_vision_stack": selected_ai_vision_stack,
+                "selected_ai_memory_stack": selected_ai_memory_stack,
+                "selected_ai_stack_names": selected_ai_stack_names,
+                "ai_route_reason_codes": self._dedupe_strings(
+                    [
+                        *ai_route_reason_codes,
+                        *route_selection_reason_codes,
+                    ]
+                )[:10],
                 "learning_profile": clean_learning_profile,
                 "execution_mode": clean_execution_mode,
                 "provider_model_readiness": readiness_payload,
@@ -11095,6 +11322,27 @@ class DesktopActionRouter:
             "local_runtime_ready": bool(route.get("local_runtime_ready", False)),
             "ocr_ready": bool(route.get("ocr_ready", False)),
             "api_assist_recommended": bool(route.get("api_assist_recommended", False)),
+            "ai_route_status": str(route.get("ai_route_status", "") or "").strip().lower(),
+            "ai_route_confidence": max(0.0, min(float(route.get("ai_route_confidence", 0.0) or 0.0), 1.0)),
+            "ai_route_confidence_band": str(route.get("ai_route_confidence_band", "") or "").strip().lower(),
+            "ai_route_fallback_applied": bool(route.get("ai_route_fallback_applied", False)),
+            "selected_ai_runtime_band": str(route.get("selected_ai_runtime_band", "") or "").strip().lower(),
+            "selected_ai_route_profile": str(route.get("selected_ai_route_profile", "") or "").strip().lower(),
+            "selected_ai_model_preference": str(route.get("selected_ai_model_preference", "") or "").strip().lower(),
+            "selected_ai_provider_source": str(route.get("selected_ai_provider_source", "") or "").strip().lower(),
+            "selected_ai_reasoning_stack": str(route.get("selected_ai_reasoning_stack", "") or "").strip().lower(),
+            "selected_ai_vision_stack": str(route.get("selected_ai_vision_stack", "") or "").strip().lower(),
+            "selected_ai_memory_stack": str(route.get("selected_ai_memory_stack", "") or "").strip().lower(),
+            "selected_ai_stack_names": [
+                str(item).strip().lower()
+                for item in route.get("selected_ai_stack_names", [])
+                if isinstance(route.get("selected_ai_stack_names", []), list) and str(item).strip()
+            ][:6],
+            "ai_route_reason_codes": [
+                str(item).strip().lower()
+                for item in route.get("ai_route_reason_codes", [])
+                if isinstance(route.get("ai_route_reason_codes", []), list) and str(item).strip()
+            ][:10],
             "provider_model_readiness": provider_model_payload,
         }
         return updated

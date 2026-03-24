@@ -612,6 +612,20 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
                     "runtime_band_preference": "hybrid",
                     "preferred_probe_mode": "local_vision_assist",
                 },
+                "provider_model_readiness": {
+                    "ai_route_status": "matched",
+                    "ai_route_confidence": 0.84,
+                    "ai_route_confidence_band": "high",
+                    "selected_ai_runtime_band": "hybrid",
+                    "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                    "selected_ai_model_preference": "hybrid_runtime",
+                    "selected_ai_provider_source": "local_runtime_plus_ocr",
+                    "selected_ai_reasoning_stack": "desktop_agent",
+                    "selected_ai_vision_stack": "perception",
+                    "selected_ai_memory_stack": "memory",
+                    "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                    "ai_route_reason_codes": ["hybrid_runtime_priority"],
+                },
             }
         ],
     )
@@ -626,18 +640,34 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert payload["wave_summary"]["adaptive_wave_depth_app_count"] == 1
     assert payload["targeting"]["runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
     assert payload["targeting"]["runtime_band_counts"]["hybrid"] == 1
-    assert payload["targeting"]["route_profile_counts"]["local_vision_assist"] == 1
+    assert payload["targeting"]["route_profile_counts"]["local_vision_assist_native_stabilized"] == 1
     assert payload["targeting"]["model_preference_counts"]["hybrid_runtime"] == 1
     assert payload["targeting"]["runtime_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+    assert payload["targeting"]["ai_route_status_counts"]["matched"] == 1
+    assert payload["targeting"]["ai_route_runtime_band_counts"]["hybrid"] == 1
+    assert payload["targeting"]["ai_route_profile_counts"]["local_vision_assist_native_stabilized"] == 1
+    assert payload["targeting"]["ai_route_provider_source_counts"]["local_runtime_plus_ocr"] == 1
+    assert payload["targeting"]["ai_route_stack_name_counts"]["desktop_agent"] == 1
+    assert payload["targeting"]["ai_route_confident_count"] == 1
+    assert payload["targeting"]["ai_route_fallback_count"] == 0
     assert payload["targeting"]["route_fallback_app_count"] == 0
     assert payload["items"][0]["targeting"]["target_container_roles"][:2] == ["dialog", "menu"]
     assert "sidebar" in payload["items"][0]["targeting"]["target_container_roles"]
     assert payload["items"][0]["targeting"]["preferred_wave_actions"] == ["command"]
     assert payload["items"][0]["adaptive_learning_runtime"]["strategy_profile"] == "balanced_hybrid_guided_explore"
     assert payload["items"][0]["adaptive_learning_runtime"]["selected_runtime_band"] == "hybrid"
-    assert payload["items"][0]["adaptive_learning_runtime"]["route_profile"] == "local_vision_assist"
+    assert payload["items"][0]["adaptive_learning_runtime"]["route_profile"] == "local_vision_assist_native_stabilized"
     assert payload["items"][0]["adaptive_learning_runtime"]["model_preference"] == "hybrid_runtime"
     assert payload["items"][0]["adaptive_learning_runtime"]["runtime_provider_source"] == "local_runtime_plus_ocr"
+    assert payload["items"][0]["adaptive_learning_runtime"]["ai_route_status"] == "matched"
+    assert payload["items"][0]["adaptive_learning_runtime"]["selected_ai_runtime_band"] == "hybrid"
+    assert payload["items"][0]["adaptive_learning_runtime"]["selected_ai_route_profile"] == "local_vision_assist_native_stabilized"
+    assert payload["items"][0]["adaptive_learning_runtime"]["selected_ai_reasoning_stack"] == "desktop_agent"
+    assert payload["items"][0]["adaptive_learning_runtime"]["selected_ai_stack_names"] == [
+        "desktop_agent",
+        "perception",
+        "memory",
+    ]
     assert payload["targeting"]["route_resolution_counts"]["matched"] == 1
     recommended_paths = payload["items"][0]["targeting"]["recommended_traversal_paths"]
     assert recommended_paths[:2] == ["dialog", "menu"]

@@ -535,10 +535,22 @@ class DesktopAppMemorySupervisor:
             expected_route_profile_counts: Dict[str, int] = {}
             expected_model_preference_counts: Dict[str, int] = {}
             expected_provider_source_counts: Dict[str, int] = {}
+            ai_route_status_counts: Dict[str, int] = {}
+            ai_route_runtime_band_counts: Dict[str, int] = {}
+            ai_route_profile_counts: Dict[str, int] = {}
+            ai_route_provider_source_counts: Dict[str, int] = {}
+            ai_route_stack_name_counts: Dict[str, int] = {}
+            ai_route_confident_count = 0
+            ai_route_fallback_count = 0
             for item in clean_adaptive_profiles:
                 runtime_strategy_payload = (
                     dict(item.get("runtime_strategy", {}))
                     if isinstance(item.get("runtime_strategy", {}), dict)
+                    else {}
+                )
+                readiness_payload = (
+                    dict(item.get("provider_model_readiness", {}))
+                    if isinstance(item.get("provider_model_readiness", {}), dict)
                     else {}
                 )
                 runtime_strategy_profile = str(
@@ -586,6 +598,84 @@ class DesktopAppMemorySupervisor:
                 expected_provider_source_counts[expected_provider_source] = int(
                     expected_provider_source_counts.get(expected_provider_source, 0) or 0
                 ) + 1
+                ai_route_status = str(
+                    item.get("ai_route_status", "")
+                    or readiness_payload.get("ai_route_status", "")
+                    or ""
+                ).strip().lower()
+                if ai_route_status:
+                    ai_route_status_counts[ai_route_status] = int(
+                        ai_route_status_counts.get(ai_route_status, 0) or 0
+                    ) + 1
+                ai_runtime_band = str(
+                    item.get("selected_ai_runtime_band", "")
+                    or readiness_payload.get("selected_ai_runtime_band", "")
+                    or runtime_band
+                    or ""
+                ).strip().lower()
+                if ai_runtime_band:
+                    ai_route_runtime_band_counts[ai_runtime_band] = int(
+                        ai_route_runtime_band_counts.get(ai_runtime_band, 0) or 0
+                    ) + 1
+                ai_route_profile = str(
+                    item.get("selected_ai_route_profile", "")
+                    or readiness_payload.get("selected_ai_route_profile", "")
+                    or expected_route_profile
+                    or ""
+                ).strip().lower()
+                if ai_route_profile:
+                    ai_route_profile_counts[ai_route_profile] = int(
+                        ai_route_profile_counts.get(ai_route_profile, 0) or 0
+                    ) + 1
+                ai_provider_source = str(
+                    item.get("selected_ai_provider_source", "")
+                    or readiness_payload.get("selected_ai_provider_source", "")
+                    or expected_provider_source
+                    or ""
+                ).strip().lower()
+                if ai_provider_source:
+                    ai_route_provider_source_counts[ai_provider_source] = int(
+                        ai_route_provider_source_counts.get(ai_provider_source, 0) or 0
+                    ) + 1
+                ai_stack_names = self._dedupe_strings(
+                    [
+                        *[
+                            str(stack_name).strip().lower()
+                            for stack_name in item.get("selected_ai_stack_names", [])
+                            if isinstance(item.get("selected_ai_stack_names", []), list) and str(stack_name).strip()
+                        ],
+                        *[
+                            str(stack_name).strip().lower()
+                            for stack_name in readiness_payload.get("selected_ai_stack_names", [])
+                            if isinstance(readiness_payload.get("selected_ai_stack_names", []), list)
+                            and str(stack_name).strip()
+                        ],
+                        str(item.get("selected_ai_reasoning_stack", "") or readiness_payload.get("selected_ai_reasoning_stack", "") or "").strip().lower(),
+                        str(item.get("selected_ai_vision_stack", "") or readiness_payload.get("selected_ai_vision_stack", "") or "").strip().lower(),
+                        str(item.get("selected_ai_memory_stack", "") or readiness_payload.get("selected_ai_memory_stack", "") or "").strip().lower(),
+                    ]
+                )[:6]
+                for stack_name in ai_stack_names:
+                    ai_route_stack_name_counts[stack_name] = int(
+                        ai_route_stack_name_counts.get(stack_name, 0) or 0
+                    ) + 1
+                ai_route_confidence_value = item.get(
+                    "ai_route_confidence",
+                    readiness_payload.get("ai_route_confidence", 0.0),
+                )
+                try:
+                    ai_route_confidence = max(0.0, min(float(ai_route_confidence_value or 0.0), 1.0))
+                except (TypeError, ValueError):
+                    ai_route_confidence = 0.0
+                if ai_route_confidence >= 0.66:
+                    ai_route_confident_count += 1
+                if bool(
+                    item.get(
+                        "ai_route_fallback_applied",
+                        readiness_payload.get("ai_route_fallback_applied", False),
+                    )
+                ):
+                    ai_route_fallback_count += 1
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -648,6 +738,28 @@ class DesktopAppMemorySupervisor:
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
                 },
+                "ai_route_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_runtime_band_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_runtime_band_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_profile_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_profile_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_provider_source_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_stack_name_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(ai_route_stack_name_counts.items(), key=lambda entry: entry[0])
+                },
+                "ai_route_confident_count": int(ai_route_confident_count),
+                "ai_route_fallback_count": int(ai_route_fallback_count),
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
                     "top_container_roles": [
@@ -921,8 +1033,54 @@ class DesktopAppMemorySupervisor:
                 and isinstance(dict(result.get("targeting", {})).get("route_resolution_counts", {}), dict)
                 else {}
             )
+            actual_ai_route_status_counts = (
+                dict(dict(result.get("targeting", {})).get("ai_route_status_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("ai_route_status_counts", {}), dict)
+                else {}
+            )
+            actual_ai_route_runtime_band_counts = (
+                dict(dict(result.get("targeting", {})).get("ai_route_runtime_band_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("ai_route_runtime_band_counts", {}), dict)
+                else {}
+            )
+            actual_ai_route_profile_counts = (
+                dict(dict(result.get("targeting", {})).get("ai_route_profile_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("ai_route_profile_counts", {}), dict)
+                else {}
+            )
+            actual_ai_route_provider_source_counts = (
+                dict(dict(result.get("targeting", {})).get("ai_route_provider_source_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("ai_route_provider_source_counts", {}), dict)
+                else {}
+            )
+            actual_ai_route_stack_name_counts = (
+                dict(dict(result.get("targeting", {})).get("ai_route_stack_name_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("ai_route_stack_name_counts", {}), dict)
+                else {}
+            )
             route_fallback_app_count = self._coerce_int(
                 dict(result.get("targeting", {})).get("route_fallback_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            ai_route_confident_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("ai_route_confident_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            ai_route_fallback_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("ai_route_fallback_count", 0)
                 if isinstance(result.get("targeting", {}), dict)
                 else 0,
                 minimum=0,
@@ -945,11 +1103,39 @@ class DesktopAppMemorySupervisor:
                 maximum=1_000_000,
                 default=0,
             )
-            if not actual_route_profile_counts or not actual_model_preference_counts or not actual_provider_source_counts:
+            need_route_profile_counts = not actual_route_profile_counts
+            need_model_preference_counts = not actual_model_preference_counts
+            need_provider_source_counts = not actual_provider_source_counts
+            need_ai_route_status_counts = not actual_ai_route_status_counts
+            need_ai_route_runtime_band_counts = not actual_ai_route_runtime_band_counts
+            need_ai_route_profile_counts = not actual_ai_route_profile_counts
+            need_ai_route_provider_source_counts = not actual_ai_route_provider_source_counts
+            need_ai_route_stack_name_counts = not actual_ai_route_stack_name_counts
+            need_ai_route_confident_count = ai_route_confident_count == 0
+            need_ai_route_fallback_count = ai_route_fallback_count == 0
+            if any(
+                [
+                    need_route_profile_counts,
+                    need_model_preference_counts,
+                    need_provider_source_counts,
+                    need_ai_route_status_counts,
+                    need_ai_route_runtime_band_counts,
+                    need_ai_route_profile_counts,
+                    need_ai_route_provider_source_counts,
+                    need_ai_route_stack_name_counts,
+                    need_ai_route_confident_count,
+                    need_ai_route_fallback_count,
+                ]
+            ):
                 for item in effective_adaptive_profiles:
                     runtime_strategy_payload = (
                         dict(item.get("runtime_strategy", {}))
                         if isinstance(item.get("runtime_strategy", {}), dict)
+                        else {}
+                    )
+                    readiness_payload = (
+                        dict(item.get("provider_model_readiness", {}))
+                        if isinstance(item.get("provider_model_readiness", {}), dict)
                         else {}
                     )
                     runtime_band = str(
@@ -957,17 +1143,17 @@ class DesktopAppMemorySupervisor:
                         or runtime_strategy_payload.get("runtime_band_preference", "")
                         or ""
                     ).strip().lower()
-                    if not actual_route_profile_counts:
-                        expected_route_profile = str(
-                            runtime_strategy_payload.get("preferred_probe_mode", "") or ""
-                        ).strip().lower()
+                    expected_route_profile = str(
+                        runtime_strategy_payload.get("preferred_probe_mode", "") or ""
+                    ).strip().lower()
+                    if need_route_profile_counts:
                         if bool(runtime_strategy_payload.get("prefer_native_stabilization", False)) and expected_route_profile:
                             expected_route_profile = f"{expected_route_profile}_native_stabilized"
                         if expected_route_profile:
                             actual_route_profile_counts[expected_route_profile] = int(
                                 actual_route_profile_counts.get(expected_route_profile, 0) or 0
                             ) + 1
-                    if not actual_model_preference_counts:
+                    if need_model_preference_counts:
                         expected_model_preference = "accessibility"
                         if runtime_band == "local":
                             expected_model_preference = "local_runtime"
@@ -978,8 +1164,8 @@ class DesktopAppMemorySupervisor:
                         actual_model_preference_counts[expected_model_preference] = int(
                             actual_model_preference_counts.get(expected_model_preference, 0) or 0
                         ) + 1
-                    if not actual_provider_source_counts:
-                        expected_provider_source = "accessibility_only"
+                    expected_provider_source = "accessibility_only"
+                    if need_provider_source_counts:
                         if runtime_band == "local":
                             expected_provider_source = "local_runtime"
                         elif runtime_band == "hybrid":
@@ -989,6 +1175,87 @@ class DesktopAppMemorySupervisor:
                         actual_provider_source_counts[expected_provider_source] = int(
                             actual_provider_source_counts.get(expected_provider_source, 0) or 0
                         ) + 1
+                    ai_route_status = str(
+                        item.get("ai_route_status", "")
+                        or readiness_payload.get("ai_route_status", "")
+                        or ""
+                    ).strip().lower()
+                    if need_ai_route_status_counts and ai_route_status:
+                        actual_ai_route_status_counts[ai_route_status] = int(
+                            actual_ai_route_status_counts.get(ai_route_status, 0) or 0
+                        ) + 1
+                    ai_runtime_band = str(
+                        item.get("selected_ai_runtime_band", "")
+                        or readiness_payload.get("selected_ai_runtime_band", "")
+                        or runtime_band
+                        or ""
+                    ).strip().lower()
+                    if need_ai_route_runtime_band_counts and ai_runtime_band:
+                        actual_ai_route_runtime_band_counts[ai_runtime_band] = int(
+                            actual_ai_route_runtime_band_counts.get(ai_runtime_band, 0) or 0
+                        ) + 1
+                    ai_route_profile = str(
+                        item.get("selected_ai_route_profile", "")
+                        or readiness_payload.get("selected_ai_route_profile", "")
+                        or expected_route_profile
+                        or ""
+                    ).strip().lower()
+                    if need_ai_route_profile_counts and ai_route_profile:
+                        actual_ai_route_profile_counts[ai_route_profile] = int(
+                            actual_ai_route_profile_counts.get(ai_route_profile, 0) or 0
+                        ) + 1
+                    ai_provider_source = str(
+                        item.get("selected_ai_provider_source", "")
+                        or readiness_payload.get("selected_ai_provider_source", "")
+                        or expected_provider_source
+                        or ""
+                    ).strip().lower()
+                    if need_ai_route_provider_source_counts and ai_provider_source:
+                        actual_ai_route_provider_source_counts[ai_provider_source] = int(
+                            actual_ai_route_provider_source_counts.get(ai_provider_source, 0) or 0
+                        ) + 1
+                    if need_ai_route_stack_name_counts:
+                        ai_stack_names = self._dedupe_strings(
+                            [
+                                *[
+                                    str(stack_name).strip().lower()
+                                    for stack_name in item.get("selected_ai_stack_names", [])
+                                    if isinstance(item.get("selected_ai_stack_names", []), list)
+                                    and str(stack_name).strip()
+                                ],
+                                *[
+                                    str(stack_name).strip().lower()
+                                    for stack_name in readiness_payload.get("selected_ai_stack_names", [])
+                                    if isinstance(readiness_payload.get("selected_ai_stack_names", []), list)
+                                    and str(stack_name).strip()
+                                ],
+                                str(item.get("selected_ai_reasoning_stack", "") or readiness_payload.get("selected_ai_reasoning_stack", "") or "").strip().lower(),
+                                str(item.get("selected_ai_vision_stack", "") or readiness_payload.get("selected_ai_vision_stack", "") or "").strip().lower(),
+                                str(item.get("selected_ai_memory_stack", "") or readiness_payload.get("selected_ai_memory_stack", "") or "").strip().lower(),
+                            ]
+                        )[:6]
+                        for stack_name in ai_stack_names:
+                            actual_ai_route_stack_name_counts[stack_name] = int(
+                                actual_ai_route_stack_name_counts.get(stack_name, 0) or 0
+                            ) + 1
+                    if need_ai_route_confident_count:
+                        ai_route_confidence_value = item.get(
+                            "ai_route_confidence",
+                            readiness_payload.get("ai_route_confidence", 0.0),
+                        )
+                        try:
+                            ai_route_confidence = max(0.0, min(float(ai_route_confidence_value or 0.0), 1.0))
+                        except (TypeError, ValueError):
+                            ai_route_confidence = 0.0
+                        if ai_route_confidence >= 0.66:
+                            ai_route_confident_count += 1
+                    if need_ai_route_fallback_count and bool(
+                        item.get(
+                            "ai_route_fallback_applied",
+                            readiness_payload.get("ai_route_fallback_applied", False),
+                        )
+                    ):
+                        ai_route_fallback_count += 1
             result_items = {
                 str(item.get("app_name", "") or "").strip().lower(): dict(item)
                 for item in result.get("items", [])
@@ -1097,6 +1364,33 @@ class DesktopAppMemorySupervisor:
                     for key, value in actual_provider_source_counts.items()
                     if str(key).strip()
                 },
+                "ai_route_status_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_ai_route_status_counts.items()
+                    if str(key).strip()
+                },
+                "ai_route_runtime_band_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_ai_route_runtime_band_counts.items()
+                    if str(key).strip()
+                },
+                "ai_route_profile_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_ai_route_profile_counts.items()
+                    if str(key).strip()
+                },
+                "ai_route_provider_source_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_ai_route_provider_source_counts.items()
+                    if str(key).strip()
+                },
+                "ai_route_stack_name_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_ai_route_stack_name_counts.items()
+                    if str(key).strip()
+                },
+                "ai_route_confident_count": ai_route_confident_count,
+                "ai_route_fallback_count": ai_route_fallback_count,
                 "route_fallback_app_count": route_fallback_app_count,
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
@@ -1267,6 +1561,33 @@ class DesktopAppMemorySupervisor:
                 for key, value in actual_provider_source_counts.items()
                 if str(key).strip()
             }
+            campaign["ai_route_status_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_ai_route_status_counts.items()
+                if str(key).strip()
+            }
+            campaign["ai_route_runtime_band_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_ai_route_runtime_band_counts.items()
+                if str(key).strip()
+            }
+            campaign["ai_route_profile_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_ai_route_profile_counts.items()
+                if str(key).strip()
+            }
+            campaign["ai_route_provider_source_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_ai_route_provider_source_counts.items()
+                if str(key).strip()
+            }
+            campaign["ai_route_stack_name_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_ai_route_stack_name_counts.items()
+                if str(key).strip()
+            }
+            campaign["ai_route_confident_count"] = ai_route_confident_count
+            campaign["ai_route_fallback_count"] = ai_route_fallback_count
             campaign["route_resolution_counts"] = {
                 str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
                 for key, value in actual_route_resolution_counts.items()
