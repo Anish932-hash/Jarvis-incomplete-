@@ -449,6 +449,13 @@ def test_desktop_machine_onboarding_continuation_plan_adds_memory_followthrough(
                         "remediation_provider_blocked": False,
                         "remediation_setup_followup_required": False,
                         "remediation_recent_action_code": "",
+                        "memory_mission": {
+                            "status": "strong",
+                            "seed_query": "settings",
+                            "query_hints": ["settings", "preferences"],
+                            "hotkey_hints": ["Ctrl+F", "Alt+F"],
+                            "followthrough_recommended": True,
+                        },
                     }
                 ]
             }
@@ -463,8 +470,14 @@ def test_desktop_machine_onboarding_continuation_plan_adds_memory_followthrough(
     assert continuation["count"] == 1
     assert continuation["items"][0]["kind"] == "activate_memory_guided_learning"
     assert continuation["items"][0]["memory_followthrough_recommended"] is True
+    assert continuation["items"][0]["target"] == "settings"
+    assert continuation["items"][0]["target_query"] == "settings"
+    assert continuation["items"][0]["memory_mission"]["seed_query"] == "settings"
     assert continuation["summary"]["memory_followthrough_count"] == 1
     assert continuation["summary"]["memory_route_alignment_counts"]["underused"] == 1
+    assert continuation["summary"]["memory_mission_status_counts"]["strong"] == 1
+    assert continuation["summary"]["top_memory_mission_queries"]["settings"] >= 1
+    assert continuation["summary"]["top_memory_mission_hotkeys"]["Ctrl+F"] >= 1
 
 
 def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_vm_items() -> None:
@@ -479,8 +492,21 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
         multimodal_setup_actions=[],
         launch_seed_plan={"items": []},
         app_learning_plan={
-            "plan": {"summary": {"memory_followthrough_enabled": True}},
-            "campaign_defaults": {"memory_followthrough_enabled": True},
+            "plan": {
+                "summary": {
+                    "memory_followthrough_enabled": True,
+                    "memory_mission_status_counts": {"strong": 1},
+                    "top_memory_mission_queries": {"settings": 2},
+                    "top_memory_mission_hotkeys": {"Ctrl+F": 1},
+                }
+            },
+            "campaign_defaults": {
+                "memory_followthrough_enabled": True,
+                "query": "settings",
+                "query_hints_by_app": {"Notepad": ["settings", "preferences"]},
+                "semantic_hotkeys_by_app": {"Notepad": ["Ctrl+F"]},
+                "memory_mission_status_counts": {"strong": 1},
+            },
         },
         app_control_prepare_plan={
             "items": [
@@ -493,6 +519,12 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                     "memory_route_alignment_status": "underused",
                     "execution_mode": "hybrid_ready",
                     "expected_route_profile": "local_vision_assist",
+                    "memory_mission": {
+                        "status": "strong",
+                        "seed_query": "settings",
+                        "query_hints": ["settings", "preferences"],
+                        "hotkey_hints": ["Ctrl+F"],
+                    },
                 }
             ]
         },
@@ -507,6 +539,12 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                     "memory_route_alignment_status": "assisted",
                     "execution_mode": "hybrid_ready",
                     "expected_route_profile": "linux_vm_desktop_control",
+                    "memory_mission": {
+                        "status": "partial",
+                        "seed_query": "desktop settings",
+                        "query_hints": ["desktop settings", "preferences"],
+                        "hotkey_hints": ["Ctrl+Alt+S"],
+                    },
                 }
             ]
         },
@@ -517,9 +555,19 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
     )
 
     assert queue["status"] == "success"
+    learning_create_item = next(item for item in queue["items"] if item.get("id") == "app_learning:create")
+    assert learning_create_item["memory_mission"]["seed_query"] == "settings"
+    assert learning_create_item["target_query"] == "settings"
     vm_item = next(item for item in queue["items"] if item.get("stage") == "vm_prepare")
     assert vm_item["kind"] == "deepen_vm_control_learning"
     assert vm_item["memory_followthrough_recommended"] is True
+    assert vm_item["memory_mission"]["seed_query"] == "desktop settings"
+    next_app_learning = next(item for item in queue["items"] if item.get("id") == "app_learning:run")
+    assert next_app_learning["memory_mission"]["seed_query"] == "settings"
+
+    next_actions = queue["next_actions"]
+    assert any(item.get("query") == "settings" for item in next_actions)
+    assert any("Ctrl+F" in list(item.get("hotkey_hints", [])) for item in next_actions)
 
     summary = service._desktop_machine_onboarding_execution_queue_summary(items=queue["items"])
     assert summary["memory_followthrough_count"] == 3
@@ -530,6 +578,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
     assert summary["memory_route_alignment_counts"]["cold"] == 2
     assert summary["memory_route_alignment_counts"]["underused"] == 1
     assert summary["memory_route_alignment_counts"]["assisted"] == 1
+    assert summary["memory_mission_status_counts"]["strong"] >= 1
+    assert summary["memory_mission_status_counts"]["partial"] >= 1
+    assert summary["top_memory_mission_queries"]["settings"] >= 1
+    assert summary["top_memory_mission_hotkeys"]["Ctrl+F"] >= 1
 
 
 def test_memory_guided_runtime_strategy_biases_ai_route() -> None:

@@ -10589,6 +10589,132 @@ class DesktopBackendService:
             "reason_codes": reason_codes[:12],
         }
 
+    @classmethod
+    def _desktop_machine_memory_mission_from_summary(
+        cls,
+        *,
+        summary: Optional[Dict[str, Any]] = None,
+        defaults: Optional[Dict[str, Any]] = None,
+        fallback_name: str = "",
+    ) -> Dict[str, Any]:
+        clean_summary = dict(summary) if isinstance(summary, dict) else {}
+        clean_defaults = dict(defaults) if isinstance(defaults, dict) else {}
+        status_counts = (
+            dict(clean_defaults.get("memory_mission_status_counts", {}))
+            if isinstance(clean_defaults.get("memory_mission_status_counts", {}), dict)
+            else dict(clean_summary.get("memory_mission_status_counts", {}))
+            if isinstance(clean_summary.get("memory_mission_status_counts", {}), dict)
+            else {}
+        )
+        mission_status = next(
+            (
+                str(key).strip().lower()
+                for key, _value in sorted(
+                    status_counts.items(),
+                    key=lambda entry: (-int(entry[1] or 0), str(entry[0]).lower()),
+                )
+                if str(key).strip()
+            ),
+            "cold",
+        )
+        query_hints = cls._machine_dedupe(
+            [
+                str(clean_defaults.get("query", "") or "").strip(),
+                *[
+                    str(key).strip()
+                    for key in (
+                        dict(clean_summary.get("top_memory_mission_queries", {})).keys()
+                        if isinstance(clean_summary.get("top_memory_mission_queries", {}), dict)
+                        else []
+                    )
+                    if str(key).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for values in (
+                        dict(clean_defaults.get("query_hints_by_app", {})).values()
+                        if isinstance(clean_defaults.get("query_hints_by_app", {}), dict)
+                        else []
+                    )
+                    for item in (values if isinstance(values, list) else [])
+                    if str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        hotkey_hints = cls._machine_dedupe(
+            [
+                *[
+                    str(key).strip()
+                    for key in (
+                        dict(clean_summary.get("top_memory_mission_hotkeys", {})).keys()
+                        if isinstance(clean_summary.get("top_memory_mission_hotkeys", {}), dict)
+                        else []
+                    )
+                    if str(key).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for values in (
+                        dict(clean_defaults.get("semantic_hotkeys_by_app", {})).values()
+                        if isinstance(clean_defaults.get("semantic_hotkeys_by_app", {}), dict)
+                        else []
+                    )
+                    for item in (values if isinstance(values, list) else [])
+                    if str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        followthrough_recommended = bool(
+            clean_defaults.get("memory_followthrough_enabled", False)
+            or clean_summary.get("memory_followthrough_enabled", False)
+            or int(clean_summary.get("memory_underused_count", 0) or 0) > 0
+        )
+        alignment_status = (
+            "underused"
+            if int(clean_summary.get("memory_underused_count", 0) or 0) > 0
+            else "aligned"
+            if int(clean_summary.get("memory_aligned_count", 0) or 0) > 0
+            else "assisted"
+            if int(clean_summary.get("memory_assisted_route_count", 0) or 0) > 0
+            else "cold"
+        )
+        reason_codes = cls._machine_dedupe(
+            [
+                *(["memory_followthrough_enabled"] if followthrough_recommended else []),
+                *(["memory_alignment_" + alignment_status] if alignment_status and alignment_status != "cold" else []),
+                *(["memory_status_" + mission_status] if mission_status else []),
+                *(["memory_hotkeys_available"] if hotkey_hints else []),
+                *(["memory_queries_available"] if query_hints else []),
+            ],
+            limit=8,
+        )
+        seed_query = next((item for item in query_hints if str(item).strip()), "") or str(fallback_name or "").strip()
+        return {
+            "app_name": str(fallback_name or "").strip(),
+            "profile_id": "",
+            "status": mission_status or "cold",
+            "seed_query": seed_query,
+            "query_hints": query_hints[:8],
+            "hotkey_hints": hotkey_hints[:8],
+            "label_hints": [],
+            "target_container_roles": [],
+            "preferred_wave_actions": [],
+            "preferred_traversal_paths": [],
+            "semantic_guidance_status": "",
+            "memory_guidance_status": mission_status or "cold",
+            "memory_route_alignment_status": alignment_status,
+            "memory_guided_route": bool(int(clean_summary.get("memory_guided_route_count", 0) or 0) > 0),
+            "memory_assisted_route": bool(int(clean_summary.get("memory_assisted_route_count", 0) or 0) > 0),
+            "semantic_guidance_match_count": 0,
+            "semantic_memory_available": bool(query_hints or hotkey_hints),
+            "knowledge_gap_level": "warm" if query_hints or hotkey_hints else "cold",
+            "followthrough_recommended": followthrough_recommended,
+            "revisit_priority": 2 if followthrough_recommended else 1 if mission_status != "strong" else 0,
+            "reason_codes": reason_codes[:8],
+        }
+
     def _desktop_machine_app_learning_defaults(
         self,
         *,
@@ -12523,6 +12649,9 @@ class DesktopBackendService:
         memory_assisted_route_count = 0
         memory_route_alignment_counts: Dict[str, int] = {}
         memory_followthrough_stage_counts: Dict[str, int] = {}
+        memory_mission_status_counts: Dict[str, int] = {}
+        memory_mission_query_counts: Dict[str, int] = {}
+        memory_mission_hotkey_counts: Dict[str, int] = {}
         for row in items:
             if not isinstance(row, dict):
                 continue
@@ -12558,6 +12687,31 @@ class DesktopBackendService:
                 memory_guided_route_count += 1
             if bool(row.get("memory_assisted_route", False)):
                 memory_assisted_route_count += 1
+            memory_mission = dict(row.get("memory_mission", {})) if isinstance(row.get("memory_mission", {}), dict) else {}
+            memory_mission_status = str(
+                memory_mission.get("status", "") or row.get("memory_guidance_status", "") or ""
+            ).strip().lower()
+            if memory_mission_status:
+                memory_mission_status_counts[memory_mission_status] = int(
+                    memory_mission_status_counts.get(memory_mission_status, 0) or 0
+                ) + 1
+            for query_hint in memory_mission.get("query_hints", []):
+                clean_query_hint = str(query_hint or "").strip()
+                if clean_query_hint:
+                    memory_mission_query_counts[clean_query_hint] = int(
+                        memory_mission_query_counts.get(clean_query_hint, 0) or 0
+                    ) + 1
+            seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+            if seed_query:
+                memory_mission_query_counts[seed_query] = int(
+                    memory_mission_query_counts.get(seed_query, 0) or 0
+                ) + 1
+            for hotkey_hint in memory_mission.get("hotkey_hints", []):
+                clean_hotkey_hint = str(hotkey_hint or "").strip()
+                if clean_hotkey_hint:
+                    memory_mission_hotkey_counts[clean_hotkey_hint] = int(
+                        memory_mission_hotkey_counts.get(clean_hotkey_hint, 0) or 0
+                    ) + 1
             if stage_name == "setup_action":
                 setup_action_count += 1
                 if bool(row.get("auto_runnable", False)):
@@ -12606,6 +12760,24 @@ class DesktopBackendService:
             "memory_followthrough_stage_counts": {
                 str(key): int(value)
                 for key, value in sorted(memory_followthrough_stage_counts.items(), key=lambda entry: entry[0])
+            },
+            "memory_mission_status_counts": {
+                str(key): int(value)
+                for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_memory_mission_queries": {
+                str(key): int(value)
+                for key, value in sorted(
+                    memory_mission_query_counts.items(),
+                    key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                )[:8]
+            },
+            "top_memory_mission_hotkeys": {
+                str(key): int(value)
+                for key, value in sorted(
+                    memory_mission_hotkey_counts.items(),
+                    key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                )[:8]
             },
             "setup_action_code_counts": {
                 str(key): int(value)
@@ -13053,6 +13225,7 @@ class DesktopBackendService:
             status_name = str(row.get("status", "") or "").strip().lower()
             if status_name in {"success", "skipped"}:
                 continue
+            memory_mission = dict(row.get("memory_mission", {})) if isinstance(row.get("memory_mission", {}), dict) else {}
             selected.append(
                 {
                     "id": str(row.get("id", "") or "").strip(),
@@ -13071,6 +13244,22 @@ class DesktopBackendService:
                         or row.get("recommended_next_action", "")
                         or ""
                     ).strip(),
+                    "query": str(row.get("target_query", "") or memory_mission.get("seed_query", "") or "").strip(),
+                    "query_hints": [
+                        str(item).strip()
+                        for item in memory_mission.get("query_hints", [])
+                        if isinstance(memory_mission.get("query_hints", []), list) and str(item).strip()
+                    ][:4],
+                    "hotkey_hints": [
+                        str(item).strip()
+                        for item in memory_mission.get("hotkey_hints", [])
+                        if isinstance(memory_mission.get("hotkey_hints", []), list) and str(item).strip()
+                    ][:4],
+                    "memory_mission_status": str(memory_mission.get("status", "") or "").strip().lower(),
+                    "memory_route_alignment_status": str(
+                        row.get("memory_route_alignment_status", "") or memory_mission.get("memory_route_alignment_status", "") or ""
+                    ).strip().lower(),
+                    "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
                 }
             )
             if len(selected) >= max(1, min(int(limit or 6), 12)):
@@ -13433,6 +13622,17 @@ class DesktopBackendService:
             and isinstance(app_learning_plan.get("plan", {}).get("summary", {}), dict)
             else {}
         )
+        app_learning_campaign_defaults = (
+            dict(app_learning_plan.get("plan", {}).get("campaign_defaults", {}))
+            if isinstance(app_learning_plan.get("plan", {}), dict)
+            and isinstance(app_learning_plan.get("plan", {}).get("campaign_defaults", {}), dict)
+            else {}
+        )
+        app_learning_memory_mission = self._desktop_machine_memory_mission_from_summary(
+            summary=app_learning_plan_summary,
+            defaults=app_learning_campaign_defaults,
+            fallback_name="installed apps",
+        )
         items.append(
             {
                 "id": "app_learning:create",
@@ -13469,6 +13669,8 @@ class DesktopBackendService:
                     if int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
                     else "cold"
                 ),
+                "memory_mission": app_learning_memory_mission,
+                "target_query": str(app_learning_memory_mission.get("seed_query", "") or "").strip(),
             }
         )
         items.append(
@@ -13502,6 +13704,8 @@ class DesktopBackendService:
                     if int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
                     else "cold"
                 ),
+                "memory_mission": app_learning_memory_mission,
+                "target_query": str(app_learning_memory_mission.get("seed_query", "") or "").strip(),
             }
         )
 
@@ -13524,6 +13728,11 @@ class DesktopBackendService:
                 base_status = "blocked"
             elif str(row.get("readiness_status", "") or "").strip().lower() == "degraded":
                 base_status = "attention"
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else self._desktop_machine_memory_mission_for_target(target_row=row)
+            )
             items.append(
                 {
                     "id": f"app_prepare:{self._machine_text(app_name)}",
@@ -13548,6 +13757,8 @@ class DesktopBackendService:
                     "memory_route_alignment_status": str(
                         row.get("memory_route_alignment_status", "") or ""
                     ).strip().lower(),
+                    "memory_mission": memory_mission,
+                    "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
                 }
             )
 
@@ -13573,6 +13784,11 @@ class DesktopBackendService:
                 base_status = "blocked"
             elif str(row.get("execution_mode", "") or "").strip().lower() in {"degraded", "partial"}:
                 base_status = "attention"
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
             items.append(
                 {
                     "id": f"vm_prepare:{self._machine_text(guest_name)}",
@@ -13602,6 +13818,8 @@ class DesktopBackendService:
                     "memory_route_alignment_status": str(
                         row.get("memory_route_alignment_status", "") or ""
                     ).strip().lower(),
+                    "memory_mission": memory_mission,
+                    "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
                 }
             )
 
@@ -13682,8 +13900,15 @@ class DesktopBackendService:
                 continue
             clean_app_name = str(row.get("app_name", "") or "").strip()
             clean_provider = str(row.get("provider", "") or "").strip().lower()
+            queue_memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
             clean_target = str(
                 row.get("target", "")
+                or row.get("target_query", "")
+                or queue_memory_mission.get("seed_query", "")
                 or row.get("recommended_next_action", "")
                 or row.get("setup_action_code", "")
                 or clean_app_name
@@ -13705,6 +13930,8 @@ class DesktopBackendService:
                     "provider_blocked": clean_provider == "huggingface" and status_name in {"manual_input_required", "blocked"},
                     "setup_followup_required": str(row.get("stage", "") or "").strip().lower() == "setup_action",
                     "recent_action_code": str(row.get("setup_action_code", "") or row.get("recommended_next_action", "") or "").strip().lower(),
+                    "memory_mission": queue_memory_mission,
+                    "target_query": str(row.get("target_query", "") or queue_memory_mission.get("seed_query", "") or "").strip(),
                     "continuation_source": "execution_queue",
                 }
             )
@@ -13725,6 +13952,11 @@ class DesktopBackendService:
             )
             memory_guided_route = bool(row.get("memory_guided_route", False))
             memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else self._desktop_machine_memory_mission_for_target(target_row=row)
+            )
             memory_followthrough_recommended = bool(row.get("auto_learn_allowed", False)) and (
                 memory_route_alignment_status in {"underused", "assisted"}
                 and semantic_guidance_status in {"strong", "partial"}
@@ -13759,6 +13991,7 @@ class DesktopBackendService:
                     "provider": "",
                     "target": str(
                         row.get("remediation_recent_action_code", "")
+                        or memory_mission.get("seed_query", "")
                         or ("memory-followthrough" if memory_followthrough_recommended else app_name)
                     ).strip(),
                     "retry_recommended": retry_recommended,
@@ -13768,6 +14001,8 @@ class DesktopBackendService:
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
                     "memory_route_alignment_status": memory_route_alignment_status,
+                    "memory_mission": memory_mission,
+                    "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
                     "semantic_followup_recommended": semantic_followup_recommended,
                     "semantic_guidance_status": semantic_guidance_status,
                     "knowledge_gap_level": knowledge_gap_level,
@@ -13786,6 +14021,11 @@ class DesktopBackendService:
             provider_blocked = bool(row.get("remediation_provider_blocked", False))
             setup_followup_required = bool(row.get("remediation_setup_followup_required", False))
             semantic_guidance_status = str(row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else self._desktop_machine_memory_mission_for_target(target_row=row)
+            )
             memory_route_alignment_status = (
                 str(row.get("memory_route_alignment_status", "") or "").strip().lower() or "cold"
             )
@@ -13826,6 +14066,7 @@ class DesktopBackendService:
                     "provider": "",
                     "target": str(
                         row.get("remediation_recent_action_code", "")
+                        or memory_mission.get("seed_query", "")
                         or ("memory-followthrough" if memory_followthrough_recommended else app_name)
                     ).strip(),
                     "retry_recommended": retry_recommended,
@@ -13835,6 +14076,8 @@ class DesktopBackendService:
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
                     "memory_route_alignment_status": memory_route_alignment_status,
+                    "memory_mission": memory_mission,
+                    "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
                     "semantic_followup_recommended": semantic_followup_recommended,
                     "semantic_guidance_status": semantic_guidance_status,
                     "knowledge_gap_level": "",
@@ -13862,6 +14105,11 @@ class DesktopBackendService:
             )
             memory_guided_route = bool(row.get("memory_guided_route", False))
             memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
             memory_followthrough_recommended = bool(row.get("auto_prepare_allowed", False)) and (
                 bool(row.get("memory_followthrough_recommended", False))
                 or memory_route_alignment_status in {"underused", "assisted"}
@@ -13891,6 +14139,7 @@ class DesktopBackendService:
                     "provider": str(row.get("provider", "") or "").strip().lower(),
                     "target": str(
                         row.get("remediation_action_code", "")
+                        or memory_mission.get("seed_query", "")
                         or ("memory-followthrough" if memory_followthrough_recommended else guest_name)
                     ).strip(),
                     "retry_recommended": retry_recommended,
@@ -13900,6 +14149,8 @@ class DesktopBackendService:
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
                     "memory_route_alignment_status": memory_route_alignment_status,
+                    "memory_mission": memory_mission,
+                    "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
                     "semantic_followup_recommended": False,
                     "semantic_guidance_status": "",
                     "knowledge_gap_level": "",
@@ -13998,6 +14249,9 @@ class DesktopBackendService:
         recent_action_counts: Dict[str, int] = {}
         semantic_guidance_status_counts: Dict[str, int] = {}
         memory_route_alignment_counts: Dict[str, int] = {}
+        memory_mission_status_counts: Dict[str, int] = {}
+        memory_mission_query_counts: Dict[str, int] = {}
+        memory_mission_hotkey_counts: Dict[str, int] = {}
         retry_count = 0
         provider_blocked_count = 0
         setup_followup_count = 0
@@ -14028,6 +14282,29 @@ class DesktopBackendService:
                 memory_route_alignment_counts[memory_route_alignment_status] = int(
                     memory_route_alignment_counts.get(memory_route_alignment_status, 0) or 0
                 ) + 1
+            memory_mission = dict(row.get("memory_mission", {})) if isinstance(row.get("memory_mission", {}), dict) else {}
+            memory_mission_status = str(memory_mission.get("status", "") or "").strip().lower()
+            if memory_mission_status:
+                memory_mission_status_counts[memory_mission_status] = int(
+                    memory_mission_status_counts.get(memory_mission_status, 0) or 0
+                ) + 1
+            seed_query = str(row.get("target_query", "") or memory_mission.get("seed_query", "") or "").strip()
+            if seed_query:
+                memory_mission_query_counts[seed_query] = int(
+                    memory_mission_query_counts.get(seed_query, 0) or 0
+                ) + 1
+            for query_hint in memory_mission.get("query_hints", []):
+                clean_query_hint = str(query_hint or "").strip()
+                if clean_query_hint:
+                    memory_mission_query_counts[clean_query_hint] = int(
+                        memory_mission_query_counts.get(clean_query_hint, 0) or 0
+                    ) + 1
+            for hotkey_hint in memory_mission.get("hotkey_hints", []):
+                clean_hotkey_hint = str(hotkey_hint or "").strip()
+                if clean_hotkey_hint:
+                    memory_mission_hotkey_counts[clean_hotkey_hint] = int(
+                        memory_mission_hotkey_counts.get(clean_hotkey_hint, 0) or 0
+                    ) + 1
             if bool(row.get("retry_recommended", False)):
                 retry_count += 1
             if bool(row.get("provider_blocked", False)):
@@ -14082,6 +14359,24 @@ class DesktopBackendService:
                 "memory_route_alignment_counts": {
                     str(key): int(value)
                     for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_query_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_hotkey_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
                 },
                 "top_apps": {
                     str(key): int(value)
@@ -20232,6 +20527,21 @@ class DesktopBackendService:
                     if isinstance(continuation_plan.get("summary", {}), dict)
                     else 0
                 ),
+                "continuation_memory_mission_status_counts": dict(
+                    dict(continuation_plan.get("summary", {})).get("memory_mission_status_counts", {})
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else {}
+                ),
+                "continuation_top_memory_mission_queries": dict(
+                    dict(continuation_plan.get("summary", {})).get("top_memory_mission_queries", {})
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else {}
+                ),
+                "continuation_top_memory_mission_hotkeys": dict(
+                    dict(continuation_plan.get("summary", {})).get("top_memory_mission_hotkeys", {})
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else {}
+                ),
                 "continuation_semantic_followup_count": int(
                     dict(continuation_plan.get("summary", {})).get("semantic_followup_count", 0)
                     if isinstance(continuation_plan.get("summary", {}), dict)
@@ -20251,6 +20561,21 @@ class DesktopBackendService:
                 "execution_error_count": int(execution_queue_summary.get("error_count", 0) or 0),
                 "execution_memory_followthrough_count": int(
                     execution_queue_summary.get("memory_followthrough_count", 0) or 0
+                ),
+                "execution_memory_mission_status_counts": dict(
+                    execution_queue_summary.get("memory_mission_status_counts", {})
+                    if isinstance(execution_queue_summary.get("memory_mission_status_counts", {}), dict)
+                    else {}
+                ),
+                "execution_top_memory_mission_queries": dict(
+                    execution_queue_summary.get("top_memory_mission_queries", {})
+                    if isinstance(execution_queue_summary.get("top_memory_mission_queries", {}), dict)
+                    else {}
+                ),
+                "execution_top_memory_mission_hotkeys": dict(
+                    execution_queue_summary.get("top_memory_mission_hotkeys", {})
+                    if isinstance(execution_queue_summary.get("top_memory_mission_hotkeys", {}), dict)
+                    else {}
                 ),
                 "execution_memory_guided_route_count": int(
                     execution_queue_summary.get("memory_guided_route_count", 0) or 0

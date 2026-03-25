@@ -22445,6 +22445,78 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             )}
                                           </p>
                                         ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.execution_memory_mission_status_counts)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            execution memory missions:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.execution_memory_mission_status_counts)
+                                            )
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.execution_top_memory_mission_queries)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            execution seed queries:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.execution_top_memory_mission_queries)
+                                            )
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {Object.keys(
+                                              asObjectRecord(desktopMachineOnboardingSummary.execution_top_memory_mission_hotkeys)
+                                            ).length > 0
+                                              ? ` • hotkeys ${Object.entries(
+                                                  asObjectRecord(desktopMachineOnboardingSummary.execution_top_memory_mission_hotkeys)
+                                                )
+                                                  .slice(0, 3)
+                                                  .map(([key, value]) => `${key}:${value}`)
+                                                  .join(' • ')}`
+                                              : ''}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.continuation_memory_mission_status_counts)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            continuation missions:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.continuation_memory_mission_status_counts)
+                                            )
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {Object.keys(
+                                          asObjectRecord(desktopMachineOnboardingSummary.continuation_top_memory_mission_queries)
+                                        ).length > 0 ? (
+                                          <p className="mt-1">
+                                            continuation seed queries:{' '}
+                                            {Object.entries(
+                                              asObjectRecord(desktopMachineOnboardingSummary.continuation_top_memory_mission_queries)
+                                            )
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {Object.keys(
+                                              asObjectRecord(desktopMachineOnboardingSummary.continuation_top_memory_mission_hotkeys)
+                                            ).length > 0
+                                              ? ` • hotkeys ${Object.entries(
+                                                  asObjectRecord(desktopMachineOnboardingSummary.continuation_top_memory_mission_hotkeys)
+                                                )
+                                                  .slice(0, 3)
+                                                  .map(([key, value]) => `${key}:${value}`)
+                                                  .join(' • ')}`
+                                              : ''}
+                                          </p>
+                                        ) : null}
                                         {desktopMachineOnboardingContinuationRows.length > 0 ? (
                                           <p className="mt-1">
                                             continuation items:{' '}
