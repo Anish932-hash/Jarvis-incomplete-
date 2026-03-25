@@ -998,3 +998,130 @@ def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
     assert ai_route["memory_route_alignment_status"] == "aligned"
     assert "memory_guided_route" in ai_route["memory_route_reason_codes"]
     assert ai_route["ai_route_confidence"] > 0.5
+
+
+def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    run_calls: list[dict[str, object]] = []
+
+    def _run_campaign(**kwargs):
+        run_calls.append(dict(kwargs))
+        pending = 1 if len(run_calls) == 1 else 0
+        return {
+            "status": "success",
+            "campaign": {
+                "campaign_id": "camp-1",
+                "max_apps": 4,
+                "pending_app_count": pending,
+                "completed_app_count": 3 + len(run_calls),
+                "partial_app_count": 0,
+                "failed_app_count": 0,
+                "memory_followthrough_enabled": True,
+                "memory_mission_status_counts": {"strong": 2, "partial": 1},
+                "top_memory_mission_queries": {"settings": 3},
+                "top_memory_mission_hotkeys": {"Alt+F": 2},
+            },
+            "next_actions": [] if pending <= 0 else [{"kind": "continue_learning"}],
+        }
+
+    service.run_desktop_app_memory_campaign = _run_campaign
+
+    payload = service._desktop_machine_continue_app_learning_campaign(
+        campaign_result={
+            "campaign": {
+                "campaign": {
+                    "campaign_id": "camp-1",
+                    "max_apps": 4,
+                    "pending_app_count": 2,
+                    "memory_followthrough_enabled": True,
+                }
+            },
+            "run": {
+                "status": "success",
+                "campaign": {
+                    "campaign_id": "camp-1",
+                    "max_apps": 4,
+                    "pending_app_count": 2,
+                    "memory_followthrough_enabled": True,
+                },
+            },
+        },
+        max_followthrough_waves=3,
+        source="unit_test",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["waves_executed"] == 2
+    assert payload["continued_run_count"] == 2
+    assert payload["final_pending_app_count"] == 0
+    assert payload["final_completed_app_count"] == 5
+    assert payload["memory_mission_status_counts"]["strong"] == 2
+    assert payload["top_memory_mission_queries"]["settings"] == 3
+    assert payload["top_memory_mission_hotkeys"]["Alt+F"] == 2
+    assert run_calls[0]["source"] == "unit_test_followthrough"
+
+
+def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assisted_guest() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    prepare_calls: list[dict[str, object]] = []
+
+    def _prepare_vm(**kwargs):
+        prepare_calls.append(dict(kwargs))
+        return {
+            "status": "success",
+            "guest_name": kwargs.get("guest_name", ""),
+            "summary": {
+                "guest_name": kwargs.get("guest_name", ""),
+                "readiness_status": "ready",
+                "ai_route_status": "matched",
+                "memory_route_alignment_status": "aligned",
+                "memory_followthrough_recommended": False,
+                "memory_guided_route": True,
+                "memory_assisted_route": False,
+                "memory_mission": {
+                    "status": "strong",
+                    "seed_query": kwargs.get("query", ""),
+                    "query_hints": ["desktop settings"],
+                    "hotkey_hints": ["Alt+F"],
+                },
+                "provider_model_readiness": {"setup_followup_codes": []},
+            },
+        }
+
+    service.desktop_machine_prepare_vm_control = _prepare_vm
+
+    payload = service._desktop_machine_continue_vm_prepare_followthrough(
+        vm_items=[
+            {
+                "status": "success",
+                "guest_name": "Ubuntu Dev VM",
+                "summary": {
+                    "guest_name": "Ubuntu Dev VM",
+                    "readiness_status": "attention",
+                    "ai_route_status": "fallback",
+                    "memory_route_alignment_status": "assisted",
+                    "memory_followthrough_recommended": True,
+                    "memory_mission": {
+                        "status": "partial",
+                        "seed_query": "desktop settings",
+                        "query_hints": ["desktop settings"],
+                        "hotkey_hints": ["Alt+F"],
+                    },
+                    "provider_model_readiness": {"setup_followup_codes": ["warm_local_reasoning_runtime"]},
+                },
+            }
+        ],
+        max_followthrough_waves=2,
+        task="linux",
+        source="unit_test",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["waves_executed"] == 1
+    assert payload["continued_guest_count"] == 1
+    assert payload["resolved_guest_count"] == 1
+    assert payload["persistent_guest_count"] == 0
+    assert payload["summary"]["memory_guided_route_count"] == 1
+    assert payload["summary"]["memory_route_alignment_counts"]["aligned"] == 1
+    assert prepare_calls[0]["query"] == "desktop settings"
+    assert prepare_calls[0]["source"] == "unit_test_vm_followthrough"

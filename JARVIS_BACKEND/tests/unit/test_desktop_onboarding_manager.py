@@ -67,6 +67,8 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "app_learning_setup_boosted_count": 1,
                 "app_learning_setup_constrained_count": 1,
                 "app_learning_memory_followthrough_count": 2,
+                "app_learning_continuation_wave_count": 2,
+                "app_learning_continued_run_count": 2,
                 "app_learning_remediation_retry_count": 1,
                 "app_learning_remediation_provider_blocked_count": 1,
                 "app_learning_remediation_setup_followup_count": 1,
@@ -101,6 +103,10 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "vm_blocked_guest_count": 0,
                 "vm_setup_followup_guest_count": 1,
                 "vm_memory_followthrough_count": 1,
+                "vm_prepare_continuation_wave_count": 1,
+                "vm_prepare_continuation_guest_count": 1,
+                "vm_prepare_continuation_resolved_count": 1,
+                "vm_prepare_continuation_persistent_count": 0,
             },
         },
         source="machine_onboarding",
@@ -175,6 +181,8 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 1
     assert history["summary"]["app_learning_memory_followthrough_total"] == 2
+    assert history["summary"]["app_learning_continuation_wave_total"] == 2
+    assert history["summary"]["app_learning_continued_run_total"] == 2
     assert history["summary"]["app_learning_remediation_retry_total"] == 1
     assert history["summary"]["app_learning_remediation_provider_blocked_total"] == 1
     assert history["summary"]["app_learning_remediation_setup_followup_total"] == 1
@@ -209,3 +217,7 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["vm_blocked_guest_total"] == 0
     assert history["summary"]["vm_setup_followup_guest_total"] == 1
     assert history["summary"]["vm_memory_followthrough_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_wave_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_guest_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_resolved_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_persistent_total"] == 0

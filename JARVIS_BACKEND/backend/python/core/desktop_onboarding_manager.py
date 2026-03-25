@@ -88,6 +88,8 @@ class DesktopOnboardingManager:
         app_learning_setup_boosted_total = 0
         app_learning_setup_constrained_total = 0
         app_learning_memory_followthrough_total = 0
+        app_learning_continuation_wave_total = 0
+        app_learning_continued_run_total = 0
         prepared_setup_aligned_total = 0
         prepared_setup_boosted_total = 0
         prepared_setup_constrained_total = 0
@@ -99,6 +101,10 @@ class DesktopOnboardingManager:
         vm_blocked_guest_total = 0
         vm_setup_followup_guest_total = 0
         vm_memory_followthrough_total = 0
+        vm_prepare_continuation_wave_total = 0
+        vm_prepare_continuation_guest_total = 0
+        vm_prepare_continuation_resolved_total = 0
+        vm_prepare_continuation_persistent_total = 0
         route_remediation_total = 0
         route_remediation_blocked_total = 0
         route_remediation_degraded_total = 0
@@ -201,6 +207,12 @@ class DesktopOnboardingManager:
             app_learning_memory_followthrough_total += int(
                 summary.get("app_learning_memory_followthrough_count", 0) or 0
             )
+            app_learning_continuation_wave_total += int(
+                summary.get("app_learning_continuation_wave_count", 0) or 0
+            )
+            app_learning_continued_run_total += int(
+                summary.get("app_learning_continued_run_count", 0) or 0
+            )
             app_learning_remediation_retry_total += int(
                 summary.get("app_learning_remediation_retry_count", 0) or 0
             )
@@ -223,6 +235,18 @@ class DesktopOnboardingManager:
             vm_blocked_guest_total += int(summary.get("vm_blocked_guest_count", 0) or 0)
             vm_setup_followup_guest_total += int(summary.get("vm_setup_followup_guest_count", 0) or 0)
             vm_memory_followthrough_total += int(summary.get("vm_memory_followthrough_count", 0) or 0)
+            vm_prepare_continuation_wave_total += int(
+                summary.get("vm_prepare_continuation_wave_count", 0) or 0
+            )
+            vm_prepare_continuation_guest_total += int(
+                summary.get("vm_prepare_continuation_guest_count", 0) or 0
+            )
+            vm_prepare_continuation_resolved_total += int(
+                summary.get("vm_prepare_continuation_resolved_count", 0) or 0
+            )
+            vm_prepare_continuation_persistent_total += int(
+                summary.get("vm_prepare_continuation_persistent_count", 0) or 0
+            )
             prepared_remediation_retry_total += int(summary.get("prepared_remediation_retry_count", 0) or 0)
             prepared_remediation_provider_blocked_total += int(
                 summary.get("prepared_remediation_provider_blocked_count", 0) or 0
@@ -339,6 +363,8 @@ class DesktopOnboardingManager:
                 "app_learning_setup_boosted_total": app_learning_setup_boosted_total,
                 "app_learning_setup_constrained_total": app_learning_setup_constrained_total,
                 "app_learning_memory_followthrough_total": app_learning_memory_followthrough_total,
+                "app_learning_continuation_wave_total": app_learning_continuation_wave_total,
+                "app_learning_continued_run_total": app_learning_continued_run_total,
                 "app_learning_remediation_retry_total": app_learning_remediation_retry_total,
                 "app_learning_remediation_provider_blocked_total": app_learning_remediation_provider_blocked_total,
                 "app_learning_remediation_setup_followup_total": app_learning_remediation_setup_followup_total,
@@ -353,6 +379,10 @@ class DesktopOnboardingManager:
                 "vm_blocked_guest_total": vm_blocked_guest_total,
                 "vm_setup_followup_guest_total": vm_setup_followup_guest_total,
                 "vm_memory_followthrough_total": vm_memory_followthrough_total,
+                "vm_prepare_continuation_wave_total": vm_prepare_continuation_wave_total,
+                "vm_prepare_continuation_guest_total": vm_prepare_continuation_guest_total,
+                "vm_prepare_continuation_resolved_total": vm_prepare_continuation_resolved_total,
+                "vm_prepare_continuation_persistent_total": vm_prepare_continuation_persistent_total,
                 "prepared_remediation_retry_total": prepared_remediation_retry_total,
                 "prepared_remediation_provider_blocked_total": prepared_remediation_provider_blocked_total,
                 "prepared_remediation_setup_followup_total": prepared_remediation_setup_followup_total,

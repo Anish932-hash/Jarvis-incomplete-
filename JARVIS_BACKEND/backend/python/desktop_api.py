@@ -11666,6 +11666,373 @@ class DesktopBackendService:
                 )
         return _to_jsonable(result)
 
+    def _desktop_machine_continue_app_learning_campaign(
+        self,
+        *,
+        campaign_result: Dict[str, Any],
+        max_followthrough_waves: int = 1,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        bounded_waves = max(0, min(int(max_followthrough_waves or 0), 4))
+        if bounded_waves <= 0:
+            return {
+                "status": "skipped",
+                "waves_executed": 0,
+                "continued_run_count": 0,
+                "reason_codes": ["followthrough_disabled"],
+                "items": [],
+                "next_actions": [],
+            }
+        payload = dict(campaign_result or {}) if isinstance(campaign_result, dict) else {}
+        created_campaign = (
+            dict(dict(payload.get("campaign", {})).get("campaign", {}))
+            if isinstance(payload.get("campaign", {}), dict)
+            and isinstance(dict(payload.get("campaign", {})).get("campaign", {}), dict)
+            else {}
+        )
+        latest_run = dict(payload.get("run", {})) if isinstance(payload.get("run", {}), dict) else {}
+        latest_campaign = (
+            dict(latest_run.get("campaign", {}))
+            if isinstance(latest_run.get("campaign", {}), dict)
+            else dict(created_campaign)
+        )
+        campaign_id = str(
+            latest_campaign.get("campaign_id", "") or created_campaign.get("campaign_id", "") or ""
+        ).strip()
+        if not campaign_id:
+            return {
+                "status": "skipped",
+                "waves_executed": 0,
+                "continued_run_count": 0,
+                "reason_codes": ["missing_campaign_id"],
+                "items": [],
+                "next_actions": [],
+            }
+        should_followthrough = bool(latest_campaign.get("memory_followthrough_enabled", False)) or any(
+            int(latest_campaign.get(field_name, 0) or 0) > 0
+            for field_name in (
+                "memory_underused_count",
+                "attention_target_count",
+                "failure_target_count",
+                "revalidation_target_count",
+                "pending_app_count",
+                "memory_mission_followthrough_count",
+            )
+        )
+        if not should_followthrough:
+            return {
+                "status": "skipped",
+                "campaign_id": campaign_id,
+                "waves_executed": 0,
+                "continued_run_count": 0,
+                "reason_codes": ["campaign_stable"],
+                "final_pending_app_count": int(latest_campaign.get("pending_app_count", 0) or 0),
+                "items": [],
+                "next_actions": [],
+            }
+
+        continued_items: List[Dict[str, Any]] = []
+        previous_pending = int(latest_campaign.get("pending_app_count", 0) or 0)
+        for _ in range(bounded_waves):
+            max_apps = int(latest_campaign.get("max_apps", 0) or created_campaign.get("max_apps", 4) or 4)
+            run_payload = self.run_desktop_app_memory_campaign(
+                campaign_id=campaign_id,
+                max_apps=max(1, min(max_apps, 16)),
+                source=f"{source}_followthrough",
+            )
+            run_payload = dict(run_payload) if isinstance(run_payload, dict) else {"status": "error", "message": "invalid followthrough payload"}
+            continued_items.append(run_payload)
+            latest_run = run_payload
+            latest_campaign = (
+                dict(run_payload.get("campaign", {}))
+                if isinstance(run_payload.get("campaign", {}), dict)
+                else latest_campaign
+            )
+            current_pending = int(latest_campaign.get("pending_app_count", 0) or 0)
+            current_status = str(run_payload.get("status", "") or "").strip().lower()
+            if current_status not in {"success", "partial"}:
+                break
+            if current_pending <= 0:
+                break
+            if current_pending >= previous_pending:
+                break
+            previous_pending = current_pending
+
+        final_campaign = dict(latest_campaign) if isinstance(latest_campaign, dict) else {}
+        final_next_actions = (
+            list(latest_run.get("next_actions", []))
+            if isinstance(latest_run.get("next_actions", []), list)
+            else []
+        )[:8]
+        return {
+            "status": "success" if continued_items else "skipped",
+            "campaign_id": campaign_id,
+            "waves_requested": bounded_waves,
+            "waves_executed": len(continued_items),
+            "continued_run_count": len(continued_items),
+            "final_pending_app_count": int(final_campaign.get("pending_app_count", 0) or 0),
+            "final_completed_app_count": int(final_campaign.get("completed_app_count", 0) or 0),
+            "final_partial_app_count": int(final_campaign.get("partial_app_count", 0) or 0),
+            "final_failed_app_count": int(final_campaign.get("failed_app_count", 0) or 0),
+            "memory_followthrough_enabled": bool(final_campaign.get("memory_followthrough_enabled", False)),
+            "memory_mission_status_counts": (
+                dict(final_campaign.get("memory_mission_status_counts", {}))
+                if isinstance(final_campaign.get("memory_mission_status_counts", {}), dict)
+                else {}
+            ),
+            "top_memory_mission_queries": (
+                dict(final_campaign.get("top_memory_mission_queries", {}))
+                if isinstance(final_campaign.get("top_memory_mission_queries", {}), dict)
+                else {}
+            ),
+            "top_memory_mission_hotkeys": (
+                dict(final_campaign.get("top_memory_mission_hotkeys", {}))
+                if isinstance(final_campaign.get("top_memory_mission_hotkeys", {}), dict)
+                else {}
+            ),
+            "reason_codes": self._machine_dedupe(
+                [
+                    "learning_campaign_followthrough"
+                    if continued_items
+                    else "",
+                    "campaign_pending_apps_remain"
+                    if int(final_campaign.get("pending_app_count", 0) or 0) > 0
+                    else "",
+                    "campaign_memory_followthrough_enabled"
+                    if bool(final_campaign.get("memory_followthrough_enabled", False))
+                    else "",
+                ]
+            ),
+            "items": continued_items,
+            "final_campaign": final_campaign,
+            "next_actions": final_next_actions,
+        }
+
+    def _desktop_machine_vm_prepare_result_summary(
+        self,
+        *,
+        vm_items: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        vm_status_counts: Dict[str, int] = {}
+        vm_execution_mode_counts: Dict[str, int] = {}
+        vm_learning_profile_counts: Dict[str, int] = {}
+        vm_runtime_band_counts: Dict[str, int] = {}
+        vm_route_profile_counts: Dict[str, int] = {}
+        vm_model_preference_counts: Dict[str, int] = {}
+        vm_route_resolution_status_counts: Dict[str, int] = {}
+        vm_remediation_kind_counts: Dict[str, int] = {}
+        vm_memory_route_alignment_counts: Dict[str, int] = {}
+        vm_ready_count = 0
+        vm_attention_count = 0
+        vm_blocked_count = 0
+        vm_setup_followup_guest_count = 0
+        vm_memory_guided_route_count = 0
+        vm_memory_assisted_route_count = 0
+        vm_memory_followthrough_guest_count = 0
+
+        for prepared_vm in vm_items:
+            if not isinstance(prepared_vm, dict):
+                continue
+            status_name = str(prepared_vm.get("status", "") or "unknown").strip().lower() or "unknown"
+            vm_status_counts[status_name] = int(vm_status_counts.get(status_name, 0) or 0) + 1
+            vm_summary = dict(prepared_vm.get("summary", {})) if isinstance(prepared_vm.get("summary", {}), dict) else {}
+            readiness_name = str(vm_summary.get("readiness_status", "") or "").strip().lower()
+            if readiness_name == "ready":
+                vm_ready_count += 1
+            elif readiness_name == "blocked":
+                vm_blocked_count += 1
+            else:
+                vm_attention_count += 1
+            for field_name, bucket in (
+                ("execution_mode", vm_execution_mode_counts),
+                ("guest_learning_profile", vm_learning_profile_counts),
+                ("runtime_band_preference", vm_runtime_band_counts),
+                ("expected_route_profile", vm_route_profile_counts),
+                ("expected_model_preference", vm_model_preference_counts),
+                ("route_resolution_status", vm_route_resolution_status_counts),
+                ("remediation_kind", vm_remediation_kind_counts),
+            ):
+                field_value = str(vm_summary.get(field_name, "") or prepared_vm.get(field_name, "") or "").strip().lower()
+                if field_value:
+                    bucket[field_value] = int(bucket.get(field_value, 0) or 0) + 1
+            provider_model_readiness = (
+                dict(vm_summary.get("provider_model_readiness", {}))
+                if isinstance(vm_summary.get("provider_model_readiness", {}), dict)
+                else {}
+            )
+            if isinstance(provider_model_readiness.get("setup_followup_codes", []), list) and provider_model_readiness.get("setup_followup_codes", []):
+                vm_setup_followup_guest_count += 1
+            if bool(vm_summary.get("memory_guided_route", False)):
+                vm_memory_guided_route_count += 1
+            if bool(vm_summary.get("memory_assisted_route", False)):
+                vm_memory_assisted_route_count += 1
+            if bool(vm_summary.get("memory_followthrough_recommended", False)):
+                vm_memory_followthrough_guest_count += 1
+            alignment_status = str(vm_summary.get("memory_route_alignment_status", "") or "").strip().lower()
+            if alignment_status:
+                vm_memory_route_alignment_counts[alignment_status] = int(
+                    vm_memory_route_alignment_counts.get(alignment_status, 0) or 0
+                ) + 1
+
+        return {
+            "prepared_vm_control_count": len(
+                [row for row in vm_items if isinstance(row, dict) and str(row.get("status", "") or "").strip().lower() in {"success", "partial"}]
+            ),
+            "ready_count": vm_ready_count,
+            "attention_count": vm_attention_count,
+            "blocked_count": vm_blocked_count,
+            "status_counts": {str(key): int(value) for key, value in sorted(vm_status_counts.items(), key=lambda entry: entry[0])},
+            "execution_mode_counts": {str(key): int(value) for key, value in sorted(vm_execution_mode_counts.items(), key=lambda entry: entry[0])},
+            "learning_profile_counts": {str(key): int(value) for key, value in sorted(vm_learning_profile_counts.items(), key=lambda entry: entry[0])},
+            "runtime_band_counts": {str(key): int(value) for key, value in sorted(vm_runtime_band_counts.items(), key=lambda entry: entry[0])},
+            "expected_route_profile_counts": {str(key): int(value) for key, value in sorted(vm_route_profile_counts.items(), key=lambda entry: entry[0])},
+            "expected_model_preference_counts": {str(key): int(value) for key, value in sorted(vm_model_preference_counts.items(), key=lambda entry: entry[0])},
+            "route_resolution_status_counts": {str(key): int(value) for key, value in sorted(vm_route_resolution_status_counts.items(), key=lambda entry: entry[0])},
+            "remediation_kind_counts": {str(key): int(value) for key, value in sorted(vm_remediation_kind_counts.items(), key=lambda entry: entry[0])},
+            "setup_followup_guest_count": vm_setup_followup_guest_count,
+            "memory_guided_route_count": vm_memory_guided_route_count,
+            "memory_assisted_route_count": vm_memory_assisted_route_count,
+            "memory_followthrough_guest_count": vm_memory_followthrough_guest_count,
+            "memory_route_alignment_counts": {str(key): int(value) for key, value in sorted(vm_memory_route_alignment_counts.items(), key=lambda entry: entry[0])},
+        }
+
+    def _desktop_machine_continue_vm_prepare_followthrough(
+        self,
+        *,
+        vm_items: List[Dict[str, Any]],
+        max_followthrough_waves: int = 1,
+        task: str = "",
+        app_limit: int = 320,
+        model_limit: int = 200,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        bounded_waves = max(0, min(int(max_followthrough_waves or 0), 3))
+        latest_items_by_guest: Dict[str, Dict[str, Any]] = {}
+        for item in vm_items:
+            if not isinstance(item, dict):
+                continue
+            guest_name = str(
+                item.get("guest_name", "")
+                or dict(item.get("summary", {})).get("guest_name", "")
+                if isinstance(item.get("summary", {}), dict)
+                else item.get("guest_name", "")
+            ).strip()
+            if guest_name:
+                latest_items_by_guest[guest_name.lower()] = dict(item)
+        if bounded_waves <= 0 or not latest_items_by_guest:
+            return {
+                "status": "skipped",
+                "waves_executed": 0,
+                "continued_guest_count": 0,
+                "resolved_guest_count": 0,
+                "persistent_guest_count": 0,
+                "items": [],
+                "latest_items": list(latest_items_by_guest.values()),
+                "summary": self._desktop_machine_vm_prepare_result_summary(vm_items=list(latest_items_by_guest.values())),
+                "next_actions": [],
+            }
+
+        continuation_items: List[Dict[str, Any]] = []
+        continued_guest_names: set[str] = set()
+        resolved_guest_names: set[str] = set()
+        persistent_guest_names: set[str] = set()
+        executed_wave_count = 0
+
+        for _ in range(bounded_waves):
+            target_rows: List[Dict[str, Any]] = []
+            for row in latest_items_by_guest.values():
+                summary = dict(row.get("summary", {})) if isinstance(row.get("summary", {}), dict) else {}
+                readiness_status = str(summary.get("readiness_status", "") or "").strip().lower()
+                ai_route_status = str(summary.get("ai_route_status", "") or "").strip().lower()
+                memory_alignment = str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
+                should_retry = bool(summary.get("memory_followthrough_recommended", False))
+                should_retry = should_retry or bool(summary.get("recent_setup_followthrough_recommended", False))
+                should_retry = should_retry or readiness_status in {"attention", "degraded"}
+                should_retry = should_retry or ai_route_status in {"fallback", "setup_waiting", "setup_constrained"}
+                should_retry = should_retry or memory_alignment in {"underused", "assisted"}
+                if should_retry:
+                    target_rows.append(dict(row))
+            if not target_rows:
+                break
+            executed_wave_count += 1
+
+            wave_resolved = 0
+            for row in target_rows:
+                summary = dict(row.get("summary", {})) if isinstance(row.get("summary", {}), dict) else {}
+                guest_name = str(summary.get("guest_name", "") or row.get("guest_name", "") or "").strip()
+                if not guest_name:
+                    continue
+                continued_guest_names.add(guest_name.lower())
+                memory_mission = dict(summary.get("memory_mission", {})) if isinstance(summary.get("memory_mission", {}), dict) else {}
+                prepare_query = str(memory_mission.get("seed_query", "") or row.get("query", "") or "").strip()
+                prepared_payload = self.desktop_machine_prepare_vm_control(
+                    task=str(task or "").strip().lower(),
+                    guest_name=guest_name,
+                    guest_id=str(row.get("requested_guest_id", "") or row.get("guest_id", "") or "").strip(),
+                    query=prepare_query,
+                    app_limit=app_limit,
+                    model_limit=model_limit,
+                    refresh_apps=False,
+                    ensure_provider_launch=True,
+                    auto_execute_setup_followthrough=True,
+                    max_setup_followthrough_waves=2,
+                    source=f"{source}_vm_followthrough",
+                )
+                prepared_payload = dict(prepared_payload) if isinstance(prepared_payload, dict) else {"status": "error"}
+                continuation_items.append(prepared_payload)
+                latest_items_by_guest[guest_name.lower()] = prepared_payload
+                latest_summary = (
+                    dict(prepared_payload.get("summary", {}))
+                    if isinstance(prepared_payload.get("summary", {}), dict)
+                    else {}
+                )
+                latest_alignment = str(latest_summary.get("memory_route_alignment_status", "") or "").strip().lower()
+                latest_readiness = str(latest_summary.get("readiness_status", "") or "").strip().lower()
+                latest_followthrough = bool(latest_summary.get("memory_followthrough_recommended", False))
+                if not latest_followthrough and latest_alignment == "aligned" and latest_readiness == "ready":
+                    resolved_guest_names.add(guest_name.lower())
+                    wave_resolved += 1
+                else:
+                    persistent_guest_names.add(guest_name.lower())
+            if wave_resolved <= 0:
+                break
+
+        latest_items = list(latest_items_by_guest.values())
+        latest_summary = self._desktop_machine_vm_prepare_result_summary(vm_items=latest_items)
+        return {
+            "status": "success" if continuation_items else "skipped",
+            "waves_executed": executed_wave_count,
+            "continued_guest_count": len(continued_guest_names),
+            "resolved_guest_count": len(resolved_guest_names),
+            "persistent_guest_count": len(
+                [name for name in persistent_guest_names if name not in resolved_guest_names]
+            ),
+            "items": continuation_items,
+            "latest_items": latest_items,
+            "summary": latest_summary,
+            "next_actions": [
+                {
+                    "id": f"vm_followthrough:{summary.get('guest_name', '')}",
+                    "kind": "deepen_vm_control_learning",
+                    "title": f"Continue VM control learning for {summary.get('guest_name', 'guest')}",
+                    "target": str(summary.get("guest_name", "") or "").strip(),
+                    "status": "ready",
+                }
+                for summary in [
+                    dict(item.get("summary", {}))
+                    for item in latest_items
+                    if isinstance(item, dict) and isinstance(item.get("summary", {}), dict)
+                ]
+                if str(summary.get("guest_name", "") or "").strip()
+                and (
+                    bool(summary.get("memory_followthrough_recommended", False))
+                    or str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
+                    in {"underused", "assisted"}
+                    or str(summary.get("readiness_status", "") or "").strip().lower() in {"attention", "degraded"}
+                )
+            ][:6],
+        }
+
     def create_desktop_machine_app_learning_campaign(
         self,
         *,
@@ -20523,8 +20890,26 @@ class DesktopBackendService:
         ai_runtime_setup_result: Dict[str, Any] = {"status": "skipped", "selected_action_codes": [], "selected_action_count": 0}
         multimodal_setup_result: Dict[str, Any] = {"status": "skipped", "selected_action_codes": [], "selected_action_count": 0}
         app_learning_result: Dict[str, Any] = {"status": "skipped"}
+        app_learning_continuation: Dict[str, Any] = {
+            "status": "skipped",
+            "waves_executed": 0,
+            "continued_run_count": 0,
+            "items": [],
+            "next_actions": [],
+        }
         app_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
         vm_control_prepare_result: Dict[str, Any] = {"status": "skipped", "count": 0, "items": []}
+        vm_prepare_continuation: Dict[str, Any] = {
+            "status": "skipped",
+            "waves_executed": 0,
+            "continued_guest_count": 0,
+            "resolved_guest_count": 0,
+            "persistent_guest_count": 0,
+            "items": [],
+            "latest_items": [],
+            "summary": {},
+            "next_actions": [],
+        }
         queue_model_setup_mission: Dict[str, Any] = (
             dict(model_setup_mission) if isinstance(model_setup_mission, dict) else {}
         )
@@ -20800,6 +21185,128 @@ class DesktopBackendService:
                     auto_run=bool(auto_run_app_learning_campaign),
                     source="machine_onboarding",
                 )
+                continuation_wave_budget = max(
+                    int(
+                        runtime_app_learning_campaign_defaults.get(
+                            "recent_setup_suggested_followthrough_waves",
+                            runtime_app_learning_plan_summary.get(
+                                "recent_setup_suggested_followthrough_waves",
+                                0,
+                            ),
+                        )
+                        or 0
+                    ),
+                    1
+                    if bool(runtime_app_learning_campaign_defaults.get("memory_followthrough_enabled", False))
+                    or int(runtime_app_learning_campaign_defaults.get("memory_underused_count", 0) or 0) > 0
+                    or int(runtime_app_learning_campaign_defaults.get("memory_mission_followthrough_count", 0) or 0) > 0
+                    else 0,
+                )
+                if bool(auto_run_app_learning_campaign) and continuation_wave_budget > 0:
+                    app_learning_continuation = self._desktop_machine_continue_app_learning_campaign(
+                        campaign_result=app_learning_result if isinstance(app_learning_result, dict) else {},
+                        max_followthrough_waves=min(3, continuation_wave_budget),
+                        source="machine_onboarding",
+                    )
+                if isinstance(app_learning_result, dict):
+                    app_learning_result["continuation"] = dict(app_learning_continuation)
+                    if isinstance(app_learning_continuation.get("final_campaign", {}), dict):
+                        app_learning_result["latest_campaign"] = dict(
+                            app_learning_continuation.get("final_campaign", {})
+                        )
+                    if isinstance(app_learning_continuation.get("items", []), list) and app_learning_continuation.get("items", []):
+                        app_learning_result["latest_run"] = dict(app_learning_continuation["items"][-1])
+                if int(app_learning_continuation.get("waves_executed", 0) or 0) > 0:
+                    refreshed_runtime_profile = self.desktop_machine_profile(
+                        task=str(task or "").strip().lower(),
+                        app_query=app_query,
+                        app_category=app_category,
+                        app_limit=app_limit,
+                        model_limit=model_limit,
+                        refresh_apps=False,
+                        refresh_provider_credentials=False,
+                        verify_providers=False,
+                        provider_timeout_s=provider_timeout_s,
+                        source="machine_onboarding_post_learning_profile",
+                    )
+                    if isinstance(refreshed_runtime_profile, dict) and refreshed_runtime_profile.get("status") == "success":
+                        runtime_profile_for_preparation = dict(refreshed_runtime_profile)
+                    refreshed_runtime_app_learning_payload = self.desktop_machine_app_learning_plan(
+                        task=str(task or "").strip().lower(),
+                        app_query=app_query,
+                        app_category=app_category,
+                        app_limit=app_limit,
+                        refresh_apps=False,
+                        max_targets=max_targets,
+                        source="machine_onboarding_post_learning_plan",
+                    )
+                    if isinstance(refreshed_runtime_app_learning_payload, dict) and refreshed_runtime_app_learning_payload.get("status") == "success":
+                        if isinstance(refreshed_runtime_app_learning_payload.get("profile", {}), dict):
+                            runtime_profile_for_preparation = dict(
+                                refreshed_runtime_app_learning_payload.get("profile", {})
+                            )
+                        runtime_app_learning_plan_payload = self._desktop_machine_apply_setup_execution_to_learning_plan(
+                            app_learning_plan=refreshed_runtime_app_learning_payload,
+                            setup_execution=model_install_result if isinstance(model_install_result, dict) else {},
+                        )
+                        if bool(auto_continue_unresolved) and continuation_focus_app_names:
+                            runtime_app_learning_plan_payload = self._desktop_machine_prioritize_app_learning_plan_targets(
+                                app_learning_payload=runtime_app_learning_plan_payload,
+                                focus_app_names=continuation_focus_app_names,
+                                source="runtime_continuation",
+                            )
+                        runtime_app_learning_plan_summary = (
+                            dict(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}))
+                            if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                            and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("summary", {}), dict)
+                            else {}
+                        )
+                        runtime_app_learning_campaign_defaults = (
+                            dict(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}))
+                            if isinstance(runtime_app_learning_plan_payload.get("plan", {}), dict)
+                            and isinstance(runtime_app_learning_plan_payload.get("plan", {}).get("campaign_defaults", {}), dict)
+                            else {}
+                        )
+                        runtime_app_control_prepare_plan = self._desktop_machine_app_control_prepare_plan(
+                            profile=runtime_profile_for_preparation if isinstance(runtime_profile_for_preparation, dict) else {},
+                            app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
+                            launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
+                            provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else None,
+                            model_selection=model_selection if isinstance(model_selection, dict) else None,
+                            max_apps=min(4, max_targets),
+                        )
+                        runtime_prepare_plan_items = [
+                            dict(item)
+                            for item in runtime_app_control_prepare_plan.get("items", [])
+                            if isinstance(runtime_app_control_prepare_plan.get("items", []), list)
+                            and isinstance(item, dict)
+                        ][: max(1, min(int(prepare_app_limit or 3), 12))]
+                        runtime_prepare_plan_summary = (
+                            dict(runtime_app_control_prepare_plan.get("summary", {}))
+                            if isinstance(runtime_app_control_prepare_plan.get("summary", {}), dict)
+                            else {}
+                        )
+                        runtime_vm_control_plan = (
+                            self.desktop_vm_manager.build_vm_control_plan(
+                                inventory=(
+                                    dict(runtime_profile_for_preparation.get("virtual_machines", {}))
+                                    if isinstance(runtime_profile_for_preparation.get("virtual_machines", {}), dict)
+                                    else {}
+                                ),
+                                task=str(task or "").strip().lower(),
+                                query=app_query,
+                                max_targets=max(1, min(int(vm_prepare_limit or 2), 8)),
+                                machine_profile=runtime_profile_for_preparation if isinstance(runtime_profile_for_preparation, dict) else {},
+                            )
+                            if getattr(self, "desktop_vm_manager", None) is not None
+                            else runtime_vm_control_plan
+                        )
+                        vm_prepare_plan_items = [
+                            dict(item)
+                            for item in runtime_vm_control_plan.get("items", [])
+                            if isinstance(runtime_vm_control_plan.get("items", []), list)
+                            and isinstance(item, dict)
+                        ][: max(1, min(int(vm_prepare_limit or 2), 8))]
             if bool(auto_prepare_app_controls) and runtime_prepare_plan_items:
                 prepare_items = []
                 for item in runtime_prepare_plan_items:
@@ -21188,6 +21695,67 @@ class DesktopBackendService:
                         "setup_followup_guest_count": vm_setup_followup_guest_count,
                     },
                 }
+                vm_followthrough_wave_budget = max(
+                    int(
+                        runtime_app_learning_plan_summary.get(
+                            "recent_setup_suggested_followthrough_waves",
+                            runtime_app_learning_campaign_defaults.get(
+                                "recent_setup_suggested_followthrough_waves",
+                                0,
+                            ),
+                        )
+                        or 0
+                    ),
+                    1
+                    if int(dict(vm_control_prepare_result.get("summary", {})).get("memory_followthrough_guest_count", 0) or 0) > 0
+                    or int(dict(vm_control_prepare_result.get("summary", {})).get("attention_count", 0) or 0) > 0
+                    else 0,
+                )
+                if vm_followthrough_wave_budget > 0:
+                    vm_prepare_continuation = self._desktop_machine_continue_vm_prepare_followthrough(
+                        vm_items=[
+                            dict(item)
+                            for item in vm_control_prepare_result.get("items", [])
+                            if isinstance(vm_control_prepare_result.get("items", []), list) and isinstance(item, dict)
+                        ],
+                        max_followthrough_waves=min(2, vm_followthrough_wave_budget),
+                        task=str(task or "").strip().lower(),
+                        app_limit=app_limit,
+                        model_limit=model_limit,
+                        source="machine_onboarding",
+                    )
+                vm_result_summary = (
+                    dict(vm_control_prepare_result.get("summary", {}))
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                )
+                vm_result_summary.update(
+                    {
+                        "continuation_wave_count": int(
+                            vm_prepare_continuation.get("waves_executed", 0) or 0
+                        ),
+                        "continuation_guest_count": int(
+                            vm_prepare_continuation.get("continued_guest_count", 0) or 0
+                        ),
+                        "continuation_resolved_count": int(
+                            vm_prepare_continuation.get("resolved_guest_count", 0) or 0
+                        ),
+                        "continuation_persistent_count": int(
+                            vm_prepare_continuation.get("persistent_guest_count", 0) or 0
+                        ),
+                    }
+                )
+                if isinstance(vm_prepare_continuation.get("summary", {}), dict):
+                    vm_result_summary.update(dict(vm_prepare_continuation.get("summary", {})))
+                vm_control_prepare_result["continuation"] = dict(vm_prepare_continuation)
+                if isinstance(vm_prepare_continuation.get("latest_items", []), list) and vm_prepare_continuation.get("latest_items", []):
+                    vm_control_prepare_result["items"] = [
+                        dict(item)
+                        for item in vm_prepare_continuation.get("latest_items", [])
+                        if isinstance(item, dict)
+                    ]
+                    vm_control_prepare_result["count"] = len(vm_control_prepare_result["items"])
+                vm_control_prepare_result["summary"] = vm_result_summary
         else:
             provider_updates = {
                 "status": "planned",
@@ -21284,6 +21852,7 @@ class DesktopBackendService:
             app_learning_result = {
                 "status": "planned" if auto_create_app_learning_campaign else "skipped",
                 "auto_run": bool(auto_run_app_learning_campaign),
+                "continuation": dict(app_learning_continuation),
             }
             app_control_prepare_result = {
                 "status": "planned" if auto_prepare_app_controls and runtime_prepare_plan_items else "skipped",
@@ -21324,6 +21893,7 @@ class DesktopBackendService:
                         else {},
                     },
                 }
+            vm_control_prepare_result["continuation"] = dict(vm_prepare_continuation)
 
         execution_queue = self._desktop_machine_onboarding_execution_queue(
             provider_actions=plan.get("provider_actions", {}) if isinstance(plan.get("provider_actions", {}), dict) else {},
@@ -21424,6 +21994,20 @@ class DesktopBackendService:
             next_actions,
             list(continuation_plan.get("next_actions", []))
             if isinstance(continuation_plan.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(app_learning_continuation.get("next_actions", []))
+            if isinstance(app_learning_continuation.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(vm_prepare_continuation.get("next_actions", []))
+            if isinstance(vm_prepare_continuation.get("next_actions", []), list)
             else [],
             limit=8,
         )
@@ -21728,6 +22312,39 @@ class DesktopBackendService:
                 )
                 if isinstance(runtime_app_learning_plan_summary.get("remediation_feedback_status_counts", {}), dict)
                 else {},
+                "app_learning_continuation_status": str(
+                    app_learning_continuation.get("status", "") or ""
+                ).strip().lower(),
+                "app_learning_continuation_wave_count": int(
+                    app_learning_continuation.get("waves_executed", 0) or 0
+                ),
+                "app_learning_continued_run_count": int(
+                    app_learning_continuation.get("continued_run_count", 0) or 0
+                ),
+                "app_learning_continuation_pending_app_count": int(
+                    app_learning_continuation.get("final_pending_app_count", 0) or 0
+                ),
+                "app_learning_continuation_completed_app_count": int(
+                    app_learning_continuation.get("final_completed_app_count", 0) or 0
+                ),
+                "app_learning_continuation_failed_app_count": int(
+                    app_learning_continuation.get("final_failed_app_count", 0) or 0
+                ),
+                "app_learning_continuation_memory_mission_status_counts": dict(
+                    app_learning_continuation.get("memory_mission_status_counts", {})
+                )
+                if isinstance(app_learning_continuation.get("memory_mission_status_counts", {}), dict)
+                else {},
+                "app_learning_continuation_top_memory_mission_queries": dict(
+                    app_learning_continuation.get("top_memory_mission_queries", {})
+                )
+                if isinstance(app_learning_continuation.get("top_memory_mission_queries", {}), dict)
+                else {},
+                "app_learning_continuation_top_memory_mission_hotkeys": dict(
+                    app_learning_continuation.get("top_memory_mission_hotkeys", {})
+                )
+                if isinstance(app_learning_continuation.get("top_memory_mission_hotkeys", {}), dict)
+                else {},
                 "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
                 "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
                 "multimodal_knowledge_entry_count": int(
@@ -21950,6 +22567,31 @@ class DesktopBackendService:
                     dict(vm_control_prepare_result.get("summary", {})).get("setup_followup_guest_count", 0)
                     if isinstance(vm_control_prepare_result.get("summary", {}), dict)
                     else 0
+                ),
+                "vm_prepare_continuation_status": str(
+                    vm_prepare_continuation.get("status", "") or ""
+                ).strip().lower(),
+                "vm_prepare_continuation_wave_count": int(
+                    vm_prepare_continuation.get("waves_executed", 0) or 0
+                ),
+                "vm_prepare_continuation_guest_count": int(
+                    vm_prepare_continuation.get("continued_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_resolved_count": int(
+                    vm_prepare_continuation.get("resolved_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_persistent_count": int(
+                    vm_prepare_continuation.get("persistent_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_memory_followthrough_count": int(
+                    dict(vm_prepare_continuation.get("summary", {})).get("memory_followthrough_guest_count", 0)
+                    if isinstance(vm_prepare_continuation.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_prepare_continuation_memory_route_alignment_counts": dict(
+                    dict(vm_prepare_continuation.get("summary", {})).get("memory_route_alignment_counts", {})
+                    if isinstance(vm_prepare_continuation.get("summary", {}), dict)
+                    else {}
                 ),
                 "route_remediation_count": int(route_remediation.get("count", 0) or 0),
                 "route_remediation_blocked_count": int(
