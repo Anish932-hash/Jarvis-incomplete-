@@ -70,7 +70,15 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
                 "knowledge_low_coverage_app_count": 2,
                 "knowledge_semantic_ready_app_count": 3,
             }
-        }
+        },
+        "app_learning_plan": {
+            "plan": {
+                "summary": {
+                    "semantic_guided_count": 2,
+                    "semantic_followup_count": 1,
+                }
+            }
+        },
     }
     plan = manager.build_vm_control_plan(
         inventory=inventory,
@@ -93,6 +101,9 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["structured_memory_vector_count"] == 27
     assert plan["items"][0]["provider_model_readiness"]["memory_guidance_status"] == "partial"
     assert "semantic_memory_ready" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
+    assert "learning_semantic_guidance_available" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
+    assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_followup_count"] == 1
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_blocked_stack_count"] == 1
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
@@ -121,5 +132,6 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert prepared["summary"]["provider_model_readiness"]["structured_memory_semantic_ready_count"] == 3
     assert prepared["summary"]["memory_guidance_status"] == "partial"
+    assert prepared["summary"]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
     assert prepared["summary"]["ai_route_status"] == "fallback"
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"

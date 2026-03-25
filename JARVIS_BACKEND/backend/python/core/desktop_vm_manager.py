@@ -898,6 +898,13 @@ class DesktopVMManager:
             and isinstance(machine_profile.get("ai_runtime_profile", {}).get("summary", {}), dict)
             else {}
         )
+        app_learning_summary = (
+            dict(machine_profile.get("app_learning_plan", {}).get("plan", {}).get("summary", {}))
+            if isinstance(machine_profile.get("app_learning_plan", {}), dict)
+            and isinstance(machine_profile.get("app_learning_plan", {}).get("plan", {}), dict)
+            and isinstance(machine_profile.get("app_learning_plan", {}).get("plan", {}).get("summary", {}), dict)
+            else {}
+        )
         local_model_count = int(local_inventory.get("count", 0) or 0)
         vision_runtime_available = bool(multimodal_summary.get("vision_runtime_available", False))
         vision_loaded_model_count = int(multimodal_summary.get("vision_loaded_model_count", 0) or 0)
@@ -916,9 +923,15 @@ class DesktopVMManager:
         structured_memory_vector_count = int(multimodal_summary.get("knowledge_store_vector_count", 0) or 0)
         structured_memory_low_coverage_count = int(multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0)
         structured_memory_semantic_ready_count = int(multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0)
+        app_learning_semantic_guided_count = int(app_learning_summary.get("semantic_guided_count", 0) or 0)
+        app_learning_semantic_followup_count = int(app_learning_summary.get("semantic_followup_count", 0) or 0)
         if structured_memory_semantic_ready_count > 0 and structured_memory_low_coverage_count <= 0:
             memory_guidance_status = "strong"
-        elif structured_memory_semantic_ready_count > 0 or structured_memory_vector_count > 0:
+        elif (
+            structured_memory_semantic_ready_count > 0
+            or structured_memory_vector_count > 0
+            or app_learning_semantic_guided_count > 0
+        ):
             memory_guidance_status = "partial"
         else:
             memory_guidance_status = "cold"
@@ -927,6 +940,8 @@ class DesktopVMManager:
                 "semantic_memory_ready" if structured_memory_semantic_ready_count > 0 else "",
                 "vector_memory_available" if structured_memory_vector_count > 0 else "",
                 "memory_low_coverage_pressure" if structured_memory_low_coverage_count > 0 else "",
+                "learning_semantic_guidance_available" if app_learning_semantic_guided_count > 0 else "",
+                "learning_semantic_followup_pending" if app_learning_semantic_followup_count > 0 else "",
             ],
             limit=6,
         )
@@ -1078,6 +1093,8 @@ class DesktopVMManager:
             "structured_memory_vector_count": structured_memory_vector_count,
             "structured_memory_low_coverage_count": structured_memory_low_coverage_count,
             "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
+            "app_learning_semantic_guided_count": app_learning_semantic_guided_count,
+            "app_learning_semantic_followup_count": app_learning_semantic_followup_count,
             "memory_guidance_status": memory_guidance_status,
             "memory_guidance_reason_codes": memory_guidance_reason_codes,
             "remote_endpoint_ready": remote_endpoint_ready,
