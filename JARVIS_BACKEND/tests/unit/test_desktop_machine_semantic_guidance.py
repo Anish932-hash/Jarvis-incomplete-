@@ -397,3 +397,84 @@ def test_desktop_machine_onboarding_continuation_plan_adds_semantic_followup() -
     assert continuation["items"][0]["semantic_followup_recommended"] is True
     assert continuation["summary"]["semantic_followup_count"] == 1
     assert continuation["summary"]["semantic_guidance_status_counts"]["cold"] == 1
+
+
+def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    target_row = {
+        "learning_profile": "hybrid_guided_explore",
+        "execution_mode": "hybrid_ready",
+        "readiness_status": "ready",
+        "local_ready_tasks": ["control"],
+        "install_ready_tasks": [],
+        "remote_ready_tasks": [],
+        "blocker_codes": [],
+        "ai_runtime_status": "partial",
+        "ai_runtime_blocked_stack_count": 0,
+        "ai_runtime_action_required_task_count": 0,
+        "ai_runtime_reasoning_ready": True,
+        "ai_runtime_vision_ready": False,
+        "semantic_guidance_status": "strong",
+        "semantic_guidance_match_count": 3,
+        "semantic_memory_available": True,
+        "knowledge_hotkey_count": 2,
+        "knowledge_store_vector_count": 5,
+        "required_tasks": ["control", "vision", "reasoning"],
+        "related_setup_action_count": 0,
+    }
+
+    strategy = service._desktop_machine_learning_runtime_strategy_for_target(target_row=target_row)
+
+    assert strategy["strategy_profile"].startswith("memory_guided_")
+    assert strategy["preferred_target_mode"] == "memory_guided"
+    assert strategy["preferred_wave_mode"] == "memory_guided_hotkey_first"
+    assert strategy["preferred_probe_mode"] == "accessibility_first"
+    assert "semantic_memory_vision_bypass" in strategy["reason_codes"]
+
+    profile = {
+        "ai_runtime_profile": {
+            "status": "success",
+            "summary": {
+                "reasoning_runtime_ready": True,
+                "vision_runtime_ready": False,
+                "ready_stack_count": 2,
+                "blocked_stack_count": 0,
+                "action_required_task_count": 0,
+            },
+            "stacks": [
+                {
+                    "stack_name": "desktop_agent",
+                    "desktop_coworker_ready": True,
+                    "local_runtime_ready_count": 1,
+                    "ready_task_count": 2,
+                    "score": 0.91,
+                },
+                {
+                    "stack_name": "memory",
+                    "desktop_coworker_ready": True,
+                    "local_runtime_ready_count": 1,
+                    "ready_task_count": 1,
+                    "score": 0.74,
+                },
+            ],
+        },
+        "multimodal_memory": {
+            "summary": {
+                "vision_runtime_available": False,
+                "vision_loaded_model_count": 0,
+            }
+        },
+        "providers": {"summary": {"verified_count": 1}},
+    }
+
+    ai_route = service._desktop_machine_ai_route_plan(
+        profile=profile,
+        task="control",
+        runtime_strategy=strategy,
+        target_row=target_row,
+    )
+
+    assert ai_route["selected_ai_route_profile"] == "accessibility_memory_first"
+    assert "semantic_memory_route_bias" in ai_route["ai_route_reason_codes"]
+    assert ai_route["ai_route_confidence"] > 0.5

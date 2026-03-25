@@ -1023,6 +1023,14 @@ class DesktopVMManager:
             selected_ai_model_preference = "api_assist"
             selected_ai_provider_source = "api_assist_plus_ocr"
             selected_ai_route_profile = "api_vm_assist"
+        if memory_guidance_status == "strong":
+            if selected_ai_route_profile == "accessibility_first":
+                selected_ai_route_profile = "accessibility_memory_first"
+            elif selected_ai_route_profile:
+                selected_ai_route_profile = f"memory_guided_{selected_ai_route_profile}"
+            ai_route_reason_codes.append("memory_guided_vm_route")
+        elif memory_guidance_status == "partial":
+            ai_route_reason_codes.append("memory_assisted_vm_route")
 
         selected_ai_reasoning_stack = "desktop_agent" if ai_reasoning_ready else ""
         selected_ai_vision_stack = "perception" if local_vision_ready and family != "terminal" else ""
@@ -1039,6 +1047,7 @@ class DesktopVMManager:
         ai_route_confidence -= 0.08 if ai_route_status == "setup_constrained" else 0.0
         ai_route_confidence -= 0.18 if ai_route_status == "blocked" else 0.0
         ai_route_confidence -= 0.04 if structured_memory_low_coverage_count > 0 and family != "terminal" else 0.0
+        ai_route_confidence += 0.05 if memory_guidance_status == "strong" else 0.02 if memory_guidance_status == "partial" else 0.0
         ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
 
         if readiness_status == "blocked":

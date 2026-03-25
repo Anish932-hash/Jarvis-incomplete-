@@ -102,6 +102,7 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["memory_guidance_status"] == "partial"
     assert "semantic_memory_ready" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
     assert "learning_semantic_guidance_available" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
+    assert "memory_assisted_vm_route" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_followup_count"] == 1
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_status"] == "partial"

@@ -11254,6 +11254,12 @@ class DesktopBackendService:
             "knowledge_store_vector_count": int(selected_target.get("knowledge_store_vector_count", 0) or 0),
             "knowledge_hotkey_count": int(selected_target.get("knowledge_hotkey_count", 0) or 0),
             "semantic_memory_available": bool(selected_target.get("semantic_memory_available", False)),
+            "memory_guidance_status": str(selected_target.get("memory_guidance_status", "") or "").strip().lower(),
+            "memory_guidance_reason_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("memory_guidance_reason_codes", [])
+                if isinstance(selected_target.get("memory_guidance_reason_codes", []), list) and str(item).strip()
+            ][:8],
             "knowledge_gap_reasons": [
                 str(item).strip().lower()
                 for item in selected_target.get("knowledge_gap_reasons", [])
@@ -11280,6 +11286,11 @@ class DesktopBackendService:
             "semantic_guidance_container_roles": semantic_guidance_roles,
             "semantic_guidance_wave_actions": semantic_guidance_actions,
             "semantic_guidance_traversal_paths": semantic_guidance_paths,
+            "ai_route_memory_guided": str(selected_target.get("selected_ai_route_profile", "") or "").strip().lower().startswith(
+                "memory_guided_"
+            )
+            or str(selected_target.get("selected_ai_route_profile", "") or "").strip().lower()
+            == "accessibility_memory_first",
             "surface_node_count": int(selected_target.get("surface_node_count", 0) or 0),
             "surface_transition_count": int(selected_target.get("surface_transition_count", 0) or 0),
             "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
@@ -14642,6 +14653,26 @@ class DesktopBackendService:
         ai_runtime_action_required_task_count = int(ai_runtime_summary.get("action_required_task_count", 0) or 0)
         ai_runtime_reasoning_ready = bool(ai_runtime_summary.get("reasoning_runtime_ready", False))
         ai_runtime_vision_ready = bool(ai_runtime_summary.get("vision_runtime_ready", False))
+        semantic_guidance_status = str(target_row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
+        semantic_guidance_match_count = int(target_row.get("semantic_guidance_match_count", 0) or 0)
+        semantic_memory_available = bool(target_row.get("semantic_memory_available", False))
+        knowledge_hotkey_count = int(target_row.get("knowledge_hotkey_count", 0) or 0)
+        knowledge_store_vector_count = int(target_row.get("knowledge_store_vector_count", 0) or 0)
+        strong_memory_guidance = semantic_guidance_status == "strong" and semantic_guidance_match_count > 0
+        partial_memory_guidance = (
+            semantic_guidance_match_count > 0
+            or semantic_memory_available
+            or knowledge_store_vector_count > 0
+        )
+        memory_guidance_reason_codes = self._machine_dedupe(
+            [
+                "strong_semantic_memory_guidance" if strong_memory_guidance else "",
+                "semantic_memory_available" if semantic_memory_available else "",
+                "hotkey_memory_ready" if knowledge_hotkey_count > 0 else "",
+                "vector_memory_available" if knowledge_store_vector_count > 0 else "",
+            ],
+            limit=8,
+        )
         models = profile.get("models", {}) if isinstance(profile.get("models", {}), dict) else {}
         local_inventory = models.get("local_inventory", {}) if isinstance(models.get("local_inventory", {}), dict) else {}
         task_preferences = (
@@ -14830,6 +14861,10 @@ class DesktopBackendService:
             priority_score += 6.0
         if "low_coverage" in reason_codes:
             priority_score += 5.0
+        if strong_memory_guidance:
+            priority_score += 6.0
+        elif partial_memory_guidance:
+            priority_score += 2.5
         remediation_progress_status = str(target_row.get("remediation_progress_status", "") or "").strip().lower()
         remediation_priority_delta = float(target_row.get("remediation_priority_delta", 0.0) or 0.0)
         if remediation_priority_delta:
@@ -14891,6 +14926,12 @@ class DesktopBackendService:
             ],
             limit=8,
         )
+        if strong_memory_guidance:
+            related_setup_action_codes = [
+                code
+                for code in related_setup_action_codes
+                if code not in {"initialize_local_vision_runtime", "warm_local_vision_runtime"}
+            ]
         return {
             "required_tasks": required_tasks,
             "local_ready_tasks": local_ready_tasks,
@@ -14916,11 +14957,14 @@ class DesktopBackendService:
             "ai_runtime_vision_ready": bool(ai_runtime_vision_ready),
             "ai_runtime_setup_action_codes": ai_runtime_setup_action_codes,
             "ai_runtime_setup_action_count": len(ai_runtime_setup_action_codes),
+            "memory_guidance_status": "strong" if strong_memory_guidance else "partial" if partial_memory_guidance else "cold",
+            "memory_guidance_reason_codes": memory_guidance_reason_codes,
             "prepare_priority_score": round(priority_score, 3),
             "prepare_priority_band": priority_band,
             "prepare_priority_reasons": self._machine_dedupe(
                 [
                     *priority_reasons,
+                    *memory_guidance_reason_codes,
                     *(
                         ["remediation_kind_" + str(target_row.get("remediation_kind", "") or "").strip().lower()]
                         if str(target_row.get("remediation_kind", "") or "").strip()
@@ -15495,6 +15539,17 @@ class DesktopBackendService:
         ai_runtime_action_required_task_count = int(target_row.get("ai_runtime_action_required_task_count", 0) or 0)
         ai_runtime_reasoning_ready = bool(target_row.get("ai_runtime_reasoning_ready", False))
         ai_runtime_vision_ready = bool(target_row.get("ai_runtime_vision_ready", False))
+        semantic_guidance_status = str(target_row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
+        semantic_guidance_match_count = int(target_row.get("semantic_guidance_match_count", 0) or 0)
+        semantic_memory_available = bool(target_row.get("semantic_memory_available", False))
+        knowledge_hotkey_count = int(target_row.get("knowledge_hotkey_count", 0) or 0)
+        knowledge_store_vector_count = int(target_row.get("knowledge_store_vector_count", 0) or 0)
+        strong_memory_guidance = semantic_guidance_status == "strong" and semantic_guidance_match_count > 0
+        partial_memory_guidance = (
+            semantic_guidance_match_count > 0
+            or semantic_memory_available
+            or knowledge_store_vector_count > 0
+        )
         reason_codes: List[str] = []
         runtime_band_preference = "accessibility"
         preferred_probe_mode = "accessibility_first"
@@ -15580,6 +15635,35 @@ class DesktopBackendService:
             elif execution_mode == "degraded":
                 runtime_band_preference = "accessibility"
                 preferred_probe_mode = "accessibility_first"
+
+        if strong_memory_guidance and readiness_status != "blocked":
+            if not str(strategy_profile).startswith("memory_guided_"):
+                strategy_profile = f"memory_guided_{strategy_profile}"
+            preferred_wave_mode = "memory_guided_hotkey_first" if knowledge_hotkey_count > 0 else "memory_guided_safe_traversal"
+            preferred_target_mode = "memory_guided"
+            reason_codes.extend(
+                [
+                    "semantic_memory_guided",
+                    "structured_memory_ready",
+                    *(
+                        ["hotkey_memory_ready"]
+                        if knowledge_hotkey_count > 0
+                        else []
+                    ),
+                ]
+            )
+            if not ai_runtime_vision_ready and runtime_band_preference in {"local", "hybrid"}:
+                preferred_probe_mode = "accessibility_first"
+                reason_codes.append("semantic_memory_vision_bypass")
+            elif runtime_band_preference == "api" and execution_mode in {"local_ready", "hybrid_ready"}:
+                runtime_band_preference = "hybrid"
+                reason_codes.append("semantic_memory_reduce_api_dependency")
+        elif partial_memory_guidance and readiness_status != "blocked":
+            preferred_target_mode = "memory_guided"
+            reason_codes.append("semantic_memory_available")
+            if knowledge_hotkey_count > 0:
+                preferred_wave_mode = "memory_guided_hotkey_first"
+                reason_codes.append("hotkey_memory_ready")
 
         return {
             "strategy_profile": strategy_profile,
@@ -15706,6 +15790,17 @@ class DesktopBackendService:
             limit=8,
         )
         related_setup_action_count = int(target.get("related_setup_action_count", 0) or 0)
+        semantic_guidance_status = str(target.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
+        semantic_guidance_match_count = int(target.get("semantic_guidance_match_count", 0) or 0)
+        semantic_memory_available = bool(target.get("semantic_memory_available", False))
+        knowledge_hotkey_count = int(target.get("knowledge_hotkey_count", 0) or 0)
+        knowledge_store_vector_count = int(target.get("knowledge_store_vector_count", 0) or 0)
+        strong_memory_guidance = semantic_guidance_status == "strong" and semantic_guidance_match_count > 0
+        partial_memory_guidance = (
+            semantic_guidance_match_count > 0
+            or semantic_memory_available
+            or knowledge_store_vector_count > 0
+        )
         reason_codes = self._machine_dedupe(
             [
                 str(item).strip().lower()
@@ -15732,12 +15827,15 @@ class DesktopBackendService:
                 selected_runtime_band = "accessibility"
 
         if "vision" in required_tasks and not ai_vision_ready and selected_runtime_band in {"local", "hybrid"}:
-            fallback_applied = True
-            reason_codes.append("ai_vision_runtime_gap")
-            if verified_provider_count > 0:
-                selected_runtime_band = "api"
+            if strong_memory_guidance and preferred_probe_mode == "accessibility_first":
+                reason_codes.append("semantic_memory_vision_bypass")
             else:
-                selected_runtime_band = "accessibility"
+                fallback_applied = True
+                reason_codes.append("ai_vision_runtime_gap")
+                if verified_provider_count > 0:
+                    selected_runtime_band = "api"
+                else:
+                    selected_runtime_band = "accessibility"
 
         if "vision" in required_tasks and not local_vision_runtime_ready and selected_runtime_band == "local":
             fallback_applied = True
@@ -15761,11 +15859,23 @@ class DesktopBackendService:
         if selected_runtime_band == "accessibility":
             selected_probe_mode = "accessibility_first"
         elif selected_runtime_band == "api":
-            selected_probe_mode = "api_vision_assist"
+            selected_probe_mode = (
+                preferred_probe_mode
+                if preferred_probe_mode in {"accessibility_first", "api_vision_assist"}
+                else "api_vision_assist"
+            )
         elif selected_runtime_band == "hybrid":
-            selected_probe_mode = "hybrid_verify"
+            selected_probe_mode = (
+                preferred_probe_mode
+                if preferred_probe_mode in {"accessibility_first", "hybrid_verify"}
+                else "hybrid_verify"
+            )
         elif selected_runtime_band == "local":
-            selected_probe_mode = "local_vision_assist"
+            selected_probe_mode = (
+                preferred_probe_mode
+                if preferred_probe_mode in {"accessibility_first", "local_vision_assist"}
+                else "local_vision_assist"
+            )
 
         selected_route_profile = selected_probe_mode
         if bool(strategy.get("prefer_native_stabilization", False)) and selected_probe_mode not in {
@@ -15773,6 +15883,23 @@ class DesktopBackendService:
             "accessibility_first",
         }:
             selected_route_profile = f"{selected_probe_mode}_native_stabilized"
+        if strong_memory_guidance:
+            if selected_route_profile == "accessibility_first":
+                selected_route_profile = "accessibility_memory_first"
+            elif selected_route_profile:
+                selected_route_profile = f"memory_guided_{selected_route_profile}"
+            reason_codes.extend(
+                [
+                    "semantic_memory_route_bias",
+                    *(
+                        ["hotkey_memory_route_bias"]
+                        if knowledge_hotkey_count > 0
+                        else []
+                    ),
+                ]
+            )
+        elif partial_memory_guidance:
+            reason_codes.append("semantic_memory_route_assist")
 
         selected_model_preference = "accessibility"
         selected_provider_source = "accessibility_only"
@@ -15847,6 +15974,9 @@ class DesktopBackendService:
         confidence_score -= 0.18 if route_status == "blocked" else 0.0
         confidence_score -= 0.05 if fallback_applied else 0.0
         confidence_score += 0.05 if selected_provider_source == expected_provider_source else -0.02
+        confidence_score += 0.08 if strong_memory_guidance else 0.03 if partial_memory_guidance else 0.0
+        confidence_score += 0.03 if knowledge_hotkey_count > 0 else 0.0
+        confidence_score -= 0.04 if not semantic_memory_available and knowledge_store_vector_count <= 0 else 0.0
         confidence_score = max(0.05, min(round(confidence_score, 2), 0.98))
         confidence_band = "high" if confidence_score >= 0.72 else "medium" if confidence_score >= 0.45 else "low"
 
@@ -15866,6 +15996,8 @@ class DesktopBackendService:
             "selected_vision_stack": selected_vision_stack,
             "selected_memory_stack": selected_memory_stack,
             "selected_stack_names": selected_stack_names,
+            "semantic_guidance_status": semantic_guidance_status,
+            "semantic_guidance_match_count": semantic_guidance_match_count,
             "confidence_score": confidence_score,
             "confidence_band": confidence_band,
             "reason_codes": self._machine_dedupe(reason_codes, limit=12),
