@@ -6,7 +6,23 @@ from backend.python.desktop_api import DesktopBackendService
 def test_desktop_machine_prepare_app_control_uses_semantic_memory_guidance() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
 
-    service.desktop_machine_profile = lambda **_kwargs: {"status": "success"}
+    service.desktop_machine_profile = lambda **_kwargs: {
+        "status": "success",
+        "continuation_memory": {
+            "continuation_status": "recommended",
+            "continuation_recommended": True,
+            "continuation_required": False,
+            "app_learning_continuation_wave_total": 2,
+            "vm_prepare_continuation_wave_total": 1,
+            "continuation_retry_total": 1,
+            "continuation_provider_blocked_total": 0,
+            "continuation_setup_followup_total": 1,
+            "continuation_memory_followthrough_total": 3,
+            "top_memory_mission_queries": {"settings": 2, "preferences": 1},
+            "top_memory_mission_hotkeys": {"Alt+F": 2, "Ctrl+F": 1},
+            "reason_codes": ["recent_continuation_recommended", "recent_continuation_memory_followthrough"],
+        },
+    }
     service.desktop_machine_app_learning_plan = lambda **_kwargs: {
         "status": "success",
         "plan": {
@@ -167,12 +183,19 @@ def test_desktop_machine_prepare_app_control_uses_semantic_memory_guidance() -> 
     assert payload["semantic_memory_guidance"]["guidance_status"] == "strong"
     assert payload["summary"]["semantic_guidance_match_count"] == 2
     assert payload["summary"]["semantic_guidance_alignment"] == "matched"
+    assert payload["summary"]["recent_continuation_status"] == "recommended"
+    assert payload["summary"]["recent_continuation_recommended"] is True
+    assert payload["summary"]["recent_continuation_learning_wave_total"] == 2
+    assert payload["summary"]["recent_continuation_memory_followthrough_count"] == 3
+    assert "settings" in payload["summary"]["recent_continuation_top_memory_mission_queries"]
+    assert "Alt+F" in payload["summary"]["recent_continuation_top_memory_mission_hotkeys"]
     assert payload["summary"]["memory_guided_route"] is False
     assert payload["summary"]["memory_assisted_route"] is False
     assert payload["summary"]["memory_route_alignment_status"] == "underused"
     assert "menu" in list(captured_survey.get("target_container_roles", []))
     assert "focus_toolbar" in list(captured_survey.get("preferred_wave_actions", []))
     assert "focus_search_box" in list(captured_survey.get("preferred_wave_actions", []))
+    assert "focus_navigation_tree" in list(captured_survey.get("preferred_wave_actions", []))
 
 
 def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
@@ -1018,6 +1041,15 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                 "failed_app_count": 0,
                 "memory_followthrough_enabled": True,
                 "memory_mission_status_counts": {"strong": 2, "partial": 1},
+                "memory_route_alignment_counts": {"underused": 1 if pending > 0 else 0, "aligned": 1},
+                "memory_underused_count": 1 if pending > 0 else 0,
+                "memory_guided_route_count": 1,
+                "memory_assisted_route_count": 1,
+                "memory_underused_app_names": ["Notepad"],
+                "memory_guided_app_names": ["Calculator"],
+                "pending_apps": ["Notepad"] if pending > 0 else [],
+                "query_hints_by_app": {"Notepad": ["settings", "preferences"]},
+                "semantic_hotkeys_by_app": {"Notepad": ["Alt+F"]},
                 "top_memory_mission_queries": {"settings": 3},
                 "top_memory_mission_hotkeys": {"Alt+F": 2},
             },
@@ -1034,6 +1066,7 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                     "max_apps": 4,
                     "pending_app_count": 2,
                     "memory_followthrough_enabled": True,
+                    "target_apps": ["Notepad", "Calculator"],
                 }
             },
             "run": {
@@ -1043,7 +1076,17 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                     "max_apps": 4,
                     "pending_app_count": 2,
                     "memory_followthrough_enabled": True,
+                    "target_apps": ["Notepad", "Calculator"],
                 },
+            },
+            "strategy": {
+                "memory_mission": {
+                    "status": "strong",
+                    "seed_query": "settings",
+                    "query_hints": ["settings", "preferences"],
+                    "hotkey_hints": ["Alt+F"],
+                },
+                "continuation_focus_app_names": ["Notepad"],
             },
         },
         max_followthrough_waves=3,
@@ -1055,9 +1098,14 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
     assert payload["continued_run_count"] == 2
     assert payload["final_pending_app_count"] == 0
     assert payload["final_completed_app_count"] == 5
+    assert payload["memory_mission"]["seed_query"] == "settings"
+    assert payload["focus_app_count"] >= 1
+    assert payload["memory_route_alignment_counts"]["aligned"] == 1
     assert payload["memory_mission_status_counts"]["strong"] == 2
     assert payload["top_memory_mission_queries"]["settings"] == 3
     assert payload["top_memory_mission_hotkeys"]["Alt+F"] == 2
+    assert payload["next_actions"][0]["query"] == "settings"
+    assert "alt+f" in payload["next_actions"][0]["memory_mission"]["hotkey_hints"]
     assert run_calls[0]["source"] == "unit_test_followthrough"
 
 
@@ -1121,7 +1169,76 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
     assert payload["continued_guest_count"] == 1
     assert payload["resolved_guest_count"] == 1
     assert payload["persistent_guest_count"] == 0
+    assert payload["memory_mission"]["seed_query"] == "desktop settings"
+    assert payload["memory_mission_status_counts"]["strong"] == 1
+    assert payload["top_memory_mission_queries"]["desktop settings"] >= 1
+    assert payload["top_memory_mission_hotkeys"]["Alt+F"] >= 1
     assert payload["summary"]["memory_guided_route_count"] == 1
     assert payload["summary"]["memory_route_alignment_counts"]["aligned"] == 1
     assert prepare_calls[0]["query"] == "desktop settings"
     assert prepare_calls[0]["source"] == "unit_test_vm_followthrough"
+
+
+def test_desktop_machine_recent_continuation_memory_aggregates_history() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    class _StubOnboardingManager:
+        def history(self, **_kwargs):
+            return {
+                "status": "success",
+                "count": 2,
+                "latest_run": {
+                    "summary": {
+                        "app_learning_continuation_memory_mission_status_counts": {"partial": 2},
+                        "app_learning_continuation_top_memory_mission_queries": {"settings": 3, "preferences": 1},
+                        "app_learning_continuation_top_memory_mission_hotkeys": {"Alt+F": 2},
+                        "app_learning_continuation_focus_app_count": 2,
+                        "vm_prepare_continuation_memory_mission_status_counts": {"strong": 1},
+                        "vm_prepare_continuation_top_memory_mission_queries": {"desktop settings": 1},
+                        "vm_prepare_continuation_top_memory_mission_hotkeys": {"Ctrl+Alt+S": 1},
+                        "vm_prepare_continuation_focus_guest_count": 1,
+                        "continuation_memory_followthrough_count": 4,
+                        "continuation_semantic_followup_count": 1,
+                        "continuation_focus_app_count": 2,
+                    },
+                    "next_actions": [
+                        {"id": "continuation:learn:notepad", "kind": "activate_memory_guided_learning", "target": "settings"}
+                    ],
+                },
+                "summary": {
+                    "continuation_total": 5,
+                    "continuation_auto_runnable_total": 3,
+                    "continuation_manual_total": 1,
+                    "continuation_retry_total": 2,
+                    "continuation_provider_blocked_total": 1,
+                    "continuation_setup_followup_total": 2,
+                    "continuation_memory_followthrough_total": 4,
+                    "app_learning_continuation_wave_total": 3,
+                    "app_learning_continued_run_total": 2,
+                    "vm_prepare_continuation_wave_total": 2,
+                    "vm_prepare_continuation_guest_total": 2,
+                    "vm_prepare_continuation_resolved_total": 1,
+                    "vm_prepare_continuation_persistent_total": 1,
+                },
+            }
+
+    service.desktop_onboarding_manager = _StubOnboardingManager()
+
+    payload = service._desktop_machine_recent_continuation_memory(limit=8)
+
+    assert payload["status"] == "success"
+    assert payload["continuation_status"] == "required"
+    assert payload["continuation_recommended"] is True
+    assert payload["continuation_required"] is True
+    assert payload["suggested_learning_followthrough_waves"] >= 3
+    assert payload["suggested_vm_followthrough_waves"] >= 3
+    assert payload["continuation_memory_followthrough_total"] == 4
+    assert payload["app_learning_continuation_wave_total"] == 3
+    assert payload["vm_prepare_continuation_persistent_total"] == 1
+    assert payload["top_memory_mission_queries"]["settings"] == 3
+    assert payload["top_memory_mission_queries"]["desktop settings"] == 1
+    assert payload["top_memory_mission_hotkeys"]["Alt+F"] == 2
+    assert payload["top_memory_mission_hotkeys"]["Ctrl+Alt+S"] == 1
+    assert payload["memory_mission_status_counts"]["partial"] == 2
+    assert payload["memory_mission_status_counts"]["strong"] == 1
+    assert payload["next_actions"][0]["kind"] == "activate_memory_guided_learning"

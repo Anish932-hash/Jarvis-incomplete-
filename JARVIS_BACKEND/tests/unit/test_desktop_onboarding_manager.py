@@ -96,6 +96,13 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "continuation_retry_count": 2,
                 "continuation_provider_blocked_count": 1,
                 "continuation_setup_followup_count": 2,
+                "continuation_memory_followthrough_count": 3,
+                "continuation_focus_app_count": 2,
+                "recent_continuation_recommended": True,
+                "recent_continuation_required": False,
+                "recent_continuation_learning_wave_total": 2,
+                "recent_continuation_vm_wave_total": 1,
+                "app_learning_continuation_focus_app_count": 2,
                 "vm_prepare_count": 2,
                 "prepared_vm_control_count": 2,
                 "vm_ready_guest_count": 1,
@@ -107,6 +114,7 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "vm_prepare_continuation_guest_count": 1,
                 "vm_prepare_continuation_resolved_count": 1,
                 "vm_prepare_continuation_persistent_count": 0,
+                "vm_prepare_continuation_focus_guest_count": 1,
             },
         },
         source="machine_onboarding",
@@ -210,6 +218,13 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["continuation_retry_total"] == 2
     assert history["summary"]["continuation_provider_blocked_total"] == 1
     assert history["summary"]["continuation_setup_followup_total"] == 2
+    assert history["summary"]["continuation_memory_followthrough_total"] == 3
+    assert history["summary"]["continuation_focus_app_total"] == 2
+    assert history["summary"]["recent_continuation_recommended_total"] == 1
+    assert history["summary"]["recent_continuation_required_total"] == 0
+    assert history["summary"]["recent_continuation_learning_wave_total"] == 2
+    assert history["summary"]["recent_continuation_vm_wave_total"] == 1
+    assert history["summary"]["app_learning_continuation_focus_app_total"] == 2
     assert history["summary"]["vm_prepare_total"] == 2
     assert history["summary"]["prepared_vm_control_total"] == 2
     assert history["summary"]["vm_ready_guest_total"] == 1
@@ -221,3 +236,4 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["vm_prepare_continuation_guest_total"] == 1
     assert history["summary"]["vm_prepare_continuation_resolved_total"] == 1
     assert history["summary"]["vm_prepare_continuation_persistent_total"] == 0
+    assert history["summary"]["vm_prepare_continuation_focus_guest_total"] == 1

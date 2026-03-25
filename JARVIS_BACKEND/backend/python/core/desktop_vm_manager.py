@@ -1080,6 +1080,11 @@ class DesktopVMManager:
             if isinstance(machine_profile.get("setup_followthrough_memory", {}), dict)
             else {}
         )
+        continuation_memory = (
+            dict(machine_profile.get("continuation_memory", {}))
+            if isinstance(machine_profile.get("continuation_memory", {}), dict)
+            else {}
+        )
         app_learning_memory_mission_status_counts = (
             dict(app_learning_summary.get("memory_mission_status_counts", {}))
             if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
@@ -1145,6 +1150,56 @@ class DesktopVMManager:
             str(item).strip().lower()
             for item in setup_followthrough_memory.get("reason_codes", [])
             if isinstance(setup_followthrough_memory.get("reason_codes", []), list) and str(item).strip()
+        ][:8]
+        recent_continuation_status = _norm_text(
+            continuation_memory.get("continuation_status", "")
+        ) or "cold"
+        recent_continuation_recommended = bool(
+            continuation_memory.get("continuation_recommended", False)
+        )
+        recent_continuation_required = bool(
+            continuation_memory.get("continuation_required", False)
+        )
+        recent_continuation_learning_wave_total = int(
+            continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+        )
+        recent_continuation_vm_wave_total = int(
+            continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+        )
+        recent_continuation_retry_count = int(
+            continuation_memory.get("continuation_retry_total", 0) or 0
+        )
+        recent_continuation_provider_blocked_count = int(
+            continuation_memory.get("continuation_provider_blocked_total", 0) or 0
+        )
+        recent_continuation_setup_followup_count = int(
+            continuation_memory.get("continuation_setup_followup_total", 0) or 0
+        )
+        recent_continuation_memory_followthrough_count = int(
+            continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
+        )
+        recent_continuation_reason_codes = [
+            str(item).strip().lower()
+            for item in continuation_memory.get("reason_codes", [])
+            if isinstance(continuation_memory.get("reason_codes", []), list) and str(item).strip()
+        ][:8]
+        recent_continuation_top_memory_mission_queries = [
+            str(item).strip()
+            for item in (
+                dict(continuation_memory.get("top_memory_mission_queries", {})).keys()
+                if isinstance(continuation_memory.get("top_memory_mission_queries", {}), dict)
+                else []
+            )
+            if str(item).strip()
+        ][:8]
+        recent_continuation_top_memory_mission_hotkeys = [
+            str(item).strip()
+            for item in (
+                dict(continuation_memory.get("top_memory_mission_hotkeys", {})).keys()
+                if isinstance(continuation_memory.get("top_memory_mission_hotkeys", {}), dict)
+                else []
+            )
+            if str(item).strip()
         ][:8]
         if structured_memory_semantic_ready_count > 0 and structured_memory_low_coverage_count <= 0:
             memory_guidance_status = "strong"
@@ -1230,6 +1285,12 @@ class DesktopVMManager:
                 ai_route_status = "setup_waiting"
         elif recent_setup_followthrough_recommended:
             ai_route_reason_codes.append("recent_setup_followthrough_recommended")
+        if recent_continuation_required:
+            ai_route_reason_codes.append("recent_continuation_required")
+            if ai_route_status == "matched":
+                ai_route_status = "setup_waiting"
+        elif recent_continuation_recommended:
+            ai_route_reason_codes.append("recent_continuation_recommended")
         if setup_followup_codes and ai_route_status == "matched":
             ai_route_status = "setup_constrained"
         elif ai_route_status == "matched" and ai_route_fallback_applied:
@@ -1343,6 +1404,18 @@ class DesktopVMManager:
             "recent_setup_provider_blocked_count": recent_setup_provider_blocked_count,
             "recent_setup_followup_count": recent_setup_followup_count,
             "recent_setup_reason_codes": recent_setup_reason_codes,
+            "recent_continuation_status": recent_continuation_status,
+            "recent_continuation_recommended": recent_continuation_recommended,
+            "recent_continuation_required": recent_continuation_required,
+            "recent_continuation_learning_wave_total": recent_continuation_learning_wave_total,
+            "recent_continuation_vm_wave_total": recent_continuation_vm_wave_total,
+            "recent_continuation_retry_count": recent_continuation_retry_count,
+            "recent_continuation_provider_blocked_count": recent_continuation_provider_blocked_count,
+            "recent_continuation_setup_followup_count": recent_continuation_setup_followup_count,
+            "recent_continuation_memory_followthrough_count": recent_continuation_memory_followthrough_count,
+            "recent_continuation_reason_codes": recent_continuation_reason_codes,
+            "recent_continuation_top_memory_mission_queries": recent_continuation_top_memory_mission_queries,
+            "recent_continuation_top_memory_mission_hotkeys": recent_continuation_top_memory_mission_hotkeys,
             "app_learning_memory_mission_status_counts": app_learning_memory_mission_status_counts,
             "app_learning_top_memory_mission_queries": app_learning_top_memory_mission_queries,
             "app_learning_top_memory_mission_hotkeys": app_learning_top_memory_mission_hotkeys,

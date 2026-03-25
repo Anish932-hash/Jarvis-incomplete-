@@ -91,6 +91,20 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
             "setup_followup_total": 3,
             "reason_codes": ["recent_setup_followthrough_required", "recent_provider_blocked_pressure"],
         },
+        "continuation_memory": {
+            "continuation_status": "recommended",
+            "continuation_recommended": True,
+            "continuation_required": False,
+            "app_learning_continuation_wave_total": 2,
+            "vm_prepare_continuation_wave_total": 1,
+            "continuation_retry_total": 1,
+            "continuation_provider_blocked_total": 0,
+            "continuation_setup_followup_total": 1,
+            "continuation_memory_followthrough_total": 3,
+            "reason_codes": ["recent_continuation_recommended", "recent_continuation_memory_followthrough"],
+            "top_memory_mission_queries": {"settings": 2},
+            "top_memory_mission_hotkeys": {"Alt+F": 1},
+        },
     }
     plan = manager.build_vm_control_plan(
         inventory=inventory,
@@ -130,6 +144,11 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_remaining_ready_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_provider_blocked_count"] == 1
     assert "recent_setup_followthrough_required" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert plan["items"][0]["provider_model_readiness"]["recent_continuation_status"] == "recommended"
+    assert plan["items"][0]["provider_model_readiness"]["recent_continuation_recommended"] is True
+    assert plan["items"][0]["provider_model_readiness"]["recent_continuation_learning_wave_total"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["recent_continuation_memory_followthrough_count"] == 3
+    assert "recent_continuation_recommended" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["memory_guided_route"] is False
     assert plan["items"][0]["provider_model_readiness"]["memory_assisted_route"] is True
     assert plan["items"][0]["provider_model_readiness"]["memory_route_alignment_status"] == "assisted"
@@ -172,6 +191,8 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["provider_model_readiness"]["structured_memory_semantic_ready_count"] == 3
     assert prepared["summary"]["memory_guidance_status"] == "partial"
     assert prepared["summary"]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
+    assert prepared["summary"]["provider_model_readiness"]["recent_continuation_status"] == "recommended"
+    assert prepared["summary"]["provider_model_readiness"]["recent_continuation_top_memory_mission_queries"][0] == "settings"
     assert prepared["summary"]["ai_route_status"] == "fallback"
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"
     assert prepared["summary"]["memory_guided_route"] is False

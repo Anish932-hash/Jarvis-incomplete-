@@ -105,6 +105,7 @@ class DesktopOnboardingManager:
         vm_prepare_continuation_guest_total = 0
         vm_prepare_continuation_resolved_total = 0
         vm_prepare_continuation_persistent_total = 0
+        vm_prepare_continuation_focus_guest_total = 0
         route_remediation_total = 0
         route_remediation_blocked_total = 0
         route_remediation_degraded_total = 0
@@ -122,6 +123,13 @@ class DesktopOnboardingManager:
         continuation_retry_total = 0
         continuation_provider_blocked_total = 0
         continuation_setup_followup_total = 0
+        continuation_memory_followthrough_total = 0
+        continuation_focus_app_total = 0
+        recent_continuation_recommended_total = 0
+        recent_continuation_required_total = 0
+        recent_continuation_learning_wave_total = 0
+        recent_continuation_vm_wave_total = 0
+        app_learning_continuation_focus_app_total = 0
         app_learning_remediation_retry_total = 0
         app_learning_remediation_provider_blocked_total = 0
         app_learning_remediation_setup_followup_total = 0
@@ -213,6 +221,9 @@ class DesktopOnboardingManager:
             app_learning_continued_run_total += int(
                 summary.get("app_learning_continued_run_count", 0) or 0
             )
+            app_learning_continuation_focus_app_total += int(
+                summary.get("app_learning_continuation_focus_app_count", 0) or 0
+            )
             app_learning_remediation_retry_total += int(
                 summary.get("app_learning_remediation_retry_count", 0) or 0
             )
@@ -246,6 +257,9 @@ class DesktopOnboardingManager:
             )
             vm_prepare_continuation_persistent_total += int(
                 summary.get("vm_prepare_continuation_persistent_count", 0) or 0
+            )
+            vm_prepare_continuation_focus_guest_total += int(
+                summary.get("vm_prepare_continuation_focus_guest_count", 0) or 0
             )
             prepared_remediation_retry_total += int(summary.get("prepared_remediation_retry_count", 0) or 0)
             prepared_remediation_provider_blocked_total += int(
@@ -300,6 +314,20 @@ class DesktopOnboardingManager:
             continuation_retry_total += int(summary.get("continuation_retry_count", 0) or 0)
             continuation_provider_blocked_total += int(summary.get("continuation_provider_blocked_count", 0) or 0)
             continuation_setup_followup_total += int(summary.get("continuation_setup_followup_count", 0) or 0)
+            continuation_memory_followthrough_total += int(
+                summary.get("continuation_memory_followthrough_count", 0) or 0
+            )
+            continuation_focus_app_total += int(summary.get("continuation_focus_app_count", 0) or 0)
+            if bool(summary.get("recent_continuation_recommended", False)):
+                recent_continuation_recommended_total += 1
+            if bool(summary.get("recent_continuation_required", False)):
+                recent_continuation_required_total += 1
+            recent_continuation_learning_wave_total += int(
+                summary.get("recent_continuation_learning_wave_total", 0) or 0
+            )
+            recent_continuation_vm_wave_total += int(
+                summary.get("recent_continuation_vm_wave_total", 0) or 0
+            )
         return {
             "status": "success",
             "count": len(limited),
@@ -416,6 +444,14 @@ class DesktopOnboardingManager:
                 "continuation_retry_total": continuation_retry_total,
                 "continuation_provider_blocked_total": continuation_provider_blocked_total,
                 "continuation_setup_followup_total": continuation_setup_followup_total,
+                "continuation_memory_followthrough_total": continuation_memory_followthrough_total,
+                "continuation_focus_app_total": continuation_focus_app_total,
+                "recent_continuation_recommended_total": recent_continuation_recommended_total,
+                "recent_continuation_required_total": recent_continuation_required_total,
+                "recent_continuation_learning_wave_total": recent_continuation_learning_wave_total,
+                "recent_continuation_vm_wave_total": recent_continuation_vm_wave_total,
+                "app_learning_continuation_focus_app_total": app_learning_continuation_focus_app_total,
+                "vm_prepare_continuation_focus_guest_total": vm_prepare_continuation_focus_guest_total,
             },
         }
 

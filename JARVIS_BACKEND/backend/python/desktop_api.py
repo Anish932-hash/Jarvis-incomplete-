@@ -8592,6 +8592,11 @@ class DesktopBackendService:
             if isinstance(profile.get("setup_followthrough_memory", {}), dict)
             else self._desktop_machine_recent_setup_followthrough_memory(limit=12)
         )
+        recent_continuation_memory = (
+            dict(profile.get("continuation_memory", {}))
+            if isinstance(profile.get("continuation_memory", {}), dict)
+            else self._desktop_machine_recent_continuation_memory(limit=12)
+        )
         setup_followthrough = {"status": "skipped", "executed_count": 0, "next_actions": []}
         should_execute_setup_followthrough = bool(auto_execute_setup_followthrough) and (
             bool(selected_vm_target.get("provider_model_readiness", {}))
@@ -8755,6 +8760,34 @@ class DesktopBackendService:
                     )
                     if isinstance(recent_setup_followthrough_memory, dict)
                     else 0,
+                    "recent_continuation_status": str(
+                        recent_continuation_memory.get("continuation_status", "") or ""
+                    ).strip().lower()
+                    if isinstance(recent_continuation_memory, dict)
+                    else "",
+                    "recent_continuation_recommended": bool(
+                        isinstance(recent_continuation_memory, dict)
+                        and recent_continuation_memory.get("continuation_recommended", False)
+                    ),
+                    "recent_continuation_required": bool(
+                        isinstance(recent_continuation_memory, dict)
+                        and recent_continuation_memory.get("continuation_required", False)
+                    ),
+                    "recent_continuation_learning_wave_total": int(
+                        recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+                    )
+                    if isinstance(recent_continuation_memory, dict)
+                    else 0,
+                    "recent_continuation_vm_wave_total": int(
+                        recent_continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+                    )
+                    if isinstance(recent_continuation_memory, dict)
+                    else 0,
+                    "recent_continuation_memory_followthrough_count": int(
+                        recent_continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
+                    )
+                    if isinstance(recent_continuation_memory, dict)
+                    else 0,
                 }
             )
             prepared["summary"] = prepared_summary
@@ -8766,6 +8799,7 @@ class DesktopBackendService:
             "vm_inventory": inventory,
             "vm_plan": vm_plan,
             "setup_followthrough_memory": recent_setup_followthrough_memory,
+            "continuation_memory": recent_continuation_memory,
             "setup_followthrough": setup_followthrough,
             **(prepared if isinstance(prepared, dict) else {}),
         }
@@ -8866,6 +8900,7 @@ class DesktopBackendService:
                 model_limit=bounded_model_limit,
             )
             setup_followthrough_memory = self._desktop_machine_recent_setup_followthrough_memory(limit=12)
+            continuation_memory = self._desktop_machine_recent_continuation_memory(limit=12)
             app_learning_plan = self._desktop_machine_app_learning_plan_payload(
                 app_inventory=app_inventory if isinstance(app_inventory, dict) else {},
                 app_memory=app_memory if isinstance(app_memory, dict) else {},
@@ -8876,8 +8911,17 @@ class DesktopBackendService:
                 ),
                 max_targets=8,
             )
+            planning_profile = dict(payload) if isinstance(payload, dict) else {}
+            planning_profile["multimodal_memory"] = multimodal_memory if isinstance(multimodal_memory, dict) else {}
+            planning_profile["ai_runtime_profile"] = ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {}
+            planning_profile["setup_followthrough_memory"] = (
+                setup_followthrough_memory if isinstance(setup_followthrough_memory, dict) else {}
+            )
+            planning_profile["continuation_memory"] = (
+                continuation_memory if isinstance(continuation_memory, dict) else {}
+            )
             app_learning_plan = self._desktop_machine_finalize_app_learning_plan(
-                profile=payload if isinstance(payload, dict) else {},
+                profile=planning_profile,
                 app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
                 task=clean_task,
                 model_limit=bounded_model_limit,
@@ -8891,6 +8935,9 @@ class DesktopBackendService:
                 payload["ai_runtime_profile"] = ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {}
                 payload["setup_followthrough_memory"] = (
                     setup_followthrough_memory if isinstance(setup_followthrough_memory, dict) else {}
+                )
+                payload["continuation_memory"] = (
+                    continuation_memory if isinstance(continuation_memory, dict) else {}
                 )
                 payload["ai_route_preview"] = self._desktop_machine_ai_route_plan(
                     profile=payload,
@@ -10155,6 +10202,31 @@ class DesktopBackendService:
                 break
         return rows
 
+    @staticmethod
+    def _machine_merge_counter_maps(
+        *mappings: Optional[Dict[str, Any]],
+        limit: int = 0,
+    ) -> Dict[str, int]:
+        merged: Dict[str, int] = {}
+        for mapping in mappings:
+            if not isinstance(mapping, dict):
+                continue
+            for key, value in mapping.items():
+                clean_key = str(key or "").strip()
+                if not clean_key:
+                    continue
+                try:
+                    clean_value = max(0, int(value or 0))
+                except Exception:  # noqa: BLE001
+                    continue
+                if clean_value <= 0:
+                    continue
+                merged[clean_key] = int(merged.get(clean_key, 0) or 0) + clean_value
+        items = sorted(merged.items(), key=lambda entry: (-int(entry[1]), str(entry[0]).lower()))
+        if int(limit or 0) > 0:
+            items = items[: max(1, min(int(limit or 0), 64))]
+        return {str(key): int(value) for key, value in items}
+
     @classmethod
     def _desktop_machine_memory_route_guidance_summary(
         cls,
@@ -10862,6 +10934,81 @@ class DesktopBackendService:
             ],
             limit=8,
         )
+        target_container_roles = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in clean_defaults.get("target_container_roles", [])
+                    if isinstance(clean_defaults.get("target_container_roles", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item.get("value", "") or item.get("role", "") or "").strip()
+                    for key_name in (
+                        "top_target_container_roles",
+                        "top_container_roles",
+                        "top_revalidation_container_roles",
+                    )
+                    for item in (
+                        clean_summary.get(key_name, [])
+                        if isinstance(clean_summary.get(key_name, []), list)
+                        else []
+                    )
+                    if isinstance(item, dict)
+                    and str(item.get("value", "") or item.get("role", "") or "").strip()
+                ],
+            ],
+            limit=8,
+        )
+        preferred_wave_actions = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in clean_defaults.get("preferred_wave_actions", [])
+                    if isinstance(clean_defaults.get("preferred_wave_actions", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in clean_defaults.get("memory_followthrough_preferred_wave_actions", [])
+                    if isinstance(clean_defaults.get("memory_followthrough_preferred_wave_actions", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item.get("value", "") or item.get("action", "") or "").strip().lower()
+                    for item in (
+                        clean_summary.get("top_preferred_wave_actions", [])
+                        if isinstance(clean_summary.get("top_preferred_wave_actions", []), list)
+                        else []
+                    )
+                    if isinstance(item, dict)
+                    and str(item.get("value", "") or item.get("action", "") or "").strip()
+                ],
+            ],
+            limit=8,
+        )
+        preferred_traversal_paths = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in clean_defaults.get("preferred_traversal_paths", [])
+                    if isinstance(clean_defaults.get("preferred_traversal_paths", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item.get("value", "") or item.get("path", "") or "").strip().lower()
+                    for key_name in (
+                        "top_preferred_traversal_paths",
+                        "top_recommended_traversal_paths",
+                    )
+                    for item in (
+                        clean_summary.get(key_name, [])
+                        if isinstance(clean_summary.get(key_name, []), list)
+                        else []
+                    )
+                    if isinstance(item, dict)
+                    and str(item.get("value", "") or item.get("path", "") or "").strip()
+                ],
+            ],
+            limit=8,
+        )
         followthrough_recommended = bool(
             clean_defaults.get("memory_followthrough_enabled", False)
             or clean_summary.get("memory_followthrough_enabled", False)
@@ -10895,9 +11042,9 @@ class DesktopBackendService:
             "query_hints": query_hints[:8],
             "hotkey_hints": hotkey_hints[:8],
             "label_hints": [],
-            "target_container_roles": [],
-            "preferred_wave_actions": [],
-            "preferred_traversal_paths": [],
+            "target_container_roles": target_container_roles[:8],
+            "preferred_wave_actions": preferred_wave_actions[:8],
+            "preferred_traversal_paths": preferred_traversal_paths[:8],
             "semantic_guidance_status": "",
             "memory_guidance_status": mission_status or "cold",
             "memory_route_alignment_status": alignment_status,
@@ -11558,71 +11705,98 @@ class DesktopBackendService:
             ),
             source=source,
         )
+        plan_summary = dict(plan.get("summary", {})) if isinstance(plan.get("summary", {}), dict) else {}
+        strategy_memory_mission = self._desktop_machine_memory_mission_from_summary(
+            summary=plan_summary,
+            defaults=campaign_defaults,
+            fallback_name=str(label or campaign_defaults.get("label", "") or (app_names[0] if app_names else "")).strip(),
+        )
+        continuation_focus_app_names = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in campaign_defaults.get("memory_underused_app_names", [])
+                    if isinstance(campaign_defaults.get("memory_underused_app_names", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in campaign_defaults.get("memory_guided_app_names", [])
+                    if isinstance(campaign_defaults.get("memory_guided_app_names", []), list)
+                    and str(item).strip()
+                ],
+                *app_names,
+            ],
+            limit=8,
+        )
         result: Dict[str, Any] = {
             "status": str(create_payload.get("status", "error") or "error"),
             "plan": plan_payload,
             "campaign": create_payload,
-                "strategy": {
-                    "profile": str(campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
-                    "auto_learn_count": int(campaign_defaults.get("auto_learn_count", 0) or 0),
-                    "blocked_count": int(campaign_defaults.get("blocked_count", 0) or 0),
-                    "degraded_count": int(campaign_defaults.get("degraded_count", 0) or 0),
-                    "memory_followthrough_enabled": bool(
-                        campaign_defaults.get("memory_followthrough_enabled", False)
-                    ),
-                    "memory_guided_route_count": int(
-                        campaign_defaults.get("memory_guided_route_count", 0) or 0
-                    ),
-                    "memory_assisted_route_count": int(
-                        campaign_defaults.get("memory_assisted_route_count", 0) or 0
-                    ),
-                    "memory_underused_count": int(
-                        campaign_defaults.get("memory_underused_count", 0) or 0
-                    ),
-                    "memory_aligned_count": int(
-                        campaign_defaults.get("memory_aligned_count", 0) or 0
-                    ),
-                    "memory_route_alignment_counts": (
-                        dict(campaign_defaults.get("memory_route_alignment_counts", {}))
-                        if isinstance(campaign_defaults.get("memory_route_alignment_counts", {}), dict)
-                        else {}
-                    ),
-                    "memory_guided_app_names": [
-                        str(item).strip()
-                        for item in campaign_defaults.get("memory_guided_app_names", [])
-                        if isinstance(campaign_defaults.get("memory_guided_app_names", []), list)
-                        and str(item).strip()
-                    ][:8],
-                    "memory_underused_app_names": [
-                        str(item).strip()
-                        for item in campaign_defaults.get("memory_underused_app_names", [])
-                        if isinstance(campaign_defaults.get("memory_underused_app_names", []), list)
-                        and str(item).strip()
-                    ][:8],
-                    "memory_followthrough_preferred_wave_actions": [
-                        str(item).strip().lower()
-                        for item in campaign_defaults.get("memory_followthrough_preferred_wave_actions", [])
-                        if isinstance(
-                            campaign_defaults.get("memory_followthrough_preferred_wave_actions", []),
-                            list,
-                        )
-                        and str(item).strip()
-                    ][:8],
-                    "effective_max_probe_controls": int(
-                        campaign_defaults.get(
-                            "effective_max_probe_controls",
-                            campaign_defaults.get("max_probe_controls", 4),
-                        )
-                        or 4
-                    ),
-                    "effective_max_surface_waves": int(
-                        campaign_defaults.get("max_surface_waves", 4) or 4
-                    ),
-                    "execution_mode_counts": (
-                        dict(campaign_defaults.get("execution_mode_counts", {}))
-                        if isinstance(campaign_defaults.get("execution_mode_counts", {}), dict)
-                        else {}
-                    ),
+            "memory_mission": strategy_memory_mission,
+            "strategy": {
+                "profile": str(campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                "auto_learn_count": int(campaign_defaults.get("auto_learn_count", 0) or 0),
+                "blocked_count": int(campaign_defaults.get("blocked_count", 0) or 0),
+                "degraded_count": int(campaign_defaults.get("degraded_count", 0) or 0),
+                "memory_followthrough_enabled": bool(
+                    campaign_defaults.get("memory_followthrough_enabled", False)
+                ),
+                "memory_guided_route_count": int(
+                    campaign_defaults.get("memory_guided_route_count", 0) or 0
+                ),
+                "memory_assisted_route_count": int(
+                    campaign_defaults.get("memory_assisted_route_count", 0) or 0
+                ),
+                "memory_underused_count": int(
+                    campaign_defaults.get("memory_underused_count", 0) or 0
+                ),
+                "memory_aligned_count": int(
+                    campaign_defaults.get("memory_aligned_count", 0) or 0
+                ),
+                "memory_route_alignment_counts": (
+                    dict(campaign_defaults.get("memory_route_alignment_counts", {}))
+                    if isinstance(campaign_defaults.get("memory_route_alignment_counts", {}), dict)
+                    else {}
+                ),
+                "memory_guided_app_names": [
+                    str(item).strip()
+                    for item in campaign_defaults.get("memory_guided_app_names", [])
+                    if isinstance(campaign_defaults.get("memory_guided_app_names", []), list)
+                    and str(item).strip()
+                ][:8],
+                "memory_underused_app_names": [
+                    str(item).strip()
+                    for item in campaign_defaults.get("memory_underused_app_names", [])
+                    if isinstance(campaign_defaults.get("memory_underused_app_names", []), list)
+                    and str(item).strip()
+                ][:8],
+                "memory_followthrough_preferred_wave_actions": [
+                    str(item).strip().lower()
+                    for item in campaign_defaults.get("memory_followthrough_preferred_wave_actions", [])
+                    if isinstance(
+                        campaign_defaults.get("memory_followthrough_preferred_wave_actions", []),
+                        list,
+                    )
+                    and str(item).strip()
+                ][:8],
+                "memory_mission": strategy_memory_mission,
+                "continuation_focus_app_names": continuation_focus_app_names[:8],
+                "effective_max_probe_controls": int(
+                    campaign_defaults.get(
+                        "effective_max_probe_controls",
+                        campaign_defaults.get("max_probe_controls", 4),
+                    )
+                    or 4
+                ),
+                "effective_max_surface_waves": int(
+                    campaign_defaults.get("max_surface_waves", 4) or 4
+                ),
+                "execution_mode_counts": (
+                    dict(campaign_defaults.get("execution_mode_counts", {}))
+                    if isinstance(campaign_defaults.get("execution_mode_counts", {}), dict)
+                    else {}
+                ),
                 "learning_profile_counts": (
                     dict(campaign_defaults.get("learning_profile_counts", {}))
                     if isinstance(campaign_defaults.get("learning_profile_counts", {}), dict)
@@ -11631,9 +11805,12 @@ class DesktopBackendService:
                 "adaptive_app_profiles": [
                     dict(item)
                     for item in campaign_defaults.get("adaptive_app_profiles", [])
-                    if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
+                    if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list)
+                    and isinstance(item, dict)
                 ][:8],
-                "setup_execution_mode": str(campaign_defaults.get("setup_execution_mode", "") or "").strip().lower(),
+                "setup_execution_mode": str(
+                    campaign_defaults.get("setup_execution_mode", "") or ""
+                ).strip().lower(),
                 "setup_execution_selected_action_count": int(
                     campaign_defaults.get("setup_execution_selected_action_count", 0) or 0
                 ),
@@ -11646,9 +11823,15 @@ class DesktopBackendService:
                 "setup_execution_resume_ready": bool(
                     campaign_defaults.get("setup_execution_resume_ready", False)
                 ),
-                "setup_aligned_app_count": int(campaign_defaults.get("setup_aligned_app_count", 0) or 0),
-                "setup_boosted_app_count": int(campaign_defaults.get("setup_boosted_app_count", 0) or 0),
-                "setup_constrained_app_count": int(campaign_defaults.get("setup_constrained_app_count", 0) or 0),
+                "setup_aligned_app_count": int(
+                    campaign_defaults.get("setup_aligned_app_count", 0) or 0
+                ),
+                "setup_boosted_app_count": int(
+                    campaign_defaults.get("setup_boosted_app_count", 0) or 0
+                ),
+                "setup_constrained_app_count": int(
+                    campaign_defaults.get("setup_constrained_app_count", 0) or 0
+                ),
             },
         }
         created_campaign = (
@@ -11684,6 +11867,7 @@ class DesktopBackendService:
                 "next_actions": [],
             }
         payload = dict(campaign_result or {}) if isinstance(campaign_result, dict) else {}
+        created_strategy = dict(payload.get("strategy", {})) if isinstance(payload.get("strategy", {}), dict) else {}
         created_campaign = (
             dict(dict(payload.get("campaign", {})).get("campaign", {}))
             if isinstance(payload.get("campaign", {}), dict)
@@ -11759,11 +11943,178 @@ class DesktopBackendService:
             previous_pending = current_pending
 
         final_campaign = dict(latest_campaign) if isinstance(latest_campaign, dict) else {}
+        final_memory_mission = self._desktop_machine_memory_mission_from_summary(
+            summary=final_campaign,
+            defaults=created_strategy,
+            fallback_name=str(
+                next(
+                    (
+                        item
+                        for item in (
+                            list(final_campaign.get("memory_underused_app_names", []))
+                            if isinstance(final_campaign.get("memory_underused_app_names", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ),
+                    "",
+                )
+                or next(
+                    (
+                        item
+                        for item in (
+                            list(final_campaign.get("pending_apps", []))
+                            if isinstance(final_campaign.get("pending_apps", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ),
+                    "",
+                )
+                or next(
+                    (
+                        item
+                        for item in (
+                            list(created_campaign.get("target_apps", []))
+                            if isinstance(created_campaign.get("target_apps", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ),
+                    "",
+                )
+            ).strip(),
+        )
+        query_hints_by_app = (
+            dict(final_campaign.get("query_hints_by_app", {}))
+            if isinstance(final_campaign.get("query_hints_by_app", {}), dict)
+            else {}
+        )
+        semantic_hotkeys_by_app = (
+            dict(final_campaign.get("semantic_hotkeys_by_app", {}))
+            if isinstance(final_campaign.get("semantic_hotkeys_by_app", {}), dict)
+            else {}
+        )
+        focus_app_names: List[str] = []
+        focus_seen: set[str] = set()
+        for candidate in [
+            *(
+                list(final_campaign.get("memory_underused_app_names", []))
+                if isinstance(final_campaign.get("memory_underused_app_names", []), list)
+                else []
+            ),
+            *(
+                list(final_campaign.get("memory_guided_app_names", []))
+                if isinstance(final_campaign.get("memory_guided_app_names", []), list)
+                else []
+            ),
+            *(
+                list(final_campaign.get("pending_apps", []))
+                if isinstance(final_campaign.get("pending_apps", []), list)
+                else []
+            ),
+            *(
+                list(created_strategy.get("continuation_focus_app_names", []))
+                if isinstance(created_strategy.get("continuation_focus_app_names", []), list)
+                else []
+            ),
+            *(
+                list(created_campaign.get("target_apps", []))
+                if isinstance(created_campaign.get("target_apps", []), list)
+                else []
+            ),
+        ]:
+            clean_name = str(candidate or "").strip()
+            normalized_name = self._machine_text(clean_name)
+            if not clean_name or not normalized_name or normalized_name in focus_seen:
+                continue
+            focus_seen.add(normalized_name)
+            focus_app_names.append(clean_name)
+            if len(focus_app_names) >= 8:
+                break
+
+        def _lookup_hints(mapping: Dict[str, Any], app_name: str) -> List[str]:
+            target_key = self._machine_text(app_name)
+            for raw_name, raw_values in mapping.items():
+                if self._machine_text(raw_name) != target_key:
+                    continue
+                if not isinstance(raw_values, list):
+                    return []
+                return [str(item).strip() for item in raw_values if str(item).strip()][:8]
+            return []
+
         final_next_actions = (
             list(latest_run.get("next_actions", []))
             if isinstance(latest_run.get("next_actions", []), list)
             else []
         )[:8]
+        generated_next_actions: List[Dict[str, Any]] = []
+        for app_name in focus_app_names:
+            app_query_hints = _lookup_hints(query_hints_by_app, app_name)
+            app_hotkey_hints = _lookup_hints(semantic_hotkeys_by_app, app_name)
+            seed_query = next(
+                (str(item).strip() for item in app_query_hints if str(item).strip()),
+                "",
+            ) or str(final_memory_mission.get("seed_query", "") or app_name).strip()
+            memory_mission = dict(final_memory_mission)
+            memory_mission["app_name"] = str(app_name).strip()
+            memory_mission["seed_query"] = seed_query
+            memory_mission["query_hints"] = self._machine_dedupe(
+                [seed_query, *app_query_hints, *memory_mission.get("query_hints", [])],
+                limit=8,
+            )
+            memory_mission["hotkey_hints"] = self._machine_dedupe(
+                [*app_hotkey_hints, *memory_mission.get("hotkey_hints", [])],
+                limit=8,
+            )
+            generated_next_actions.append(
+                {
+                    "id": f"learning_followthrough:{self._machine_text(app_name)}",
+                    "stage": "app_learning_followthrough",
+                    "kind": (
+                        "activate_memory_guided_learning"
+                        if bool(final_campaign.get("memory_followthrough_enabled", False))
+                        else "continue_app_learning"
+                    ),
+                    "title": f"Continue app learning for {app_name}",
+                    "target": str(app_name).strip(),
+                    "query": seed_query,
+                    "hotkey_hints": list(memory_mission.get("hotkey_hints", []))[:8],
+                    "status": (
+                        "ready"
+                        if self._machine_text(app_name)
+                        in {
+                            self._machine_text(item)
+                            for item in (
+                                list(final_campaign.get("pending_apps", []))
+                                if isinstance(final_campaign.get("pending_apps", []), list)
+                                else []
+                            )
+                        }
+                        else "attention"
+                    ),
+                    "memory_mission": memory_mission,
+                    "reason_codes": self._machine_dedupe(
+                        [
+                            *[
+                                str(item).strip().lower()
+                                for item in final_memory_mission.get("reason_codes", [])
+                                if isinstance(final_memory_mission.get("reason_codes", []), list)
+                                and str(item).strip()
+                            ],
+                            "learning_campaign_followthrough",
+                        ],
+                        limit=10,
+                    ),
+                }
+            )
+            if len(generated_next_actions) >= 6:
+                break
+        final_next_actions = self._desktop_machine_merge_next_actions(
+            final_next_actions,
+            generated_next_actions,
+            limit=8,
+        )
         return {
             "status": "success" if continued_items else "skipped",
             "campaign_id": campaign_id,
@@ -11775,6 +12126,7 @@ class DesktopBackendService:
             "final_partial_app_count": int(final_campaign.get("partial_app_count", 0) or 0),
             "final_failed_app_count": int(final_campaign.get("failed_app_count", 0) or 0),
             "memory_followthrough_enabled": bool(final_campaign.get("memory_followthrough_enabled", False)),
+            "memory_mission": final_memory_mission,
             "memory_mission_status_counts": (
                 dict(final_campaign.get("memory_mission_status_counts", {}))
                 if isinstance(final_campaign.get("memory_mission_status_counts", {}), dict)
@@ -11790,6 +12142,16 @@ class DesktopBackendService:
                 if isinstance(final_campaign.get("top_memory_mission_hotkeys", {}), dict)
                 else {}
             ),
+            "memory_route_alignment_counts": (
+                dict(final_campaign.get("memory_route_alignment_counts", {}))
+                if isinstance(final_campaign.get("memory_route_alignment_counts", {}), dict)
+                else {}
+            ),
+            "memory_underused_count": int(final_campaign.get("memory_underused_count", 0) or 0),
+            "memory_guided_route_count": int(final_campaign.get("memory_guided_route_count", 0) or 0),
+            "memory_assisted_route_count": int(final_campaign.get("memory_assisted_route_count", 0) or 0),
+            "focus_app_names": focus_app_names[:8],
+            "focus_app_count": len(focus_app_names),
             "reason_codes": self._machine_dedupe(
                 [
                     "learning_campaign_followthrough"
@@ -11822,6 +12184,9 @@ class DesktopBackendService:
         vm_route_resolution_status_counts: Dict[str, int] = {}
         vm_remediation_kind_counts: Dict[str, int] = {}
         vm_memory_route_alignment_counts: Dict[str, int] = {}
+        vm_memory_mission_status_counts: Dict[str, int] = {}
+        vm_memory_mission_query_counts: Dict[str, int] = {}
+        vm_memory_mission_hotkey_counts: Dict[str, int] = {}
         vm_ready_count = 0
         vm_attention_count = 0
         vm_blocked_count = 0
@@ -11873,6 +12238,35 @@ class DesktopBackendService:
                 vm_memory_route_alignment_counts[alignment_status] = int(
                     vm_memory_route_alignment_counts.get(alignment_status, 0) or 0
                 ) + 1
+            memory_mission = (
+                dict(vm_summary.get("memory_mission", {}))
+                if isinstance(vm_summary.get("memory_mission", {}), dict)
+                else {}
+            )
+            mission_status = str(
+                memory_mission.get("status", "") or vm_summary.get("memory_guidance_status", "") or ""
+            ).strip().lower()
+            if mission_status:
+                vm_memory_mission_status_counts[mission_status] = int(
+                    vm_memory_mission_status_counts.get(mission_status, 0) or 0
+                ) + 1
+            seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+            if seed_query:
+                vm_memory_mission_query_counts[seed_query] = int(
+                    vm_memory_mission_query_counts.get(seed_query, 0) or 0
+                ) + 1
+            for query_hint in memory_mission.get("query_hints", []):
+                clean_query_hint = str(query_hint or "").strip()
+                if clean_query_hint:
+                    vm_memory_mission_query_counts[clean_query_hint] = int(
+                        vm_memory_mission_query_counts.get(clean_query_hint, 0) or 0
+                    ) + 1
+            for hotkey_hint in memory_mission.get("hotkey_hints", []):
+                clean_hotkey_hint = str(hotkey_hint or "").strip()
+                if clean_hotkey_hint:
+                    vm_memory_mission_hotkey_counts[clean_hotkey_hint] = int(
+                        vm_memory_mission_hotkey_counts.get(clean_hotkey_hint, 0) or 0
+                    ) + 1
 
         return {
             "prepared_vm_control_count": len(
@@ -11894,6 +12288,21 @@ class DesktopBackendService:
             "memory_assisted_route_count": vm_memory_assisted_route_count,
             "memory_followthrough_guest_count": vm_memory_followthrough_guest_count,
             "memory_route_alignment_counts": {str(key): int(value) for key, value in sorted(vm_memory_route_alignment_counts.items(), key=lambda entry: entry[0])},
+            "memory_mission_status_counts": {str(key): int(value) for key, value in sorted(vm_memory_mission_status_counts.items(), key=lambda entry: entry[0])},
+            "top_memory_mission_queries": {
+                str(key): int(value)
+                for key, value in sorted(
+                    vm_memory_mission_query_counts.items(),
+                    key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                )[:8]
+            },
+            "top_memory_mission_hotkeys": {
+                str(key): int(value)
+                for key, value in sorted(
+                    vm_memory_mission_hotkey_counts.items(),
+                    key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                )[:8]
+            },
         }
 
     def _desktop_machine_continue_vm_prepare_followthrough(
@@ -11999,6 +12408,56 @@ class DesktopBackendService:
 
         latest_items = list(latest_items_by_guest.values())
         latest_summary = self._desktop_machine_vm_prepare_result_summary(vm_items=latest_items)
+        continuation_next_actions: List[Dict[str, Any]] = []
+        focus_guest_names: List[str] = []
+        focus_seen: set[str] = set()
+        for item in latest_items:
+            if not isinstance(item, dict):
+                continue
+            summary = dict(item.get("summary", {})) if isinstance(item.get("summary", {}), dict) else {}
+            guest_name = str(summary.get("guest_name", "") or item.get("guest_name", "") or "").strip()
+            if not guest_name:
+                continue
+            memory_mission = dict(summary.get("memory_mission", {})) if isinstance(summary.get("memory_mission", {}), dict) else {}
+            memory_alignment = str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
+            readiness_status = str(summary.get("readiness_status", "") or "").strip().lower()
+            followthrough_recommended = bool(summary.get("memory_followthrough_recommended", False))
+            needs_attention = (
+                followthrough_recommended
+                or memory_alignment in {"underused", "assisted"}
+                or readiness_status in {"attention", "degraded"}
+            )
+            if needs_attention:
+                normalized_name = self._machine_text(guest_name)
+                if normalized_name and normalized_name not in focus_seen:
+                    focus_seen.add(normalized_name)
+                    focus_guest_names.append(guest_name)
+            if not needs_attention:
+                continue
+            seed_query = str(memory_mission.get("seed_query", "") or summary.get("learning_query", "") or "").strip()
+            continuation_next_actions.append(
+                {
+                    "id": f"vm_followthrough:{self._machine_text(guest_name)}",
+                    "stage": "vm_prepare_followthrough",
+                    "kind": "deepen_vm_control_learning" if followthrough_recommended else "retry_vm_prepare",
+                    "title": f"Continue VM control learning for {guest_name}",
+                    "target": guest_name,
+                    "query": seed_query,
+                    "hotkey_hints": [
+                        str(item).strip()
+                        for item in memory_mission.get("hotkey_hints", [])
+                        if isinstance(memory_mission.get("hotkey_hints", []), list) and str(item).strip()
+                    ][:8],
+                    "memory_mission": memory_mission,
+                    "status": (
+                        "ready"
+                        if str(item.get("status", "") or "").strip().lower() == "success"
+                        else "attention"
+                    ),
+                }
+            )
+            if len(continuation_next_actions) >= 6:
+                break
         return {
             "status": "success" if continuation_items else "skipped",
             "waves_executed": executed_wave_count,
@@ -12010,27 +12469,33 @@ class DesktopBackendService:
             "items": continuation_items,
             "latest_items": latest_items,
             "summary": latest_summary,
-            "next_actions": [
-                {
-                    "id": f"vm_followthrough:{summary.get('guest_name', '')}",
-                    "kind": "deepen_vm_control_learning",
-                    "title": f"Continue VM control learning for {summary.get('guest_name', 'guest')}",
-                    "target": str(summary.get("guest_name", "") or "").strip(),
-                    "status": "ready",
-                }
-                for summary in [
-                    dict(item.get("summary", {}))
-                    for item in latest_items
-                    if isinstance(item, dict) and isinstance(item.get("summary", {}), dict)
-                ]
-                if str(summary.get("guest_name", "") or "").strip()
-                and (
-                    bool(summary.get("memory_followthrough_recommended", False))
-                    or str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
-                    in {"underused", "assisted"}
-                    or str(summary.get("readiness_status", "") or "").strip().lower() in {"attention", "degraded"}
-                )
-            ][:6],
+            "memory_mission_status_counts": (
+                dict(latest_summary.get("memory_mission_status_counts", {}))
+                if isinstance(latest_summary.get("memory_mission_status_counts", {}), dict)
+                else {}
+            ),
+            "top_memory_mission_queries": (
+                dict(latest_summary.get("top_memory_mission_queries", {}))
+                if isinstance(latest_summary.get("top_memory_mission_queries", {}), dict)
+                else {}
+            ),
+            "top_memory_mission_hotkeys": (
+                dict(latest_summary.get("top_memory_mission_hotkeys", {}))
+                if isinstance(latest_summary.get("top_memory_mission_hotkeys", {}), dict)
+                else {}
+            ),
+            "focus_guest_names": focus_guest_names[:8],
+            "focus_guest_count": len(focus_guest_names),
+            "memory_mission": self._desktop_machine_memory_mission_from_summary(
+                summary=(
+                    dict(latest_summary)
+                    if isinstance(latest_summary, dict)
+                    else {}
+                ),
+                defaults={},
+                fallback_name=(focus_guest_names[0] if focus_guest_names else ""),
+            ),
+            "next_actions": continuation_next_actions[:6],
         }
 
     def create_desktop_machine_app_learning_campaign(
@@ -12409,6 +12874,54 @@ class DesktopBackendService:
             "recent_setup_followup_count": int(
                 selected_target.get("recent_setup_followup_count", 0) or 0
             ),
+            "recent_continuation_status": str(
+                selected_target.get("recent_continuation_status", "") or ""
+            ).strip().lower(),
+            "recent_continuation_recommended": bool(
+                selected_target.get("recent_continuation_recommended", False)
+            ),
+            "recent_continuation_required": bool(
+                selected_target.get("recent_continuation_required", False)
+            ),
+            "recent_continuation_reason_codes": [
+                str(code).strip().lower()
+                for code in selected_target.get("recent_continuation_reason_codes", [])
+                if isinstance(selected_target.get("recent_continuation_reason_codes", []), list)
+                and str(code).strip()
+            ][:10],
+            "recent_continuation_learning_wave_total": int(
+                selected_target.get("recent_continuation_learning_wave_total", 0) or 0
+            ),
+            "recent_continuation_vm_wave_total": int(
+                selected_target.get("recent_continuation_vm_wave_total", 0) or 0
+            ),
+            "recent_continuation_retry_count": int(
+                selected_target.get("recent_continuation_retry_count", 0) or 0
+            ),
+            "recent_continuation_provider_blocked_count": int(
+                selected_target.get("recent_continuation_provider_blocked_count", 0) or 0
+            ),
+            "recent_continuation_setup_followup_count": int(
+                selected_target.get("recent_continuation_setup_followup_count", 0) or 0
+            ),
+            "recent_continuation_memory_followthrough_count": int(
+                selected_target.get("recent_continuation_memory_followthrough_count", 0) or 0
+            ),
+            "recent_continuation_semantic_followup_count": int(
+                selected_target.get("recent_continuation_semantic_followup_count", 0) or 0
+            ),
+            "recent_continuation_top_memory_mission_queries": [
+                str(item).strip()
+                for item in selected_target.get("recent_continuation_top_memory_mission_queries", [])
+                if isinstance(selected_target.get("recent_continuation_top_memory_mission_queries", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_continuation_top_memory_mission_hotkeys": [
+                str(item).strip()
+                for item in selected_target.get("recent_continuation_top_memory_mission_hotkeys", [])
+                if isinstance(selected_target.get("recent_continuation_top_memory_mission_hotkeys", []), list)
+                and str(item).strip()
+            ][:8],
             "memory_mission": (
                 dict(selected_target.get("memory_mission", {}))
                 if isinstance(selected_target.get("memory_mission", {}), dict)
@@ -12585,6 +13098,14 @@ class DesktopBackendService:
                 else self._desktop_machine_recent_setup_followthrough_memory(limit=12)
             ),
         )
+        selected_target = self._desktop_machine_apply_recent_continuation_memory(
+            target_row=selected_target,
+            continuation_memory=(
+                dict(profile.get("continuation_memory", {}))
+                if isinstance(profile.get("continuation_memory", {}), dict)
+                else self._desktop_machine_recent_continuation_memory(limit=12)
+            ),
+        )
         adaptive_runtime_strategy = (
             dict(prepare_context.get("adaptive_runtime_strategy", {}))
             if isinstance(prepare_context.get("adaptive_runtime_strategy", {}), dict)
@@ -12688,6 +13209,14 @@ class DesktopBackendService:
                                 dict(profile.get("setup_followthrough_memory", {}))
                                 if isinstance(profile.get("setup_followthrough_memory", {}), dict)
                                 else self._desktop_machine_recent_setup_followthrough_memory(limit=12)
+                            ),
+                        )
+                        selected_target = self._desktop_machine_apply_recent_continuation_memory(
+                            target_row=selected_target,
+                            continuation_memory=(
+                                dict(profile.get("continuation_memory", {}))
+                                if isinstance(profile.get("continuation_memory", {}), dict)
+                                else self._desktop_machine_recent_continuation_memory(limit=12)
                             ),
                         )
                         adaptive_runtime_strategy = (
@@ -13017,6 +13546,11 @@ class DesktopBackendService:
                 "launch": launch_result,
                 "survey": survey_result,
                 "setup_followthrough": setup_followthrough,
+                "continuation_memory": (
+                    dict(profile.get("continuation_memory", {}))
+                    if isinstance(profile.get("continuation_memory", {}), dict)
+                    else self._desktop_machine_recent_continuation_memory(limit=12)
+                ),
                 "semantic_memory_guidance": semantic_memory_guidance,
                 "app_memory": memory_snapshot,
                 "launch_memory": launch_memory,
@@ -13689,6 +14223,14 @@ class DesktopBackendService:
                 dict(profile.get("setup_followthrough_memory", {}))
                 if isinstance(profile.get("setup_followthrough_memory", {}), dict)
                 else self._desktop_machine_recent_setup_followthrough_memory(limit=12)
+            ),
+        )
+        selected_target = self._desktop_machine_apply_recent_continuation_memory(
+            target_row=selected_target,
+            continuation_memory=(
+                dict(profile.get("continuation_memory", {}))
+                if isinstance(profile.get("continuation_memory", {}), dict)
+                else self._desktop_machine_recent_continuation_memory(limit=12)
             ),
         )
         return {
@@ -16987,6 +17529,391 @@ class DesktopBackendService:
                 )
         return item_payload
 
+    def _desktop_machine_recent_continuation_memory(
+        self,
+        *,
+        limit: int = 12,
+    ) -> Dict[str, Any]:
+        manager = getattr(self, "desktop_onboarding_manager", None)
+        if manager is None:
+            return {
+                "status": "unavailable",
+                "continuation_status": "cold",
+                "continuation_recommended": False,
+                "continuation_required": False,
+                "recent_run_count": 0,
+                "suggested_learning_followthrough_waves": 1,
+                "suggested_vm_followthrough_waves": 1,
+                "reason_codes": [],
+                "next_actions": [],
+            }
+        history_payload = manager.history(limit=max(1, min(int(limit or 12), 32)))
+        if not isinstance(history_payload, dict):
+            return {
+                "status": "error",
+                "continuation_status": "cold",
+                "continuation_recommended": False,
+                "continuation_required": False,
+                "recent_run_count": 0,
+                "suggested_learning_followthrough_waves": 1,
+                "suggested_vm_followthrough_waves": 1,
+                "reason_codes": ["history_unavailable"],
+                "next_actions": [],
+            }
+        summary = (
+            dict(history_payload.get("summary", {}))
+            if isinstance(history_payload.get("summary", {}), dict)
+            else {}
+        )
+        latest_run = (
+            dict(history_payload.get("latest_run", {}))
+            if isinstance(history_payload.get("latest_run", {}), dict)
+            else {}
+        )
+        latest_summary = (
+            dict(latest_run.get("summary", {}))
+            if isinstance(latest_run.get("summary", {}), dict)
+            else {}
+        )
+        recent_run_count = int(history_payload.get("count", 0) or 0)
+        continuation_total = int(summary.get("continuation_total", 0) or 0)
+        continuation_auto_runnable_total = int(summary.get("continuation_auto_runnable_total", 0) or 0)
+        continuation_manual_total = int(summary.get("continuation_manual_total", 0) or 0)
+        continuation_retry_total = int(summary.get("continuation_retry_total", 0) or 0)
+        continuation_provider_blocked_total = int(summary.get("continuation_provider_blocked_total", 0) or 0)
+        continuation_setup_followup_total = int(summary.get("continuation_setup_followup_total", 0) or 0)
+        continuation_memory_followthrough_total = int(
+            summary.get("continuation_memory_followthrough_total", latest_summary.get("continuation_memory_followthrough_count", 0))
+            or 0
+        )
+        continuation_semantic_followup_total = int(
+            summary.get("continuation_semantic_followup_total", latest_summary.get("continuation_semantic_followup_count", 0))
+            or 0
+        )
+        continuation_focus_app_total = int(
+            summary.get(
+                "continuation_focus_app_total",
+                latest_summary.get(
+                    "continuation_focus_app_count",
+                    latest_summary.get(
+                        "app_learning_continuation_focus_app_count",
+                        latest_summary.get("vm_prepare_continuation_focus_guest_count", 0),
+                    ),
+                ),
+            )
+            or 0
+        )
+        app_learning_continuation_wave_total = int(summary.get("app_learning_continuation_wave_total", 0) or 0)
+        app_learning_continued_run_total = int(summary.get("app_learning_continued_run_total", 0) or 0)
+        vm_prepare_continuation_wave_total = int(summary.get("vm_prepare_continuation_wave_total", 0) or 0)
+        vm_prepare_continuation_guest_total = int(summary.get("vm_prepare_continuation_guest_total", 0) or 0)
+        vm_prepare_continuation_resolved_total = int(summary.get("vm_prepare_continuation_resolved_total", 0) or 0)
+        vm_prepare_continuation_persistent_total = int(summary.get("vm_prepare_continuation_persistent_total", 0) or 0)
+        continuation_memory_mission_status_counts = self._machine_merge_counter_maps(
+            (
+                dict(latest_summary.get("continuation_memory_mission_status_counts", {}))
+                if isinstance(latest_summary.get("continuation_memory_mission_status_counts", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("app_learning_continuation_memory_mission_status_counts", {}))
+                if isinstance(latest_summary.get("app_learning_continuation_memory_mission_status_counts", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("vm_prepare_continuation_memory_mission_status_counts", {}))
+                if isinstance(latest_summary.get("vm_prepare_continuation_memory_mission_status_counts", {}), dict)
+                else {}
+            ),
+            limit=8,
+        )
+        continuation_top_memory_mission_queries = self._machine_merge_counter_maps(
+            (
+                dict(latest_summary.get("continuation_top_memory_mission_queries", {}))
+                if isinstance(latest_summary.get("continuation_top_memory_mission_queries", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("app_learning_continuation_top_memory_mission_queries", {}))
+                if isinstance(latest_summary.get("app_learning_continuation_top_memory_mission_queries", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("vm_prepare_continuation_top_memory_mission_queries", {}))
+                if isinstance(latest_summary.get("vm_prepare_continuation_top_memory_mission_queries", {}), dict)
+                else {}
+            ),
+            limit=8,
+        )
+        continuation_top_memory_mission_hotkeys = self._machine_merge_counter_maps(
+            (
+                dict(latest_summary.get("continuation_top_memory_mission_hotkeys", {}))
+                if isinstance(latest_summary.get("continuation_top_memory_mission_hotkeys", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("app_learning_continuation_top_memory_mission_hotkeys", {}))
+                if isinstance(latest_summary.get("app_learning_continuation_top_memory_mission_hotkeys", {}), dict)
+                else {}
+            ),
+            (
+                dict(latest_summary.get("vm_prepare_continuation_top_memory_mission_hotkeys", {}))
+                if isinstance(latest_summary.get("vm_prepare_continuation_top_memory_mission_hotkeys", {}), dict)
+                else {}
+            ),
+            limit=8,
+        )
+        continuation_required = bool(
+            continuation_retry_total > 0
+            or continuation_provider_blocked_total > 0
+            or continuation_setup_followup_total > 0
+            or vm_prepare_continuation_persistent_total > 0
+        )
+        continuation_recommended = bool(
+            continuation_required
+            or continuation_total > 0
+            or continuation_auto_runnable_total > 0
+            or continuation_memory_followthrough_total > 0
+            or continuation_semantic_followup_total > 0
+            or app_learning_continuation_wave_total > 0
+            or vm_prepare_continuation_wave_total > 0
+        )
+        if recent_run_count <= 0:
+            continuation_status = "cold"
+        elif continuation_required:
+            continuation_status = "required"
+        elif continuation_recommended:
+            continuation_status = "recommended"
+        else:
+            continuation_status = "stable"
+        suggested_learning_followthrough_waves = 1
+        suggested_vm_followthrough_waves = 1
+        if continuation_recommended:
+            suggested_learning_followthrough_waves = 2
+            suggested_vm_followthrough_waves = 2
+        if continuation_required:
+            suggested_learning_followthrough_waves = 3
+            suggested_vm_followthrough_waves = 3
+        if continuation_memory_followthrough_total > 2 or app_learning_continuation_wave_total > 2:
+            suggested_learning_followthrough_waves = min(4, suggested_learning_followthrough_waves + 1)
+        if vm_prepare_continuation_persistent_total > 0 or vm_prepare_continuation_guest_total > 2:
+            suggested_vm_followthrough_waves = min(4, suggested_vm_followthrough_waves + 1)
+        reason_codes = self._machine_dedupe(
+            [
+                "recent_continuation_required" if continuation_required else "",
+                "recent_continuation_recommended" if continuation_recommended else "",
+                "recent_continuation_retry_pressure" if continuation_retry_total > 0 else "",
+                "recent_continuation_provider_blocked" if continuation_provider_blocked_total > 0 else "",
+                "recent_continuation_setup_followup" if continuation_setup_followup_total > 0 else "",
+                "recent_continuation_memory_followthrough" if continuation_memory_followthrough_total > 0 else "",
+                "recent_continuation_semantic_followup" if continuation_semantic_followup_total > 0 else "",
+                "recent_app_learning_continuation" if app_learning_continuation_wave_total > 0 else "",
+                "recent_vm_prepare_continuation" if vm_prepare_continuation_wave_total > 0 else "",
+                "recent_vm_prepare_persistent" if vm_prepare_continuation_persistent_total > 0 else "",
+            ],
+            limit=10,
+        )
+        next_actions: List[Dict[str, Any]] = []
+        latest_next_actions = latest_run.get("next_actions", [])
+        if isinstance(latest_next_actions, list):
+            for item in latest_next_actions:
+                if not isinstance(item, dict):
+                    continue
+                next_actions.append(dict(item))
+                if len(next_actions) >= 4:
+                    break
+        if not next_actions and continuation_recommended:
+            continuation_seed_query = next(
+                (str(item).strip() for item in continuation_top_memory_mission_queries.keys() if str(item).strip()),
+                "",
+            )
+            continuation_hotkey_hints = [
+                str(item).strip()
+                for item in continuation_top_memory_mission_hotkeys.keys()
+                if str(item).strip()
+            ][:6]
+            next_actions.append(
+                {
+                    "id": "recent_continuation_followthrough",
+                    "kind": "continuation_followthrough",
+                    "action": "continue_unresolved_learning_and_vm_followthrough",
+                    "target": "continuation",
+                    "query": continuation_seed_query,
+                    "hotkey_hints": continuation_hotkey_hints,
+                    "auto_runnable": bool(
+                        continuation_auto_runnable_total > 0
+                        or app_learning_continuation_wave_total > 0
+                        or vm_prepare_continuation_wave_total > 0
+                    ),
+                    "required": bool(continuation_required),
+                    "summary": "Resume recent app-learning and VM continuation work before starting another colder pass.",
+                    "reason_codes": reason_codes,
+                }
+            )
+        return {
+            "status": "success",
+            "recent_run_count": recent_run_count,
+            "continuation_status": continuation_status,
+            "continuation_recommended": continuation_recommended,
+            "continuation_required": continuation_required,
+            "suggested_learning_followthrough_waves": suggested_learning_followthrough_waves,
+            "suggested_vm_followthrough_waves": suggested_vm_followthrough_waves,
+            "continuation_total": continuation_total,
+            "continuation_auto_runnable_total": continuation_auto_runnable_total,
+            "continuation_manual_total": continuation_manual_total,
+            "continuation_retry_total": continuation_retry_total,
+            "continuation_provider_blocked_total": continuation_provider_blocked_total,
+            "continuation_setup_followup_total": continuation_setup_followup_total,
+            "continuation_memory_followthrough_total": continuation_memory_followthrough_total,
+            "continuation_semantic_followup_total": continuation_semantic_followup_total,
+            "continuation_focus_app_total": continuation_focus_app_total,
+            "app_learning_continuation_wave_total": app_learning_continuation_wave_total,
+            "app_learning_continued_run_total": app_learning_continued_run_total,
+            "vm_prepare_continuation_wave_total": vm_prepare_continuation_wave_total,
+            "vm_prepare_continuation_guest_total": vm_prepare_continuation_guest_total,
+            "vm_prepare_continuation_resolved_total": vm_prepare_continuation_resolved_total,
+            "vm_prepare_continuation_persistent_total": vm_prepare_continuation_persistent_total,
+            "memory_mission_status_counts": continuation_memory_mission_status_counts,
+            "top_memory_mission_queries": continuation_top_memory_mission_queries,
+            "top_memory_mission_hotkeys": continuation_top_memory_mission_hotkeys,
+            "reason_codes": reason_codes,
+            "next_actions": next_actions[:4],
+        }
+
+    def _desktop_machine_apply_recent_continuation_memory(
+        self,
+        *,
+        target_row: Dict[str, Any],
+        continuation_memory: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        item_payload = dict(target_row) if isinstance(target_row, dict) else {}
+        memory_payload = dict(continuation_memory) if isinstance(continuation_memory, dict) else {}
+        continuation_status = str(memory_payload.get("continuation_status", "") or "").strip().lower()
+        continuation_recommended = bool(memory_payload.get("continuation_recommended", False))
+        continuation_required = bool(memory_payload.get("continuation_required", False))
+        suggested_learning_followthrough_waves = max(
+            1,
+            min(int(memory_payload.get("suggested_learning_followthrough_waves", 1) or 1), 8),
+        )
+        suggested_vm_followthrough_waves = max(
+            1,
+            min(int(memory_payload.get("suggested_vm_followthrough_waves", 1) or 1), 8),
+        )
+        reason_codes = [
+            str(item).strip().lower()
+            for item in memory_payload.get("reason_codes", [])
+            if isinstance(memory_payload.get("reason_codes", []), list) and str(item).strip()
+        ][:10]
+        top_memory_mission_queries = [
+            str(item).strip()
+            for item in (
+                dict(memory_payload.get("top_memory_mission_queries", {})).keys()
+                if isinstance(memory_payload.get("top_memory_mission_queries", {}), dict)
+                else []
+            )
+            if str(item).strip()
+        ][:8]
+        top_memory_mission_hotkeys = [
+            str(item).strip()
+            for item in (
+                dict(memory_payload.get("top_memory_mission_hotkeys", {})).keys()
+                if isinstance(memory_payload.get("top_memory_mission_hotkeys", {}), dict)
+                else []
+            )
+            if str(item).strip()
+        ][:8]
+        item_payload["recent_continuation_status"] = continuation_status
+        item_payload["recent_continuation_recommended"] = continuation_recommended
+        item_payload["recent_continuation_required"] = continuation_required
+        item_payload["recent_continuation_reason_codes"] = reason_codes
+        item_payload["recent_continuation_learning_wave_total"] = int(
+            memory_payload.get("app_learning_continuation_wave_total", 0) or 0
+        )
+        item_payload["recent_continuation_vm_wave_total"] = int(
+            memory_payload.get("vm_prepare_continuation_wave_total", 0) or 0
+        )
+        item_payload["recent_continuation_retry_count"] = int(
+            memory_payload.get("continuation_retry_total", 0) or 0
+        )
+        item_payload["recent_continuation_provider_blocked_count"] = int(
+            memory_payload.get("continuation_provider_blocked_total", 0) or 0
+        )
+        item_payload["recent_continuation_setup_followup_count"] = int(
+            memory_payload.get("continuation_setup_followup_total", 0) or 0
+        )
+        item_payload["recent_continuation_memory_followthrough_count"] = int(
+            memory_payload.get("continuation_memory_followthrough_total", 0) or 0
+        )
+        item_payload["recent_continuation_semantic_followup_count"] = int(
+            memory_payload.get("continuation_semantic_followup_total", 0) or 0
+        )
+        item_payload["recent_continuation_suggested_learning_waves"] = suggested_learning_followthrough_waves
+        item_payload["recent_continuation_suggested_vm_waves"] = suggested_vm_followthrough_waves
+        item_payload["recent_continuation_top_memory_mission_queries"] = top_memory_mission_queries
+        item_payload["recent_continuation_top_memory_mission_hotkeys"] = top_memory_mission_hotkeys
+        if continuation_recommended:
+            existing_reason_codes = (
+                list(item_payload.get("reason_codes", []))
+                if isinstance(item_payload.get("reason_codes", []), list)
+                else []
+            )
+            item_payload["reason_codes"] = self._machine_dedupe(
+                [*existing_reason_codes, *reason_codes],
+                limit=16,
+            )
+            existing_queries = (
+                list(item_payload.get("recommended_queries", []))
+                if isinstance(item_payload.get("recommended_queries", []), list)
+                else []
+            )
+            item_payload["recommended_queries"] = self._machine_dedupe(
+                [*existing_queries, *top_memory_mission_queries],
+                limit=8,
+            )
+            existing_actions = (
+                list(item_payload.get("preferred_wave_actions", []))
+                if isinstance(item_payload.get("preferred_wave_actions", []), list)
+                else []
+            )
+            boosted_actions = ["focus_navigation_tree", "focus_list_surface"]
+            if int(memory_payload.get("vm_prepare_continuation_wave_total", 0) or 0) > 0:
+                boosted_actions.append("focus_sidebar")
+            item_payload["preferred_wave_actions"] = self._machine_dedupe(
+                [*existing_actions, *boosted_actions],
+                limit=8,
+            )
+            if str(item_payload.get("readiness_status", "") or "").strip().lower() not in {"blocked"}:
+                current_surface_waves = max(
+                    int(item_payload.get("effective_max_surface_waves", 0) or 0),
+                    int(item_payload.get("recommended_max_surface_waves", 0) or 0),
+                    3,
+                )
+                current_probe_controls = max(
+                    int(item_payload.get("effective_max_probe_controls", 0) or 0),
+                    int(item_payload.get("recommended_max_probe_controls", 0) or 0),
+                    3,
+                )
+                current_per_app_limit = max(
+                    int(item_payload.get("effective_per_app_limit", 0) or 0),
+                    20,
+                )
+                item_payload["effective_max_surface_waves"] = min(
+                    8,
+                    max(
+                        current_surface_waves,
+                        suggested_learning_followthrough_waves + (1 if continuation_required else 0),
+                    ),
+                )
+                item_payload["effective_max_probe_controls"] = min(
+                    8,
+                    max(current_probe_controls, 4 if continuation_required else 3),
+                )
+                item_payload["effective_per_app_limit"] = min(
+                    64,
+                    max(current_per_app_limit, current_per_app_limit + (4 if continuation_required else 2)),
+                )
+        return item_payload
+
     def _desktop_machine_apply_route_feedback(
         self,
         *,
@@ -17606,6 +18533,16 @@ class DesktopBackendService:
             for item in launch_seed_items
             if self._machine_text(item.get("app_name", ""))
         }
+        recent_setup_followthrough_memory = (
+            dict(profile.get("setup_followthrough_memory", {}))
+            if isinstance(profile.get("setup_followthrough_memory", {}), dict)
+            else self._desktop_machine_recent_setup_followthrough_memory(limit=max(8, bounded))
+        )
+        recent_continuation_memory = (
+            dict(profile.get("continuation_memory", {}))
+            if isinstance(profile.get("continuation_memory", {}), dict)
+            else self._desktop_machine_recent_continuation_memory(limit=max(8, bounded))
+        )
         annotated_items: List[Dict[str, Any]] = []
         for row in target_rows:
             app_name = str(row.get("app_name", "") or "").strip()
@@ -17766,6 +18703,12 @@ class DesktopBackendService:
                 if isinstance(recent_setup_followthrough_memory, dict)
                 else None,
             )
+            item_payload = self._desktop_machine_apply_recent_continuation_memory(
+                target_row=item_payload,
+                continuation_memory=recent_continuation_memory
+                if isinstance(recent_continuation_memory, dict)
+                else None,
+            )
             runtime_strategy = self._desktop_machine_learning_runtime_strategy_for_target(
                 target_row=item_payload,
             )
@@ -17858,6 +18801,8 @@ class DesktopBackendService:
         memory_route_alignment_counts: Dict[str, int] = {}
         memory_guided_route_count = 0
         memory_assisted_route_count = 0
+        recent_continuation_recommended_count = 0
+        recent_continuation_required_count = 0
         for item in items:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
@@ -17937,6 +18882,10 @@ class DesktopBackendService:
                 memory_guided_route_count += 1
             if bool(item.get("memory_assisted_route", False)):
                 memory_assisted_route_count += 1
+            if bool(item.get("recent_continuation_recommended", False)):
+                recent_continuation_recommended_count += 1
+            if bool(item.get("recent_continuation_required", False)):
+                recent_continuation_required_count += 1
         return {
             "status": "success",
             "count": len(items),
@@ -17979,6 +18928,32 @@ class DesktopBackendService:
                 },
                 "memory_guided_route_count": memory_guided_route_count,
                 "memory_assisted_route_count": memory_assisted_route_count,
+                "recent_continuation_status": str(
+                    recent_continuation_memory.get("continuation_status", "") or ""
+                ).strip().lower(),
+                "recent_continuation_recommended": bool(
+                    recent_continuation_memory.get("continuation_recommended", False)
+                ),
+                "recent_continuation_required": bool(
+                    recent_continuation_memory.get("continuation_required", False)
+                ),
+                "recent_continuation_recommended_count": recent_continuation_recommended_count,
+                "recent_continuation_required_count": recent_continuation_required_count,
+                "recent_continuation_learning_wave_total": int(
+                    recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_vm_wave_total": int(
+                    recent_continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_memory_followthrough_count": int(
+                    recent_continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
+                ),
+                "recent_continuation_reason_codes": [
+                    str(code).strip().lower()
+                    for code in recent_continuation_memory.get("reason_codes", [])
+                    if isinstance(recent_continuation_memory.get("reason_codes", []), list)
+                    and str(code).strip()
+                ][:10],
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(semantic_label_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
@@ -18755,6 +19730,11 @@ class DesktopBackendService:
             if isinstance(profile.get("setup_followthrough_memory", {}), dict)
             else self._desktop_machine_recent_setup_followthrough_memory(limit=max(8, max_targets))
         )
+        recent_continuation_memory = (
+            dict(profile.get("continuation_memory", {}))
+            if isinstance(profile.get("continuation_memory", {}), dict)
+            else self._desktop_machine_recent_continuation_memory(limit=max(8, max_targets))
+        )
         bounded_targets = max(1, min(int(max_targets or plan.get("count", 8) or 8), 24))
         annotated_targets: List[Dict[str, Any]] = []
         for row in target_rows:
@@ -18775,6 +19755,18 @@ class DesktopBackendService:
                 self._desktop_machine_learning_strategy_for_target(
                     target_row=item_payload,
                 )
+            )
+            item_payload = self._desktop_machine_apply_recent_setup_followthrough_memory(
+                target_row=item_payload,
+                setup_memory=recent_setup_followthrough_memory
+                if isinstance(recent_setup_followthrough_memory, dict)
+                else None,
+            )
+            item_payload = self._desktop_machine_apply_recent_continuation_memory(
+                target_row=item_payload,
+                continuation_memory=recent_continuation_memory
+                if isinstance(recent_continuation_memory, dict)
+                else None,
             )
             runtime_strategy = self._desktop_machine_learning_runtime_strategy_for_target(
                 target_row=item_payload,
@@ -18878,6 +19870,8 @@ class DesktopBackendService:
         strategy_notes: List[str] = []
         recent_setup_followthrough_recommended_count = 0
         recent_setup_followthrough_required_count = 0
+        recent_continuation_recommended_count = 0
+        recent_continuation_required_count = 0
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             learning_profile = str(item.get("learning_profile", "") or "unknown").strip().lower() or "unknown"
@@ -18961,6 +19955,10 @@ class DesktopBackendService:
                 recent_setup_followthrough_recommended_count += 1
             if bool(item.get("recent_setup_followthrough_required", False)):
                 recent_setup_followthrough_required_count += 1
+            if bool(item.get("recent_continuation_recommended", False)):
+                recent_continuation_recommended_count += 1
+            if bool(item.get("recent_continuation_required", False)):
+                recent_continuation_required_count += 1
             if int(item.get("semantic_guidance_match_count", 0) or 0) > 0:
                 semantic_guided_count += 1
             if semantic_guidance_status == "cold" and knowledge_gap_level in {"cold", "thin"}:
@@ -19041,6 +20039,10 @@ class DesktopBackendService:
             strategy_notes.append("recent setup followthrough pressure is shaping app-learning depth")
         elif recent_setup_followthrough_recommended_count > 0:
             strategy_notes.append("recent setup followthrough memory is reused across learning targets")
+        if recent_continuation_required_count > 0:
+            strategy_notes.append("recent continuation pressure is pushing another deeper learning pass before memory goes stale")
+        elif recent_continuation_recommended_count > 0:
+            strategy_notes.append("recent continuation memory is being reused to resume unfinished app-learning missions")
         combined_roles: List[str] = []
         combined_actions: List[str] = []
         combined_paths: List[str] = []
@@ -19089,6 +20091,25 @@ class DesktopBackendService:
             max_surface_waves_value = max(2, min(max_surface_waves_value, 4))
             max_probe_controls_value = max(2, min(max_probe_controls_value, 4))
             per_app_limit = max(16, min(per_app_limit, 24))
+        if recent_continuation_required_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(
+                    max_surface_waves_value,
+                    int(recent_continuation_memory.get("suggested_learning_followthrough_waves", 2) or 2) + 1,
+                ),
+            )
+            max_probe_controls_value = min(8, max(max_probe_controls_value, 4))
+            per_app_limit = min(56, max(per_app_limit, 28))
+            combined_actions.extend(["focus_navigation_tree", "focus_list_surface"])
+        elif recent_continuation_recommended_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(
+                    max_surface_waves_value,
+                    int(recent_continuation_memory.get("suggested_learning_followthrough_waves", 2) or 2),
+                ),
+            )
         blocked_app_names = [
             str(item.get("app_name", "") or "").strip()
             for item in selected_targets
@@ -19183,6 +20204,62 @@ class DesktopBackendService:
                     if isinstance(recent_setup_followthrough_memory.get("reason_codes", []), list)
                     and str(code).strip()
                 ][:10],
+                "recent_continuation_status": str(
+                    recent_continuation_memory.get("continuation_status", "") or ""
+                ).strip().lower(),
+                "recent_continuation_recommended": bool(
+                    recent_continuation_memory.get("continuation_recommended", False)
+                ),
+                "recent_continuation_required": bool(
+                    recent_continuation_memory.get("continuation_required", False)
+                ),
+                "recent_continuation_recommended_count": recent_continuation_recommended_count,
+                "recent_continuation_required_count": recent_continuation_required_count,
+                "recent_continuation_learning_wave_total": int(
+                    recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_vm_wave_total": int(
+                    recent_continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_retry_count": int(
+                    recent_continuation_memory.get("continuation_retry_total", 0) or 0
+                ),
+                "recent_continuation_provider_blocked_count": int(
+                    recent_continuation_memory.get("continuation_provider_blocked_total", 0) or 0
+                ),
+                "recent_continuation_setup_followup_count": int(
+                    recent_continuation_memory.get("continuation_setup_followup_total", 0) or 0
+                ),
+                "recent_continuation_memory_followthrough_count": int(
+                    recent_continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
+                ),
+                "recent_continuation_semantic_followup_count": int(
+                    recent_continuation_memory.get("continuation_semantic_followup_total", 0) or 0
+                ),
+                "recent_continuation_reason_codes": [
+                    str(code).strip().lower()
+                    for code in recent_continuation_memory.get("reason_codes", [])
+                    if isinstance(recent_continuation_memory.get("reason_codes", []), list)
+                    and str(code).strip()
+                ][:10],
+                "recent_continuation_top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        dict(recent_continuation_memory.get("top_memory_mission_queries", {})).items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                }
+                if isinstance(recent_continuation_memory.get("top_memory_mission_queries", {}), dict)
+                else {},
+                "recent_continuation_top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        dict(recent_continuation_memory.get("top_memory_mission_hotkeys", {})).items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                }
+                if isinstance(recent_continuation_memory.get("top_memory_mission_hotkeys", {}), dict)
+                else {},
                 "memory_mission_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
@@ -19445,6 +20522,44 @@ class DesktopBackendService:
                     str(code).strip().lower()
                     for code in recent_setup_followthrough_memory.get("reason_codes", [])
                     if isinstance(recent_setup_followthrough_memory.get("reason_codes", []), list)
+                    and str(code).strip()
+                ][:10],
+                "recent_continuation_status": str(
+                    recent_continuation_memory.get("continuation_status", "") or ""
+                ).strip().lower(),
+                "recent_continuation_recommended": bool(
+                    recent_continuation_memory.get("continuation_recommended", False)
+                ),
+                "recent_continuation_required": bool(
+                    recent_continuation_memory.get("continuation_required", False)
+                ),
+                "recent_continuation_recommended_count": recent_continuation_recommended_count,
+                "recent_continuation_required_count": recent_continuation_required_count,
+                "recent_continuation_learning_wave_total": int(
+                    recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_vm_wave_total": int(
+                    recent_continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_retry_count": int(
+                    recent_continuation_memory.get("continuation_retry_total", 0) or 0
+                ),
+                "recent_continuation_provider_blocked_count": int(
+                    recent_continuation_memory.get("continuation_provider_blocked_total", 0) or 0
+                ),
+                "recent_continuation_setup_followup_count": int(
+                    recent_continuation_memory.get("continuation_setup_followup_total", 0) or 0
+                ),
+                "recent_continuation_memory_followthrough_count": int(
+                    recent_continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
+                ),
+                "recent_continuation_semantic_followup_count": int(
+                    recent_continuation_memory.get("continuation_semantic_followup_total", 0) or 0
+                ),
+                "recent_continuation_reason_codes": [
+                    str(code).strip().lower()
+                    for code in recent_continuation_memory.get("reason_codes", [])
+                    if isinstance(recent_continuation_memory.get("reason_codes", []), list)
                     and str(code).strip()
                 ][:10],
                 "memory_mission_status_counts": {
@@ -19771,6 +20886,11 @@ class DesktopBackendService:
             if isinstance(profile.get("setup_followthrough_memory", {}), dict)
             else self._desktop_machine_recent_setup_followthrough_memory(limit=max(8, max_targets))
         )
+        continuation_memory = (
+            dict(profile.get("continuation_memory", {}))
+            if isinstance(profile.get("continuation_memory", {}), dict)
+            else self._desktop_machine_recent_continuation_memory(limit=max(8, max_targets))
+        )
         multimodal_memory = (
             dict(profile.get("multimodal_memory", {}))
             if isinstance(profile.get("multimodal_memory", {}), dict)
@@ -19983,6 +21103,13 @@ class DesktopBackendService:
         )
         next_actions = self._desktop_machine_merge_next_actions(
             next_actions,
+            list(continuation_memory.get("next_actions", []))
+            if isinstance(continuation_memory.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
             list(ai_runtime_profile.get("next_actions", []))
             if isinstance(ai_runtime_profile.get("next_actions", []), list)
             else [],
@@ -20100,6 +21227,25 @@ class DesktopBackendService:
                 + int(setup_followthrough_memory.get("multimodal_setup_action_total", 0) or 0),
             },
             {
+                "id": "recent_continuation_followthrough",
+                "kind": "continuation_followthrough",
+                "status": "skipped"
+                if not bool(continuation_memory.get("continuation_recommended", False))
+                else "attention"
+                if bool(continuation_memory.get("continuation_required", False))
+                or int(continuation_memory.get("continuation_retry_total", 0) or 0) > 0
+                or int(continuation_memory.get("continuation_provider_blocked_total", 0) or 0) > 0
+                else "ready",
+                "title": "Resume recent app-learning and VM continuation work before another cold pass",
+                "auto_runnable": bool(
+                    int(continuation_memory.get("continuation_auto_runnable_total", 0) or 0) > 0
+                    or int(continuation_memory.get("app_learning_continuation_wave_total", 0) or 0) > 0
+                    or int(continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0) > 0
+                ),
+                "required": bool(continuation_memory.get("continuation_required", False)),
+                "count": int(continuation_memory.get("continuation_total", 0) or 0),
+            },
+            {
                 "id": "ai_runtime",
                 "kind": "ai_runtime",
                 "status": "skipped"
@@ -20207,6 +21353,7 @@ class DesktopBackendService:
                 "task_preference_plan": task_preference_plan,
                 "launch_seed_plan": launch_seed_plan,
                 "setup_followthrough_memory": setup_followthrough_memory,
+                "continuation_memory": continuation_memory,
                 "multimodal_memory": multimodal_memory,
                 "app_control_prepare_plan": app_control_prepare_plan,
                 "vm_control_plan": vm_control_plan,
@@ -22048,6 +23195,13 @@ class DesktopBackendService:
             if isinstance(plan.get("setup_followthrough_memory", {}), dict)
             else self._desktop_machine_recent_setup_followthrough_memory(limit=max(8, max_targets))
         )
+        final_continuation_memory = (
+            dict(final_profile.get("continuation_memory", {}))
+            if isinstance(final_profile.get("continuation_memory", {}), dict)
+            else dict(plan.get("continuation_memory", {}))
+            if isinstance(plan.get("continuation_memory", {}), dict)
+            else self._desktop_machine_recent_continuation_memory(limit=max(8, max_targets))
+        )
         final_ai_runtime_summary = (
             dict(final_ai_runtime_profile.get("summary", {}))
             if isinstance(final_ai_runtime_profile.get("summary", {}), dict)
@@ -22071,6 +23225,13 @@ class DesktopBackendService:
             next_actions,
             list(final_setup_followthrough_memory.get("next_actions", []))
             if isinstance(final_setup_followthrough_memory.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(final_continuation_memory.get("next_actions", []))
+            if isinstance(final_continuation_memory.get("next_actions", []), list)
             else [],
             limit=8,
         )
@@ -22127,6 +23288,7 @@ class DesktopBackendService:
             "next_actions": next_actions,
             "final_profile": final_profile,
             "setup_followthrough_memory": final_setup_followthrough_memory,
+            "continuation_memory": final_continuation_memory,
             "multimodal_memory": final_multimodal_memory,
             "summary": {
                 "provider_update_count": int(provider_updates.get("count", 0) or 0),
@@ -22216,6 +23378,33 @@ class DesktopBackendService:
                 ),
                 "recent_setup_memory_followthrough_count": int(
                     final_setup_followthrough_memory.get("memory_followthrough_total", 0) or 0
+                ),
+                "recent_continuation_status": str(
+                    final_continuation_memory.get("continuation_status", "") or ""
+                ).strip().lower(),
+                "recent_continuation_recommended": bool(
+                    final_continuation_memory.get("continuation_recommended", False)
+                ),
+                "recent_continuation_required": bool(
+                    final_continuation_memory.get("continuation_required", False)
+                ),
+                "recent_continuation_learning_wave_total": int(
+                    final_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_vm_wave_total": int(
+                    final_continuation_memory.get("vm_prepare_continuation_wave_total", 0) or 0
+                ),
+                "recent_continuation_retry_count": int(
+                    final_continuation_memory.get("continuation_retry_total", 0) or 0
+                ),
+                "recent_continuation_provider_blocked_count": int(
+                    final_continuation_memory.get("continuation_provider_blocked_total", 0) or 0
+                ),
+                "recent_continuation_setup_followup_count": int(
+                    final_continuation_memory.get("continuation_setup_followup_total", 0) or 0
+                ),
+                "recent_continuation_memory_followthrough_count": int(
+                    final_continuation_memory.get("continuation_memory_followthrough_total", 0) or 0
                 ),
                 "multimodal_setup_action_count": int(
                     multimodal_setup_action_summary.get("count", 0) or 0
@@ -22345,6 +23534,23 @@ class DesktopBackendService:
                 )
                 if isinstance(app_learning_continuation.get("top_memory_mission_hotkeys", {}), dict)
                 else {},
+                "app_learning_continuation_focus_app_count": int(
+                    app_learning_continuation.get("focus_app_count", 0) or 0
+                ),
+                "app_learning_continuation_memory_route_alignment_counts": dict(
+                    app_learning_continuation.get("memory_route_alignment_counts", {})
+                )
+                if isinstance(app_learning_continuation.get("memory_route_alignment_counts", {}), dict)
+                else {},
+                "app_learning_continuation_memory_guided_app_count": int(
+                    app_learning_continuation.get("memory_guided_route_count", 0) or 0
+                ),
+                "app_learning_continuation_memory_assisted_app_count": int(
+                    app_learning_continuation.get("memory_assisted_route_count", 0) or 0
+                ),
+                "app_learning_continuation_memory_underused_count": int(
+                    app_learning_continuation.get("memory_underused_count", 0) or 0
+                ),
                 "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
                 "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
                 "multimodal_knowledge_entry_count": int(
@@ -22593,6 +23799,24 @@ class DesktopBackendService:
                     if isinstance(vm_prepare_continuation.get("summary", {}), dict)
                     else {}
                 ),
+                "vm_prepare_continuation_memory_mission_status_counts": dict(
+                    vm_prepare_continuation.get("memory_mission_status_counts", {})
+                )
+                if isinstance(vm_prepare_continuation.get("memory_mission_status_counts", {}), dict)
+                else {},
+                "vm_prepare_continuation_top_memory_mission_queries": dict(
+                    vm_prepare_continuation.get("top_memory_mission_queries", {})
+                )
+                if isinstance(vm_prepare_continuation.get("top_memory_mission_queries", {}), dict)
+                else {},
+                "vm_prepare_continuation_top_memory_mission_hotkeys": dict(
+                    vm_prepare_continuation.get("top_memory_mission_hotkeys", {})
+                )
+                if isinstance(vm_prepare_continuation.get("top_memory_mission_hotkeys", {}), dict)
+                else {},
+                "vm_prepare_continuation_focus_guest_count": int(
+                    vm_prepare_continuation.get("focus_guest_count", 0) or 0
+                ),
                 "route_remediation_count": int(route_remediation.get("count", 0) or 0),
                 "route_remediation_blocked_count": int(
                     dict(route_remediation.get("summary", {})).get("blocked_app_count", 0)
@@ -22681,20 +23905,59 @@ class DesktopBackendService:
                     if isinstance(continuation_plan.get("summary", {}), dict)
                     else 0
                 ),
-                "continuation_memory_mission_status_counts": dict(
-                    dict(continuation_plan.get("summary", {})).get("memory_mission_status_counts", {})
-                    if isinstance(continuation_plan.get("summary", {}), dict)
-                    else {}
+                "continuation_memory_mission_status_counts": self._machine_merge_counter_maps(
+                    (
+                        dict(continuation_plan.get("summary", {})).get("memory_mission_status_counts", {})
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(app_learning_continuation.get("memory_mission_status_counts", {}))
+                        if isinstance(app_learning_continuation.get("memory_mission_status_counts", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(vm_prepare_continuation.get("memory_mission_status_counts", {}))
+                        if isinstance(vm_prepare_continuation.get("memory_mission_status_counts", {}), dict)
+                        else {}
+                    ),
+                    limit=8,
                 ),
-                "continuation_top_memory_mission_queries": dict(
-                    dict(continuation_plan.get("summary", {})).get("top_memory_mission_queries", {})
-                    if isinstance(continuation_plan.get("summary", {}), dict)
-                    else {}
+                "continuation_top_memory_mission_queries": self._machine_merge_counter_maps(
+                    (
+                        dict(continuation_plan.get("summary", {})).get("top_memory_mission_queries", {})
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(app_learning_continuation.get("top_memory_mission_queries", {}))
+                        if isinstance(app_learning_continuation.get("top_memory_mission_queries", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(vm_prepare_continuation.get("top_memory_mission_queries", {}))
+                        if isinstance(vm_prepare_continuation.get("top_memory_mission_queries", {}), dict)
+                        else {}
+                    ),
+                    limit=8,
                 ),
-                "continuation_top_memory_mission_hotkeys": dict(
-                    dict(continuation_plan.get("summary", {})).get("top_memory_mission_hotkeys", {})
-                    if isinstance(continuation_plan.get("summary", {}), dict)
-                    else {}
+                "continuation_top_memory_mission_hotkeys": self._machine_merge_counter_maps(
+                    (
+                        dict(continuation_plan.get("summary", {})).get("top_memory_mission_hotkeys", {})
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(app_learning_continuation.get("top_memory_mission_hotkeys", {}))
+                        if isinstance(app_learning_continuation.get("top_memory_mission_hotkeys", {}), dict)
+                        else {}
+                    ),
+                    (
+                        dict(vm_prepare_continuation.get("top_memory_mission_hotkeys", {}))
+                        if isinstance(vm_prepare_continuation.get("top_memory_mission_hotkeys", {}), dict)
+                        else {}
+                    ),
+                    limit=8,
                 ),
                 "continuation_semantic_followup_count": int(
                     dict(continuation_plan.get("summary", {})).get("semantic_followup_count", 0)
@@ -22702,9 +23965,14 @@ class DesktopBackendService:
                     else 0
                 ),
                 "continuation_focus_app_count": int(
-                    dict(continuation_plan.get("summary", {})).get("focus_app_count", 0)
-                    if isinstance(continuation_plan.get("summary", {}), dict)
-                    else 0
+                    max(
+                        int(
+                            dict(continuation_plan.get("summary", {})).get("focus_app_count", 0)
+                            if isinstance(continuation_plan.get("summary", {}), dict)
+                            else 0
+                        ),
+                        int(app_learning_continuation.get("focus_app_count", 0) or 0),
+                    )
                 ),
                 "execution_action_count": int(execution_queue_summary.get("count", 0) or 0),
                 "execution_auto_runnable_count": int(execution_queue_summary.get("auto_runnable_count", 0) or 0),
