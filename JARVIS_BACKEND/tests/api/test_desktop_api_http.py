@@ -13549,6 +13549,29 @@ class FakeDesktopService:
                     }
                 ],
             },
+            "setup_followthrough_memory": {
+                "status": "success",
+                "followthrough_status": "recommended",
+                "followthrough_recommended": True,
+                "followthrough_required": False,
+                "suggested_followthrough_waves": 2,
+                "setup_execution_remaining_ready_total": 1,
+                "provider_blocked_total": 1,
+                "setup_followup_total": 2,
+                "memory_followthrough_total": 3,
+                "reason_codes": [
+                    "recent_setup_followthrough_recommended",
+                    "recent_provider_blocked_pressure",
+                ],
+                "next_actions": [
+                    {
+                        "kind": "setup_followthrough",
+                        "action": "continue_setup_followthrough",
+                        "target": "setup",
+                        "auto_runnable": True,
+                    }
+                ],
+            },
             "recommendations": [{"code": "configure_huggingface_token", "severity": "high"}],
             "setup_actions": [{"code": "configure_huggingface_token", "severity": "high"}],
             "change_detection": {"changed": False, "areas": [], "requires_revalidation": False},
@@ -13760,6 +13783,8 @@ class FakeDesktopService:
         model_limit: int = 160,
         refresh_apps: bool = False,
         ensure_provider_launch: bool = True,
+        auto_execute_setup_followthrough: bool = True,
+        max_setup_followthrough_waves: int = 2,
         source: str = "machine_vm_prepare",
     ) -> Dict[str, Any]:
         call = {
@@ -13771,6 +13796,8 @@ class FakeDesktopService:
             "model_limit": int(model_limit),
             "refresh_apps": bool(refresh_apps),
             "ensure_provider_launch": bool(ensure_provider_launch),
+            "auto_execute_setup_followthrough": bool(auto_execute_setup_followthrough),
+            "max_setup_followthrough_waves": int(max_setup_followthrough_waves),
             "source": source,
         }
         self.machine_vm_prepare_calls.append(call)
@@ -13788,6 +13815,14 @@ class FakeDesktopService:
             },
             "resolved_target": {"status": "success", "requested_app": "VirtualBox", "resolution": "launch_memory"},
             "launch": {"status": "success", "launch_method": "launch_memory"},
+            "setup_followthrough": {
+                "status": "success" if auto_execute_setup_followthrough else "skipped",
+                "executed_count": 3 if auto_execute_setup_followthrough else 0,
+                "provider_followthrough": {"verified_count": 1, "recovery_continued_count": 1},
+                "selected_model_action_count": 1 if auto_execute_setup_followthrough else 0,
+                "selected_ai_runtime_action_count": 1 if auto_execute_setup_followthrough else 0,
+                "selected_multimodal_action_count": 1 if auto_execute_setup_followthrough else 0,
+            },
             "summary": {
                 "guest_name": guest_name or "Ubuntu Dev VM",
                 "provider": "virtualbox",
@@ -13832,6 +13867,8 @@ class FakeDesktopService:
                 "readiness_status": "ready",
                 "provider_launch_ready": True,
                 "attach_strategy": "provider_console",
+                "setup_followthrough_status": "success" if auto_execute_setup_followthrough else "skipped",
+                "setup_followthrough_executed_count": 3 if auto_execute_setup_followthrough else 0,
             },
         }
 
@@ -14008,6 +14045,30 @@ class FakeDesktopService:
                 "items": [
                     {"app_name": "Google Chrome", "memory_present": True},
                     {"app_name": "Visual Studio Code", "memory_present": False},
+                ],
+            },
+            "setup_followthrough_memory": {
+                "status": "success",
+                "followthrough_status": "recommended",
+                "followthrough_recommended": True,
+                "followthrough_required": False,
+                "suggested_followthrough_waves": 2,
+                "setup_execution_remaining_ready_total": 1,
+                "provider_blocked_total": 1,
+                "setup_followup_total": 2,
+                "memory_followthrough_total": 3,
+                "top_setup_action_codes": {"configure_huggingface_token": 1},
+                "reason_codes": [
+                    "recent_setup_followthrough_recommended",
+                    "recent_provider_blocked_pressure",
+                ],
+                "next_actions": [
+                    {
+                        "kind": "setup_followthrough",
+                        "action": "continue_setup_followthrough",
+                        "target": "setup",
+                        "auto_runnable": True,
+                    }
                 ],
             },
             "app_control_prepare_plan": {
@@ -14357,6 +14418,14 @@ class FakeDesktopService:
             },
             "next_actions": [
                 {
+                    "id": "recent_setup_followthrough",
+                    "stage": "setup",
+                    "kind": "setup_followthrough",
+                    "status": "ready",
+                    "title": "Continue recent setup followthrough",
+                    "target": "setup",
+                },
+                {
                     "id": "provider:huggingface",
                     "stage": "provider",
                     "kind": "configure_provider_credentials",
@@ -14373,9 +14442,21 @@ class FakeDesktopService:
                     "target": "reasoning-qwen3.5-9b",
                 },
             ],
-            "steps": [{"id": "provider_credentials", "status": "manual_input_required"}],
+            "steps": [
+                {"id": "provider_credentials", "status": "manual_input_required"},
+                {"id": "recent_setup_followthrough", "status": "ready"},
+            ],
             "summary": {
                 "profile_setup_action_count": 1,
+                "recent_setup_followthrough_status": "recommended",
+                "recent_setup_followthrough_recommended": True,
+                "recent_setup_followthrough_required": False,
+                "recent_setup_suggested_followthrough_waves": 2,
+                "recent_setup_remaining_ready_count": 1,
+                "recent_setup_provider_blocked_count": 1,
+                "recent_setup_followup_count": 2,
+                "recent_setup_memory_followthrough_count": 3,
+                "recent_setup_top_setup_action_codes": {"configure_huggingface_token": 1},
                 "ai_runtime_stack_count": 3,
                 "ai_runtime_ready_stack_count": 2,
                 "ai_runtime_blocked_stack_count": 1,
@@ -14573,6 +14654,13 @@ class FakeDesktopService:
                         "setup_execution_continued_action_count": 1,
                         "setup_execution_remaining_ready_count": 0,
                         "setup_execution_resume_ready": False,
+                        "recent_setup_followthrough_status": "recommended",
+                        "recent_setup_followthrough_recommended": True,
+                        "recent_setup_followthrough_required": False,
+                        "recent_setup_remaining_ready_count": 1,
+                        "recent_setup_provider_blocked_count": 1,
+                        "recent_setup_followup_count": 2,
+                        "recent_setup_memory_followthrough_count": 3,
                     },
                     "execution_queue_summary": {
                         "count": 6,
@@ -14648,6 +14736,13 @@ class FakeDesktopService:
                     "setup_execution_continued_action_count": 1,
                     "setup_execution_remaining_ready_count": 0,
                     "setup_execution_resume_ready": False,
+                    "recent_setup_followthrough_status": "recommended",
+                    "recent_setup_followthrough_recommended": True,
+                    "recent_setup_followthrough_required": False,
+                    "recent_setup_remaining_ready_count": 1,
+                    "recent_setup_provider_blocked_count": 1,
+                    "recent_setup_followup_count": 2,
+                    "recent_setup_memory_followthrough_count": 3,
                     "launch_seed_count": 2,
                     "app_learning_target_count": 2,
                     "app_learning_strategy_profile": "hybrid_guided_explore",
@@ -14792,6 +14887,12 @@ class FakeDesktopService:
                 "setup_execution_continued_action_total": 1,
                 "setup_execution_remaining_ready_total": 0,
                 "setup_execution_resume_ready_total": 0,
+                "recent_setup_followthrough_recommended_total": 1,
+                "recent_setup_followthrough_required_total": 0,
+                "recent_setup_remaining_ready_total": 1,
+                "recent_setup_provider_blocked_total": 1,
+                "recent_setup_followup_total": 2,
+                "recent_setup_memory_followthrough_total": 3,
                 "multimodal_memory_app_total": 2,
                 "multimodal_ocr_memory_app_total": 2,
                 "multimodal_local_runtime_ready_app_total": 1,
@@ -15524,6 +15625,29 @@ class FakeDesktopService:
                     "runtime_provider_mode_counts": {"local_runtime": 1, "api_assist": 1},
                 },
             },
+            "setup_followthrough_memory": {
+                "status": "success",
+                "followthrough_status": "recommended",
+                "followthrough_recommended": True,
+                "followthrough_required": False,
+                "suggested_followthrough_waves": 2,
+                "setup_execution_remaining_ready_total": 1,
+                "provider_blocked_total": 1,
+                "setup_followup_total": 2,
+                "memory_followthrough_total": 3,
+                "reason_codes": [
+                    "recent_setup_followthrough_recommended",
+                    "recent_provider_blocked_pressure",
+                ],
+                "next_actions": [
+                    {
+                        "kind": "setup_followthrough",
+                        "action": "continue_setup_followthrough",
+                        "target": "setup",
+                        "auto_runnable": True,
+                    }
+                ],
+            },
             "summary": {
                 "provider_update_count": len(dict(provider_credentials or {})),
                 "profile_setup_action_count": 1,
@@ -15548,6 +15672,14 @@ class FakeDesktopService:
                 "setup_execution_remaining_ready_count": 0,
                 "setup_execution_resume_ready": False,
                 "setup_execution_continue_status": "success",
+                "recent_setup_followthrough_status": "recommended",
+                "recent_setup_followthrough_recommended": True,
+                "recent_setup_followthrough_required": False,
+                "recent_setup_suggested_followthrough_waves": 2,
+                "recent_setup_remaining_ready_count": 1,
+                "recent_setup_provider_blocked_count": 1,
+                "recent_setup_followup_count": 2,
+                "recent_setup_memory_followthrough_count": 3,
                 "app_learning_strategy_profile": "hybrid_guided_explore",
                 "app_learning_auto_target_count": 2,
                 "app_learning_blocked_count": 0,
@@ -16104,6 +16236,8 @@ class FakeDesktopService:
         allow_risky_probes: bool = False,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        auto_execute_setup_followthrough: bool = True,
+        max_setup_followthrough_waves: int = 2,
         source: str = "machine_prepare",
     ) -> Dict[str, Any]:
         effective_app_name = app_name or app_query or "Google Chrome"
@@ -16129,6 +16263,8 @@ class FakeDesktopService:
             "allow_risky_probes": bool(allow_risky_probes),
             "revalidate_known_controls": bool(revalidate_known_controls),
             "prefer_failure_memory": bool(prefer_failure_memory),
+            "auto_execute_setup_followthrough": bool(auto_execute_setup_followthrough),
+            "max_setup_followthrough_waves": int(max_setup_followthrough_waves),
             "source": source,
         }
         self.machine_prepare_app_control_calls.append(call)
@@ -16235,6 +16371,14 @@ class FakeDesktopService:
             },
             "app_memory": {"status": "success", "count": 1, "items": [{"app_name": effective_app_name}]},
             "launch_memory": {"status": "success", "count": 1, "items": [{"requested_app": effective_app_name}]},
+            "setup_followthrough": {
+                "status": "success" if auto_execute_setup_followthrough else "skipped",
+                "executed_count": 4 if auto_execute_setup_followthrough else 0,
+                "provider_followthrough": {"verified_count": 1, "recovery_continued_count": 1},
+                "selected_model_action_count": 2 if auto_execute_setup_followthrough else 0,
+                "selected_ai_runtime_action_count": 1 if auto_execute_setup_followthrough else 0,
+                "selected_multimodal_action_count": 1 if auto_execute_setup_followthrough else 0,
+            },
             "summary": {
                 "app_name": effective_app_name,
                 "launch_method": "already_running_attach",
@@ -16285,6 +16429,8 @@ class FakeDesktopService:
                 "probe_success_count": 2,
                 "selected_ai_reasoning_stack": "desktop_agent",
                 "selected_ai_vision_stack": "perception",
+                "setup_followthrough_status": "success" if auto_execute_setup_followthrough else "skipped",
+                "setup_followthrough_executed_count": 4 if auto_execute_setup_followthrough else 0,
             },
             "adaptive_runtime_strategy": {
                 "strategy_profile": "balanced_hybrid_guided_explore",
@@ -25906,6 +26052,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert profile["multimodal_memory"]["summary"]["vision_runtime_status"] == "success"
     assert profile["multimodal_memory"]["summary"]["vision_runtime_available"] is True
     assert profile["multimodal_memory"]["summary"]["route_profile_counts"]["hybrid_verify"] == 1
+    assert profile["setup_followthrough_memory"]["followthrough_status"] == "recommended"
+    assert profile["setup_followthrough_memory"]["provider_blocked_total"] == 1
     assert service.machine_profile_calls[-1]["refresh_apps"] is True
     assert service.machine_profile_calls[-1]["task"] == "reasoning"
 
@@ -25962,6 +26110,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
             "query": "settings",
             "refresh_apps": True,
             "ensure_provider_launch": True,
+            "auto_execute_setup_followthrough": True,
+            "max_setup_followthrough_waves": 4,
         },
     )
     assert status == 200
@@ -25971,8 +26121,12 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert vm_prepared["summary"]["guest_learning_profile"] == "linux_desktop_explore"
     assert vm_prepared["summary"]["expected_route_profile"] == "linux_vm_desktop_control"
     assert vm_prepared["summary"]["execution_mode"] == "hybrid_ready"
+    assert vm_prepared["summary"]["setup_followthrough_status"] == "success"
+    assert vm_prepared["summary"]["setup_followthrough_executed_count"] == 3
     assert service.machine_vm_prepare_calls[-1]["guest_name"] == "Ubuntu Dev VM"
     assert service.machine_vm_prepare_calls[-1]["ensure_provider_launch"] is True
+    assert service.machine_vm_prepare_calls[-1]["auto_execute_setup_followthrough"] is True
+    assert service.machine_vm_prepare_calls[-1]["max_setup_followthrough_waves"] == 4
 
     status, updated = request_json(
         "POST",
@@ -26039,6 +26193,8 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
             "ensure_app_launch": True,
             "survey_limit": 18,
             "max_surface_waves": 5,
+            "auto_execute_setup_followthrough": True,
+            "max_setup_followthrough_waves": 3,
         },
     )
     assert status == 200
@@ -26056,11 +26212,15 @@ def test_desktop_machine_profile_and_app_launcher_routes(api_server: tuple[str, 
     assert prepared["summary"]["selected_ai_reasoning_stack"] == "desktop_agent"
     assert prepared["summary"]["related_setup_action_count"] == 2
     assert prepared["summary"]["setup_followup_count"] == 2
+    assert prepared["summary"]["setup_followthrough_status"] == "success"
+    assert prepared["summary"]["setup_followthrough_executed_count"] == 4
     assert prepared["summary"]["remediation_progress_status"] == "resolved"
     assert prepared["summary"]["setup_execution_policy"] == "mission_followthrough"
     assert prepared["adaptive_runtime_strategy"]["runtime_band_preference"] == "hybrid"
     assert service.machine_prepare_app_control_calls[-1]["app_name"] == "chrome"
     assert service.machine_prepare_app_control_calls[-1]["max_surface_waves"] == 5
+    assert service.machine_prepare_app_control_calls[-1]["auto_execute_setup_followthrough"] is True
+    assert service.machine_prepare_app_control_calls[-1]["max_setup_followthrough_waves"] == 3
 
 
 def test_desktop_machine_app_learning_plan_and_campaign_routes(api_server: tuple[str, FakeDesktopService]) -> None:
@@ -26138,6 +26298,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["summary"]["multimodal_setup_auto_runnable_count"] == 1
     assert plan["summary"]["setup_execution_selected_action_count"] == 1
     assert plan["summary"]["setup_execution_continue_recommended"] is True
+    assert plan["summary"]["recent_setup_followthrough_status"] == "recommended"
+    assert plan["summary"]["recent_setup_followthrough_recommended"] is True
+    assert plan["summary"]["recent_setup_provider_blocked_count"] == 1
     assert plan["app_control_prepare_plan"]["summary"]["degraded_count"] == 1
     assert plan["summary"]["app_control_prepare_degraded_count"] == 1
     assert plan["app_learning_plan"]["plan"]["summary"]["setup_aligned_app_count"] == 2
@@ -26172,7 +26335,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 3
     assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
     assert plan["execution_queue_summary"]["stage_counts"]["setup_action"] == 3
-    assert plan["next_actions"][0]["target"] == "huggingface"
+    assert plan["next_actions"][0]["target"] == "setup"
+    assert any(item.get("target") == "huggingface" for item in plan["next_actions"])
+    assert plan["setup_followthrough_memory"]["followthrough_status"] == "recommended"
     assert service.machine_onboarding_plan_calls[-1]["continuation_limit"] == 5
     assert service.machine_onboarding_plan_calls[-1]["vm_prepare_limit"] == 2
     assert service.machine_onboarding_plan_calls[-1]["max_model_items"] == 3
@@ -26230,6 +26395,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["summary"]["setup_execution_mode"] == "mission"
     assert launched["summary"]["setup_execution_selected_action_count"] == 1
     assert launched["summary"]["setup_execution_continued_action_count"] == 1
+    assert launched["summary"]["recent_setup_followthrough_status"] == "recommended"
+    assert launched["summary"]["recent_setup_provider_blocked_count"] == 1
+    assert launched["setup_followthrough_memory"]["followthrough_recommended"] is True
     assert launched["app_control_prepare"]["count"] == 2
     assert launched["vm_control_plan"]["count"] == 1
     assert launched["vm_control_prepare"]["count"] == 1
@@ -26297,6 +26465,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["ai_runtime_setup_success_total"] == 1
     assert history["summary"]["setup_execution_selected_action_total"] == 1
     assert history["summary"]["setup_execution_continued_action_total"] == 1
+    assert history["summary"]["recent_setup_followthrough_recommended_total"] == 1
+    assert history["summary"]["recent_setup_provider_blocked_total"] == 1
+    assert history["summary"]["recent_setup_followup_total"] == 2
     assert history["summary"]["multimodal_memory_app_total"] == 2
     assert history["summary"]["multimodal_ocr_memory_app_total"] == 2
     assert history["summary"]["multimodal_revalidation_target_total"] == 3
@@ -26324,6 +26495,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
     assert history["latest_run"]["execution_queue_summary"]["memory_followthrough_count"] == 2
     assert history["latest_run"]["summary"]["ai_runtime_setup_action_count"] == 1
+    assert history["latest_run"]["summary"]["recent_setup_followthrough_status"] == "recommended"
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
     assert history["latest_run"]["summary"]["app_learning_memory_followthrough_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1

@@ -44,6 +44,12 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "setup_execution_continued_action_count": 1,
                 "setup_execution_remaining_ready_count": 1,
                 "setup_execution_resume_ready": True,
+                "recent_setup_followthrough_recommended": True,
+                "recent_setup_followthrough_required": True,
+                "recent_setup_remaining_ready_count": 1,
+                "recent_setup_provider_blocked_count": 2,
+                "recent_setup_followup_count": 3,
+                "recent_setup_memory_followthrough_count": 4,
                 "multimodal_memory_app_count": 3,
                 "multimodal_ocr_memory_app_count": 2,
                 "multimodal_local_runtime_ready_app_count": 1,
@@ -146,6 +152,12 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["setup_execution_continued_action_total"] == 1
     assert history["summary"]["setup_execution_remaining_ready_total"] == 1
     assert history["summary"]["setup_execution_resume_ready_total"] == 1
+    assert history["summary"]["recent_setup_followthrough_recommended_total"] == 1
+    assert history["summary"]["recent_setup_followthrough_required_total"] == 1
+    assert history["summary"]["recent_setup_remaining_ready_total"] == 1
+    assert history["summary"]["recent_setup_provider_blocked_total"] == 2
+    assert history["summary"]["recent_setup_followup_total"] == 3
+    assert history["summary"]["recent_setup_memory_followthrough_total"] == 4
     assert history["summary"]["multimodal_memory_app_total"] == 3
     assert history["summary"]["multimodal_ocr_memory_app_total"] == 2
     assert history["summary"]["multimodal_local_runtime_ready_app_total"] == 1

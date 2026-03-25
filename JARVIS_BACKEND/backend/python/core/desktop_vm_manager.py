@@ -1075,6 +1075,11 @@ class DesktopVMManager:
             and isinstance(machine_profile.get("app_learning_plan", {}).get("plan", {}).get("summary", {}), dict)
             else {}
         )
+        setup_followthrough_memory = (
+            dict(machine_profile.get("setup_followthrough_memory", {}))
+            if isinstance(machine_profile.get("setup_followthrough_memory", {}), dict)
+            else {}
+        )
         app_learning_memory_mission_status_counts = (
             dict(app_learning_summary.get("memory_mission_status_counts", {}))
             if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
@@ -1118,6 +1123,29 @@ class DesktopVMManager:
         structured_memory_semantic_ready_count = int(multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0)
         app_learning_semantic_guided_count = int(app_learning_summary.get("semantic_guided_count", 0) or 0)
         app_learning_semantic_followup_count = int(app_learning_summary.get("semantic_followup_count", 0) or 0)
+        recent_setup_followthrough_status = _norm_text(
+            setup_followthrough_memory.get("followthrough_status", "")
+        ) or "cold"
+        recent_setup_followthrough_recommended = bool(
+            setup_followthrough_memory.get("followthrough_recommended", False)
+        )
+        recent_setup_followthrough_required = bool(
+            setup_followthrough_memory.get("followthrough_required", False)
+        )
+        recent_setup_remaining_ready_count = int(
+            setup_followthrough_memory.get("setup_execution_remaining_ready_total", 0) or 0
+        )
+        recent_setup_provider_blocked_count = int(
+            setup_followthrough_memory.get("provider_blocked_total", 0) or 0
+        )
+        recent_setup_followup_count = int(
+            setup_followthrough_memory.get("setup_followup_total", 0) or 0
+        )
+        recent_setup_reason_codes = [
+            str(item).strip().lower()
+            for item in setup_followthrough_memory.get("reason_codes", [])
+            if isinstance(setup_followthrough_memory.get("reason_codes", []), list) and str(item).strip()
+        ][:8]
         if structured_memory_semantic_ready_count > 0 and structured_memory_low_coverage_count <= 0:
             memory_guidance_status = "strong"
         elif (
@@ -1196,6 +1224,12 @@ class DesktopVMManager:
             ai_route_reason_codes.append("ai_runtime_stack_attention")
             if ai_route_status == "matched":
                 ai_route_status = "fallback" if ai_route_fallback_applied else "setup_constrained"
+        if recent_setup_followthrough_required:
+            ai_route_reason_codes.append("recent_setup_followthrough_required")
+            if ai_route_status == "matched":
+                ai_route_status = "setup_waiting"
+        elif recent_setup_followthrough_recommended:
+            ai_route_reason_codes.append("recent_setup_followthrough_recommended")
         if setup_followup_codes and ai_route_status == "matched":
             ai_route_status = "setup_constrained"
         elif ai_route_status == "matched" and ai_route_fallback_applied:
@@ -1302,6 +1336,13 @@ class DesktopVMManager:
             "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
             "app_learning_semantic_guided_count": app_learning_semantic_guided_count,
             "app_learning_semantic_followup_count": app_learning_semantic_followup_count,
+            "recent_setup_followthrough_status": recent_setup_followthrough_status,
+            "recent_setup_followthrough_recommended": recent_setup_followthrough_recommended,
+            "recent_setup_followthrough_required": recent_setup_followthrough_required,
+            "recent_setup_remaining_ready_count": recent_setup_remaining_ready_count,
+            "recent_setup_provider_blocked_count": recent_setup_provider_blocked_count,
+            "recent_setup_followup_count": recent_setup_followup_count,
+            "recent_setup_reason_codes": recent_setup_reason_codes,
             "app_learning_memory_mission_status_counts": app_learning_memory_mission_status_counts,
             "app_learning_top_memory_mission_queries": app_learning_top_memory_mission_queries,
             "app_learning_top_memory_mission_hotkeys": app_learning_top_memory_mission_hotkeys,

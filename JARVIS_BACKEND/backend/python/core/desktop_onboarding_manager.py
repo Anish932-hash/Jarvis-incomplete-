@@ -78,6 +78,12 @@ class DesktopOnboardingManager:
         setup_execution_continued_action_total = 0
         setup_execution_remaining_ready_total = 0
         setup_execution_resume_ready_total = 0
+        recent_setup_followthrough_recommended_total = 0
+        recent_setup_followthrough_required_total = 0
+        recent_setup_remaining_ready_total = 0
+        recent_setup_provider_blocked_total = 0
+        recent_setup_followup_total = 0
+        recent_setup_memory_followthrough_total = 0
         app_learning_setup_aligned_total = 0
         app_learning_setup_boosted_total = 0
         app_learning_setup_constrained_total = 0
@@ -179,6 +185,16 @@ class DesktopOnboardingManager:
             setup_execution_remaining_ready_total += int(summary.get("setup_execution_remaining_ready_count", 0) or 0)
             if bool(summary.get("setup_execution_resume_ready", False)):
                 setup_execution_resume_ready_total += 1
+            if bool(summary.get("recent_setup_followthrough_recommended", False)):
+                recent_setup_followthrough_recommended_total += 1
+            if bool(summary.get("recent_setup_followthrough_required", False)):
+                recent_setup_followthrough_required_total += 1
+            recent_setup_remaining_ready_total += int(summary.get("recent_setup_remaining_ready_count", 0) or 0)
+            recent_setup_provider_blocked_total += int(summary.get("recent_setup_provider_blocked_count", 0) or 0)
+            recent_setup_followup_total += int(summary.get("recent_setup_followup_count", 0) or 0)
+            recent_setup_memory_followthrough_total += int(
+                summary.get("recent_setup_memory_followthrough_count", 0) or 0
+            )
             app_learning_setup_aligned_total += int(summary.get("app_learning_setup_aligned_count", 0) or 0)
             app_learning_setup_boosted_total += int(summary.get("app_learning_setup_boosted_count", 0) or 0)
             app_learning_setup_constrained_total += int(summary.get("app_learning_setup_constrained_count", 0) or 0)
@@ -313,6 +329,12 @@ class DesktopOnboardingManager:
                 "setup_execution_continued_action_total": setup_execution_continued_action_total,
                 "setup_execution_remaining_ready_total": setup_execution_remaining_ready_total,
                 "setup_execution_resume_ready_total": setup_execution_resume_ready_total,
+                "recent_setup_followthrough_recommended_total": recent_setup_followthrough_recommended_total,
+                "recent_setup_followthrough_required_total": recent_setup_followthrough_required_total,
+                "recent_setup_remaining_ready_total": recent_setup_remaining_ready_total,
+                "recent_setup_provider_blocked_total": recent_setup_provider_blocked_total,
+                "recent_setup_followup_total": recent_setup_followup_total,
+                "recent_setup_memory_followthrough_total": recent_setup_memory_followthrough_total,
                 "app_learning_setup_aligned_total": app_learning_setup_aligned_total,
                 "app_learning_setup_boosted_total": app_learning_setup_boosted_total,
                 "app_learning_setup_constrained_total": app_learning_setup_constrained_total,

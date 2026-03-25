@@ -335,6 +335,8 @@ def test_provider_setup_recovery_launch_executes_ready_provider_actions() -> Non
         refresh_remote: bool = False,
         remote_timeout_s: float = 8.0,
         verify_integrity: bool = False,
+        manifest_path: str = "",
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         install_calls.append(
             {
@@ -347,6 +349,8 @@ def test_provider_setup_recovery_launch_executes_ready_provider_actions() -> Non
                 "refresh_remote": refresh_remote,
                 "remote_timeout_s": remote_timeout_s,
                 "verify_integrity": verify_integrity,
+                "manifest_path": manifest_path,
+                "workspace_root": workspace_root,
             }
         )
         return {
@@ -433,6 +437,68 @@ def test_verify_provider_credentials_can_auto_continue_and_include_coworker_cont
     assert recovery_calls[0]["provider"] == "huggingface"
     assert recovery_calls[0]["item_keys"] == ["reasoning-llama"]
     assert recovery_calls[0]["continue_followup_actions"] is True
+
+
+def test_desktop_machine_execute_provider_followthrough_executes_ready_items_and_reports_manual_input() -> None:
+    service = _service()
+    verify_calls: List[Dict[str, Any]] = []
+
+    service._desktop_machine_onboarding_provider_actions = lambda **_kwargs: {
+        "items": [
+            {
+                "provider": "huggingface",
+                "state": "ready",
+                "present": True,
+                "verified": False,
+                "summary": "Hugging Face token is ready for verification.",
+            },
+            {
+                "provider": "openrouter",
+                "state": "needs_input",
+                "present": False,
+                "verified": False,
+                "summary": "OpenRouter API key still required.",
+            },
+        ]
+    }
+
+    def _verify(**kwargs: Any) -> Dict[str, Any]:
+        verify_calls.append(dict(kwargs))
+        return {
+            "status": "success",
+            "verification_status": "success",
+            "verification": {"verified": True, "summary": "Verified Hugging Face token."},
+            "continue_setup_recovery_status": "success",
+            "provider_setup": {"provider": "huggingface", "ready": True, "present": True},
+            "setup_recovery": {"launchable_count": 1},
+            "message": "provider verified",
+        }
+
+    service.verify_provider_credentials = _verify  # type: ignore[method-assign]
+
+    payload = service._desktop_machine_execute_provider_followthrough(
+        profile={"status": "success"},
+        model_selection={"selected_item_keys": ["reasoning-llama"]},
+        task="reasoning",
+        limit=48,
+        continue_followup_actions=True,
+        max_followup_waves=3,
+        refresh_remote=True,
+        source="unit_test",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["selected_provider_count"] == 2
+    assert payload["executed_count"] == 1
+    assert payload["verified_count"] == 1
+    assert payload["recovery_continued_count"] == 1
+    assert payload["manual_input_count"] == 1
+    assert verify_calls[0]["provider"] == "huggingface"
+    assert verify_calls[0]["item_keys"] == ["reasoning-llama"]
+    assert verify_calls[0]["continue_setup_recovery"] is True
+    assert verify_calls[0]["continue_followup_actions"] is True
+    assert verify_calls[0]["refresh_remote"] is True
+    assert any(item["status"] == "manual_input_required" for item in payload["items"])
 
 
 def test_provider_setup_recovery_launch_can_cascade_followup_actions() -> None:

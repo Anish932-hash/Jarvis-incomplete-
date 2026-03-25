@@ -82,6 +82,15 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
                 }
             }
         },
+        "setup_followthrough_memory": {
+            "followthrough_status": "required",
+            "followthrough_recommended": True,
+            "followthrough_required": True,
+            "setup_execution_remaining_ready_total": 2,
+            "provider_blocked_total": 1,
+            "setup_followup_total": 3,
+            "reason_codes": ["recent_setup_followthrough_required", "recent_provider_blocked_pressure"],
+        },
     }
     plan = manager.build_vm_control_plan(
         inventory=inventory,
@@ -116,6 +125,11 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
     assert plan["items"][0]["provider_model_readiness"]["ai_route_status"] == "fallback"
     assert plan["items"][0]["provider_model_readiness"]["selected_ai_runtime_band"] == "accessibility"
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_followthrough_status"] == "required"
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_followthrough_required"] is True
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_remaining_ready_count"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_provider_blocked_count"] == 1
+    assert "recent_setup_followthrough_required" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["memory_guided_route"] is False
     assert plan["items"][0]["provider_model_readiness"]["memory_assisted_route"] is True
     assert plan["items"][0]["provider_model_readiness"]["memory_route_alignment_status"] == "assisted"

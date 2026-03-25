@@ -14914,6 +14914,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         allow_risky_probes: false,
         revalidate_known_controls: true,
         prefer_failure_memory: true,
+        auto_execute_setup_followthrough: true,
+        max_setup_followthrough_waves: 3,
         source: 'operator_panel',
       });
       setDesktopMachinePrepareState(payload);
@@ -14993,6 +14995,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
         model_limit: 48,
         refresh_apps: false,
         ensure_provider_launch: true,
+        auto_execute_setup_followthrough: true,
+        max_setup_followthrough_waves: 3,
         source: 'operator_panel',
       });
       setDesktopMachineVmPrepareState(payload);

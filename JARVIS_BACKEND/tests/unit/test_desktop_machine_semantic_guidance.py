@@ -175,6 +175,337 @@ def test_desktop_machine_prepare_app_control_uses_semantic_memory_guidance() -> 
     assert "focus_search_box" in list(captured_survey.get("preferred_wave_actions", []))
 
 
+def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    profile_calls = []
+
+    class _StubOnboardingManager:
+        def history(self, **_kwargs):
+            return {
+                "status": "success",
+                "count": 1,
+                "latest_run": {
+                    "summary": {
+                        "setup_action_top_codes": {"configure_huggingface_token": 1},
+                        "ai_runtime_setup_top_codes": {"warm_local_reasoning_runtime": 1},
+                    },
+                    "next_actions": [{"kind": "continue_setup_followthrough", "target": "setup"}],
+                },
+                "summary": {
+                    "setup_action_total": 2,
+                    "setup_action_auto_runnable_total": 1,
+                    "setup_action_manual_total": 0,
+                    "setup_action_blocked_total": 0,
+                    "ai_runtime_setup_action_total": 1,
+                    "ai_runtime_setup_auto_runnable_total": 1,
+                    "ai_runtime_setup_error_total": 0,
+                    "multimodal_setup_action_total": 1,
+                    "multimodal_setup_auto_runnable_total": 1,
+                    "setup_execution_remaining_ready_total": 2,
+                    "setup_execution_resume_ready_total": 0,
+                    "route_remediation_provider_blocked_total": 1,
+                    "route_remediation_persistent_provider_blocked_total": 0,
+                    "continuation_provider_blocked_total": 0,
+                    "app_learning_remediation_provider_blocked_total": 0,
+                    "prepared_remediation_provider_blocked_total": 0,
+                    "route_remediation_setup_followup_total": 1,
+                    "continuation_setup_followup_total": 0,
+                    "app_learning_remediation_setup_followup_total": 0,
+                    "prepared_remediation_setup_followup_total": 0,
+                    "vm_setup_followup_guest_total": 0,
+                    "execution_memory_followthrough_total": 1,
+                    "app_learning_memory_followthrough_total": 1,
+                    "prepared_memory_followthrough_total": 1,
+                    "vm_memory_followthrough_total": 0,
+                    "continuation_manual_total": 0,
+                    "route_remediation_blocked_total": 0,
+                    "continuation_retry_total": 0,
+                },
+            }
+
+    service.desktop_onboarding_manager = _StubOnboardingManager()
+
+    def _profile(**_kwargs):
+        profile_calls.append(dict(_kwargs))
+        if len(profile_calls) == 1:
+            return {
+                "status": "success",
+                "profile_marker": "initial",
+                "ai_runtime_profile": {},
+                "multimodal_memory": {},
+                "setup_followthrough_memory": {
+                    "followthrough_status": "required",
+                    "followthrough_recommended": True,
+                    "followthrough_required": True,
+                    "suggested_followthrough_waves": 3,
+                    "setup_execution_remaining_ready_total": 2,
+                    "provider_blocked_total": 1,
+                    "setup_followup_total": 1,
+                    "memory_followthrough_total": 3,
+                },
+            }
+        return {"status": "error", "message": "refresh failed"}
+
+    service.desktop_machine_profile = _profile
+    service.desktop_machine_app_learning_plan = lambda **_kwargs: {
+        "status": "success",
+        "plan": {"targets": [{"app_name": "Notepad"}], "campaign_defaults": {}},
+    }
+    service.desktop_app_launcher_resolve = lambda **_kwargs: {
+        "status": "success",
+        "requested_app": "notepad",
+        "display_name": "Notepad",
+        "path": r"C:\Windows\notepad.exe",
+        "profile": {},
+    }
+    service._desktop_machine_prepare_target_context = lambda **_kwargs: {
+        "plan_payload": {"status": "success", "plan": {"targets": [{"app_name": "Notepad"}], "campaign_defaults": {}}},
+        "plan": {"targets": [{"app_name": "Notepad"}], "campaign_defaults": {}},
+        "campaign_defaults": {},
+        "provider_actions": {"items": [{"provider": "huggingface", "state": "ready"}]},
+        "model_selection": {"selected_item_keys": ["reasoning-llama"]},
+        "selected_target": {
+            "app_name": "Notepad",
+            "execution_mode": "degraded",
+            "readiness_status": "degraded",
+            "required_tasks": ["reasoning", "vision"],
+            "related_setup_action_codes": ["configure_huggingface_token"],
+            "ai_runtime_setup_action_codes": ["warm_local_reasoning_runtime"],
+            "target_container_roles": ["menu"],
+            "preferred_wave_actions": ["focus_toolbar"],
+            "preferred_traversal_paths": ["menu"],
+            "recommended_queries": ["settings"],
+            "effective_per_app_limit": 12,
+            "effective_max_probe_controls": 3,
+            "effective_max_surface_waves": 3,
+            "adaptive_runtime_strategy": {
+                "strategy_profile": "hybrid_guided_explore",
+                "runtime_band_preference": "hybrid",
+            },
+            "expected_route_profile": "hybrid_verify",
+            "expected_model_preference": "hybrid_runtime",
+            "expected_provider_source": "local_runtime_plus_ocr",
+        },
+        "adaptive_runtime_strategy": {
+            "strategy_profile": "hybrid_guided_explore",
+            "runtime_band_preference": "hybrid",
+        },
+    }
+    service._desktop_machine_execute_target_setup_followthrough = lambda **_kwargs: {
+        "status": "success",
+        "executed_count": 4,
+        "provider_followthrough": {"verified_count": 1, "recovery_continued_count": 1},
+        "selected_model_action_count": 2,
+        "selected_ai_runtime_action_count": 1,
+        "selected_multimodal_action_count": 1,
+        "next_actions": [{"kind": "continue_setup"}],
+    }
+    service.desktop_app_launcher_launch = lambda **_kwargs: {
+        "status": "skipped",
+        "requested_app": "Notepad",
+        "launch_method": "launch_memory",
+        "attach_only": True,
+    }
+    service._desktop_machine_semantic_memory_guidance = lambda **_kwargs: {
+        "status": "success",
+        "guidance_status": "cold",
+        "count": 0,
+        "top_match_labels": [],
+        "top_hotkeys": [],
+        "recommended_container_roles": [],
+        "recommended_wave_actions": [],
+        "recommended_traversal_paths": [],
+    }
+    service.survey_desktop_app_memory = lambda **kwargs: {
+        "status": "success",
+        "query": kwargs.get("query", ""),
+        "targeting": {
+            "target_container_roles": list(kwargs.get("target_container_roles", []) or []),
+            "preferred_wave_actions": list(kwargs.get("preferred_wave_actions", []) or []),
+        },
+        "adaptive_learning_runtime": {
+            "route_profile": "hybrid_verify",
+            "model_preference": "hybrid_runtime",
+            "runtime_provider_source": "local_runtime_plus_ocr",
+            "route_resolution_status": "matched",
+        },
+        "memory_entry": {
+            "discovered_control_count": 2,
+            "known_surface_count": 1,
+            "metrics": {"wave_attempt_count": 1, "known_surface_count": 1},
+        },
+        "probe_report": {"attempted_count": 1, "successful_count": 1},
+    }
+    service.desktop_app_memory_status = lambda **_kwargs: {"status": "success", "count": 1, "items": [{"app_name": "Notepad"}]}
+    service.desktop_app_launcher_memory = lambda **_kwargs: {"status": "success", "count": 1, "items": [{"requested_app": "notepad"}]}
+
+    payload = service.desktop_machine_prepare_app_control(
+        task="reasoning",
+        app_name="notepad",
+        query="settings",
+        ensure_app_launch=False,
+        auto_execute_setup_followthrough=True,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["profile"]["profile_marker"] == "initial"
+    assert payload["setup_followthrough"]["executed_count"] == 4
+    assert payload["summary"]["setup_followthrough_status"] == "success"
+    assert payload["summary"]["setup_followthrough_executed_count"] == 4
+    assert payload["summary"]["setup_followthrough_provider_verified_count"] == 1
+    assert payload["summary"]["setup_followthrough_model_action_count"] == 2
+    assert payload["summary"]["recent_setup_followthrough_status"] == "required"
+    assert payload["summary"]["recent_setup_followthrough_required"] is True
+    assert payload["summary"]["recent_setup_remaining_ready_count"] == 2
+    assert payload["summary"]["recent_setup_provider_blocked_count"] == 1
+    assert payload["summary"]["recent_setup_followup_count"] == 1
+    assert len(profile_calls) == 2
+
+
+def test_desktop_machine_prepare_vm_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    profile_calls = []
+
+    class _StubOnboardingManager:
+        def history(self, **_kwargs):
+            return {
+                "status": "success",
+                "count": 1,
+                "latest_run": {
+                    "summary": {
+                        "setup_action_top_codes": {"configure_huggingface_token": 1},
+                    },
+                    "next_actions": [{"kind": "continue_vm_setup", "target": "vm"}],
+                },
+                "summary": {
+                    "setup_action_total": 1,
+                    "setup_action_auto_runnable_total": 1,
+                    "setup_action_manual_total": 0,
+                    "setup_action_blocked_total": 0,
+                    "ai_runtime_setup_action_total": 1,
+                    "ai_runtime_setup_auto_runnable_total": 1,
+                    "ai_runtime_setup_error_total": 0,
+                    "multimodal_setup_action_total": 0,
+                    "multimodal_setup_auto_runnable_total": 0,
+                    "setup_execution_remaining_ready_total": 1,
+                    "setup_execution_resume_ready_total": 0,
+                    "route_remediation_provider_blocked_total": 0,
+                    "route_remediation_persistent_provider_blocked_total": 0,
+                    "continuation_provider_blocked_total": 0,
+                    "app_learning_remediation_provider_blocked_total": 0,
+                    "prepared_remediation_provider_blocked_total": 0,
+                    "route_remediation_setup_followup_total": 0,
+                    "continuation_setup_followup_total": 0,
+                    "app_learning_remediation_setup_followup_total": 0,
+                    "prepared_remediation_setup_followup_total": 0,
+                    "vm_setup_followup_guest_total": 1,
+                    "execution_memory_followthrough_total": 0,
+                    "app_learning_memory_followthrough_total": 0,
+                    "prepared_memory_followthrough_total": 0,
+                    "vm_memory_followthrough_total": 1,
+                    "continuation_manual_total": 0,
+                    "route_remediation_blocked_total": 0,
+                    "continuation_retry_total": 0,
+                },
+            }
+
+    service.desktop_onboarding_manager = _StubOnboardingManager()
+
+    def _profile(**_kwargs):
+        profile_calls.append(dict(_kwargs))
+        if len(profile_calls) == 1:
+            return {
+                "status": "success",
+                "profile_marker": "initial_vm",
+                "virtual_machines": {
+                    "status": "success",
+                    "items": [{"guest_name": "Ubuntu Dev VM", "guest_id": "vm-1"}],
+                },
+                "setup_followthrough_memory": {
+                    "followthrough_status": "required",
+                    "followthrough_recommended": True,
+                    "followthrough_required": True,
+                    "suggested_followthrough_waves": 3,
+                    "setup_execution_remaining_ready_total": 1,
+                    "provider_blocked_total": 0,
+                    "setup_followup_total": 1,
+                    "memory_followthrough_total": 1,
+                },
+            }
+        return {"status": "error", "message": "refresh failed"}
+
+    class _StubVmManager:
+        def build_vm_control_plan(self, **_kwargs):
+            return {
+                "status": "success",
+                "items": [
+                    {
+                        "guest_name": "Ubuntu Dev VM",
+                        "guest_id": "vm-1",
+                        "provider": "virtualbox",
+                        "route_resolution_status": "setup_constrained",
+                        "memory_followthrough_recommended": True,
+                        "provider_model_readiness": {
+                            "required_tasks": ["control", "vision", "reasoning"],
+                            "setup_followup_codes": ["warm_local_reasoning_runtime"],
+                            "ai_runtime_action_required_task_count": 1,
+                        },
+                    }
+                ],
+                "summary": {},
+            }
+
+        def prepare_guest_control(self, **kwargs):
+            machine_profile = kwargs.get("machine_profile", {})
+            return {
+                "status": "success",
+                "summary": {
+                    "guest_name": "Ubuntu Dev VM",
+                    "provider": "virtualbox",
+                    "provider_model_readiness": {},
+                    "profile_marker": machine_profile.get("profile_marker", ""),
+                },
+            }
+
+    service.desktop_machine_profile = _profile
+    service.desktop_vm_inventory = lambda **_kwargs: {
+        "status": "success",
+        "items": [{"guest_name": "Ubuntu Dev VM", "guest_id": "vm-1"}],
+    }
+    service.desktop_vm_manager = _StubVmManager()
+    service.app_launcher = object()
+    service._desktop_machine_execute_target_setup_followthrough = lambda **_kwargs: {
+        "status": "success",
+        "executed_count": 3,
+        "provider_followthrough": {"verified_count": 1, "recovery_continued_count": 1},
+        "selected_model_action_count": 1,
+        "selected_ai_runtime_action_count": 1,
+        "selected_multimodal_action_count": 1,
+        "next_actions": [{"kind": "continue_vm_setup"}],
+    }
+
+    payload = service.desktop_machine_prepare_vm_control(
+        task="linux",
+        guest_name="Ubuntu Dev VM",
+        query="settings",
+        auto_execute_setup_followthrough=True,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["profile"]["profile_marker"] == "initial_vm"
+    assert payload["setup_followthrough"]["executed_count"] == 3
+    assert payload["summary"]["setup_followthrough_status"] == "success"
+    assert payload["summary"]["setup_followthrough_executed_count"] == 3
+    assert payload["summary"]["setup_followthrough_provider_verified_count"] == 1
+    assert payload["summary"]["setup_followthrough_model_action_count"] == 1
+    assert payload["summary"]["recent_setup_followthrough_status"] == "required"
+    assert payload["summary"]["recent_setup_followthrough_recommended"] is True
+    assert payload["summary"]["recent_setup_remaining_ready_count"] == 1
+    assert payload["summary"]["recent_setup_followup_count"] == 1
+    assert payload["summary"]["profile_marker"] == "initial_vm"
+    assert len(profile_calls) == 2
+
+
 def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
 
