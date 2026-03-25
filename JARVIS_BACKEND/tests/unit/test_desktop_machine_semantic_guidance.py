@@ -343,6 +343,53 @@ def test_desktop_machine_prepare_readiness_annotation_uses_recent_setup_memory_h
     assert "warm_local_vision_runtime" in payload["related_setup_action_codes"]
 
 
+def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_queries_and_paths() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    payload = service._desktop_machine_apply_recent_setup_followthrough_memory(
+        target_row={
+            "app_name": "Notepad",
+            "required_tasks": ["control", "vision"],
+            "recommended_queries": ["help"],
+            "preferred_wave_actions": ["focus_form_surface"],
+            "target_container_roles": ["dialog"],
+            "preferred_traversal_paths": ["dialog"],
+            "readiness_status": "ready",
+            "effective_max_surface_waves": 3,
+            "effective_max_probe_controls": 2,
+        },
+        setup_memory={
+            "followthrough_status": "required",
+            "followthrough_recommended": True,
+            "followthrough_required": True,
+            "suggested_followthrough_waves": 3,
+            "top_verified_provider_names": ["huggingface"],
+            "top_selected_model_item_keys": ["reasoning-llama", "vision-ocr"],
+            "top_ai_runtime_setup_action_codes": ["warm_local_reasoning_runtime"],
+            "top_multimodal_setup_action_codes": ["warm_local_vision_runtime"],
+            "setup_guidance_status": "strong",
+            "setup_guidance_reason_codes": ["recent_provider_verified"],
+        },
+    )
+
+    assert payload["setup_followthrough_recommended"] is True
+    assert payload["setup_execution_policy"] == "auto_followthrough_required"
+    assert "settings" in payload["recent_setup_guided_queries"]
+    assert "preferences" in payload["recent_setup_guided_queries"]
+    assert "focus_toolbar" in payload["recent_setup_guided_wave_actions"]
+    assert "focus_navigation_tree" in payload["recent_setup_guided_wave_actions"]
+    assert "menu" in payload["recent_setup_guided_container_roles"]
+    assert "tree" in payload["recent_setup_guided_container_roles"]
+    assert "toolbar" in payload["recent_setup_guided_traversal_paths"]
+    assert "sidebar" in payload["recent_setup_guided_traversal_paths"]
+    assert "settings" in payload["recommended_queries"]
+    assert "focus_search_box" in payload["preferred_wave_actions"]
+    assert "menu" in payload["target_container_roles"]
+    assert "tree" in payload["preferred_traversal_paths"]
+    assert int(payload["effective_max_surface_waves"] or 0) >= 4
+    assert int(payload["effective_max_probe_controls"] or 0) >= 4
+
+
 def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     profile_calls = []

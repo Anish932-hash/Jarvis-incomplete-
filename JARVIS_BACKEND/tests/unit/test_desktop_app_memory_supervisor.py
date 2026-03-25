@@ -464,6 +464,96 @@ def test_desktop_app_memory_supervisor_campaign_reseeds_stale_targets(tmp_path: 
         supervisor.stop()
 
 
+def test_desktop_app_memory_supervisor_campaign_uses_setup_and_continuation_guidance(tmp_path: Path) -> None:
+    supervisor = DesktopAppMemorySupervisor(
+        state_path=str(Path(tmp_path) / "desktop_app_memory_supervisor_guided.json"),
+        enabled=False,
+        max_apps=1,
+        per_app_limit=24,
+    )
+    captured: list[dict[str, object]] = []
+
+    def _execute(**kwargs: object) -> dict[str, object]:
+        captured.append(dict(kwargs))
+        names = [str(item) for item in kwargs.get("app_names", [])] if isinstance(kwargs.get("app_names", []), list) else []
+        return {
+            "status": "success",
+            "message": "guided campaign executed",
+            "surveyed_app_count": len(names),
+            "success_count": len(names),
+            "partial_count": 0,
+            "error_count": 0,
+            "skipped_app_count": 0,
+            "items": [{"app_name": name, "status": "success", "message": "ok"} for name in names],
+            "failed_apps": [],
+            "wave_summary": {
+                "wave_attempt_total": 3,
+                "learned_surface_total": 2,
+                "known_surface_total": 1,
+            },
+        }
+
+    supervisor.start(_execute)
+    try:
+        created = supervisor.create_campaign(
+            app_names=["notepad"],
+            label="Guided learner",
+            adaptive_app_profiles=[
+                {
+                    "app_name": "notepad",
+                    "memory_mission": {
+                        "status": "partial",
+                        "seed_query": "settings",
+                        "query_hints": ["settings"],
+                        "hotkey_hints": ["Alt+F"],
+                        "followthrough_recommended": True,
+                    },
+                    "recent_setup_followthrough_recommended": True,
+                    "recent_setup_followthrough_required": True,
+                    "recent_setup_guided_queries": ["advanced", "display"],
+                    "recent_continuation_recommended": True,
+                    "recent_continuation_top_memory_mission_queries": ["preferences"],
+                    "recent_continuation_top_memory_mission_hotkeys": ["Ctrl+Shift+P"],
+                    "provider_model_readiness": {
+                        "memory_guidance_status": "partial",
+                        "memory_route_alignment_status": "underused",
+                    },
+                }
+            ],
+            follow_surface_waves=True,
+            max_surface_waves=2,
+            max_probe_controls=3,
+        )
+
+        assert created["status"] == "success"
+        assert created["campaign"]["setup_guided_target_count"] == 1
+        assert created["campaign"]["continuation_guided_target_count"] == 1
+        assert int(created["campaign"]["effective_max_surface_waves"] or 0) >= 5
+        assert int(created["campaign"]["effective_max_probe_controls"] or 0) >= 6
+        assert "focus_toolbar" in created["campaign"]["preferred_wave_actions"]
+        assert "focus_navigation_tree" in created["campaign"]["preferred_wave_actions"]
+        assert "menu" in created["campaign"]["target_container_roles"]
+        assert "tree" in created["campaign"]["target_container_roles"]
+        assert "advanced" in created["campaign"]["query_hints_by_app"]["notepad"]
+        assert "preferences" in created["campaign"]["query_hints_by_app"]["notepad"]
+        assert "Ctrl+Shift+P" in created["campaign"]["semantic_hotkeys_by_app"]["notepad"]
+
+        campaign_id = str(created["campaign"]["campaign_id"])
+        executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
+
+        assert executed["status"] == "success"
+        assert int(captured[-1]["max_surface_waves"] or 0) >= 5
+        assert int(captured[-1]["max_probe_controls"] or 0) >= 6
+        assert "focus_toolbar" in captured[-1]["preferred_wave_actions"]
+        assert "focus_navigation_tree" in captured[-1]["preferred_wave_actions"]
+        assert "menu" in captured[-1]["target_container_roles"]
+        assert "tree" in captured[-1]["target_container_roles"]
+        assert executed["campaign"]["setup_guided_target_count"] == 1
+        assert executed["campaign"]["continuation_guided_target_count"] == 1
+    finally:
+        supervisor.stop()
+
+
 def test_desktop_app_memory_supervisor_campaign_tracks_memory_guided_routes(tmp_path: Path) -> None:
     supervisor = DesktopAppMemorySupervisor(
         state_path=str(Path(tmp_path) / "desktop_app_memory_supervisor.json"),

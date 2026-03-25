@@ -889,6 +889,68 @@ class DesktopAppMemorySupervisor:
             memory_followthrough_enabled = bool(
                 memory_underused_count > 0 or memory_assisted_route_count > 0
             )
+            setup_guided_target_count = 0
+            continuation_guided_target_count = 0
+            setup_guided_app_names: List[str] = []
+            continuation_guided_app_names: List[str] = []
+            for item in clean_adaptive_profiles:
+                app_key = str(
+                    item.get("app_name", "")
+                    or item.get("profile_name", "")
+                    or item.get("profile_id", "")
+                    or ""
+                ).strip()
+                setup_guided = bool(
+                    item.get("recent_setup_followthrough_recommended", False)
+                    or item.get("recent_setup_followthrough_required", False)
+                    or item.get("setup_followthrough_recommended", False)
+                )
+                continuation_guided = bool(
+                    item.get("recent_continuation_recommended", False)
+                    or item.get("recent_continuation_required", False)
+                )
+                if setup_guided:
+                    setup_guided_target_count += 1
+                    if app_key:
+                        setup_guided_app_names.append(app_key)
+                if continuation_guided:
+                    continuation_guided_target_count += 1
+                    if app_key:
+                        continuation_guided_app_names.append(app_key)
+                if not app_key:
+                    continue
+                merged_query_hints = self._dedupe_strings(
+                    [
+                        *clean_query_hints_by_app.get(app_key, []),
+                        *[
+                            str(query_hint).strip()
+                            for query_hint in item.get("recent_setup_guided_queries", [])
+                            if isinstance(item.get("recent_setup_guided_queries", []), list)
+                            and str(query_hint).strip()
+                        ],
+                        *[
+                            str(query_hint).strip()
+                            for query_hint in item.get("recent_continuation_top_memory_mission_queries", [])
+                            if isinstance(item.get("recent_continuation_top_memory_mission_queries", []), list)
+                            and str(query_hint).strip()
+                        ],
+                    ]
+                )[:8]
+                if merged_query_hints:
+                    clean_query_hints_by_app[app_key] = merged_query_hints
+                merged_hotkeys = self._dedupe_strings(
+                    [
+                        *clean_semantic_hotkeys_by_app.get(app_key, []),
+                        *[
+                            str(hotkey_hint).strip()
+                            for hotkey_hint in item.get("recent_continuation_top_memory_mission_hotkeys", [])
+                            if isinstance(item.get("recent_continuation_top_memory_mission_hotkeys", []), list)
+                            and str(hotkey_hint).strip()
+                        ],
+                    ]
+                )[:8]
+                if merged_hotkeys:
+                    clean_semantic_hotkeys_by_app[app_key] = merged_hotkeys
             memory_guided_app_names = self._dedupe_strings(
                 [
                     str(item.get("app_name", "") or item.get("profile_name", "") or item.get("profile_id", "")).strip()
@@ -934,6 +996,28 @@ class DesktopAppMemorySupervisor:
             if memory_followthrough_enabled and not requested_preferred_wave_actions:
                 preferred_wave_actions = memory_followthrough_preferred_wave_actions[:]
                 adaptive_preferred_wave_actions = bool(preferred_wave_actions)
+            if setup_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "dialog", "menu"]
+                )[:8]
+                preferred_wave_actions = self._dedupe_strings(
+                    [*preferred_wave_actions, "focus_toolbar", "focus_search_box", "command"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "dialog", "menu"]
+                )[:8]
+                effective_max_surface_waves = max(effective_max_surface_waves, 4)
+            if continuation_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "tree", "sidebar"]
+                )[:8]
+                preferred_wave_actions = self._dedupe_strings(
+                    [*preferred_wave_actions, "focus_navigation_tree", "focus_list_surface", "focus_sidebar"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "tree", "sidebar"]
+                )[:8]
+                effective_max_surface_waves = max(effective_max_surface_waves, 5)
             effective_max_probe_controls = self._coerce_int(
                 max_probe_controls,
                 minimum=1,
@@ -946,6 +1030,10 @@ class DesktopAppMemorySupervisor:
                     effective_max_probe_controls,
                     min(12, effective_max_probe_controls + probe_bonus),
                 )
+            if setup_guided_target_count > 0:
+                effective_max_probe_controls = max(effective_max_probe_controls, 5)
+            if continuation_guided_target_count > 0:
+                effective_max_probe_controls = max(effective_max_probe_controls, 6)
             effective_query = str(query or "").strip()
             if not effective_query:
                 effective_query = (
@@ -1082,6 +1170,10 @@ class DesktopAppMemorySupervisor:
                 "memory_guided_app_names": memory_guided_app_names[:8],
                 "memory_underused_app_names": memory_underused_app_names[:8],
                 "memory_followthrough_preferred_wave_actions": memory_followthrough_preferred_wave_actions[:8],
+                "setup_guided_target_count": int(setup_guided_target_count),
+                "setup_guided_app_names": self._dedupe_strings(setup_guided_app_names)[:8],
+                "continuation_guided_target_count": int(continuation_guided_target_count),
+                "continuation_guided_app_names": self._dedupe_strings(continuation_guided_app_names)[:8],
                 "query_hints_by_app": {
                     str(key): list(value)
                     for key, value in clean_query_hints_by_app.items()
@@ -1279,12 +1371,58 @@ class DesktopAppMemorySupervisor:
                     or not explicit_preferred_traversal_paths
                 )
             )
+            setup_guided_target_count = self._coerce_int(
+                campaign.get("setup_guided_target_count", 0),
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            continuation_guided_target_count = self._coerce_int(
+                campaign.get("continuation_guided_target_count", 0),
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            if setup_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "dialog", "menu"]
+                )[:8]
+                effective_preferred_wave_actions = self._dedupe_strings(
+                    [*effective_preferred_wave_actions, "focus_toolbar", "focus_search_box", "command"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "dialog", "menu"]
+                )[:8]
+            if continuation_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "tree", "sidebar"]
+                )[:8]
+                effective_preferred_wave_actions = self._dedupe_strings(
+                    [*effective_preferred_wave_actions, "focus_navigation_tree", "focus_list_surface", "focus_sidebar"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "tree", "sidebar"]
+                )[:8]
             effective_max_surface_waves, adaptive_surface_wave_depth = self._adaptive_campaign_wave_depth(
                 self._coerce_int(campaign.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
                 target_container_roles=effective_target_container_roles,
                 summary=dict(cycle_target_summary.get("summary", {})) if isinstance(cycle_target_summary, dict) else {},
                 explicit_roles=not bool(campaign.get("adaptive_target_container_roles", False)),
             )
+            if setup_guided_target_count > 0:
+                effective_max_surface_waves = max(effective_max_surface_waves, 4)
+            if continuation_guided_target_count > 0:
+                effective_max_surface_waves = max(effective_max_surface_waves, 5)
+            callback_max_probe_controls = self._coerce_int(
+                campaign.get("effective_max_probe_controls", campaign.get("max_probe_controls", 4)),
+                minimum=1,
+                maximum=12,
+                default=4,
+            )
+            if setup_guided_target_count > 0:
+                callback_max_probe_controls = max(callback_max_probe_controls, 5)
+            if continuation_guided_target_count > 0:
+                callback_max_probe_controls = max(callback_max_probe_controls, 6)
             campaign_adaptive_profiles = [
                 dict(item)
                 for item in campaign.get("adaptive_app_profiles", [])
@@ -1340,12 +1478,7 @@ class DesktopAppMemorySupervisor:
                 category=str(campaign.get("category", "") or "").strip(),
                 ensure_app_launch=bool(campaign.get("ensure_app_launch", True)),
                 probe_controls=bool(campaign.get("probe_controls", True)),
-                max_probe_controls=self._coerce_int(
-                    campaign.get("effective_max_probe_controls", campaign.get("max_probe_controls", 4)),
-                    minimum=1,
-                    maximum=12,
-                    default=4,
-                ),
+                max_probe_controls=callback_max_probe_controls,
                 follow_surface_waves=bool(campaign.get("follow_surface_waves", True)),
                 max_surface_waves=effective_max_surface_waves,
                 allow_risky_probes=bool(campaign.get("allow_risky_probes", False)),
@@ -1756,13 +1889,20 @@ class DesktopAppMemorySupervisor:
             if memory_followthrough_enabled and bool(campaign.get("adaptive_preferred_wave_actions", False)):
                 effective_preferred_wave_actions = memory_followthrough_preferred_wave_actions[:]
                 adaptive_preferred_wave_actions = True
-            effective_max_probe_controls = self._coerce_int(
+            campaign_probe_base = self._coerce_int(
+                campaign.get("effective_max_probe_controls", campaign.get("max_probe_controls", 4)),
+                minimum=1,
+                maximum=12,
+                default=4,
+            )
+            explicit_campaign_probe_limit = self._coerce_int(
                 campaign.get("max_probe_controls", 4),
                 minimum=1,
                 maximum=12,
                 default=4,
             )
-            if memory_followthrough_enabled:
+            effective_max_probe_controls = max(campaign_probe_base, callback_max_probe_controls)
+            if memory_followthrough_enabled and effective_max_probe_controls <= explicit_campaign_probe_limit:
                 probe_bonus = 2 if memory_underused_count > 0 else 1
                 effective_max_probe_controls = max(
                     effective_max_probe_controls,
@@ -1938,6 +2078,8 @@ class DesktopAppMemorySupervisor:
                 "memory_guided_app_names": memory_guided_app_names[:8],
                 "memory_underused_app_names": memory_underused_app_names[:8],
                 "memory_followthrough_preferred_wave_actions": memory_followthrough_preferred_wave_actions[:8],
+                "setup_guided_target_count": setup_guided_target_count,
+                "continuation_guided_target_count": continuation_guided_target_count,
                 "query_hint_app_count": self._coerce_int(
                     dict(result.get("targeting", {})).get("query_hint_app_count", len(dict(campaign.get("query_hints_by_app", {}))))
                     if isinstance(result.get("targeting", {}), dict)

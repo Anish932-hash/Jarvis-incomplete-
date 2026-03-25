@@ -17923,6 +17923,8 @@ class DesktopBackendService:
                 ],
                 limit=8,
             )
+        guided_task_names = {str(task_name).strip().lower() for task_name in inferred_model_tasks if str(task_name).strip()}
+        guided_task_names.update(required_tasks)
         relevant_ai_codes: List[str] = []
         if {"reasoning", "intent", "control"}.intersection(required_tasks):
             relevant_ai_codes.extend(
@@ -17963,6 +17965,78 @@ class DesktopBackendService:
         item_payload["ai_runtime_setup_action_count"] = len(item_payload["ai_runtime_setup_action_codes"])
         if followthrough_recommended:
             item_payload["setup_followthrough_recommended"] = True
+            guided_queries: List[str] = []
+            guided_wave_actions: List[str] = []
+            guided_container_roles: List[str] = []
+            guided_traversal_paths: List[str] = []
+            if {"reasoning", "intent", "control"}.intersection(guided_task_names):
+                guided_queries.extend(["settings", "preferences", "advanced"])
+                guided_wave_actions.extend(
+                    ["focus_toolbar", "focus_search_box", "focus_navigation_tree", "focus_form_surface"]
+                )
+                guided_container_roles.extend(["toolbar", "dialog", "tree", "menu"])
+                guided_traversal_paths.extend(["toolbar", "dialog", "tree", "menu"])
+            if {"vision", "ocr"}.intersection(guided_task_names):
+                guided_queries.extend(["settings", "display", "accessibility"])
+                guided_wave_actions.extend(["focus_toolbar", "focus_search_box", "focus_sidebar", "focus_list_surface"])
+                guided_container_roles.extend(["toolbar", "sidebar", "dialog", "tab"])
+                guided_traversal_paths.extend(["toolbar", "sidebar", "dialog", "tab"])
+            if setup_guidance_status == "strong":
+                guided_queries.extend(["settings", "preferences"])
+                guided_wave_actions.extend(["command"])
+                guided_container_roles.extend(["menu"])
+                guided_traversal_paths.extend(["menu"])
+            if followthrough_required:
+                guided_wave_actions.extend(["focus_navigation_tree", "focus_list_surface"])
+                guided_container_roles.extend(["tree", "sidebar"])
+                guided_traversal_paths.extend(["tree", "sidebar"])
+            item_payload["recent_setup_guided_queries"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip()
+                        for item in item_payload.get("recent_setup_guided_queries", [])
+                        if isinstance(item_payload.get("recent_setup_guided_queries", []), list) and str(item).strip()
+                    ],
+                    *guided_queries,
+                ],
+                limit=8,
+            )
+            item_payload["recent_setup_guided_wave_actions"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in item_payload.get("recent_setup_guided_wave_actions", [])
+                        if isinstance(item_payload.get("recent_setup_guided_wave_actions", []), list)
+                        and str(item).strip()
+                    ],
+                    *guided_wave_actions,
+                ],
+                limit=8,
+            )
+            item_payload["recent_setup_guided_container_roles"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in item_payload.get("recent_setup_guided_container_roles", [])
+                        if isinstance(item_payload.get("recent_setup_guided_container_roles", []), list)
+                        and str(item).strip()
+                    ],
+                    *guided_container_roles,
+                ],
+                limit=8,
+            )
+            item_payload["recent_setup_guided_traversal_paths"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in item_payload.get("recent_setup_guided_traversal_paths", [])
+                        if isinstance(item_payload.get("recent_setup_guided_traversal_paths", []), list)
+                        and str(item).strip()
+                    ],
+                    *guided_traversal_paths,
+                ],
+                limit=8,
+            )
             current_policy = str(item_payload.get("setup_execution_policy", "") or "").strip().lower()
             preferred_policy = (
                 "auto_followthrough_required" if followthrough_required else "auto_followthrough_preferred"
@@ -17977,6 +18051,42 @@ class DesktopBackendService:
             item_payload["reason_codes"] = self._machine_dedupe(
                 [*existing_reason_codes, *reason_codes, *setup_guidance_reason_codes],
                 limit=16,
+            )
+            existing_queries = (
+                list(item_payload.get("recommended_queries", []))
+                if isinstance(item_payload.get("recommended_queries", []), list)
+                else []
+            )
+            item_payload["recommended_queries"] = self._machine_dedupe(
+                [*existing_queries, *item_payload.get("recent_setup_guided_queries", [])],
+                limit=8,
+            )
+            existing_wave_actions = (
+                list(item_payload.get("preferred_wave_actions", []))
+                if isinstance(item_payload.get("preferred_wave_actions", []), list)
+                else []
+            )
+            item_payload["preferred_wave_actions"] = self._machine_dedupe(
+                [*existing_wave_actions, *item_payload.get("recent_setup_guided_wave_actions", [])],
+                limit=8,
+            )
+            existing_target_container_roles = (
+                list(item_payload.get("target_container_roles", []))
+                if isinstance(item_payload.get("target_container_roles", []), list)
+                else []
+            )
+            item_payload["target_container_roles"] = self._machine_dedupe(
+                [*existing_target_container_roles, *item_payload.get("recent_setup_guided_container_roles", [])],
+                limit=8,
+            )
+            existing_traversal_paths = (
+                list(item_payload.get("preferred_traversal_paths", []))
+                if isinstance(item_payload.get("preferred_traversal_paths", []), list)
+                else []
+            )
+            item_payload["preferred_traversal_paths"] = self._machine_dedupe(
+                [*existing_traversal_paths, *item_payload.get("recent_setup_guided_traversal_paths", [])],
+                limit=8,
             )
             if str(item_payload.get("readiness_status", "") or "").strip().lower() not in {"blocked"}:
                 current_surface_waves = max(
@@ -20676,6 +20786,93 @@ class DesktopBackendService:
             strategy_notes.append("recent continuation pressure is pushing another deeper learning pass before memory goes stale")
         elif recent_continuation_recommended_count > 0:
             strategy_notes.append("recent continuation memory is being reused to resume unfinished app-learning missions")
+        setup_guided_target_count = 0
+        continuation_focus_target_count = 0
+        setup_guided_app_names: List[str] = []
+        continuation_focus_app_names: List[str] = []
+        guided_query_hints_by_app: Dict[str, List[str]] = {}
+        guided_hotkeys_by_app: Dict[str, List[str]] = {}
+        for row in campaign_targets:
+            app_name = str(row.get("app_name", "") or "").strip()
+            if not app_name:
+                continue
+            memory_mission_payload = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
+            setup_guided = bool(
+                row.get("recent_setup_followthrough_recommended", False)
+                or row.get("recent_setup_followthrough_required", False)
+                or row.get("setup_followthrough_recommended", False)
+            )
+            continuation_guided = bool(
+                row.get("recent_continuation_recommended", False)
+                or row.get("recent_continuation_required", False)
+            )
+            if setup_guided:
+                setup_guided_target_count += 1
+                setup_guided_app_names.append(app_name)
+            if continuation_guided:
+                continuation_focus_target_count += 1
+                continuation_focus_app_names.append(app_name)
+            query_hints = self._machine_dedupe(
+                [
+                    *[
+                        str(query_hint).strip()
+                        for query_hint in row.get("recent_setup_guided_queries", [])
+                        if isinstance(row.get("recent_setup_guided_queries", []), list)
+                        and str(query_hint).strip()
+                    ],
+                    *[
+                        str(query_hint).strip()
+                        for query_hint in row.get("recommended_queries", [])
+                        if isinstance(row.get("recommended_queries", []), list)
+                        and str(query_hint).strip()
+                    ],
+                    *[
+                        str(query_hint).strip()
+                        for query_hint in row.get("recent_continuation_top_memory_mission_queries", [])
+                        if isinstance(row.get("recent_continuation_top_memory_mission_queries", []), list)
+                        and str(query_hint).strip()
+                    ],
+                    *[
+                        str(query_hint).strip()
+                        for query_hint in memory_mission_payload.get("query_hints", [])
+                        if isinstance(memory_mission_payload.get("query_hints", []), list)
+                        and str(query_hint).strip()
+                    ],
+                    str(memory_mission_payload.get("seed_query", "") or "").strip(),
+                ],
+                limit=8,
+            )
+            hotkey_hints = self._machine_dedupe(
+                [
+                    *[
+                        str(hotkey_hint).strip()
+                        for hotkey_hint in row.get("recent_continuation_top_memory_mission_hotkeys", [])
+                        if isinstance(row.get("recent_continuation_top_memory_mission_hotkeys", []), list)
+                        and str(hotkey_hint).strip()
+                    ],
+                    *[
+                        str(hotkey_hint).strip()
+                        for hotkey_hint in row.get("semantic_guidance_top_hotkeys", [])
+                        if isinstance(row.get("semantic_guidance_top_hotkeys", []), list)
+                        and str(hotkey_hint).strip()
+                    ],
+                    *[
+                        str(hotkey_hint).strip()
+                        for hotkey_hint in memory_mission_payload.get("hotkey_hints", [])
+                        if isinstance(memory_mission_payload.get("hotkey_hints", []), list)
+                        and str(hotkey_hint).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            if query_hints and (setup_guided or continuation_guided or bool(memory_mission_payload.get("followthrough_recommended", False))):
+                guided_query_hints_by_app[app_name] = query_hints
+            if hotkey_hints and (setup_guided or continuation_guided or bool(memory_mission_payload.get("followthrough_recommended", False))):
+                guided_hotkeys_by_app[app_name] = hotkey_hints
         combined_roles: List[str] = []
         combined_actions: List[str] = []
         combined_paths: List[str] = []
@@ -20743,6 +20940,41 @@ class DesktopBackendService:
                     int(recent_continuation_memory.get("suggested_learning_followthrough_waves", 2) or 2),
                 ),
             )
+        if setup_guided_target_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(
+                    max_surface_waves_value,
+                    int(recent_setup_followthrough_memory.get("suggested_followthrough_waves", 2) or 2)
+                    + (1 if recent_setup_followthrough_required_count > 0 else 0),
+                ),
+            )
+            max_probe_controls_value = min(
+                8,
+                max(max_probe_controls_value, 5 if recent_setup_followthrough_required_count > 0 else 4),
+            )
+            per_app_limit = min(56, max(per_app_limit, 30 if recent_setup_followthrough_required_count > 0 else 26))
+            combined_roles.extend(["toolbar", "dialog", "menu"])
+            combined_actions.extend(["focus_toolbar", "focus_search_box"])
+            combined_paths.extend(["toolbar", "dialog", "menu"])
+        if continuation_focus_target_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(
+                    max_surface_waves_value,
+                    int(recent_continuation_memory.get("suggested_learning_followthrough_waves", 2) or 2)
+                    + (1 if recent_continuation_required_count > 0 else 0),
+                ),
+            )
+            max_probe_controls_value = min(
+                8,
+                max(max_probe_controls_value, 5 if recent_continuation_required_count > 0 else 4),
+            )
+            combined_roles.extend(["tree", "sidebar"])
+            combined_actions.extend(["focus_navigation_tree", "focus_list_surface", "focus_sidebar"])
+            combined_paths.extend(["tree", "sidebar"])
+        for query_rows in guided_query_hints_by_app.values():
+            combined_queries.extend([str(query_hint).strip() for query_hint in query_rows if str(query_hint).strip()])
         blocked_app_names = [
             str(item.get("app_name", "") or "").strip()
             for item in selected_targets
@@ -20819,6 +21051,8 @@ class DesktopBackendService:
                 ),
                 "recent_setup_followthrough_recommended_count": recent_setup_followthrough_recommended_count,
                 "recent_setup_followthrough_required_count": recent_setup_followthrough_required_count,
+                "setup_guided_target_count": setup_guided_target_count,
+                "setup_guided_app_names": self._machine_dedupe(setup_guided_app_names, limit=8),
                 "recent_setup_suggested_followthrough_waves": int(
                     recent_setup_followthrough_memory.get("suggested_followthrough_waves", 0) or 0
                 ),
@@ -20848,6 +21082,8 @@ class DesktopBackendService:
                 ),
                 "recent_continuation_recommended_count": recent_continuation_recommended_count,
                 "recent_continuation_required_count": recent_continuation_required_count,
+                "continuation_focus_target_count": continuation_focus_target_count,
+                "continuation_focus_app_names": self._machine_dedupe(continuation_focus_app_names, limit=8),
                 "recent_continuation_learning_wave_total": int(
                     recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
                 ),
@@ -20900,6 +21136,8 @@ class DesktopBackendService:
                 "memory_mission_followthrough_count": int(memory_mission_followthrough_count),
                 "memory_guided_app_names": memory_guided_app_names[:6],
                 "memory_underused_app_names": memory_underused_app_names[:6],
+                "guided_query_hint_app_count": len(guided_query_hints_by_app),
+                "guided_hotkey_hint_app_count": len(guided_hotkeys_by_app),
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -21139,6 +21377,8 @@ class DesktopBackendService:
                 ),
                 "recent_setup_followthrough_recommended_count": recent_setup_followthrough_recommended_count,
                 "recent_setup_followthrough_required_count": recent_setup_followthrough_required_count,
+                "setup_guided_target_count": setup_guided_target_count,
+                "setup_guided_app_names": self._machine_dedupe(setup_guided_app_names, limit=8),
                 "recent_setup_suggested_followthrough_waves": int(
                     recent_setup_followthrough_memory.get("suggested_followthrough_waves", 0) or 0
                 ),
@@ -21168,6 +21408,8 @@ class DesktopBackendService:
                 ),
                 "recent_continuation_recommended_count": recent_continuation_recommended_count,
                 "recent_continuation_required_count": recent_continuation_required_count,
+                "continuation_focus_target_count": continuation_focus_target_count,
+                "continuation_focus_app_names": self._machine_dedupe(continuation_focus_app_names, limit=8),
                 "recent_continuation_learning_wave_total": int(
                     recent_continuation_memory.get("app_learning_continuation_wave_total", 0) or 0
                 ),
@@ -21202,6 +21444,8 @@ class DesktopBackendService:
                 "memory_mission_followthrough_count": int(memory_mission_followthrough_count),
                 "memory_guided_app_names": memory_guided_app_names[:6],
                 "memory_underused_app_names": memory_underused_app_names[:6],
+                "guided_query_hint_app_count": len(guided_query_hints_by_app),
+                "guided_hotkey_hint_app_count": len(guided_hotkeys_by_app),
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -21231,38 +21475,14 @@ class DesktopBackendService:
                     )[:8]
                 },
                 "query_hints_by_app": {
-                    str(item.get("app_name", "") or "").strip(): [
-                        str(query_hint).strip()
-                        for query_hint in dict(item.get("memory_mission", {})).get("query_hints", [])
-                        if isinstance(dict(item.get("memory_mission", {})).get("query_hints", []), list)
-                        and str(query_hint).strip()
-                    ][:8]
-                    for item in campaign_targets
-                    if isinstance(item, dict)
-                    and str(item.get("app_name", "") or "").strip()
-                    and isinstance(item.get("memory_mission", {}), dict)
-                    and any(
-                        str(query_hint).strip()
-                        for query_hint in dict(item.get("memory_mission", {})).get("query_hints", [])
-                        if isinstance(dict(item.get("memory_mission", {})).get("query_hints", []), list)
-                    )
+                    str(key): list(value)
+                    for key, value in guided_query_hints_by_app.items()
+                    if str(key).strip() and isinstance(value, list) and value
                 },
                 "semantic_hotkeys_by_app": {
-                    str(item.get("app_name", "") or "").strip(): [
-                        str(hotkey_hint).strip()
-                        for hotkey_hint in dict(item.get("memory_mission", {})).get("hotkey_hints", [])
-                        if isinstance(dict(item.get("memory_mission", {})).get("hotkey_hints", []), list)
-                        and str(hotkey_hint).strip()
-                    ][:8]
-                    for item in campaign_targets
-                    if isinstance(item, dict)
-                    and str(item.get("app_name", "") or "").strip()
-                    and isinstance(item.get("memory_mission", {}), dict)
-                    and any(
-                        str(hotkey_hint).strip()
-                        for hotkey_hint in dict(item.get("memory_mission", {})).get("hotkey_hints", [])
-                        if isinstance(dict(item.get("memory_mission", {})).get("hotkey_hints", []), list)
-                    )
+                    str(key): list(value)
+                    for key, value in guided_hotkeys_by_app.items()
+                    if str(key).strip() and isinstance(value, list) and value
                 },
                 "adaptive_app_profiles": [
                     {

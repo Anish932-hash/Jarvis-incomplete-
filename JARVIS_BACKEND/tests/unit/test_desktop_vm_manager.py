@@ -165,11 +165,19 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["summary"]["memory_mission_status_counts"]["partial"] == 1
     assert plan["summary"]["top_memory_mission_queries"]["settings"] >= 1
     assert plan["summary"]["top_memory_mission_hotkeys"]["Alt+F"] >= 1
+    assert plan["summary"]["setup_guided_guest_count"] == 1
+    assert plan["summary"]["continuation_guided_guest_count"] == 1
     assert plan["defaults"]["memory_followthrough_enabled"] is True
-    assert plan["defaults"]["max_surface_waves"] == 5
-    assert plan["defaults"]["max_probe_controls"] == 4
+    assert plan["defaults"]["max_surface_waves"] == 6
+    assert plan["defaults"]["max_probe_controls"] == 5
+    assert plan["defaults"]["setup_guided_guest_count"] == 1
+    assert plan["defaults"]["continuation_guided_guest_count"] == 1
+    assert "focus_toolbar" in plan["defaults"]["preferred_wave_actions"]
+    assert "focus_navigation_tree" in plan["defaults"]["preferred_wave_actions"]
     assert plan["defaults"]["memory_mission_status_counts"]["partial"] == 1
     assert plan["next_actions"][0]["kind"] == "deepen_vm_control_learning"
+    assert "settings" in plan["next_actions"][0]["query_hints"]
+    assert "Alt+F" in plan["next_actions"][0]["hotkey_hints"]
 
     prepared = manager.prepare_guest_control(
         inventory=inventory,
@@ -199,6 +207,10 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["memory_assisted_route"] is True
     assert prepared["summary"]["memory_mission"]["status"] == "partial"
     assert prepared["summary"]["memory_mission"]["seed_query"] == "desktop settings"
+    assert "settings" in prepared["summary"]["memory_mission"]["query_hints"]
+    assert "Alt+F" in prepared["summary"]["memory_mission"]["hotkey_hints"]
+    assert "recent_setup_followthrough_required" in prepared["summary"]["memory_mission"]["reason_codes"]
+    assert "recent_continuation_recommended" in prepared["summary"]["memory_mission"]["reason_codes"]
     assert prepared["summary"]["memory_route_alignment_status"] == "assisted"
     assert prepared["summary"]["memory_assisted_route_count"] == 1
     assert prepared["summary"]["memory_followthrough_recommended"] is True

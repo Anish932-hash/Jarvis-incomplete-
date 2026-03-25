@@ -254,12 +254,59 @@ class DesktopVMManager:
         memory_followthrough_guest_count = len(
             [row for row in selected if bool(row.get("memory_followthrough_recommended", False))]
         )
+        setup_guided_guest_count = len(
+            [
+                row
+                for row in selected
+                if bool(row.get("recent_setup_followthrough_recommended", False))
+                or bool(row.get("recent_setup_followthrough_required", False))
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and (
+                        bool(row.get("provider_model_readiness", {}).get("recent_setup_followthrough_recommended", False))
+                        or bool(row.get("provider_model_readiness", {}).get("recent_setup_followthrough_required", False))
+                    )
+                )
+            ]
+        )
+        continuation_guided_guest_count = len(
+            [
+                row
+                for row in selected
+                if bool(row.get("recent_continuation_recommended", False))
+                or bool(row.get("recent_continuation_required", False))
+                or int(row.get("recent_continuation_memory_followthrough_count", 0) or 0) > 0
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and (
+                        bool(row.get("provider_model_readiness", {}).get("recent_continuation_recommended", False))
+                        or bool(row.get("provider_model_readiness", {}).get("recent_continuation_required", False))
+                        or int(
+                            row.get("provider_model_readiness", {}).get(
+                                "recent_continuation_memory_followthrough_count",
+                                0,
+                            )
+                            or 0
+                        )
+                        > 0
+                    )
+                )
+            ]
+        )
         default_max_surface_waves = (
             6 if memory_underused_guest_count > 0 else 5 if memory_followthrough_guest_count > 0 else 4
         )
+        if setup_guided_guest_count > 0:
+            default_max_surface_waves = max(default_max_surface_waves, 5)
+        if continuation_guided_guest_count > 0:
+            default_max_surface_waves = max(default_max_surface_waves, 6)
         default_max_probe_controls = (
             5 if memory_underused_guest_count > 0 else 4 if memory_followthrough_guest_count > 0 else 3
         )
+        if setup_guided_guest_count > 0:
+            default_max_probe_controls = max(default_max_probe_controls, 4)
+        if continuation_guided_guest_count > 0:
+            default_max_probe_controls = max(default_max_probe_controls, 5)
         preferred_wave_actions = _dedupe_strings(
             [
                 str(action_name).strip().lower()
@@ -278,6 +325,16 @@ class DesktopVMManager:
                     for action_name in row.get("preferred_wave_actions", [])
                     if isinstance(row.get("preferred_wave_actions", []), list) and str(action_name).strip()
                 ],
+                limit=8,
+            )
+        if setup_guided_guest_count > 0:
+            preferred_wave_actions = _dedupe_strings(
+                [*preferred_wave_actions, "focus_toolbar", "focus_search_box", "command"],
+                limit=8,
+            )
+        if continuation_guided_guest_count > 0:
+            preferred_wave_actions = _dedupe_strings(
+                [*preferred_wave_actions, "focus_navigation_tree", "focus_list_surface", "focus_sidebar"],
                 limit=8,
             )
         memory_mission_status_counts: Dict[str, int] = {}
@@ -358,6 +415,8 @@ class DesktopVMManager:
                 },
                 "memory_underused_guest_count": memory_underused_guest_count,
                 "memory_followthrough_guest_count": memory_followthrough_guest_count,
+                "setup_guided_guest_count": setup_guided_guest_count,
+                "continuation_guided_guest_count": continuation_guided_guest_count,
                 "top_memory_mission_queries": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -391,6 +450,8 @@ class DesktopVMManager:
                 "probe_controls": True,
                 "max_probe_controls": default_max_probe_controls,
                 "memory_followthrough_enabled": bool(memory_followthrough_guest_count > 0),
+                "setup_guided_guest_count": setup_guided_guest_count,
+                "continuation_guided_guest_count": continuation_guided_guest_count,
                 "memory_mission_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
@@ -410,6 +471,18 @@ class DesktopVMManager:
                     "status": "ready" if bool(row.get("auto_prepare_allowed", False)) else "attention",
                     "recommended_action_code": _clean_text(row.get("remediation_action_code", "")),
                     "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
+                    "query_hints": list(
+                        dict(row.get("memory_mission", {})).get("query_hints", [])
+                        if isinstance(row.get("memory_mission", {}), dict)
+                        and isinstance(dict(row.get("memory_mission", {})).get("query_hints", []), list)
+                        else []
+                    )[:8],
+                    "hotkey_hints": list(
+                        dict(row.get("memory_mission", {})).get("hotkey_hints", [])
+                        if isinstance(row.get("memory_mission", {}), dict)
+                        and isinstance(dict(row.get("memory_mission", {})).get("hotkey_hints", []), list)
+                        else []
+                    )[:8],
                 }
                 for row in selected[:4]
             ],
@@ -1664,6 +1737,12 @@ class DesktopVMManager:
                 learning_query,
                 *[
                     str(item).strip()
+                    for item in readiness.get("recent_continuation_top_memory_mission_queries", [])
+                    if isinstance(readiness.get("recent_continuation_top_memory_mission_queries", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
                     for item in readiness.get("app_learning_top_memory_mission_queries", [])
                     if isinstance(readiness.get("app_learning_top_memory_mission_queries", []), list)
                     and str(item).strip()
@@ -1675,14 +1754,29 @@ class DesktopVMManager:
         )
         hotkey_hints = _dedupe_strings(
             [
-                str(item).strip()
-                for item in readiness.get("app_learning_top_memory_mission_hotkeys", [])
-                if isinstance(readiness.get("app_learning_top_memory_mission_hotkeys", []), list)
-                and str(item).strip()
+                *[
+                    str(item).strip()
+                    for item in readiness.get("recent_continuation_top_memory_mission_hotkeys", [])
+                    if isinstance(readiness.get("recent_continuation_top_memory_mission_hotkeys", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in readiness.get("app_learning_top_memory_mission_hotkeys", [])
+                    if isinstance(readiness.get("app_learning_top_memory_mission_hotkeys", []), list)
+                    and str(item).strip()
+                ],
             ],
             limit=8,
         )
-        followthrough_recommended = alignment_status in {"underused", "assisted"} or mission_status == "cold"
+        followthrough_recommended = (
+            alignment_status in {"underused", "assisted"}
+            or mission_status == "cold"
+            or bool(readiness.get("recent_setup_followthrough_recommended", False))
+            or bool(readiness.get("recent_setup_followthrough_required", False))
+            or bool(readiness.get("recent_continuation_recommended", False))
+            or bool(readiness.get("recent_continuation_required", False))
+        )
         return {
             "guest_name": guest_name,
             "status": mission_status,
@@ -1698,9 +1792,29 @@ class DesktopVMManager:
                 [
                     *[
                         str(item).strip()
-                        for item in readiness.get("memory_route_reason_codes", [])
-                        if isinstance(readiness.get("memory_route_reason_codes", []), list) and str(item).strip()
+                    for item in readiness.get("memory_route_reason_codes", [])
+                    if isinstance(readiness.get("memory_route_reason_codes", []), list) and str(item).strip()
                     ],
+                    *(
+                        ["recent_setup_followthrough_required"]
+                        if bool(readiness.get("recent_setup_followthrough_required", False))
+                        else []
+                    ),
+                    *(
+                        ["recent_setup_followthrough_recommended"]
+                        if bool(readiness.get("recent_setup_followthrough_recommended", False))
+                        else []
+                    ),
+                    *(
+                        ["recent_continuation_required"]
+                        if bool(readiness.get("recent_continuation_required", False))
+                        else []
+                    ),
+                    *(
+                        ["recent_continuation_recommended"]
+                        if bool(readiness.get("recent_continuation_recommended", False))
+                        else []
+                    ),
                     *(["guest_memory_followthrough_recommended"] if followthrough_recommended else []),
                 ],
                 limit=12,
