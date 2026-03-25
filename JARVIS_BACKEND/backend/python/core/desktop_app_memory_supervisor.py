@@ -305,11 +305,15 @@ class DesktopAppMemorySupervisor:
             adaptive_wave_depth_total = 0
             preferred_path_hit_total = 0
             traversal_path_execution_total = 0
+            memory_guided_route_total = 0
+            memory_assisted_route_total = 0
             target_container_role_counts: Dict[str, int] = {}
             traversed_container_role_counts: Dict[str, int] = {}
             preferred_wave_action_counts: Dict[str, int] = {}
             preferred_traversal_path_counts: Dict[str, int] = {}
             recommended_traversal_path_counts: Dict[str, int] = {}
+            memory_guidance_status_counts: Dict[str, int] = {}
+            memory_route_alignment_counts: Dict[str, int] = {}
             for item in rows:
                 self._increment_count(status_counts, str(item.get("status", "") or "unknown"))
                 pending_total += self._coerce_int(item.get("pending_app_count", 0), minimum=0, maximum=1_000_000, default=0)
@@ -329,10 +333,28 @@ class DesktopAppMemorySupervisor:
                 revisit_app_total += self._coerce_int(item.get("revisit_app_count", 0), minimum=0, maximum=1_000_000, default=0)
                 preferred_path_hit_total += self._coerce_int(item.get("preferred_path_hits", 0), minimum=0, maximum=1_000_000, default=0)
                 traversal_path_execution_total += self._coerce_int(item.get("traversal_path_execution_count", 0), minimum=0, maximum=1_000_000, default=0)
+                memory_guided_route_total += self._coerce_int(item.get("memory_guided_route_count", 0), minimum=0, maximum=1_000_000, default=0)
+                memory_assisted_route_total += self._coerce_int(item.get("memory_assisted_route_count", 0), minimum=0, maximum=1_000_000, default=0)
                 if bool(item.get("adaptive_target_container_roles", False)):
                     adaptive_target_role_total += 1
                 if bool(item.get("adaptive_surface_wave_depth", False)):
                     adaptive_wave_depth_total += 1
+                for key, value in (
+                    dict(item.get("memory_guidance_status_counts", {})).items()
+                    if isinstance(item.get("memory_guidance_status_counts", {}), dict)
+                    else []
+                ):
+                    clean_key = str(key).strip().lower()
+                    if clean_key:
+                        memory_guidance_status_counts[clean_key] = int(memory_guidance_status_counts.get(clean_key, 0) or 0) + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in (
+                    dict(item.get("memory_route_alignment_counts", {})).items()
+                    if isinstance(item.get("memory_route_alignment_counts", {}), dict)
+                    else []
+                ):
+                    clean_key = str(key).strip().lower()
+                    if clean_key:
+                        memory_route_alignment_counts[clean_key] = int(memory_route_alignment_counts.get(clean_key, 0) or 0) + self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
                 for role in item.get("target_container_roles", []) if isinstance(item.get("target_container_roles", []), list) else []:
                     clean_role = self._normalize_name(role)
                     if clean_role:
@@ -389,6 +411,10 @@ class DesktopAppMemorySupervisor:
                     "adaptive_wave_depth_total": adaptive_wave_depth_total,
                     "preferred_path_hit_total": preferred_path_hit_total,
                     "traversal_path_execution_total": traversal_path_execution_total,
+                    "memory_guided_route_total": memory_guided_route_total,
+                    "memory_assisted_route_total": memory_assisted_route_total,
+                    "memory_guidance_status_counts": self._sorted_count_map(memory_guidance_status_counts),
+                    "memory_route_alignment_counts": self._sorted_count_map(memory_route_alignment_counts),
                     "top_target_container_roles": [
                         {"value": str(key), "count": int(value)}
                         for key, value in sorted(
@@ -542,6 +568,11 @@ class DesktopAppMemorySupervisor:
             ai_route_stack_name_counts: Dict[str, int] = {}
             ai_route_confident_count = 0
             ai_route_fallback_count = 0
+            memory_guidance_status_counts: Dict[str, int] = {}
+            memory_route_alignment_counts: Dict[str, int] = {}
+            memory_guidance_reason_counts: Dict[str, int] = {}
+            memory_guided_route_count = 0
+            memory_assisted_route_count = 0
             for item in clean_adaptive_profiles:
                 runtime_strategy_payload = (
                     dict(item.get("runtime_strategy", {}))
@@ -676,6 +707,31 @@ class DesktopAppMemorySupervisor:
                     )
                 ):
                     ai_route_fallback_count += 1
+                memory_guidance = self._memory_route_guidance_summary(
+                    payload=item,
+                    readiness_payload=readiness_payload,
+                )
+                guidance_status = str(memory_guidance.get("guidance_status", "") or "").strip().lower()
+                if guidance_status:
+                    memory_guidance_status_counts[guidance_status] = int(
+                        memory_guidance_status_counts.get(guidance_status, 0) or 0
+                    ) + 1
+                alignment_status = str(memory_guidance.get("alignment_status", "") or "").strip().lower()
+                if alignment_status:
+                    memory_route_alignment_counts[alignment_status] = int(
+                        memory_route_alignment_counts.get(alignment_status, 0) or 0
+                    ) + 1
+                if bool(memory_guidance.get("memory_guided_route", False)):
+                    memory_guided_route_count += 1
+                elif bool(memory_guidance.get("memory_assisted_route", False)):
+                    memory_assisted_route_count += 1
+                for reason in memory_guidance.get("reason_codes", []):
+                    clean_reason = str(reason).strip().lower()
+                    if not clean_reason:
+                        continue
+                    memory_guidance_reason_counts[clean_reason] = int(
+                        memory_guidance_reason_counts.get(clean_reason, 0) or 0
+                    ) + 1
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -760,6 +816,23 @@ class DesktopAppMemorySupervisor:
                 },
                 "ai_route_confident_count": int(ai_route_confident_count),
                 "ai_route_fallback_count": int(ai_route_fallback_count),
+                "memory_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_guidance_reason_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_guidance_reason_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0])),
+                    )[:12]
+                },
+                "memory_guided_route_count": int(memory_guided_route_count),
+                "memory_assisted_route_count": int(memory_assisted_route_count),
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
                     "top_container_roles": [
@@ -1103,6 +1176,40 @@ class DesktopAppMemorySupervisor:
                 maximum=1_000_000,
                 default=0,
             )
+            actual_memory_guidance_status_counts = (
+                dict(dict(result.get("targeting", {})).get("memory_guidance_status_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("memory_guidance_status_counts", {}), dict)
+                else {}
+            )
+            actual_memory_route_alignment_counts = (
+                dict(dict(result.get("targeting", {})).get("memory_route_alignment_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("memory_route_alignment_counts", {}), dict)
+                else {}
+            )
+            actual_memory_guidance_reason_counts = (
+                dict(dict(result.get("targeting", {})).get("memory_guidance_reason_counts", {}))
+                if isinstance(result.get("targeting", {}), dict)
+                and isinstance(dict(result.get("targeting", {})).get("memory_guidance_reason_counts", {}), dict)
+                else {}
+            )
+            memory_guided_route_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("memory_guided_route_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            memory_assisted_route_count = self._coerce_int(
+                dict(result.get("targeting", {})).get("memory_assisted_route_app_count", 0)
+                if isinstance(result.get("targeting", {}), dict)
+                else 0,
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
             need_route_profile_counts = not actual_route_profile_counts
             need_model_preference_counts = not actual_model_preference_counts
             need_provider_source_counts = not actual_provider_source_counts
@@ -1113,6 +1220,11 @@ class DesktopAppMemorySupervisor:
             need_ai_route_stack_name_counts = not actual_ai_route_stack_name_counts
             need_ai_route_confident_count = ai_route_confident_count == 0
             need_ai_route_fallback_count = ai_route_fallback_count == 0
+            need_memory_guidance_status_counts = not actual_memory_guidance_status_counts
+            need_memory_route_alignment_counts = not actual_memory_route_alignment_counts
+            need_memory_guidance_reason_counts = not actual_memory_guidance_reason_counts
+            need_memory_guided_route_count = memory_guided_route_count == 0
+            need_memory_assisted_route_count = memory_assisted_route_count == 0
             if any(
                 [
                     need_route_profile_counts,
@@ -1125,6 +1237,11 @@ class DesktopAppMemorySupervisor:
                     need_ai_route_stack_name_counts,
                     need_ai_route_confident_count,
                     need_ai_route_fallback_count,
+                    need_memory_guidance_status_counts,
+                    need_memory_route_alignment_counts,
+                    need_memory_guidance_reason_counts,
+                    need_memory_guided_route_count,
+                    need_memory_assisted_route_count,
                 ]
             ):
                 for item in effective_adaptive_profiles:
@@ -1256,6 +1373,41 @@ class DesktopAppMemorySupervisor:
                         )
                     ):
                         ai_route_fallback_count += 1
+                    if any(
+                        [
+                            need_memory_guidance_status_counts,
+                            need_memory_route_alignment_counts,
+                            need_memory_guidance_reason_counts,
+                            need_memory_guided_route_count,
+                            need_memory_assisted_route_count,
+                        ]
+                    ):
+                        memory_guidance = self._memory_route_guidance_summary(
+                            payload=item,
+                            readiness_payload=readiness_payload,
+                        )
+                        guidance_status = str(memory_guidance.get("guidance_status", "") or "").strip().lower()
+                        if need_memory_guidance_status_counts and guidance_status:
+                            actual_memory_guidance_status_counts[guidance_status] = int(
+                                actual_memory_guidance_status_counts.get(guidance_status, 0) or 0
+                            ) + 1
+                        alignment_status = str(memory_guidance.get("alignment_status", "") or "").strip().lower()
+                        if need_memory_route_alignment_counts and alignment_status:
+                            actual_memory_route_alignment_counts[alignment_status] = int(
+                                actual_memory_route_alignment_counts.get(alignment_status, 0) or 0
+                            ) + 1
+                        if need_memory_guided_route_count and bool(memory_guidance.get("memory_guided_route", False)):
+                            memory_guided_route_count += 1
+                        elif need_memory_assisted_route_count and bool(memory_guidance.get("memory_assisted_route", False)):
+                            memory_assisted_route_count += 1
+                        if need_memory_guidance_reason_counts:
+                            for reason in memory_guidance.get("reason_codes", []):
+                                clean_reason = str(reason).strip().lower()
+                                if not clean_reason:
+                                    continue
+                                actual_memory_guidance_reason_counts[clean_reason] = int(
+                                    actual_memory_guidance_reason_counts.get(clean_reason, 0) or 0
+                                ) + 1
             result_items = {
                 str(item.get("app_name", "") or "").strip().lower(): dict(item)
                 for item in result.get("items", [])
@@ -1391,6 +1543,23 @@ class DesktopAppMemorySupervisor:
                 },
                 "ai_route_confident_count": ai_route_confident_count,
                 "ai_route_fallback_count": ai_route_fallback_count,
+                "memory_guidance_status_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_memory_guidance_status_counts.items()
+                    if str(key).strip()
+                },
+                "memory_route_alignment_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_memory_route_alignment_counts.items()
+                    if str(key).strip()
+                },
+                "memory_guidance_reason_counts": {
+                    str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                    for key, value in actual_memory_guidance_reason_counts.items()
+                    if str(key).strip()
+                },
+                "memory_guided_route_count": memory_guided_route_count,
+                "memory_assisted_route_count": memory_assisted_route_count,
                 "route_fallback_app_count": route_fallback_app_count,
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,
@@ -1588,6 +1757,23 @@ class DesktopAppMemorySupervisor:
             }
             campaign["ai_route_confident_count"] = ai_route_confident_count
             campaign["ai_route_fallback_count"] = ai_route_fallback_count
+            campaign["memory_guidance_status_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_memory_guidance_status_counts.items()
+                if str(key).strip()
+            }
+            campaign["memory_route_alignment_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_memory_route_alignment_counts.items()
+                if str(key).strip()
+            }
+            campaign["memory_guidance_reason_counts"] = {
+                str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
+                for key, value in actual_memory_guidance_reason_counts.items()
+                if str(key).strip()
+            }
+            campaign["memory_guided_route_count"] = memory_guided_route_count
+            campaign["memory_assisted_route_count"] = memory_assisted_route_count
             campaign["route_resolution_counts"] = {
                 str(key).strip().lower(): self._coerce_int(value, minimum=0, maximum=1_000_000, default=0)
                 for key, value in actual_route_resolution_counts.items()
@@ -2578,6 +2764,100 @@ class DesktopAppMemorySupervisor:
             seen.add(normalized)
             ordered.append(clean)
         return ordered
+
+    @classmethod
+    def _memory_route_guidance_summary(
+        cls,
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+        readiness_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        row = dict(payload) if isinstance(payload, dict) else {}
+        readiness = dict(readiness_payload) if isinstance(readiness_payload, dict) else {}
+        route_profile = str(
+            row.get("selected_ai_route_profile", "")
+            or row.get("route_profile", "")
+            or readiness.get("selected_ai_route_profile", "")
+            or ""
+        ).strip().lower()
+        guidance_status = str(
+            row.get("memory_guidance_status", "")
+            or row.get("semantic_guidance_status", "")
+            or ""
+        ).strip().lower()
+        reason_codes = cls._dedupe_strings(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in row.get("memory_guidance_reason_codes", [])
+                    if isinstance(row.get("memory_guidance_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in row.get("ai_route_reason_codes", [])
+                    if isinstance(row.get("ai_route_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in readiness.get("ai_route_reason_codes", [])
+                    if isinstance(readiness.get("ai_route_reason_codes", []), list) and str(item).strip()
+                ],
+            ]
+        )[:12]
+        memory_guided_route = bool(
+            row.get("memory_guided_route", False)
+            or route_profile.startswith("memory_guided_")
+            or route_profile == "accessibility_memory_first"
+        )
+        memory_assisted_route = bool(
+            row.get("memory_assisted_route", False)
+            or (
+                not memory_guided_route
+                and any(
+                    token in reason
+                    for reason in reason_codes
+                    for token in (
+                        "semantic_memory_route_assist",
+                        "semantic_memory_available",
+                        "semantic_memory_guided",
+                        "structured_memory_ready",
+                        "hotkey_memory_ready",
+                        "memory_assisted_vm_route",
+                    )
+                )
+            )
+        )
+        if guidance_status not in {"strong", "partial", "cold"}:
+            if memory_guided_route:
+                guidance_status = "strong"
+            elif memory_assisted_route:
+                guidance_status = "partial"
+            else:
+                guidance_status = "cold"
+        alignment_status = "cold"
+        if guidance_status in {"strong", "partial"} and memory_guided_route:
+            alignment_status = "aligned"
+        elif guidance_status in {"strong", "partial"} and memory_assisted_route:
+            alignment_status = "assisted"
+        elif guidance_status in {"strong", "partial"}:
+            alignment_status = "underused"
+        elif memory_guided_route or memory_assisted_route:
+            alignment_status = "speculative"
+        return {
+            "guidance_status": guidance_status,
+            "memory_guided_route": memory_guided_route,
+            "memory_assisted_route": memory_assisted_route,
+            "alignment_status": alignment_status,
+            "reason_codes": cls._dedupe_strings(
+                [
+                    *reason_codes,
+                    *(["memory_guided_route"] if memory_guided_route else []),
+                    *(["memory_assisted_route"] if memory_assisted_route else []),
+                    *(["memory_guidance_" + guidance_status] if guidance_status else []),
+                    *(["memory_alignment_" + alignment_status] if alignment_status else []),
+                ]
+            )[:12],
+        }
 
     @classmethod
     def _adaptive_target_container_roles_from_summary(

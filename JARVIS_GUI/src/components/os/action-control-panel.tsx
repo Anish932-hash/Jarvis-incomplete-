@@ -2445,6 +2445,20 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopLatestAppMemoryCampaign]
   );
+  const desktopLatestAppMemoryCampaignMemoryGuidanceStates = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopLatestAppMemoryCampaign.memory_guidance_status_counts)).sort(
+        ([left], [right]) => left.localeCompare(right)
+      ),
+    [desktopLatestAppMemoryCampaign]
+  );
+  const desktopLatestAppMemoryCampaignMemoryRouteAlignments = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopLatestAppMemoryCampaign.memory_route_alignment_counts)).sort(
+        ([left], [right]) => left.localeCompare(right)
+      ),
+    [desktopLatestAppMemoryCampaign]
+  );
   const desktopAppMemoryPreferredTraversalPaths = useMemo(() => {
     const batchTargeting = asObjectRecord(desktopAppMemoryBatchState?.targeting);
     const daemonLastSummary = asObjectRecord(desktopAppMemoryDaemon.last_summary);
@@ -23746,6 +23760,24 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               {' • '}confident:{Number(desktopLatestAppMemoryCampaign.ai_route_confident_count ?? 0)}
                                               {' • '}fallback:{Number(desktopLatestAppMemoryCampaign.ai_route_fallback_count ?? 0)}
                                             </p>
+                                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                              memory:
+                                              {desktopLatestAppMemoryCampaignMemoryGuidanceStates.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaignMemoryGuidanceStates
+                                                    .slice(0, 2)
+                                                    .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                              {' • '}alignment:
+                                              {desktopLatestAppMemoryCampaignMemoryRouteAlignments.length > 0
+                                                ? ` ${desktopLatestAppMemoryCampaignMemoryRouteAlignments
+                                                    .slice(0, 2)
+                                                    .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                    .join(' • ')}`
+                                                : ' n/a'}
+                                              {' • '}memory-first:{Number(desktopLatestAppMemoryCampaign.memory_guided_route_count ?? 0)}
+                                              {' • '}assisted:{Number(desktopLatestAppMemoryCampaign.memory_assisted_route_count ?? 0)}
+                                            </p>
                                             {desktopAppMemoryCampaignRows.length > 0 ? (
                                               <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
                                                 <p className="font-semibold uppercase tracking-wider text-primary/75">
@@ -23823,6 +23855,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                               .join(' • ')}`
                                                           : ' n/a'}
                                                         {' • '}fallback:{Number(campaign.ai_route_fallback_count ?? 0)}
+                                                      </p>
+                                                      <p className="mt-1 text-[10px] text-muted-foreground">
+                                                        memory:
+                                                        {Object.keys(asObjectRecord(campaign.memory_guidance_status_counts)).length > 0
+                                                          ? ` ${Object.entries(asObjectRecord(campaign.memory_guidance_status_counts))
+                                                              .slice(0, 2)
+                                                              .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                              .join(' • ')}`
+                                                          : ' n/a'}
+                                                        {' • '}alignment:
+                                                        {Object.keys(asObjectRecord(campaign.memory_route_alignment_counts)).length > 0
+                                                          ? ` ${Object.entries(asObjectRecord(campaign.memory_route_alignment_counts))
+                                                              .slice(0, 2)
+                                                              .map(([key, value]) => `${String(key)}:${Number(value)}`)
+                                                              .join(' • ')}`
+                                                          : ' n/a'}
+                                                        {' • '}memory-first:{Number(campaign.memory_guided_route_count ?? 0)}
                                                       </p>
                                                     </div>
                                                   ))}

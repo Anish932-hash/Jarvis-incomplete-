@@ -248,6 +248,38 @@ class DesktopVMManager:
             )
         targets.sort(key=lambda item: (-int(item.get("priority_score", 0) or 0), _norm_text(item.get("guest_name", ""))))
         selected = targets[: max(1, min(int(max_targets or 4), 16))]
+        memory_underused_guest_count = len(
+            [row for row in selected if _norm_text(row.get("memory_route_alignment_status", "")) == "underused"]
+        )
+        memory_followthrough_guest_count = len(
+            [row for row in selected if bool(row.get("memory_followthrough_recommended", False))]
+        )
+        default_max_surface_waves = (
+            6 if memory_underused_guest_count > 0 else 5 if memory_followthrough_guest_count > 0 else 4
+        )
+        default_max_probe_controls = (
+            5 if memory_underused_guest_count > 0 else 4 if memory_followthrough_guest_count > 0 else 3
+        )
+        preferred_wave_actions = _dedupe_strings(
+            [
+                str(action_name).strip().lower()
+                for row in selected
+                if bool(row.get("memory_followthrough_recommended", False))
+                for action_name in row.get("preferred_wave_actions", [])
+                if isinstance(row.get("preferred_wave_actions", []), list) and str(action_name).strip()
+            ],
+            limit=8,
+        )
+        if not preferred_wave_actions:
+            preferred_wave_actions = _dedupe_strings(
+                [
+                    str(action_name).strip().lower()
+                    for row in selected
+                    for action_name in row.get("preferred_wave_actions", [])
+                    if isinstance(row.get("preferred_wave_actions", []), list) and str(action_name).strip()
+                ],
+                limit=8,
+            )
         return {
             "status": "success",
             "count": len(selected),
@@ -294,6 +326,13 @@ class DesktopVMManager:
                     ]
                 ),
                 "memory_guidance_status_counts": self._count_values(selected, "memory_guidance_status"),
+                "memory_route_alignment_counts": self._count_values(selected, "memory_route_alignment_status"),
+                "memory_guided_route_count": len([row for row in selected if bool(row.get("memory_guided_route", False))]),
+                "memory_assisted_route_count": len(
+                    [row for row in selected if bool(row.get("memory_assisted_route", False))]
+                ),
+                "memory_underused_guest_count": memory_underused_guest_count,
+                "memory_followthrough_guest_count": memory_followthrough_guest_count,
                 "setup_followup_guest_count": len(
                     [
                         row
@@ -309,17 +348,25 @@ class DesktopVMManager:
                 "vm_prepare_limit": max(1, min(len(selected) or 1, 4)),
                 "enable_learning": True,
                 "follow_surface_waves": True,
-                "max_surface_waves": 4,
+                "max_surface_waves": default_max_surface_waves,
                 "probe_controls": True,
+                "max_probe_controls": default_max_probe_controls,
+                "memory_followthrough_enabled": bool(memory_followthrough_guest_count > 0),
+                "preferred_wave_actions": preferred_wave_actions[:8],
             },
             "next_actions": [
                 {
                     "id": f"vm_prepare:{row.get('guest_id', '')}",
-                    "kind": "prepare_vm_control",
-                    "title": f"Prepare VM control for {_clean_text(row.get('guest_name', 'guest'))}",
+                    "kind": "deepen_vm_control_learning" if bool(row.get("memory_followthrough_recommended", False)) else "prepare_vm_control",
+                    "title": (
+                        f"Deepen VM learning for {_clean_text(row.get('guest_name', 'guest'))}"
+                        if bool(row.get("memory_followthrough_recommended", False))
+                        else f"Prepare VM control for {_clean_text(row.get('guest_name', 'guest'))}"
+                    ),
                     "target": _clean_text(row.get("guest_name", "guest")),
                     "status": "ready" if bool(row.get("auto_prepare_allowed", False)) else "attention",
                     "recommended_action_code": _clean_text(row.get("remediation_action_code", "")),
+                    "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
                 }
                 for row in selected[:4]
             ],
@@ -414,6 +461,12 @@ class DesktopVMManager:
                 "memory_guidance_reason_codes": list(target.get("memory_guidance_reason_codes", []))
                 if isinstance(target.get("memory_guidance_reason_codes", []), list)
                 else [],
+                "memory_guided_route": bool(target.get("memory_guided_route", False)),
+                "memory_assisted_route": bool(target.get("memory_assisted_route", False)),
+                "memory_route_alignment_status": _norm_text(target.get("memory_route_alignment_status", "")),
+                "memory_route_reason_codes": list(target.get("memory_route_reason_codes", []))
+                if isinstance(target.get("memory_route_reason_codes", []), list)
+                else [],
                 "route_resolution_status": _norm_text(target.get("route_resolution_status", "")),
                 "remediation_kind": _norm_text(target.get("remediation_kind", "")),
                 "remediation_action_code": _clean_text(target.get("remediation_action_code", "")),
@@ -426,6 +479,9 @@ class DesktopVMManager:
                 "recommended_traversal_paths": list(target.get("recommended_traversal_paths", []))
                 if isinstance(target.get("recommended_traversal_paths", []), list)
                 else [],
+                "recommended_max_surface_waves": int(target.get("recommended_max_surface_waves", 4) or 4),
+                "recommended_max_probe_controls": int(target.get("recommended_max_probe_controls", 3) or 3),
+                "memory_followthrough_recommended": bool(target.get("memory_followthrough_recommended", False)),
                 "capability_tags": list(target.get("capability_tags", []))
                 if isinstance(target.get("capability_tags", []), list)
                 else [],
@@ -434,6 +490,11 @@ class DesktopVMManager:
                 else {},
                 "reason_codes": list(target.get("reason_codes", [])) if isinstance(target.get("reason_codes", []), list) else [],
                 "blocker_codes": list(target.get("blocker_codes", [])) if isinstance(target.get("blocker_codes", []), list) else [],
+                "memory_guided_route_count": 1 if bool(target.get("memory_guided_route", False)) else 0,
+                "memory_assisted_route_count": 1 if bool(target.get("memory_assisted_route", False)) else 0,
+                "memory_route_alignment_counts": {
+                    _norm_text(target.get("memory_route_alignment_status", "")) or "cold": 1
+                },
             },
             "message": "Prepared a host-side virtual machine control route."
             if status in {"success", "partial"}
@@ -665,6 +726,67 @@ class DesktopVMManager:
                 continue
             counts[clean] = int(counts.get(clean, 0) or 0) + 1
         return {str(name): int(value) for name, value in sorted(counts.items(), key=lambda item: item[0])}
+
+    @staticmethod
+    def _memory_route_guidance_summary(
+        *,
+        route_profile: str = "",
+        memory_guidance_status: str = "",
+        reason_codes: Optional[Iterable[Any]] = None,
+    ) -> Dict[str, Any]:
+        clean_route_profile = _norm_text(route_profile)
+        clean_guidance_status = _norm_text(memory_guidance_status)
+        clean_reason_codes = _dedupe_strings(
+            [str(item).strip().lower() for item in (reason_codes or []) if str(item).strip()],
+            limit=12,
+        )
+        memory_guided_route = bool(
+            clean_route_profile.startswith("memory_guided_") or clean_route_profile == "accessibility_memory_first"
+        )
+        memory_assisted_route = bool(
+            not memory_guided_route
+            and any(
+                token in reason
+                for reason in clean_reason_codes
+                for token in (
+                    "memory_assisted_vm_route",
+                    "semantic_memory_ready",
+                    "vector_memory_available",
+                    "learning_semantic_guidance_available",
+                )
+            )
+        )
+        if clean_guidance_status not in {"strong", "partial", "cold"}:
+            if memory_guided_route:
+                clean_guidance_status = "strong"
+            elif memory_assisted_route:
+                clean_guidance_status = "partial"
+            else:
+                clean_guidance_status = "cold"
+        alignment_status = "cold"
+        if clean_guidance_status in {"strong", "partial"} and memory_guided_route:
+            alignment_status = "aligned"
+        elif clean_guidance_status in {"strong", "partial"} and memory_assisted_route:
+            alignment_status = "assisted"
+        elif clean_guidance_status in {"strong", "partial"}:
+            alignment_status = "underused"
+        elif memory_guided_route or memory_assisted_route:
+            alignment_status = "speculative"
+        return {
+            "memory_guided_route": memory_guided_route,
+            "memory_assisted_route": memory_assisted_route,
+            "memory_route_alignment_status": alignment_status,
+            "memory_route_reason_codes": _dedupe_strings(
+                [
+                    *clean_reason_codes,
+                    *(["memory_guided_route"] if memory_guided_route else []),
+                    *(["memory_assisted_route"] if memory_assisted_route else []),
+                    *(["memory_guidance_" + clean_guidance_status] if clean_guidance_status else []),
+                    *(["memory_alignment_" + alignment_status] if alignment_status else []),
+                ],
+                limit=12,
+            ),
+        }
 
     @staticmethod
     def _select_guest(guests: List[Dict[str, Any]], *, guest_name: str, guest_id: str) -> Dict[str, Any]:
@@ -1049,6 +1171,11 @@ class DesktopVMManager:
         ai_route_confidence -= 0.04 if structured_memory_low_coverage_count > 0 and family != "terminal" else 0.0
         ai_route_confidence += 0.05 if memory_guidance_status == "strong" else 0.02 if memory_guidance_status == "partial" else 0.0
         ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
+        memory_route_guidance = cls._memory_route_guidance_summary(
+            route_profile=selected_ai_route_profile,
+            memory_guidance_status=memory_guidance_status,
+            reason_codes=ai_route_reason_codes + memory_guidance_reason_codes,
+        )
 
         if readiness_status == "blocked":
             execution_mode = "blocked"
@@ -1106,6 +1233,14 @@ class DesktopVMManager:
             "app_learning_semantic_followup_count": app_learning_semantic_followup_count,
             "memory_guidance_status": memory_guidance_status,
             "memory_guidance_reason_codes": memory_guidance_reason_codes,
+            "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+            "memory_route_alignment_status": str(
+                memory_route_guidance.get("memory_route_alignment_status", "") or ""
+            ).strip().lower(),
+            "memory_route_reason_codes": list(memory_route_guidance.get("memory_route_reason_codes", []))
+            if isinstance(memory_route_guidance.get("memory_route_reason_codes", []), list)
+            else [],
             "remote_endpoint_ready": remote_endpoint_ready,
             "execution_mode": execution_mode,
             "runtime_band_preference": runtime_band_preference,
@@ -1170,6 +1305,14 @@ class DesktopVMManager:
             priority_score += 8
         remediation_kind = _norm_text(provider_model_readiness.get("remediation_kind", "")) or "observe"
         remediation_action_code = str(remediation_kind or "").strip().replace(" ", "_")
+        memory_route_alignment_status = _norm_text(provider_model_readiness.get("memory_route_alignment_status", ""))
+        memory_followthrough_recommended = memory_route_alignment_status in {"underused", "assisted"}
+        recommended_max_surface_waves = (
+            6 if memory_route_alignment_status == "underused" else 5 if memory_followthrough_recommended else 4
+        )
+        recommended_max_probe_controls = (
+            5 if memory_route_alignment_status == "underused" else 4 if memory_followthrough_recommended else 3
+        )
         return {
             **base,
             "guest_family": cls._guest_family(base),
@@ -1196,10 +1339,21 @@ class DesktopVMManager:
             "memory_guidance_reason_codes": list(provider_model_readiness.get("memory_guidance_reason_codes", []))
             if isinstance(provider_model_readiness.get("memory_guidance_reason_codes", []), list)
             else [],
+            "memory_guided_route": bool(provider_model_readiness.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(provider_model_readiness.get("memory_assisted_route", False)),
+            "memory_route_alignment_status": _norm_text(
+                provider_model_readiness.get("memory_route_alignment_status", "")
+            ),
+            "memory_route_reason_codes": list(provider_model_readiness.get("memory_route_reason_codes", []))
+            if isinstance(provider_model_readiness.get("memory_route_reason_codes", []), list)
+            else [],
+            "memory_followthrough_recommended": memory_followthrough_recommended,
             "provider_model_readiness": provider_model_readiness,
             "recommended_traversal_roles": cls._recommended_traversal_roles(base),
             "preferred_wave_actions": cls._preferred_wave_actions(base),
             "recommended_traversal_paths": cls._recommended_traversal_paths(base),
+            "recommended_max_surface_waves": recommended_max_surface_waves,
+            "recommended_max_probe_controls": recommended_max_probe_controls,
             "capability_tags": cls._guest_capability_tags(base),
             "remediation_kind": remediation_kind,
             "remediation_action_code": remediation_action_code,

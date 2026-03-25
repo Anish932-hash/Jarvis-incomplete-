@@ -9960,6 +9960,139 @@ class DesktopBackendService:
         return rows
 
     @classmethod
+    def _desktop_machine_memory_route_guidance_summary(
+        cls,
+        *,
+        route_payload: Optional[Dict[str, Any]] = None,
+        runtime_strategy: Optional[Dict[str, Any]] = None,
+        target_row: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        route = dict(route_payload) if isinstance(route_payload, dict) else {}
+        strategy = dict(runtime_strategy) if isinstance(runtime_strategy, dict) else {}
+        target = dict(target_row) if isinstance(target_row, dict) else {}
+        route_profile = cls._machine_text(
+            route.get("selected_ai_route_profile", "")
+            or route.get("selected_route_profile", "")
+            or route.get("route_profile", "")
+            or target.get("selected_ai_route_profile", "")
+            or target.get("selected_route_profile", "")
+            or target.get("route_profile", "")
+        )
+        guidance_status = cls._machine_text(
+            route.get("memory_guidance_status", "")
+            or target.get("memory_guidance_status", "")
+            or route.get("semantic_guidance_status", "")
+            or target.get("semantic_guidance_status", "")
+        )
+        guidance_match_count = 0
+        for candidate in (
+            route.get("semantic_guidance_match_count", 0),
+            target.get("semantic_guidance_match_count", 0),
+        ):
+            try:
+                guidance_match_count = max(guidance_match_count, max(0, int(candidate or 0)))
+            except Exception:  # noqa: BLE001
+                continue
+        preferred_target_mode = cls._machine_text(
+            route.get("preferred_target_mode", "")
+            or strategy.get("preferred_target_mode", "")
+            or target.get("preferred_target_mode", "")
+            or target.get("target_mode", "")
+        )
+        reason_codes = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in route.get("ai_route_reason_codes", [])
+                    if isinstance(route.get("ai_route_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in route.get("route_selection_reason_codes", [])
+                    if isinstance(route.get("route_selection_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in route.get("memory_guidance_reason_codes", [])
+                    if isinstance(route.get("memory_guidance_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in target.get("memory_guidance_reason_codes", [])
+                    if isinstance(target.get("memory_guidance_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in strategy.get("reason_codes", [])
+                    if isinstance(strategy.get("reason_codes", []), list) and str(item).strip()
+                ],
+            ],
+            limit=12,
+        )
+        memory_guided_route = bool(
+            route.get("memory_guided_route", False)
+            or target.get("memory_guided_route", False)
+            or route_profile.startswith("memory_guided_")
+            or route_profile == "accessibility_memory_first"
+        )
+        memory_assisted_route = bool(
+            route.get("memory_assisted_route", False)
+            or target.get("memory_assisted_route", False)
+            or (
+                not memory_guided_route
+                and (
+                    preferred_target_mode.startswith("memory_")
+                    or any(
+                        token in reason
+                        for reason in reason_codes
+                        for token in (
+                            "semantic_memory_route_assist",
+                            "semantic_memory_route_bias",
+                            "semantic_memory_available",
+                            "strong_semantic_memory_guidance",
+                            "vector_memory_available",
+                            "hotkey_memory_ready",
+                            "hotkey_memory_route_bias",
+                        )
+                    )
+                )
+            )
+        )
+        if guidance_status not in {"strong", "partial", "cold"}:
+            if memory_guided_route:
+                guidance_status = "strong"
+            elif memory_assisted_route or guidance_match_count > 0:
+                guidance_status = "partial"
+            else:
+                guidance_status = "cold"
+        alignment_status = "cold"
+        if guidance_status in {"strong", "partial"} and memory_guided_route:
+            alignment_status = "aligned"
+        elif guidance_status in {"strong", "partial"} and memory_assisted_route:
+            alignment_status = "assisted"
+        elif guidance_status in {"strong", "partial"}:
+            alignment_status = "underused"
+        elif memory_guided_route or memory_assisted_route:
+            alignment_status = "speculative"
+        return {
+            "guidance_status": guidance_status,
+            "match_count": guidance_match_count,
+            "memory_guided_route": memory_guided_route,
+            "memory_assisted_route": memory_assisted_route,
+            "alignment_status": alignment_status,
+            "reason_codes": cls._machine_dedupe(
+                [
+                    *reason_codes,
+                    *(["memory_guided_route"] if memory_guided_route else []),
+                    *(["memory_assisted_route"] if memory_assisted_route else []),
+                    *(["memory_guidance_" + guidance_status] if guidance_status else []),
+                    *(["memory_alignment_" + alignment_status] if alignment_status else []),
+                ],
+                limit=12,
+            ),
+        }
+
+    @classmethod
     def _desktop_machine_semantic_container_role(cls, match: Dict[str, Any]) -> str:
         container_role = cls._machine_text(match.get("container_role", ""))
         control_type = cls._machine_text(match.get("control_type", ""))
@@ -10902,16 +11035,33 @@ class DesktopBackendService:
             "status": str(create_payload.get("status", "error") or "error"),
             "plan": plan_payload,
             "campaign": create_payload,
-            "strategy": {
-                "profile": str(campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
-                "auto_learn_count": int(campaign_defaults.get("auto_learn_count", 0) or 0),
-                "blocked_count": int(campaign_defaults.get("blocked_count", 0) or 0),
-                "degraded_count": int(campaign_defaults.get("degraded_count", 0) or 0),
-                "execution_mode_counts": (
-                    dict(campaign_defaults.get("execution_mode_counts", {}))
-                    if isinstance(campaign_defaults.get("execution_mode_counts", {}), dict)
-                    else {}
-                ),
+                "strategy": {
+                    "profile": str(campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
+                    "auto_learn_count": int(campaign_defaults.get("auto_learn_count", 0) or 0),
+                    "blocked_count": int(campaign_defaults.get("blocked_count", 0) or 0),
+                    "degraded_count": int(campaign_defaults.get("degraded_count", 0) or 0),
+                    "memory_followthrough_enabled": bool(
+                        campaign_defaults.get("memory_followthrough_enabled", False)
+                    ),
+                    "memory_guided_route_count": int(
+                        campaign_defaults.get("memory_guided_route_count", 0) or 0
+                    ),
+                    "memory_assisted_route_count": int(
+                        campaign_defaults.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "memory_underused_count": int(
+                        campaign_defaults.get("memory_underused_count", 0) or 0
+                    ),
+                    "memory_route_alignment_counts": (
+                        dict(campaign_defaults.get("memory_route_alignment_counts", {}))
+                        if isinstance(campaign_defaults.get("memory_route_alignment_counts", {}), dict)
+                        else {}
+                    ),
+                    "execution_mode_counts": (
+                        dict(campaign_defaults.get("execution_mode_counts", {}))
+                        if isinstance(campaign_defaults.get("execution_mode_counts", {}), dict)
+                        else {}
+                    ),
                 "learning_profile_counts": (
                     dict(campaign_defaults.get("learning_profile_counts", {}))
                     if isinstance(campaign_defaults.get("learning_profile_counts", {}), dict)
@@ -11114,6 +11264,19 @@ class DesktopBackendService:
                 semantic_guidance_alignment = "matched"
             else:
                 semantic_guidance_alignment = "unapplied"
+        memory_route_guidance = DesktopBackendService._desktop_machine_memory_route_guidance_summary(
+            route_payload={
+                **selected_target,
+                **adaptive_learning_runtime,
+                **(
+                    dict(survey.get("memory_route_guidance", {}))
+                    if isinstance(survey.get("memory_route_guidance", {}), dict)
+                    else {}
+                ),
+            },
+            runtime_strategy=adaptive_runtime_strategy,
+            target_row=selected_target,
+        )
         return {
             "app_name": effective_app_name,
             "launch_resolution": str(resolved.get("resolution", "") or resolved.get("kind", "") or "").strip(),
@@ -11291,6 +11454,16 @@ class DesktopBackendService:
             )
             or str(selected_target.get("selected_ai_route_profile", "") or "").strip().lower()
             == "accessibility_memory_first",
+            "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+            "memory_route_alignment_status": str(
+                memory_route_guidance.get("alignment_status", "") or ""
+            ).strip().lower(),
+            "memory_route_reason_codes": [
+                str(item).strip().lower()
+                for item in memory_route_guidance.get("reason_codes", [])
+                if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+            ][:12],
             "surface_node_count": int(selected_target.get("surface_node_count", 0) or 0),
             "surface_transition_count": int(selected_target.get("surface_transition_count", 0) or 0),
             "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
@@ -13146,6 +13319,15 @@ class DesktopBackendService:
             setup_followup_required = bool(row.get("remediation_setup_followup_required", False))
             semantic_guidance_status = str(row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
             knowledge_gap_level = str(row.get("knowledge_gap_level", "") or "cold").strip().lower() or "cold"
+            memory_route_alignment_status = (
+                str(row.get("memory_route_alignment_status", "") or "").strip().lower() or "cold"
+            )
+            memory_guided_route = bool(row.get("memory_guided_route", False))
+            memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            memory_followthrough_recommended = bool(row.get("auto_learn_allowed", False)) and (
+                memory_route_alignment_status in {"underused", "assisted"}
+                and semantic_guidance_status in {"strong", "partial"}
+            )
             semantic_followup_recommended = bool(row.get("auto_learn_allowed", False)) and (
                 semantic_guidance_status == "cold" and knowledge_gap_level in {"cold", "thin"}
             )
@@ -13153,6 +13335,7 @@ class DesktopBackendService:
                 retry_recommended
                 or provider_blocked
                 or setup_followup_required
+                or memory_followthrough_recommended
                 or semantic_followup_recommended
                 or remediation_status in {"persistent", "regressed", "new"}
                 or readiness_status in {"degraded", "blocked"}
@@ -13162,17 +13345,28 @@ class DesktopBackendService:
                 {
                     "id": f"continuation:learn:{self._machine_text(app_name)}",
                     "stage": "app_learning",
-                    "kind": "deepen_app_learning" if semantic_followup_recommended else "retry_app_learning",
+                    "kind": (
+                        "activate_memory_guided_learning"
+                        if memory_followthrough_recommended
+                        else "deepen_app_learning" if semantic_followup_recommended else "retry_app_learning"
+                    ),
                     "status": remediation_status or readiness_status or "attention",
                     "title": f"Continue learning {app_name}",
                     "auto_runnable": bool(row.get("auto_learn_allowed", False)),
                     "required": False,
                     "app_name": app_name,
                     "provider": "",
-                    "target": str(row.get("remediation_recent_action_code", "") or app_name).strip(),
+                    "target": str(
+                        row.get("remediation_recent_action_code", "")
+                        or ("memory-followthrough" if memory_followthrough_recommended else app_name)
+                    ).strip(),
                     "retry_recommended": retry_recommended,
                     "provider_blocked": provider_blocked,
                     "setup_followup_required": setup_followup_required,
+                    "memory_followthrough_recommended": memory_followthrough_recommended,
+                    "memory_guided_route": memory_guided_route,
+                    "memory_assisted_route": memory_assisted_route,
+                    "memory_route_alignment_status": memory_route_alignment_status,
                     "semantic_followup_recommended": semantic_followup_recommended,
                     "semantic_guidance_status": semantic_guidance_status,
                     "knowledge_gap_level": knowledge_gap_level,
@@ -13191,6 +13385,15 @@ class DesktopBackendService:
             provider_blocked = bool(row.get("remediation_provider_blocked", False))
             setup_followup_required = bool(row.get("remediation_setup_followup_required", False))
             semantic_guidance_status = str(row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
+            memory_route_alignment_status = (
+                str(row.get("memory_route_alignment_status", "") or "").strip().lower() or "cold"
+            )
+            memory_guided_route = bool(row.get("memory_guided_route", False))
+            memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            memory_followthrough_recommended = bool(row.get("auto_prepare_allowed", False)) and (
+                memory_route_alignment_status in {"underused", "assisted"}
+                and semantic_guidance_status in {"strong", "partial"}
+            )
             semantic_followup_recommended = bool(row.get("auto_prepare_allowed", False)) and (
                 semantic_guidance_status == "cold"
                 and int(row.get("semantic_guidance_match_count", 0) or 0) <= 0
@@ -13199,6 +13402,7 @@ class DesktopBackendService:
                 retry_recommended
                 or provider_blocked
                 or setup_followup_required
+                or memory_followthrough_recommended
                 or semantic_followup_recommended
                 or remediation_status in {"persistent", "regressed", "new"}
                 or readiness_status in {"degraded", "blocked"}
@@ -13208,17 +13412,28 @@ class DesktopBackendService:
                 {
                     "id": f"continuation:prepare:{self._machine_text(app_name)}",
                     "stage": "app_prepare",
-                    "kind": "deepen_app_prepare" if semantic_followup_recommended else "retry_app_prepare",
+                    "kind": (
+                        "activate_memory_guided_prepare"
+                        if memory_followthrough_recommended
+                        else "deepen_app_prepare" if semantic_followup_recommended else "retry_app_prepare"
+                    ),
                     "status": remediation_status or readiness_status or "attention",
                     "title": f"Continue preparing {app_name}",
                     "auto_runnable": bool(row.get("auto_prepare_allowed", False)),
                     "required": False,
                     "app_name": app_name,
                     "provider": "",
-                    "target": str(row.get("remediation_recent_action_code", "") or app_name).strip(),
+                    "target": str(
+                        row.get("remediation_recent_action_code", "")
+                        or ("memory-followthrough" if memory_followthrough_recommended else app_name)
+                    ).strip(),
                     "retry_recommended": retry_recommended,
                     "provider_blocked": provider_blocked,
                     "setup_followup_required": setup_followup_required,
+                    "memory_followthrough_recommended": memory_followthrough_recommended,
+                    "memory_guided_route": memory_guided_route,
+                    "memory_assisted_route": memory_assisted_route,
+                    "memory_route_alignment_status": memory_route_alignment_status,
                     "semantic_followup_recommended": semantic_followup_recommended,
                     "semantic_guidance_status": semantic_guidance_status,
                     "knowledge_gap_level": "",
@@ -13302,6 +13517,7 @@ class DesktopBackendService:
                 priority_rank.get(str(row.get("status", "") or "").strip().lower(), 9),
                 0 if bool(row.get("provider_blocked", False)) else 1,
                 0 if bool(row.get("setup_followup_required", False)) else 1,
+                0 if bool(row.get("memory_followthrough_recommended", False)) else 1,
                 0 if bool(row.get("semantic_followup_recommended", False)) else 1,
                 0 if bool(row.get("retry_recommended", False)) else 1,
                 0 if bool(row.get("required", False)) else 1,
@@ -13315,10 +13531,14 @@ class DesktopBackendService:
         top_apps: Dict[str, int] = {}
         recent_action_counts: Dict[str, int] = {}
         semantic_guidance_status_counts: Dict[str, int] = {}
+        memory_route_alignment_counts: Dict[str, int] = {}
         retry_count = 0
         provider_blocked_count = 0
         setup_followup_count = 0
         semantic_followup_count = 0
+        memory_followthrough_count = 0
+        memory_guided_route_count = 0
+        memory_assisted_route_count = 0
         auto_runnable_count = 0
         manual_count = 0
         for row in selected_items:
@@ -13337,6 +13557,11 @@ class DesktopBackendService:
                 semantic_guidance_status_counts[semantic_guidance_status] = int(
                     semantic_guidance_status_counts.get(semantic_guidance_status, 0) or 0
                 ) + 1
+            memory_route_alignment_status = str(row.get("memory_route_alignment_status", "") or "").strip().lower()
+            if memory_route_alignment_status:
+                memory_route_alignment_counts[memory_route_alignment_status] = int(
+                    memory_route_alignment_counts.get(memory_route_alignment_status, 0) or 0
+                ) + 1
             if bool(row.get("retry_recommended", False)):
                 retry_count += 1
             if bool(row.get("provider_blocked", False)):
@@ -13345,6 +13570,12 @@ class DesktopBackendService:
                 setup_followup_count += 1
             if bool(row.get("semantic_followup_recommended", False)):
                 semantic_followup_count += 1
+            if bool(row.get("memory_followthrough_recommended", False)):
+                memory_followthrough_count += 1
+            if bool(row.get("memory_guided_route", False)):
+                memory_guided_route_count += 1
+            if bool(row.get("memory_assisted_route", False)):
+                memory_assisted_route_count += 1
             if bool(row.get("auto_runnable", False)):
                 auto_runnable_count += 1
             else:
@@ -13367,6 +13598,9 @@ class DesktopBackendService:
                 "provider_blocked_count": provider_blocked_count,
                 "setup_followup_count": setup_followup_count,
                 "semantic_followup_count": semantic_followup_count,
+                "memory_followthrough_count": memory_followthrough_count,
+                "memory_guided_route_count": memory_guided_route_count,
+                "memory_assisted_route_count": memory_assisted_route_count,
                 "stage_counts": {
                     str(key): int(value)
                     for key, value in sorted(stage_counts.items(), key=lambda entry: entry[0])
@@ -13378,6 +13612,10 @@ class DesktopBackendService:
                 "semantic_guidance_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
                 },
                 "top_apps": {
                     str(key): int(value)
@@ -15178,6 +15416,34 @@ class DesktopBackendService:
                     runtime_strategy=runtime_strategy,
                 )
             )
+            item_payload.update(
+                self._desktop_machine_ai_route_plan(
+                    profile=profile,
+                    task=str(prepare_query or app_name).strip().lower(),
+                    runtime_strategy=runtime_strategy,
+                    target_row=item_payload,
+                )
+            )
+            memory_route_guidance = self._desktop_machine_memory_route_guidance_summary(
+                route_payload=item_payload,
+                runtime_strategy=runtime_strategy,
+                target_row=item_payload,
+            )
+            item_payload["memory_guided_route"] = bool(memory_route_guidance.get("memory_guided_route", False))
+            item_payload["memory_assisted_route"] = bool(memory_route_guidance.get("memory_assisted_route", False))
+            item_payload["memory_guidance_status"] = str(
+                item_payload.get("memory_guidance_status", "")
+                or memory_route_guidance.get("guidance_status", "")
+                or "cold"
+            ).strip().lower()
+            item_payload["memory_route_alignment_status"] = str(
+                memory_route_guidance.get("alignment_status", "") or ""
+            ).strip().lower()
+            item_payload["memory_route_reason_codes"] = [
+                str(item).strip().lower()
+                for item in memory_route_guidance.get("reason_codes", [])
+                if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+            ][:12]
             if int(item_payload.get("semantic_guidance_match_count", 0) or 0) > 0:
                 item_payload["prepare_priority_score"] = float(
                     item_payload.get("prepare_priority_score", 0.0) or 0.0
@@ -15220,6 +15486,10 @@ class DesktopBackendService:
         setup_aligned_app_count = 0
         setup_boosted_app_count = 0
         setup_constrained_app_count = 0
+        memory_guidance_status_counts: Dict[str, int] = {}
+        memory_route_alignment_counts: Dict[str, int] = {}
+        memory_guided_route_count = 0
+        memory_assisted_route_count = 0
         for item in items:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             execution_mode_counts[execution_mode] = int(execution_mode_counts.get(execution_mode, 0) or 0) + 1
@@ -15285,6 +15555,20 @@ class DesktopBackendService:
                 setup_boosted_app_count += 1
             elif setup_execution_policy == "resume_pending_constrained":
                 setup_constrained_app_count += 1
+            memory_guidance_status = str(item.get("memory_guidance_status", "") or "").strip().lower() or "cold"
+            memory_guidance_status_counts[memory_guidance_status] = int(
+                memory_guidance_status_counts.get(memory_guidance_status, 0) or 0
+            ) + 1
+            memory_route_alignment_status = (
+                str(item.get("memory_route_alignment_status", "") or "").strip().lower() or "cold"
+            )
+            memory_route_alignment_counts[memory_route_alignment_status] = int(
+                memory_route_alignment_counts.get(memory_route_alignment_status, 0) or 0
+            ) + 1
+            if bool(item.get("memory_guided_route", False)):
+                memory_guided_route_count += 1
+            if bool(item.get("memory_assisted_route", False)):
+                memory_assisted_route_count += 1
         return {
             "status": "success",
             "count": len(items),
@@ -15317,6 +15601,16 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
                 },
+                "memory_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_guided_route_count": memory_guided_route_count,
+                "memory_assisted_route_count": memory_assisted_route_count,
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(semantic_label_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
@@ -16002,6 +16296,26 @@ class DesktopBackendService:
             "confidence_band": confidence_band,
             "reason_codes": self._machine_dedupe(reason_codes, limit=12),
         }
+        memory_route_guidance = self._desktop_machine_memory_route_guidance_summary(
+            route_payload=plan,
+            runtime_strategy=strategy,
+            target_row=target,
+        )
+        plan.update(
+            {
+                "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                "memory_route_alignment_status": str(
+                    memory_route_guidance.get("alignment_status", "") or ""
+                ).strip().lower(),
+                "memory_route_reason_codes": [
+                    str(item).strip().lower()
+                    for item in memory_route_guidance.get("reason_codes", [])
+                    if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+                ][:12],
+            }
+        )
         return {
             "ai_route_plan": plan,
             "ai_route_status": str(plan.get("route_status", "") or "").strip().lower(),
@@ -16020,6 +16334,15 @@ class DesktopBackendService:
             else [],
             "ai_route_reason_codes": list(plan.get("reason_codes", []))
             if isinstance(plan.get("reason_codes", []), list)
+            else [],
+            "memory_guidance_status": str(plan.get("memory_guidance_status", "") or "").strip().lower(),
+            "memory_guided_route": bool(plan.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(plan.get("memory_assisted_route", False)),
+            "memory_route_alignment_status": str(
+                plan.get("memory_route_alignment_status", "") or ""
+            ).strip().lower(),
+            "memory_route_reason_codes": list(plan.get("memory_route_reason_codes", []))
+            if isinstance(plan.get("memory_route_reason_codes", []), list)
             else [],
         }
 
@@ -16103,6 +16426,26 @@ class DesktopBackendService:
                     target_row=item_payload,
                 )
             )
+            memory_route_guidance = self._desktop_machine_memory_route_guidance_summary(
+                route_payload=item_payload,
+                runtime_strategy=runtime_strategy,
+                target_row=item_payload,
+            )
+            item_payload["memory_guided_route"] = bool(memory_route_guidance.get("memory_guided_route", False))
+            item_payload["memory_assisted_route"] = bool(memory_route_guidance.get("memory_assisted_route", False))
+            item_payload["memory_guidance_status"] = str(
+                item_payload.get("memory_guidance_status", "")
+                or memory_route_guidance.get("guidance_status", "")
+                or "cold"
+            ).strip().lower()
+            item_payload["memory_route_alignment_status"] = str(
+                memory_route_guidance.get("alignment_status", "") or ""
+            ).strip().lower()
+            item_payload["memory_route_reason_codes"] = [
+                str(item).strip().lower()
+                for item in memory_route_guidance.get("reason_codes", [])
+                if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+            ][:12]
             annotated_targets.append(item_payload)
         profile_rank = {
             "deep_local_explore": 0,
@@ -16145,6 +16488,10 @@ class DesktopBackendService:
         semantic_guided_count = 0
         semantic_followup_count = 0
         semantic_guidance_status_counts: Dict[str, int] = {}
+        memory_guidance_status_counts: Dict[str, int] = {}
+        memory_route_alignment_counts: Dict[str, int] = {}
+        memory_guided_route_count = 0
+        memory_assisted_route_count = 0
         semantic_match_label_counts: Dict[str, int] = {}
         semantic_hotkey_counts: Dict[str, int] = {}
         strategy_notes: List[str] = []
@@ -16213,6 +16560,20 @@ class DesktopBackendService:
             semantic_guidance_status_counts[semantic_guidance_status] = int(
                 semantic_guidance_status_counts.get(semantic_guidance_status, 0) or 0
             ) + 1
+            memory_guidance_status = str(item.get("memory_guidance_status", "") or "cold").strip().lower() or "cold"
+            memory_guidance_status_counts[memory_guidance_status] = int(
+                memory_guidance_status_counts.get(memory_guidance_status, 0) or 0
+            ) + 1
+            memory_route_alignment_status = (
+                str(item.get("memory_route_alignment_status", "") or "cold").strip().lower() or "cold"
+            )
+            memory_route_alignment_counts[memory_route_alignment_status] = int(
+                memory_route_alignment_counts.get(memory_route_alignment_status, 0) or 0
+            ) + 1
+            if bool(item.get("memory_guided_route", False)):
+                memory_guided_route_count += 1
+            if bool(item.get("memory_assisted_route", False)):
+                memory_assisted_route_count += 1
             if int(item.get("semantic_guidance_match_count", 0) or 0) > 0:
                 semantic_guided_count += 1
             if semantic_guidance_status == "cold" and knowledge_gap_level in {"cold", "thin"}:
@@ -16239,6 +16600,28 @@ class DesktopBackendService:
             )[0]
         else:
             strategy_profile = "balanced_learning"
+        memory_underused_count = int(memory_route_alignment_counts.get("underused", 0) or 0)
+        memory_aligned_count = int(memory_route_alignment_counts.get("aligned", 0) or 0)
+        memory_assisted_alignment_count = int(memory_route_alignment_counts.get("assisted", 0) or 0)
+        memory_guided_app_names = [
+            str(item.get("app_name", "") or "").strip()
+            for item in campaign_targets
+            if bool(item.get("memory_guided_route", False)) and str(item.get("app_name", "") or "").strip()
+        ]
+        memory_underused_app_names = [
+            str(item.get("app_name", "") or "").strip()
+            for item in campaign_targets
+            if str(item.get("memory_route_alignment_status", "") or "").strip().lower() == "underused"
+            and str(item.get("app_name", "") or "").strip()
+        ]
+        memory_followthrough_enabled = bool(
+            memory_underused_count > 0
+            or (memory_assisted_alignment_count > 0 and memory_guided_route_count <= 0)
+        )
+        if memory_underused_count > 0:
+            strategy_notes.append("memory followthrough enabled for underused guided apps")
+        elif memory_guided_route_count > 0 and memory_assisted_route_count <= 0:
+            strategy_notes.append("memory-first revalidation bias active")
         combined_roles: List[str] = []
         combined_actions: List[str] = []
         combined_paths: List[str] = []
@@ -16278,6 +16661,15 @@ class DesktopBackendService:
             per_app_limit = max(per_app_limit, int(row.get("effective_per_app_limit", 24) or 24))
             max_surface_waves_value = max(max_surface_waves_value, int(row.get("effective_max_surface_waves", 3) or 3))
             max_probe_controls_value = max(max_probe_controls_value, int(row.get("effective_max_probe_controls", 3) or 3))
+        if memory_followthrough_enabled:
+            max_surface_waves_value = min(8, max_surface_waves_value + (2 if memory_underused_count > 0 else 1))
+            max_probe_controls_value = min(8, max_probe_controls_value + 1)
+            per_app_limit = min(48, per_app_limit + (6 if memory_underused_count > 0 else 3))
+            combined_actions.extend(["focus_navigation_tree", "focus_list_surface"])
+        elif memory_guided_route_count > 0 and memory_assisted_route_count <= 0:
+            max_surface_waves_value = max(2, min(max_surface_waves_value, 4))
+            max_probe_controls_value = max(2, min(max_probe_controls_value, 4))
+            per_app_limit = max(16, min(per_app_limit, 24))
         blocked_app_names = [
             str(item.get("app_name", "") or "").strip()
             for item in selected_targets
@@ -16330,6 +16722,21 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
                 },
+                "memory_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_guided_route_count": memory_guided_route_count,
+                "memory_assisted_route_count": memory_assisted_route_count,
+                "memory_underused_count": memory_underused_count,
+                "memory_aligned_count": memory_aligned_count,
+                "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_guided_app_names": memory_guided_app_names[:6],
+                "memory_underused_app_names": memory_underused_app_names[:6],
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -16512,6 +16919,21 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
                 },
+                "memory_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_guided_route_count": memory_guided_route_count,
+                "memory_assisted_route_count": memory_assisted_route_count,
+                "memory_underused_count": memory_underused_count,
+                "memory_aligned_count": memory_aligned_count,
+                "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_guided_app_names": memory_guided_app_names[:6],
+                "memory_underused_app_names": memory_underused_app_names[:6],
                 "top_semantic_match_labels": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -16560,6 +16982,16 @@ class DesktopBackendService:
                             if isinstance(item.get("semantic_guidance_top_hotkeys", []), list)
                             and str(hotkey).strip()
                         ][:8],
+                        "memory_guided_route": bool(item.get("memory_guided_route", False)),
+                        "memory_assisted_route": bool(item.get("memory_assisted_route", False)),
+                        "memory_route_alignment_status": str(
+                            item.get("memory_route_alignment_status", "") or ""
+                        ).strip().lower(),
+                        "memory_route_reason_codes": [
+                            str(code).strip().lower()
+                            for code in item.get("memory_route_reason_codes", [])
+                            if isinstance(item.get("memory_route_reason_codes", []), list) and str(code).strip()
+                        ][:12],
                         "surface_node_count": int(item.get("surface_node_count", 0) or 0),
                         "surface_transition_count": int(item.get("surface_transition_count", 0) or 0),
                         "knowledge_gap_reasons": [
@@ -17231,6 +17663,17 @@ class DesktopBackendService:
                     )
                     if isinstance(learning_plan_summary.get("semantic_guidance_status_counts", {}), dict)
                     else {},
+                    "app_learning_memory_guided_route_count": int(
+                        learning_plan_summary.get("memory_guided_route_count", 0) or 0
+                    ),
+                    "app_learning_memory_assisted_route_count": int(
+                        learning_plan_summary.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "app_learning_memory_route_alignment_counts": dict(
+                        learning_plan_summary.get("memory_route_alignment_counts", {})
+                    )
+                    if isinstance(learning_plan_summary.get("memory_route_alignment_counts", {}), dict)
+                    else {},
                     "app_learning_strategy_profile": str(learning_campaign_defaults.get("strategy_profile", "") or "").strip().lower(),
                     "app_learning_remediation_retry_count": int(learning_plan_summary.get("remediation_retry_count", 0) or 0),
                     "app_learning_remediation_provider_blocked_count": int(
@@ -17335,6 +17778,17 @@ class DesktopBackendService:
                     )
                     if isinstance(prepare_plan_summary.get("semantic_guidance_status_counts", {}), dict)
                     else {},
+                    "app_control_prepare_memory_guided_route_count": int(
+                        prepare_plan_summary.get("memory_guided_route_count", 0) or 0
+                    ),
+                    "app_control_prepare_memory_assisted_route_count": int(
+                        prepare_plan_summary.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "app_control_prepare_memory_route_alignment_counts": dict(
+                        prepare_plan_summary.get("memory_route_alignment_counts", {})
+                    )
+                    if isinstance(prepare_plan_summary.get("memory_route_alignment_counts", {}), dict)
+                    else {},
                     "vm_provider_count": int(vm_control_plan_summary.get("provider_counts", {}) and len(vm_control_plan_summary.get("provider_counts", {})) or 0),
                     "vm_guest_count": int(vm_control_plan_summary.get("ready_count", 0) or 0)
                     + int(vm_control_plan_summary.get("attention_count", 0) or 0)
@@ -17351,6 +17805,17 @@ class DesktopBackendService:
                     else {},
                     "vm_runtime_band_counts": dict(vm_control_plan_summary.get("runtime_band_counts", {}))
                     if isinstance(vm_control_plan_summary.get("runtime_band_counts", {}), dict)
+                    else {},
+                    "vm_memory_guided_route_count": int(
+                        vm_control_plan_summary.get("memory_guided_route_count", 0) or 0
+                    ),
+                    "vm_memory_assisted_route_count": int(
+                        vm_control_plan_summary.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "vm_memory_route_alignment_counts": dict(
+                        vm_control_plan_summary.get("memory_route_alignment_counts", {})
+                    )
+                    if isinstance(vm_control_plan_summary.get("memory_route_alignment_counts", {}), dict)
                     else {},
                     "vm_expected_route_profile_counts": dict(
                         vm_control_plan_summary.get("expected_route_profile_counts", {})
@@ -18777,6 +19242,17 @@ class DesktopBackendService:
                 )
                 if isinstance(runtime_app_learning_plan_summary.get("semantic_guidance_status_counts", {}), dict)
                 else {},
+                "app_learning_memory_guided_route_count": int(
+                    runtime_app_learning_plan_summary.get("memory_guided_route_count", 0) or 0
+                ),
+                "app_learning_memory_assisted_route_count": int(
+                    runtime_app_learning_plan_summary.get("memory_assisted_route_count", 0) or 0
+                ),
+                "app_learning_memory_route_alignment_counts": dict(
+                    runtime_app_learning_plan_summary.get("memory_route_alignment_counts", {})
+                )
+                if isinstance(runtime_app_learning_plan_summary.get("memory_route_alignment_counts", {}), dict)
+                else {},
                 "app_learning_setup_aligned_count": int(
                     runtime_app_learning_plan_summary.get("setup_aligned_app_count", 0) or 0
                 ),
@@ -18887,6 +19363,21 @@ class DesktopBackendService:
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else {}
                 ),
+                "prepared_memory_guided_route_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("memory_guided_route_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_memory_assisted_route_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("memory_assisted_route_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_memory_route_alignment_counts": dict(
+                    dict(app_control_prepare_result.get("summary", {})).get("memory_route_alignment_counts", {})
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else {}
+                ),
                 "prepared_setup_aligned_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("setup_aligned_app_count", 0)
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
@@ -18927,6 +19418,21 @@ class DesktopBackendService:
                     dict(vm_control_prepare_result.get("summary", {})).get("prepared_vm_control_count", vm_control_prepare_result.get("count", 0))
                     if isinstance(vm_control_prepare_result.get("summary", {}), dict)
                     else vm_control_prepare_result.get("count", 0)
+                ),
+                "vm_memory_guided_route_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("memory_guided_route_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_memory_assisted_route_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("memory_assisted_route_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_memory_route_alignment_counts": dict(
+                    dict(vm_control_prepare_result.get("summary", {})).get("memory_route_alignment_counts", {})
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else {}
                 ),
                 "vm_ready_guest_count": int(
                     dict(vm_control_prepare_result.get("summary", {})).get("ready_count", 0)

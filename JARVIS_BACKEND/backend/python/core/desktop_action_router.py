@@ -8420,6 +8420,36 @@ class DesktopActionRouter:
             if isinstance(surface_hint, dict)
             else []
         )
+        memory_route_guidance = self._memory_guidance_runtime_summary(
+            adaptive_learning_runtime=(
+                dict(snapshot.get("adaptive_learning_runtime", {}))
+                if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict)
+                else {}
+            ),
+            semantic_memory_guidance=semantic_memory_guidance,
+        )
+        if isinstance(snapshot.get("adaptive_learning_runtime", {}), dict) and memory_route_guidance:
+            snapshot["adaptive_learning_runtime"] = {
+                **dict(snapshot.get("adaptive_learning_runtime", {})),
+                "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                "semantic_guidance_match_count": max(0, int(memory_route_guidance.get("match_count", 0) or 0)),
+                "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                "memory_route_alignment_status": str(memory_route_guidance.get("alignment_status", "") or "").strip().lower(),
+                "memory_guidance_reason_codes": [
+                    str(item).strip().lower()
+                    for item in memory_route_guidance.get("reason_codes", [])
+                    if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+                ][:12],
+            }
+        if isinstance(snapshot.get("vision_learning_route", {}), dict) and memory_route_guidance:
+            snapshot["vision_learning_route"] = {
+                **dict(snapshot.get("vision_learning_route", {})),
+                "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                "memory_route_alignment_status": str(memory_route_guidance.get("alignment_status", "") or "").strip().lower(),
+            }
         normalized_target_container_roles = self._dedupe_strings(
             [
                 self._normalize_probe_text(item)
@@ -8772,6 +8802,14 @@ class DesktopActionRouter:
             message_parts.append(
                 f"Adaptive route resolution was {' / '.join(resolution_bits[:3])} for this surface."
             )
+        if bool(memory_route_guidance.get("memory_guided_route", False)):
+            message_parts.append(
+                "Structured app memory and vector guidance were strong enough to steer this surface through a memory-first control route."
+            )
+        elif bool(memory_route_guidance.get("memory_assisted_route", False)):
+            message_parts.append(
+                "Structured app memory and vector guidance assisted the live route selection for this surface."
+            )
         return {
             "status": "success",
             "message": " ".join(part for part in message_parts if part).strip(),
@@ -8792,6 +8830,7 @@ class DesktopActionRouter:
                 else {}
             ),
             "semantic_memory_guidance": semantic_memory_guidance,
+            "memory_route_guidance": memory_route_guidance,
             "revalidation": revalidation_payload if isinstance(revalidation_payload, dict) else {},
             "targeting": {
                 "target_container_roles": effective_target_container_roles[:8],
@@ -8800,6 +8839,15 @@ class DesktopActionRouter:
                 "recommended_traversal_paths": effective_preferred_traversal_paths[:8],
                 "semantic_guidance_status": str(semantic_memory_guidance.get("guidance_status", "") or "").strip().lower(),
                 "semantic_guidance_match_count": int(semantic_memory_guidance.get("count", 0) or 0),
+                "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                "memory_route_alignment_status": str(memory_route_guidance.get("alignment_status", "") or "").strip().lower(),
+                "memory_guidance_reason_codes": [
+                    str(item).strip().lower()
+                    for item in memory_route_guidance.get("reason_codes", [])
+                    if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+                ][:12],
                 "recommended_wave_container_roles": [
                     self._normalize_probe_text(item)
                     for item in (
@@ -8895,11 +8943,16 @@ class DesktopActionRouter:
         ai_route_profile_counts: Dict[str, int] = {}
         ai_route_provider_source_counts: Dict[str, int] = {}
         ai_route_stack_name_counts: Dict[str, int] = {}
+        memory_guidance_status_counts: Dict[str, int] = {}
+        memory_route_alignment_counts: Dict[str, int] = {}
+        memory_guidance_reason_counts: Dict[str, int] = {}
         route_fallback_app_count = 0
         setup_constrained_app_count = 0
         provider_blocked_app_count = 0
         ai_route_confident_count = 0
         ai_route_fallback_count = 0
+        memory_guided_route_app_count = 0
+        memory_assisted_route_app_count = 0
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -9231,6 +9284,41 @@ class DesktopActionRouter:
                     "selected_ai_stack_names": matched_ai_stack_names,
                     "ai_route_reason_codes": matched_ai_reason_codes,
                 }
+            memory_route_guidance = self._memory_guidance_runtime_summary(
+                adaptive_learning_runtime=adaptive_learning_runtime,
+                semantic_memory_guidance=(
+                    dict(survey_payload.get("semantic_memory_guidance", {}))
+                    if isinstance(survey_payload.get("semantic_memory_guidance", {}), dict)
+                    else {}
+                ),
+                targeting=survey_targeting,
+            )
+            if memory_route_guidance:
+                adaptive_learning_runtime = {
+                    **adaptive_learning_runtime,
+                    "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                    "semantic_guidance_match_count": max(0, int(memory_route_guidance.get("match_count", 0) or 0)),
+                    "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                    "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                    "memory_route_alignment_status": str(memory_route_guidance.get("alignment_status", "") or "").strip().lower(),
+                    "memory_guidance_reason_codes": [
+                        str(item).strip().lower()
+                        for item in memory_route_guidance.get("reason_codes", [])
+                        if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+                    ][:12],
+                }
+                survey_targeting = {
+                    **survey_targeting,
+                    "memory_guidance_status": str(memory_route_guidance.get("guidance_status", "") or "").strip().lower(),
+                    "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
+                    "memory_assisted_route": bool(memory_route_guidance.get("memory_assisted_route", False)),
+                    "memory_route_alignment_status": str(memory_route_guidance.get("alignment_status", "") or "").strip().lower(),
+                    "memory_guidance_reason_codes": [
+                        str(item).strip().lower()
+                        for item in memory_route_guidance.get("reason_codes", [])
+                        if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
+                    ][:12],
+                }
             runtime_strategy_profile = str(
                 adaptive_learning_runtime.get("strategy_profile", "")
                 or matched_adaptive_profile.get("adaptive_runtime_strategy_profile", "")
@@ -9331,6 +9419,41 @@ class DesktopActionRouter:
                 setup_constrained_app_count += 1
             if bool(adaptive_learning_runtime.get("provider_blocked", False)):
                 provider_blocked_app_count += 1
+            memory_guidance_status = str(
+                adaptive_learning_runtime.get("memory_guidance_status", "")
+                or survey_targeting.get("memory_guidance_status", "")
+                or ""
+            ).strip().lower()
+            if memory_guidance_status:
+                memory_guidance_status_counts[memory_guidance_status] = int(
+                    memory_guidance_status_counts.get(memory_guidance_status, 0) or 0
+                ) + 1
+            memory_route_alignment_status = str(
+                adaptive_learning_runtime.get("memory_route_alignment_status", "")
+                or survey_targeting.get("memory_route_alignment_status", "")
+                or ""
+            ).strip().lower()
+            if memory_route_alignment_status:
+                memory_route_alignment_counts[memory_route_alignment_status] = int(
+                    memory_route_alignment_counts.get(memory_route_alignment_status, 0) or 0
+                ) + 1
+            if bool(adaptive_learning_runtime.get("memory_guided_route", False) or survey_targeting.get("memory_guided_route", False)):
+                memory_guided_route_app_count += 1
+            elif bool(adaptive_learning_runtime.get("memory_assisted_route", False) or survey_targeting.get("memory_assisted_route", False)):
+                memory_assisted_route_app_count += 1
+            for reason in (
+                adaptive_learning_runtime.get("memory_guidance_reason_codes", [])
+                if isinstance(adaptive_learning_runtime.get("memory_guidance_reason_codes", []), list)
+                else survey_targeting.get("memory_guidance_reason_codes", [])
+                if isinstance(survey_targeting.get("memory_guidance_reason_codes", []), list)
+                else []
+            ):
+                clean_reason = str(reason).strip().lower()
+                if not clean_reason:
+                    continue
+                memory_guidance_reason_counts[clean_reason] = int(
+                    memory_guidance_reason_counts.get(clean_reason, 0) or 0
+                ) + 1
             for reason in (
                 adaptive_learning_runtime.get("route_selection_reason_codes", [])
                 if isinstance(adaptive_learning_runtime.get("route_selection_reason_codes", []), list)
@@ -9398,6 +9521,7 @@ class DesktopActionRouter:
                 },
                 "adaptive_profile": matched_adaptive_profile,
                 "adaptive_learning_runtime": adaptive_learning_runtime,
+                "memory_route_guidance": memory_route_guidance,
                 "revalidation": (
                     dict(survey_payload.get("revalidation", {}))
                     if isinstance(survey_payload.get("revalidation", {}), dict)
@@ -9560,6 +9684,21 @@ class DesktopActionRouter:
                     str(key): int(value)
                     for key, value in sorted(ai_route_stack_name_counts.items(), key=lambda entry: entry[0])
                 },
+                "memory_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_route_alignment_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_guidance_reason_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_guidance_reason_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0])),
+                    )[:12]
+                },
                 "route_resolution_counts": {
                     str(key): int(value)
                     for key, value in sorted(route_resolution_counts.items(), key=lambda entry: entry[0])
@@ -9571,6 +9710,8 @@ class DesktopActionRouter:
                 "route_fallback_app_count": int(route_fallback_app_count),
                 "ai_route_confident_count": int(ai_route_confident_count),
                 "ai_route_fallback_count": int(ai_route_fallback_count),
+                "memory_guided_route_app_count": int(memory_guided_route_app_count),
+                "memory_assisted_route_app_count": int(memory_assisted_route_app_count),
                 "setup_constrained_app_count": int(setup_constrained_app_count),
                 "provider_blocked_app_count": int(provider_blocked_app_count),
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],
@@ -24484,6 +24625,129 @@ class DesktopActionRouter:
             "recommended_container_roles": cls._dedupe_strings(recommended_container_roles)[:6],
             "recommended_wave_actions": cls._dedupe_strings(recommended_wave_actions)[:8],
             "recommended_traversal_paths": cls._dedupe_strings(recommended_traversal_paths)[:8],
+        }
+
+    @classmethod
+    def _memory_guidance_runtime_summary(
+        cls,
+        *,
+        adaptive_learning_runtime: Optional[Dict[str, Any]] = None,
+        semantic_memory_guidance: Optional[Dict[str, Any]] = None,
+        targeting: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        runtime_payload = (
+            dict(adaptive_learning_runtime)
+            if isinstance(adaptive_learning_runtime, dict)
+            else {}
+        )
+        guidance_payload = (
+            dict(semantic_memory_guidance)
+            if isinstance(semantic_memory_guidance, dict)
+            else {}
+        )
+        targeting_payload = (
+            dict(targeting)
+            if isinstance(targeting, dict)
+            else {}
+        )
+        route_profile = str(
+            runtime_payload.get("selected_ai_route_profile", "")
+            or runtime_payload.get("route_profile", "")
+            or targeting_payload.get("selected_ai_route_profile", "")
+            or ""
+        ).strip().lower()
+        guidance_status = str(
+            runtime_payload.get("memory_guidance_status", "")
+            or targeting_payload.get("memory_guidance_status", "")
+            or targeting_payload.get("semantic_guidance_status", "")
+            or guidance_payload.get("guidance_status", "")
+            or ""
+        ).strip().lower()
+        guidance_match_count = 0
+        for candidate in (
+            runtime_payload.get("semantic_guidance_match_count", 0),
+            targeting_payload.get("semantic_guidance_match_count", 0),
+            guidance_payload.get("count", 0),
+        ):
+            try:
+                guidance_match_count = max(guidance_match_count, max(0, int(candidate or 0)))
+            except (TypeError, ValueError):
+                continue
+        reason_codes = cls._dedupe_strings(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in runtime_payload.get("ai_route_reason_codes", [])
+                    if isinstance(runtime_payload.get("ai_route_reason_codes", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in runtime_payload.get("route_selection_reason_codes", [])
+                    if isinstance(runtime_payload.get("route_selection_reason_codes", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in targeting_payload.get("memory_guidance_reason_codes", [])
+                    if isinstance(targeting_payload.get("memory_guidance_reason_codes", []), list)
+                    and str(item).strip()
+                ],
+            ]
+        )[:12]
+        memory_guided_route = bool(
+            runtime_payload.get("memory_guided_route", False)
+            or route_profile.startswith("memory_guided_")
+            or route_profile == "accessibility_memory_first"
+        )
+        memory_assisted_route = bool(
+            runtime_payload.get("memory_assisted_route", False)
+            or (
+                not memory_guided_route
+                and any(
+                    token in reason
+                    for reason in reason_codes
+                    for token in (
+                        "semantic_memory_route_assist",
+                        "semantic_memory_available",
+                        "semantic_memory_guided",
+                        "structured_memory_ready",
+                        "hotkey_memory_ready",
+                    )
+                )
+            )
+        )
+        if guidance_status not in {"strong", "partial", "cold"}:
+            if memory_guided_route:
+                guidance_status = "strong"
+            elif memory_assisted_route or guidance_match_count > 0:
+                guidance_status = "partial"
+            else:
+                guidance_status = "cold"
+        alignment_status = "cold"
+        if guidance_status in {"strong", "partial"} and memory_guided_route:
+            alignment_status = "aligned"
+        elif guidance_status in {"strong", "partial"} and memory_assisted_route:
+            alignment_status = "assisted"
+        elif guidance_status in {"strong", "partial"}:
+            alignment_status = "underused"
+        elif memory_guided_route or memory_assisted_route:
+            alignment_status = "speculative"
+        return {
+            "guidance_status": guidance_status,
+            "match_count": guidance_match_count,
+            "memory_guided_route": memory_guided_route,
+            "memory_assisted_route": memory_assisted_route,
+            "alignment_status": alignment_status,
+            "reason_codes": cls._dedupe_strings(
+                [
+                    *reason_codes,
+                    *(["memory_guided_route"] if memory_guided_route else []),
+                    *(["memory_assisted_route"] if memory_assisted_route else []),
+                    *(["memory_guidance_" + guidance_status] if guidance_status else []),
+                    *(["memory_alignment_" + alignment_status] if alignment_status else []),
+                ]
+            )[:12],
         }
 
     @staticmethod

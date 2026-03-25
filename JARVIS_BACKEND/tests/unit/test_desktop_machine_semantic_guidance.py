@@ -167,6 +167,9 @@ def test_desktop_machine_prepare_app_control_uses_semantic_memory_guidance() -> 
     assert payload["semantic_memory_guidance"]["guidance_status"] == "strong"
     assert payload["summary"]["semantic_guidance_match_count"] == 2
     assert payload["summary"]["semantic_guidance_alignment"] == "matched"
+    assert payload["summary"]["memory_guided_route"] is False
+    assert payload["summary"]["memory_assisted_route"] is False
+    assert payload["summary"]["memory_route_alignment_status"] == "underused"
     assert "menu" in list(captured_survey.get("target_container_roles", []))
     assert "focus_toolbar" in list(captured_survey.get("preferred_wave_actions", []))
     assert "focus_search_box" in list(captured_survey.get("preferred_wave_actions", []))
@@ -352,11 +355,26 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
 
     assert finalized["summary"]["semantic_guided_count"] == 1
     assert finalized["summary"]["semantic_followup_count"] == 1
+    assert finalized["summary"]["memory_guidance_status_counts"]["strong"] == 1
+    assert finalized["summary"]["memory_guidance_status_counts"]["cold"] == 1
+    assert finalized["summary"]["memory_route_alignment_counts"]["underused"] == 1
+    assert finalized["summary"]["memory_guided_route_count"] == 0
+    assert finalized["summary"]["memory_assisted_route_count"] == 0
+    assert finalized["summary"]["memory_underused_count"] == 1
+    assert finalized["summary"]["memory_followthrough_enabled"] is True
+    assert "Notepad" in finalized["summary"]["memory_underused_app_names"]
+    assert finalized["campaign_defaults"]["memory_route_alignment_counts"]["underused"] == 1
+    assert finalized["campaign_defaults"]["memory_followthrough_enabled"] is True
+    assert finalized["campaign_defaults"]["memory_underused_count"] == 1
+    assert finalized["campaign_defaults"]["max_surface_waves"] == 6
+    assert finalized["campaign_defaults"]["max_probe_controls"] == 4
+    assert "focus_navigation_tree" in finalized["campaign_defaults"]["preferred_wave_actions"]
     assert finalized["campaign_defaults"]["semantic_guidance_status_counts"]["strong"] == 1
     assert finalized["campaign_defaults"]["top_semantic_match_labels"]["Settings"] == 1
     assert any(
         profile["app_name"] == "Notepad"
         and profile["semantic_guidance_status"] == "strong"
+        and profile["memory_route_alignment_status"] == "underused"
         and "Settings" in profile["semantic_guidance_top_labels"]
         for profile in finalized["campaign_defaults"]["adaptive_app_profiles"]
     )
@@ -397,6 +415,46 @@ def test_desktop_machine_onboarding_continuation_plan_adds_semantic_followup() -
     assert continuation["items"][0]["semantic_followup_recommended"] is True
     assert continuation["summary"]["semantic_followup_count"] == 1
     assert continuation["summary"]["semantic_guidance_status_counts"]["cold"] == 1
+
+
+def test_desktop_machine_onboarding_continuation_plan_adds_memory_followthrough() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    continuation = service._desktop_machine_onboarding_continuation_plan(
+        execution_queue={"items": []},
+        app_learning_plan={
+            "plan": {
+                "targets": [
+                    {
+                        "app_name": "Notepad",
+                        "auto_learn_allowed": True,
+                        "semantic_guidance_status": "strong",
+                        "knowledge_gap_level": "warm",
+                        "memory_guided_route": False,
+                        "memory_assisted_route": False,
+                        "memory_route_alignment_status": "underused",
+                        "readiness_status": "ready",
+                        "remediation_progress_status": "",
+                        "remediation_retry_recommended": False,
+                        "remediation_provider_blocked": False,
+                        "remediation_setup_followup_required": False,
+                        "remediation_recent_action_code": "",
+                    }
+                ]
+            }
+        },
+        app_control_prepare_plan={"items": []},
+        route_remediation={"items": []},
+        route_remediation_progress={"items": []},
+        limit=4,
+    )
+
+    assert continuation["status"] == "success"
+    assert continuation["count"] == 1
+    assert continuation["items"][0]["kind"] == "activate_memory_guided_learning"
+    assert continuation["items"][0]["memory_followthrough_recommended"] is True
+    assert continuation["summary"]["memory_followthrough_count"] == 1
+    assert continuation["summary"]["memory_route_alignment_counts"]["underused"] == 1
 
 
 def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
@@ -477,4 +535,8 @@ def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
 
     assert ai_route["selected_ai_route_profile"] == "accessibility_memory_first"
     assert "semantic_memory_route_bias" in ai_route["ai_route_reason_codes"]
+    assert ai_route["memory_guided_route"] is True
+    assert ai_route["memory_assisted_route"] is False
+    assert ai_route["memory_route_alignment_status"] == "aligned"
+    assert "memory_guided_route" in ai_route["memory_route_reason_codes"]
     assert ai_route["ai_route_confidence"] > 0.5

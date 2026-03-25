@@ -110,9 +110,20 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
     assert plan["items"][0]["provider_model_readiness"]["ai_route_status"] == "fallback"
     assert plan["items"][0]["provider_model_readiness"]["selected_ai_runtime_band"] == "accessibility"
+    assert plan["items"][0]["provider_model_readiness"]["memory_guided_route"] is False
+    assert plan["items"][0]["provider_model_readiness"]["memory_assisted_route"] is True
+    assert plan["items"][0]["provider_model_readiness"]["memory_route_alignment_status"] == "assisted"
     assert plan["summary"]["ai_route_status_counts"]["fallback"] == 1
     assert plan["summary"]["ai_route_runtime_band_counts"]["accessibility"] == 1
     assert plan["summary"]["memory_guidance_status_counts"]["partial"] == 1
+    assert plan["summary"]["memory_guided_route_count"] == 0
+    assert plan["summary"]["memory_assisted_route_count"] == 1
+    assert plan["summary"]["memory_route_alignment_counts"]["assisted"] == 1
+    assert plan["summary"]["memory_followthrough_guest_count"] == 1
+    assert plan["defaults"]["memory_followthrough_enabled"] is True
+    assert plan["defaults"]["max_surface_waves"] == 5
+    assert plan["defaults"]["max_probe_controls"] == 4
+    assert plan["next_actions"][0]["kind"] == "deepen_vm_control_learning"
 
     prepared = manager.prepare_guest_control(
         inventory=inventory,
@@ -136,3 +147,10 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
     assert prepared["summary"]["ai_route_status"] == "fallback"
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"
+    assert prepared["summary"]["memory_guided_route"] is False
+    assert prepared["summary"]["memory_assisted_route"] is True
+    assert prepared["summary"]["memory_route_alignment_status"] == "assisted"
+    assert prepared["summary"]["memory_assisted_route_count"] == 1
+    assert prepared["summary"]["memory_followthrough_recommended"] is True
+    assert prepared["summary"]["recommended_max_surface_waves"] == 5
+    assert prepared["summary"]["recommended_max_probe_controls"] == 4
