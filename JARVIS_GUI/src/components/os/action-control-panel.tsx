@@ -2692,6 +2692,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
       ),
     [desktopMachineVmControlPlanSummary]
   );
+  const desktopMachineVmControlMemoryMissionStatusCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.memory_mission_status_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlTopMemoryMissionQueries = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.top_memory_mission_queries)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
+  const desktopMachineVmControlTopMemoryMissionHotkeys = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineVmControlPlanSummary.top_memory_mission_hotkeys)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineVmControlPlanSummary]
+  );
   const desktopMachineVmPrepareExecutionModeCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineVmPrepareSummary.execution_mode_counts)).sort(
@@ -2717,6 +2738,10 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopMachinePrepareSummary = useMemo(
     () => asObjectRecord(desktopMachinePrepare.summary),
     [desktopMachinePrepare]
+  );
+  const desktopMachinePrepareMemoryMission = useMemo(
+    () => asObjectRecord(desktopMachinePrepareSummary.memory_mission),
+    [desktopMachinePrepareSummary]
   );
   const desktopMachineOnboardingSummary = useMemo(
     () => asObjectRecord(desktopMachineOnboardingPlan.summary),
@@ -3090,6 +3115,27 @@ const modelSetupWatchdogSupervisorRefreshLockRef = useRef(false);
   const desktopMachineAppLearningAiRouteProfileCounts = useMemo(
     () =>
       Object.entries(asObjectRecord(desktopMachineAppLearningSummary.ai_route_profile_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningMemoryMissionStatusCounts = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.memory_mission_status_counts)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningTopMemoryMissionQueries = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.top_memory_mission_queries)).sort(
+        (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
+      ),
+    [desktopMachineAppLearningSummary]
+  );
+  const desktopMachineAppLearningTopMemoryMissionHotkeys = useMemo(
+    () =>
+      Object.entries(asObjectRecord(desktopMachineAppLearningSummary.top_memory_mission_hotkeys)).sort(
         (left, right) => Number(right[1] ?? 0) - Number(left[1] ?? 0)
       ),
     [desktopMachineAppLearningSummary]
@@ -21779,6 +21825,33 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}vm:{Number(desktopMachineOnboardingSummary.vm_memory_followthrough_count ?? 0)}
                                           </p>
                                         ) : null}
+                                        {desktopMachineAppLearningMemoryMissionStatusCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            memory missions:{' '}
+                                            {desktopMachineAppLearningMemoryMissionStatusCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningTopMemoryMissionQueries.length > 0 ? (
+                                          <p className="mt-1">
+                                            seed queries:{' '}
+                                            {desktopMachineAppLearningTopMemoryMissionQueries
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineAppLearningTopMemoryMissionHotkeys.length > 0 ? (
+                                          <p className="mt-1">
+                                            memory hotkeys:{' '}
+                                            {desktopMachineAppLearningTopMemoryMissionHotkeys
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
                                         {(Number(desktopMachineAppLearningSummary.remediation_retry_count ?? 0) > 0 ||
                                           Number(desktopMachineAppLearningSummary.remediation_provider_blocked_count ?? 0) > 0 ||
                                           Number(desktopMachineAppLearningSummary.remediation_setup_followup_count ?? 0) > 0) ? (
@@ -22026,6 +22099,30 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             {' • '}confident:{Number(
                                               desktopMachineVmControlPlanSummary.ai_route_confident_count ?? 0
                                             )}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlMemoryMissionStatusCounts.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm memory missions:{' '}
+                                            {desktopMachineVmControlMemoryMissionStatusCounts
+                                              .slice(0, 4)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {desktopMachineVmControlTopMemoryMissionQueries.length > 0 ? (
+                                          <p className="mt-1">
+                                            vm seed queries:{' '}
+                                            {desktopMachineVmControlTopMemoryMissionQueries
+                                              .slice(0, 3)
+                                              .map(([key, value]) => `${key}:${value}`)
+                                              .join(' • ')}
+                                            {desktopMachineVmControlTopMemoryMissionHotkeys.length > 0
+                                              ? ` • hotkeys ${desktopMachineVmControlTopMemoryMissionHotkeys
+                                                  .slice(0, 3)
+                                                  .map(([key, value]) => `${key}:${value}`)
+                                                  .join(' • ')}`
+                                              : ''}
                                           </p>
                                         ) : null}
                                         {(Number(desktopMachineOnboardingSummary.vm_setup_followup_guest_count ?? 0) > 0 ||
@@ -22765,6 +22862,38 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                             route state:{String(desktopMachinePrepareSummary.route_resolution_status ?? 'n/a')}
                                             {' • '}setup followups:{Number(desktopMachinePrepareSummary.setup_followup_count ?? 0)}
                                             {' • '}provider blocked:{String(Boolean(desktopMachinePrepareSummary.provider_blocked))}
+                                          </p>
+                                        ) : null}
+                                        {(String(desktopMachinePrepareMemoryMission.status ?? '').trim() ||
+                                          String(desktopMachinePrepareMemoryMission.seed_query ?? '').trim()) ? (
+                                          <p className="mt-1">
+                                            memory mission:{String(desktopMachinePrepareMemoryMission.status ?? 'n/a')}
+                                            {' • '}query:{String(desktopMachinePrepareMemoryMission.seed_query ?? 'n/a')}
+                                            {' • '}guidance:{String(desktopMachinePrepareSummary.memory_guidance_status ?? 'n/a')}
+                                            {' • '}alignment:{String(
+                                              desktopMachinePrepareSummary.memory_route_alignment_status ?? 'n/a'
+                                            )}
+                                          </p>
+                                        ) : null}
+                                        {(Array.isArray(desktopMachinePrepareMemoryMission.query_hints) &&
+                                          desktopMachinePrepareMemoryMission.query_hints.length > 0) ||
+                                        (Array.isArray(desktopMachinePrepareMemoryMission.hotkey_hints) &&
+                                          desktopMachinePrepareMemoryMission.hotkey_hints.length > 0) ? (
+                                          <p className="mt-1">
+                                            memory hints:{' '}
+                                            {Array.isArray(desktopMachinePrepareMemoryMission.query_hints)
+                                              ? desktopMachinePrepareMemoryMission.query_hints
+                                                  .slice(0, 2)
+                                                  .map((item) => String(item))
+                                                  .join(' • ')
+                                              : 'n/a'}
+                                            {Array.isArray(desktopMachinePrepareMemoryMission.hotkey_hints) &&
+                                            desktopMachinePrepareMemoryMission.hotkey_hints.length > 0
+                                              ? ` • hotkeys ${desktopMachinePrepareMemoryMission.hotkey_hints
+                                                  .slice(0, 3)
+                                                  .map((item) => String(item))
+                                                  .join(' • ')}`
+                                              : ''}
                                           </p>
                                         ) : null}
                                         {(String(desktopMachinePrepareSummary.remediation_progress_status ?? '').trim() ||

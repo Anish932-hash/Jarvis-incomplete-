@@ -244,6 +244,13 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
             adaptive_app_profiles=[
                 {
                     "app_name": "notepad",
+                    "memory_mission": {
+                        "status": "strong",
+                        "seed_query": "settings",
+                        "query_hints": ["settings", "preferences"],
+                        "hotkey_hints": ["Alt+F", "Ctrl+F"],
+                        "followthrough_recommended": True,
+                    },
                     "learning_profile": "hybrid_guided_explore",
                     "execution_mode": "hybrid_ready",
                     "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
@@ -292,15 +299,25 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert created["campaign"]["ai_route_stack_name_counts"]["desktop_agent"] == 1
         assert created["campaign"]["ai_route_confident_count"] == 1
         assert created["campaign"]["ai_route_fallback_count"] == 0
+        assert created["campaign"]["memory_mission_status_counts"]["strong"] == 1
+        assert created["campaign"]["memory_mission_followthrough_count"] == 1
+        assert created["campaign"]["query"] == "settings"
+        assert created["campaign"]["query_hints_by_app"]["notepad"][0] == "settings"
+        assert "ctrl+f" in {str(item).strip().lower() for item in created["campaign"]["semantic_hotkeys_by_app"]["notepad"]}
+        assert created["campaign"]["top_memory_mission_queries"]["settings"] == 1
+        assert created["campaign"]["top_memory_mission_hotkeys"]["Alt+F"] == 1
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
 
         assert executed["status"] == "success"
+        assert captured[-1]["query"] == "settings"
         assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
         assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(captured[-1]["preferred_traversal_paths"]))
         assert int(captured[-1]["max_surface_waves"] or 0) > 2
+        assert captured[-1]["query_hints_by_app"]["notepad"][0] == "settings"
+        assert "ctrl+f" in {str(item).strip().lower() for item in captured[-1]["semantic_hotkeys_by_app"]["notepad"]}
         assert captured[-1]["adaptive_app_profiles"][0]["adaptive_runtime_strategy_profile"] == "balanced_hybrid_guided_explore"
         assert executed["campaign"]["adaptive_target_container_roles"] is True
         assert executed["campaign"]["adaptive_surface_wave_depth"] is True
@@ -318,6 +335,7 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert executed["campaign"]["ai_route_stack_name_counts"]["desktop_agent"] == 1
         assert executed["campaign"]["ai_route_confident_count"] == 1
         assert executed["campaign"]["ai_route_fallback_count"] == 0
+        assert executed["campaign"]["memory_mission_status_counts"]["strong"] == 1
         assert int(executed["campaign"].get("route_fallback_app_count", 0) or 0) == 0
         assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))

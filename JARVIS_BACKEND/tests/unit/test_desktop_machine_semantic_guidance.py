@@ -362,10 +362,19 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert finalized["summary"]["memory_assisted_route_count"] == 0
     assert finalized["summary"]["memory_underused_count"] == 1
     assert finalized["summary"]["memory_followthrough_enabled"] is True
+    assert finalized["summary"]["memory_mission_status_counts"]["strong"] == 1
+    assert finalized["summary"]["memory_mission_status_counts"]["cold"] == 1
+    assert finalized["summary"]["memory_mission_followthrough_count"] == 2
+    assert finalized["summary"]["top_memory_mission_queries"]["settings"] >= 1
+    assert finalized["summary"]["top_memory_mission_hotkeys"]["ctrl+f"] >= 1
     assert "Notepad" in finalized["summary"]["memory_underused_app_names"]
     assert finalized["campaign_defaults"]["memory_route_alignment_counts"]["underused"] == 1
     assert finalized["campaign_defaults"]["memory_followthrough_enabled"] is True
     assert finalized["campaign_defaults"]["memory_underused_count"] == 1
+    assert finalized["campaign_defaults"]["memory_mission_status_counts"]["strong"] == 1
+    assert finalized["campaign_defaults"]["memory_mission_followthrough_count"] == 2
+    assert finalized["campaign_defaults"]["query_hints_by_app"]["Notepad"][0] == "settings"
+    assert "ctrl+f" in finalized["campaign_defaults"]["semantic_hotkeys_by_app"]["Notepad"]
     assert finalized["campaign_defaults"]["max_surface_waves"] == 6
     assert finalized["campaign_defaults"]["max_probe_controls"] == 4
     assert "focus_navigation_tree" in finalized["campaign_defaults"]["preferred_wave_actions"]
@@ -376,6 +385,7 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
         and profile["semantic_guidance_status"] == "strong"
         and profile["memory_route_alignment_status"] == "underused"
         and "Settings" in profile["semantic_guidance_top_labels"]
+        and dict(profile.get("memory_mission", {})).get("seed_query", "") == "settings"
         for profile in finalized["campaign_defaults"]["adaptive_app_profiles"]
     )
 

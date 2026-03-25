@@ -10400,6 +10400,195 @@ class DesktopBackendService:
                 row["recommended_max_surface_waves"] = max(base_waves, min(base_waves + 1, 6))
         return row
 
+    @classmethod
+    def _desktop_machine_memory_mission_for_target(
+        cls,
+        *,
+        target_row: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        row = dict(target_row) if isinstance(target_row, dict) else {}
+        app_name = str(
+            row.get("app_name", "")
+            or row.get("profile_name", "")
+            or row.get("profile_id", "")
+            or ""
+        ).strip()
+        semantic_guidance = (
+            dict(row.get("semantic_memory_guidance", {}))
+            if isinstance(row.get("semantic_memory_guidance", {}), dict)
+            else {}
+        )
+        semantic_status = cls._machine_text(row.get("semantic_guidance_status", ""))
+        memory_status = cls._machine_text(row.get("memory_guidance_status", ""))
+        alignment_status = cls._machine_text(row.get("memory_route_alignment_status", ""))
+        knowledge_gap_level = cls._machine_text(row.get("knowledge_gap_level", ""))
+        try:
+            semantic_match_count = max(0, int(row.get("semantic_guidance_match_count", 0) or 0))
+        except Exception:  # noqa: BLE001
+            semantic_match_count = 0
+        semantic_memory_available = bool(row.get("semantic_memory_available", False))
+        try:
+            vector_count = max(0, int(row.get("knowledge_store_vector_count", 0) or 0))
+        except Exception:  # noqa: BLE001
+            vector_count = 0
+        try:
+            hotkey_count = max(0, int(row.get("knowledge_hotkey_count", 0) or 0))
+        except Exception:  # noqa: BLE001
+            hotkey_count = 0
+
+        query_hints = cls._machine_dedupe(
+            [
+                str(row.get("semantic_memory_query", "") or "").strip(),
+                *[
+                    str(item).strip()
+                    for item in row.get("recommended_queries", [])
+                    if isinstance(row.get("recommended_queries", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in semantic_guidance.get("recommended_queries", [])
+                    if isinstance(semantic_guidance.get("recommended_queries", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in row.get("semantic_guidance_top_labels", [])
+                    if isinstance(row.get("semantic_guidance_top_labels", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in semantic_guidance.get("top_match_labels", [])
+                    if isinstance(semantic_guidance.get("top_match_labels", []), list) and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        hotkey_hints = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in row.get("semantic_guidance_top_hotkeys", [])
+                    if isinstance(row.get("semantic_guidance_top_hotkeys", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in semantic_guidance.get("top_hotkeys", [])
+                    if isinstance(semantic_guidance.get("top_hotkeys", []), list) and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        label_hints = cls._machine_dedupe(
+            [
+                str(item).strip()
+                for item in row.get("semantic_guidance_top_labels", [])
+                if isinstance(row.get("semantic_guidance_top_labels", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        target_container_roles = cls._machine_dedupe(
+            [
+                str(item).strip()
+                for item in row.get("target_container_roles", [])
+                if isinstance(row.get("target_container_roles", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        preferred_wave_actions = cls._machine_dedupe(
+            [
+                str(item).strip()
+                for item in row.get("preferred_wave_actions", [])
+                if isinstance(row.get("preferred_wave_actions", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        preferred_traversal_paths = cls._machine_dedupe(
+            [
+                str(item).strip()
+                for item in row.get("preferred_traversal_paths", [])
+                if isinstance(row.get("preferred_traversal_paths", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        reason_codes = cls._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in row.get("reason_codes", [])
+                    if isinstance(row.get("reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in row.get("memory_guidance_reason_codes", [])
+                    if isinstance(row.get("memory_guidance_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in row.get("memory_route_reason_codes", [])
+                    if isinstance(row.get("memory_route_reason_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in semantic_guidance.get("reason_codes", [])
+                    if isinstance(semantic_guidance.get("reason_codes", []), list) and str(item).strip()
+                ],
+                *(["semantic_memory_guidance_available"] if semantic_match_count > 0 else []),
+                *(["semantic_memory_available"] if semantic_memory_available else []),
+                *(["vector_memory_available"] if vector_count > 0 else []),
+                *(["hotkey_memory_available"] if hotkey_count > 0 else []),
+                *(["knowledge_gap_" + knowledge_gap_level] if knowledge_gap_level else []),
+                *(["memory_alignment_" + alignment_status] if alignment_status else []),
+            ],
+            limit=12,
+        )
+        if alignment_status == "aligned" or semantic_status == "strong" or memory_status == "strong":
+            mission_status = "strong"
+        elif (
+            semantic_match_count > 0
+            or semantic_memory_available
+            or vector_count > 0
+            or hotkey_count > 0
+            or semantic_status == "partial"
+            or memory_status == "partial"
+        ):
+            mission_status = "partial"
+        else:
+            mission_status = "cold"
+        followthrough_recommended = bool(
+            alignment_status in {"underused", "assisted"}
+            or knowledge_gap_level in {"cold", "thin"}
+            or mission_status == "cold"
+        )
+        if followthrough_recommended:
+            reason_codes = cls._machine_dedupe(
+                [*reason_codes, "memory_followthrough_recommended"],
+                limit=12,
+            )
+        seed_query = next((item for item in query_hints if str(item).strip()), "") or app_name
+        revisit_priority = 3 if alignment_status == "underused" else 2 if followthrough_recommended else 1 if mission_status != "strong" else 0
+        return {
+            "app_name": app_name,
+            "profile_id": str(row.get("profile_id", "") or "").strip(),
+            "status": mission_status,
+            "seed_query": seed_query,
+            "query_hints": query_hints[:8],
+            "hotkey_hints": hotkey_hints[:8],
+            "label_hints": label_hints[:8],
+            "target_container_roles": target_container_roles[:8],
+            "preferred_wave_actions": preferred_wave_actions[:8],
+            "preferred_traversal_paths": preferred_traversal_paths[:8],
+            "semantic_guidance_status": semantic_status or "cold",
+            "memory_guidance_status": memory_status or "cold",
+            "memory_route_alignment_status": alignment_status or "cold",
+            "memory_guided_route": bool(row.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(row.get("memory_assisted_route", False)),
+            "semantic_guidance_match_count": semantic_match_count,
+            "semantic_memory_available": semantic_memory_available,
+            "knowledge_gap_level": knowledge_gap_level or "cold",
+            "followthrough_recommended": followthrough_recommended,
+            "revisit_priority": revisit_priority,
+            "reason_codes": reason_codes[:12],
+        }
+
     def _desktop_machine_app_learning_defaults(
         self,
         *,
@@ -11035,6 +11224,16 @@ class DesktopBackendService:
                 for item in campaign_defaults.get("adaptive_app_profiles", [])
                 if isinstance(campaign_defaults.get("adaptive_app_profiles", []), list) and isinstance(item, dict)
             ],
+            query_hints_by_app=(
+                dict(campaign_defaults.get("query_hints_by_app", {}))
+                if isinstance(campaign_defaults.get("query_hints_by_app", {}), dict)
+                else {}
+            ),
+            semantic_hotkeys_by_app=(
+                dict(campaign_defaults.get("semantic_hotkeys_by_app", {}))
+                if isinstance(campaign_defaults.get("semantic_hotkeys_by_app", {}), dict)
+                else {}
+            ),
             source=source,
         )
         result: Dict[str, Any] = {
@@ -11457,6 +11656,11 @@ class DesktopBackendService:
             "knowledge_store_vector_count": int(selected_target.get("knowledge_store_vector_count", 0) or 0),
             "knowledge_hotkey_count": int(selected_target.get("knowledge_hotkey_count", 0) or 0),
             "semantic_memory_available": bool(selected_target.get("semantic_memory_available", False)),
+            "memory_mission": (
+                dict(selected_target.get("memory_mission", {}))
+                if isinstance(selected_target.get("memory_mission", {}), dict)
+                else {}
+            ),
             "memory_guidance_status": str(selected_target.get("memory_guidance_status", "") or "").strip().lower(),
             "memory_guidance_reason_codes": [
                 str(item).strip().lower()
@@ -15706,6 +15910,9 @@ class DesktopBackendService:
                 for item in memory_route_guidance.get("reason_codes", [])
                 if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
             ][:12]
+            item_payload["memory_mission"] = self._desktop_machine_memory_mission_for_target(
+                target_row=item_payload,
+            )
             if int(item_payload.get("semantic_guidance_match_count", 0) or 0) > 0:
                 item_payload["prepare_priority_score"] = float(
                     item_payload.get("prepare_priority_score", 0.0) or 0.0
@@ -16708,6 +16915,9 @@ class DesktopBackendService:
                 for item in memory_route_guidance.get("reason_codes", [])
                 if isinstance(memory_route_guidance.get("reason_codes", []), list) and str(item).strip()
             ][:12]
+            item_payload["memory_mission"] = self._desktop_machine_memory_mission_for_target(
+                target_row=item_payload,
+            )
             annotated_targets.append(item_payload)
         profile_rank = {
             "deep_local_explore": 0,
@@ -16756,6 +16966,11 @@ class DesktopBackendService:
         memory_assisted_route_count = 0
         semantic_match_label_counts: Dict[str, int] = {}
         semantic_hotkey_counts: Dict[str, int] = {}
+        memory_mission_status_counts: Dict[str, int] = {}
+        memory_mission_query_counts: Dict[str, int] = {}
+        memory_mission_hotkey_counts: Dict[str, int] = {}
+        preferred_memory_mission_queries: List[str] = []
+        memory_mission_followthrough_count = 0
         strategy_notes: List[str] = []
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
@@ -16851,6 +17066,34 @@ class DesktopBackendService:
                 if clean_hotkey:
                     semantic_hotkey_counts[clean_hotkey] = int(
                         semantic_hotkey_counts.get(clean_hotkey, 0) or 0
+                    ) + 1
+            memory_mission = (
+                dict(item.get("memory_mission", {}))
+                if isinstance(item.get("memory_mission", {}), dict)
+                else {}
+            )
+            memory_mission_status = str(memory_mission.get("status", "") or "cold").strip().lower() or "cold"
+            memory_mission_status_counts[memory_mission_status] = int(
+                memory_mission_status_counts.get(memory_mission_status, 0) or 0
+            ) + 1
+            if bool(memory_mission.get("followthrough_recommended", False)):
+                memory_mission_followthrough_count += 1
+            seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+            if seed_query:
+                preferred_memory_mission_queries = self._machine_dedupe(
+                    [*preferred_memory_mission_queries, seed_query]
+                )
+            for query_hint in memory_mission.get("query_hints", []):
+                clean_query_hint = str(query_hint or "").strip()
+                if clean_query_hint:
+                    memory_mission_query_counts[clean_query_hint] = int(
+                        memory_mission_query_counts.get(clean_query_hint, 0) or 0
+                    ) + 1
+            for hotkey_hint in memory_mission.get("hotkey_hints", []):
+                clean_hotkey_hint = str(hotkey_hint or "").strip()
+                if clean_hotkey_hint:
+                    memory_mission_hotkey_counts[clean_hotkey_hint] = int(
+                        memory_mission_hotkey_counts.get(clean_hotkey_hint, 0) or 0
                     ) + 1
             note = str(item.get("strategy_notes", "") or "").strip()
             if note:
@@ -16997,6 +17240,11 @@ class DesktopBackendService:
                 "memory_underused_count": memory_underused_count,
                 "memory_aligned_count": memory_aligned_count,
                 "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_mission_followthrough_count": int(memory_mission_followthrough_count),
                 "memory_guided_app_names": memory_guided_app_names[:6],
                 "memory_underused_app_names": memory_underused_app_names[:6],
                 "top_semantic_match_labels": {
@@ -17010,6 +17258,20 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(
                         semantic_hotkey_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_query_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_hotkey_counts.items(),
                         key=lambda entry: (-entry[1], str(entry[0]).lower()),
                     )[:8]
                 },
@@ -17085,6 +17347,25 @@ class DesktopBackendService:
                 "label": str(existing_defaults.get("label", "") or "machine app learning campaign").strip() or "machine app learning campaign",
                 "query": (
                     next((query for query in combined_queries if str(query).strip()), "")
+                    or next(
+                        (
+                            query
+                            for query in preferred_memory_mission_queries
+                            if str(query).strip()
+                        ),
+                        "",
+                    )
+                    or next(
+                        (
+                            query
+                            for query, _count in sorted(
+                                memory_mission_query_counts.items(),
+                                key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                            )
+                            if str(query).strip()
+                        ),
+                        "",
+                    )
                     or str(existing_defaults.get("query", "") or "").strip()
                 ),
                 "max_apps": max(1, min(len(campaign_targets) or 1, 6)),
@@ -17194,6 +17475,11 @@ class DesktopBackendService:
                 "memory_underused_count": memory_underused_count,
                 "memory_aligned_count": memory_aligned_count,
                 "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_mission_followthrough_count": int(memory_mission_followthrough_count),
                 "memory_guided_app_names": memory_guided_app_names[:6],
                 "memory_underused_app_names": memory_underused_app_names[:6],
                 "top_semantic_match_labels": {
@@ -17209,6 +17495,54 @@ class DesktopBackendService:
                         semantic_hotkey_counts.items(),
                         key=lambda entry: (-entry[1], str(entry[0]).lower()),
                     )[:8]
+                },
+                "top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_query_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        memory_mission_hotkey_counts.items(),
+                        key=lambda entry: (-entry[1], str(entry[0]).lower()),
+                    )[:8]
+                },
+                "query_hints_by_app": {
+                    str(item.get("app_name", "") or "").strip(): [
+                        str(query_hint).strip()
+                        for query_hint in dict(item.get("memory_mission", {})).get("query_hints", [])
+                        if isinstance(dict(item.get("memory_mission", {})).get("query_hints", []), list)
+                        and str(query_hint).strip()
+                    ][:8]
+                    for item in campaign_targets
+                    if isinstance(item, dict)
+                    and str(item.get("app_name", "") or "").strip()
+                    and isinstance(item.get("memory_mission", {}), dict)
+                    and any(
+                        str(query_hint).strip()
+                        for query_hint in dict(item.get("memory_mission", {})).get("query_hints", [])
+                        if isinstance(dict(item.get("memory_mission", {})).get("query_hints", []), list)
+                    )
+                },
+                "semantic_hotkeys_by_app": {
+                    str(item.get("app_name", "") or "").strip(): [
+                        str(hotkey_hint).strip()
+                        for hotkey_hint in dict(item.get("memory_mission", {})).get("hotkey_hints", [])
+                        if isinstance(dict(item.get("memory_mission", {})).get("hotkey_hints", []), list)
+                        and str(hotkey_hint).strip()
+                    ][:8]
+                    for item in campaign_targets
+                    if isinstance(item, dict)
+                    and str(item.get("app_name", "") or "").strip()
+                    and isinstance(item.get("memory_mission", {}), dict)
+                    and any(
+                        str(hotkey_hint).strip()
+                        for hotkey_hint in dict(item.get("memory_mission", {})).get("hotkey_hints", [])
+                        if isinstance(dict(item.get("memory_mission", {})).get("hotkey_hints", []), list)
+                    )
                 },
                 "adaptive_app_profiles": [
                     {
@@ -17254,6 +17588,11 @@ class DesktopBackendService:
                             for code in item.get("memory_route_reason_codes", [])
                             if isinstance(item.get("memory_route_reason_codes", []), list) and str(code).strip()
                         ][:12],
+                        "memory_mission": (
+                            dict(item.get("memory_mission", {}))
+                            if isinstance(item.get("memory_mission", {}), dict)
+                            else {}
+                        ),
                         "surface_node_count": int(item.get("surface_node_count", 0) or 0),
                         "surface_transition_count": int(item.get("surface_transition_count", 0) or 0),
                         "knowledge_gap_reasons": [
@@ -20130,6 +20469,8 @@ class DesktopBackendService:
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
+        query_hints_by_app: Optional[Dict[str, List[str]]] = None,
+        semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         router = getattr(self, "desktop_action_router", None)
@@ -20161,6 +20502,8 @@ class DesktopBackendService:
                 revalidate_known_controls=revalidate_known_controls,
                 prefer_failure_memory=prefer_failure_memory,
                 adaptive_app_profiles=adaptive_app_profiles,
+                query_hints_by_app=query_hints_by_app,
+                semantic_hotkeys_by_app=semantic_hotkeys_by_app,
                 source=source,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory batch payload"}
@@ -20210,6 +20553,8 @@ class DesktopBackendService:
         preferred_wave_actions: Optional[List[str]] = None,
         preferred_traversal_paths: Optional[List[str]] = None,
         adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
+        query_hints_by_app: Optional[Dict[str, List[str]]] = None,
+        semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         supervisor = getattr(self, "desktop_app_memory_supervisor", None)
@@ -20258,6 +20603,8 @@ class DesktopBackendService:
             preferred_wave_actions=preferred_wave_actions,
             preferred_traversal_paths=preferred_traversal_paths,
             adaptive_app_profiles=adaptive_app_profiles,
+            query_hints_by_app=query_hints_by_app,
+            semantic_hotkeys_by_app=semantic_hotkeys_by_app,
             source=source,
         )
         payload["app_memory"] = _to_jsonable(
@@ -21229,6 +21576,7 @@ class DesktopBackendService:
     def _execute_desktop_app_memory_supervisor_tick(
         self,
         *,
+        app_names: Optional[List[str]] = None,
         max_apps: int = 2,
         per_app_limit: int = 24,
         query: str = "",
@@ -21246,11 +21594,15 @@ class DesktopBackendService:
         preferred_traversal_paths: Optional[List[str]] = None,
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
+        adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
+        query_hints_by_app: Optional[Dict[str, List[str]]] = None,
+        semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "daemon",
     ) -> Dict[str, Any]:
         payload = self.survey_desktop_app_memory_batch(
             query=query,
             category=category,
+            app_names=app_names,
             max_apps=max_apps,
             per_app_limit=per_app_limit,
             ensure_app_launch=ensure_app_launch,
@@ -21271,6 +21623,9 @@ class DesktopBackendService:
             preferred_traversal_paths=preferred_traversal_paths,
             revalidate_known_controls=revalidate_known_controls,
             prefer_failure_memory=prefer_failure_memory,
+            adaptive_app_profiles=adaptive_app_profiles,
+            query_hints_by_app=query_hints_by_app,
+            semantic_hotkeys_by_app=semantic_hotkeys_by_app,
             source=source,
         )
         return _to_jsonable(payload)

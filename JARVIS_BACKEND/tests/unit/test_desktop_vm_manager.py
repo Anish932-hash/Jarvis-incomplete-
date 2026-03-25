@@ -76,6 +76,9 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
                 "summary": {
                     "semantic_guided_count": 2,
                     "semantic_followup_count": 1,
+                    "memory_mission_status_counts": {"strong": 2, "cold": 1},
+                    "top_memory_mission_queries": {"settings": 2, "preferences": 1},
+                    "top_memory_mission_hotkeys": {"Alt+F": 2, "Ctrl+F": 1},
                 }
             }
         },
@@ -105,6 +108,9 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert "memory_assisted_vm_route" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_followup_count"] == 1
+    assert plan["items"][0]["provider_model_readiness"]["app_learning_memory_mission_status_counts"]["strong"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["app_learning_top_memory_mission_queries"][0] == "settings"
+    assert "Alt+F" in plan["items"][0]["provider_model_readiness"]["app_learning_top_memory_mission_hotkeys"]
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_blocked_stack_count"] == 1
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
@@ -113,6 +119,9 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["memory_guided_route"] is False
     assert plan["items"][0]["provider_model_readiness"]["memory_assisted_route"] is True
     assert plan["items"][0]["provider_model_readiness"]["memory_route_alignment_status"] == "assisted"
+    assert plan["items"][0]["memory_mission"]["status"] == "partial"
+    assert plan["items"][0]["memory_mission"]["seed_query"] == "desktop settings"
+    assert "settings" in plan["items"][0]["memory_mission"]["query_hints"]
     assert plan["summary"]["ai_route_status_counts"]["fallback"] == 1
     assert plan["summary"]["ai_route_runtime_band_counts"]["accessibility"] == 1
     assert plan["summary"]["memory_guidance_status_counts"]["partial"] == 1
@@ -120,9 +129,13 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["summary"]["memory_assisted_route_count"] == 1
     assert plan["summary"]["memory_route_alignment_counts"]["assisted"] == 1
     assert plan["summary"]["memory_followthrough_guest_count"] == 1
+    assert plan["summary"]["memory_mission_status_counts"]["partial"] == 1
+    assert plan["summary"]["top_memory_mission_queries"]["settings"] >= 1
+    assert plan["summary"]["top_memory_mission_hotkeys"]["Alt+F"] >= 1
     assert plan["defaults"]["memory_followthrough_enabled"] is True
     assert plan["defaults"]["max_surface_waves"] == 5
     assert plan["defaults"]["max_probe_controls"] == 4
+    assert plan["defaults"]["memory_mission_status_counts"]["partial"] == 1
     assert plan["next_actions"][0]["kind"] == "deepen_vm_control_learning"
 
     prepared = manager.prepare_guest_control(
@@ -149,6 +162,8 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"
     assert prepared["summary"]["memory_guided_route"] is False
     assert prepared["summary"]["memory_assisted_route"] is True
+    assert prepared["summary"]["memory_mission"]["status"] == "partial"
+    assert prepared["summary"]["memory_mission"]["seed_query"] == "desktop settings"
     assert prepared["summary"]["memory_route_alignment_status"] == "assisted"
     assert prepared["summary"]["memory_assisted_route_count"] == 1
     assert prepared["summary"]["memory_followthrough_recommended"] is True

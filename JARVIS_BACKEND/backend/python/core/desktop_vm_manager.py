@@ -280,6 +280,27 @@ class DesktopVMManager:
                 ],
                 limit=8,
             )
+        memory_mission_status_counts: Dict[str, int] = {}
+        top_memory_mission_queries: Dict[str, int] = {}
+        top_memory_mission_hotkeys: Dict[str, int] = {}
+        for row in selected:
+            memory_mission = dict(row.get("memory_mission", {})) if isinstance(row.get("memory_mission", {}), dict) else {}
+            memory_mission_status = _norm_text(memory_mission.get("status", "")) or "cold"
+            memory_mission_status_counts[memory_mission_status] = int(
+                memory_mission_status_counts.get(memory_mission_status, 0) or 0
+            ) + 1
+            for query_hint in memory_mission.get("query_hints", []):
+                clean_query_hint = _clean_text(query_hint)
+                if clean_query_hint:
+                    top_memory_mission_queries[clean_query_hint] = int(
+                        top_memory_mission_queries.get(clean_query_hint, 0) or 0
+                    ) + 1
+            for hotkey_hint in memory_mission.get("hotkey_hints", []):
+                clean_hotkey_hint = _clean_text(hotkey_hint)
+                if clean_hotkey_hint:
+                    top_memory_mission_hotkeys[clean_hotkey_hint] = int(
+                        top_memory_mission_hotkeys.get(clean_hotkey_hint, 0) or 0
+                    ) + 1
         return {
             "status": "success",
             "count": len(selected),
@@ -331,8 +352,26 @@ class DesktopVMManager:
                 "memory_assisted_route_count": len(
                     [row for row in selected if bool(row.get("memory_assisted_route", False))]
                 ),
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
                 "memory_underused_guest_count": memory_underused_guest_count,
                 "memory_followthrough_guest_count": memory_followthrough_guest_count,
+                "top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_memory_mission_queries.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_memory_mission_hotkeys.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
                 "setup_followup_guest_count": len(
                     [
                         row
@@ -352,6 +391,10 @@ class DesktopVMManager:
                 "probe_controls": True,
                 "max_probe_controls": default_max_probe_controls,
                 "memory_followthrough_enabled": bool(memory_followthrough_guest_count > 0),
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
                 "preferred_wave_actions": preferred_wave_actions[:8],
             },
             "next_actions": [
@@ -463,6 +506,11 @@ class DesktopVMManager:
                 else [],
                 "memory_guided_route": bool(target.get("memory_guided_route", False)),
                 "memory_assisted_route": bool(target.get("memory_assisted_route", False)),
+                "memory_mission": (
+                    dict(target.get("memory_mission", {}))
+                    if isinstance(target.get("memory_mission", {}), dict)
+                    else {}
+                ),
                 "memory_route_alignment_status": _norm_text(target.get("memory_route_alignment_status", "")),
                 "memory_route_reason_codes": list(target.get("memory_route_reason_codes", []))
                 if isinstance(target.get("memory_route_reason_codes", []), list)
@@ -1027,6 +1075,29 @@ class DesktopVMManager:
             and isinstance(machine_profile.get("app_learning_plan", {}).get("plan", {}).get("summary", {}), dict)
             else {}
         )
+        app_learning_memory_mission_status_counts = (
+            dict(app_learning_summary.get("memory_mission_status_counts", {}))
+            if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
+            else {}
+        )
+        app_learning_top_memory_mission_queries = [
+            str(item).strip()
+            for item in (
+                dict(app_learning_summary.get("top_memory_mission_queries", {})).keys()
+                if isinstance(app_learning_summary.get("top_memory_mission_queries", {}), dict)
+                else []
+            )
+            if str(item).strip()
+        ][:8]
+        app_learning_top_memory_mission_hotkeys = [
+            str(item).strip()
+            for item in (
+                dict(app_learning_summary.get("top_memory_mission_hotkeys", {})).keys()
+                if isinstance(app_learning_summary.get("top_memory_mission_hotkeys", {}), dict)
+                else []
+            )
+            if str(item).strip()
+        ][:8]
         local_model_count = int(local_inventory.get("count", 0) or 0)
         vision_runtime_available = bool(multimodal_summary.get("vision_runtime_available", False))
         vision_loaded_model_count = int(multimodal_summary.get("vision_loaded_model_count", 0) or 0)
@@ -1231,6 +1302,9 @@ class DesktopVMManager:
             "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
             "app_learning_semantic_guided_count": app_learning_semantic_guided_count,
             "app_learning_semantic_followup_count": app_learning_semantic_followup_count,
+            "app_learning_memory_mission_status_counts": app_learning_memory_mission_status_counts,
+            "app_learning_top_memory_mission_queries": app_learning_top_memory_mission_queries,
+            "app_learning_top_memory_mission_hotkeys": app_learning_top_memory_mission_hotkeys,
             "memory_guidance_status": memory_guidance_status,
             "memory_guidance_reason_codes": memory_guidance_reason_codes,
             "memory_guided_route": bool(memory_route_guidance.get("memory_guided_route", False)),
@@ -1313,6 +1387,10 @@ class DesktopVMManager:
         recommended_max_probe_controls = (
             5 if memory_route_alignment_status == "underused" else 4 if memory_followthrough_recommended else 3
         )
+        memory_mission = cls._guest_memory_mission(
+            {**base, "learning_query": cls._guest_learning_query(base)},
+            provider_model_readiness=provider_model_readiness,
+        )
         return {
             **base,
             "guest_family": cls._guest_family(base),
@@ -1348,6 +1426,7 @@ class DesktopVMManager:
             if isinstance(provider_model_readiness.get("memory_route_reason_codes", []), list)
             else [],
             "memory_followthrough_recommended": memory_followthrough_recommended,
+            "memory_mission": memory_mission,
             "provider_model_readiness": provider_model_readiness,
             "recommended_traversal_roles": cls._recommended_traversal_roles(base),
             "preferred_wave_actions": cls._preferred_wave_actions(base),
@@ -1369,6 +1448,75 @@ class DesktopVMManager:
         if "mac" in guest_os or "darwin" in guest_os:
             return "system settings"
         return "settings"
+
+    @classmethod
+    def _guest_memory_mission(
+        cls,
+        row: Dict[str, Any],
+        *,
+        provider_model_readiness: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        readiness = dict(provider_model_readiness) if isinstance(provider_model_readiness, dict) else {}
+        guest_name = _clean_text(row.get("guest_name", ""))
+        learning_query = _clean_text(row.get("learning_query", "")) or cls._guest_learning_query(row)
+        memory_guidance_status = _norm_text(readiness.get("memory_guidance_status", "")) or "cold"
+        alignment_status = _norm_text(readiness.get("memory_route_alignment_status", "")) or "cold"
+        mission_status = (
+            "strong"
+            if alignment_status == "aligned" or bool(readiness.get("memory_guided_route", False))
+            else "partial"
+            if memory_guidance_status in {"strong", "partial"}
+            or int(readiness.get("app_learning_semantic_guided_count", 0) or 0) > 0
+            or int(readiness.get("structured_memory_semantic_ready_count", 0) or 0) > 0
+            else "cold"
+        )
+        query_hints = _dedupe_strings(
+            [
+                learning_query,
+                *[
+                    str(item).strip()
+                    for item in readiness.get("app_learning_top_memory_mission_queries", [])
+                    if isinstance(readiness.get("app_learning_top_memory_mission_queries", []), list)
+                    and str(item).strip()
+                ],
+                guest_name,
+                _clean_text(row.get("provider_label", "")),
+            ],
+            limit=8,
+        )
+        hotkey_hints = _dedupe_strings(
+            [
+                str(item).strip()
+                for item in readiness.get("app_learning_top_memory_mission_hotkeys", [])
+                if isinstance(readiness.get("app_learning_top_memory_mission_hotkeys", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        followthrough_recommended = alignment_status in {"underused", "assisted"} or mission_status == "cold"
+        return {
+            "guest_name": guest_name,
+            "status": mission_status,
+            "seed_query": next((item for item in query_hints if _clean_text(item)), learning_query),
+            "query_hints": query_hints,
+            "hotkey_hints": hotkey_hints,
+            "memory_guidance_status": memory_guidance_status,
+            "memory_route_alignment_status": alignment_status,
+            "memory_guided_route": bool(readiness.get("memory_guided_route", False)),
+            "memory_assisted_route": bool(readiness.get("memory_assisted_route", False)),
+            "followthrough_recommended": followthrough_recommended,
+            "reason_codes": _dedupe_strings(
+                [
+                    *[
+                        str(item).strip()
+                        for item in readiness.get("memory_route_reason_codes", [])
+                        if isinstance(readiness.get("memory_route_reason_codes", []), list) and str(item).strip()
+                    ],
+                    *(["guest_memory_followthrough_recommended"] if followthrough_recommended else []),
+                ],
+                limit=12,
+            ),
+        }
 
     def _record_prepare_status(self, *, target: Dict[str, Any], status: str, source: str) -> None:
         guest_id = _clean_text(target.get("guest_id", ""))

@@ -495,6 +495,8 @@ class DesktopAppMemorySupervisor:
         preferred_wave_actions: Optional[list[str]] = None,
         preferred_traversal_paths: Optional[list[str]] = None,
         adaptive_app_profiles: Optional[list[Dict[str, Any]]] = None,
+        query_hints_by_app: Optional[Dict[str, List[str]]] = None,
+        semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "manual",
     ) -> Dict[str, Any]:
         clean_apps = self._dedupe_strings([str(item).strip() for item in app_names if str(item).strip()])
@@ -508,6 +510,36 @@ class DesktopAppMemorySupervisor:
             for item in (adaptive_app_profiles or [])
             if isinstance(item, dict)
         ]
+        clean_query_hints_by_app: Dict[str, List[str]] = {}
+        if isinstance(query_hints_by_app, dict):
+            for raw_name, raw_values in query_hints_by_app.items():
+                clean_name = str(raw_name or "").strip()
+                if not clean_name:
+                    continue
+                normalized_values = self._dedupe_strings(
+                    [
+                        str(item).strip()
+                        for item in (raw_values or [])
+                        if isinstance(raw_values, list) and str(item).strip()
+                    ]
+                )[:8]
+                if normalized_values:
+                    clean_query_hints_by_app[clean_name] = normalized_values
+        clean_semantic_hotkeys_by_app: Dict[str, List[str]] = {}
+        if isinstance(semantic_hotkeys_by_app, dict):
+            for raw_name, raw_values in semantic_hotkeys_by_app.items():
+                clean_name = str(raw_name or "").strip()
+                if not clean_name:
+                    continue
+                normalized_values = self._dedupe_strings(
+                    [
+                        str(item).strip()
+                        for item in (raw_values or [])
+                        if isinstance(raw_values, list) and str(item).strip()
+                    ]
+                )[:8]
+                if normalized_values:
+                    clean_semantic_hotkeys_by_app[clean_name] = normalized_values
         with self._lock:
             stale_after_hours_value = self._coerce_float(
                 stale_after_hours,
@@ -742,12 +774,112 @@ class DesktopAppMemorySupervisor:
                     memory_guidance_reason_counts[clean_reason] = int(
                         memory_guidance_reason_counts.get(clean_reason, 0) or 0
                     ) + 1
+                app_key = str(
+                    item.get("app_name", "")
+                    or item.get("profile_name", "")
+                    or item.get("profile_id", "")
+                    or ""
+                ).strip()
+                memory_mission = (
+                    dict(item.get("memory_mission", {}))
+                    if isinstance(item.get("memory_mission", {}), dict)
+                    else {}
+                )
+                if app_key and not clean_query_hints_by_app.get(app_key):
+                    derived_query_hints = self._dedupe_strings(
+                        [
+                            *[
+                                str(query_hint).strip()
+                                for query_hint in memory_mission.get("query_hints", [])
+                                if isinstance(memory_mission.get("query_hints", []), list)
+                                and str(query_hint).strip()
+                            ],
+                            str(memory_mission.get("seed_query", "") or "").strip(),
+                            str(item.get("semantic_memory_query", "") or "").strip(),
+                            *[
+                                str(label).strip()
+                                for label in item.get("semantic_guidance_top_labels", [])
+                                if isinstance(item.get("semantic_guidance_top_labels", []), list)
+                                and str(label).strip()
+                            ],
+                        ]
+                    )[:8]
+                    if derived_query_hints:
+                        clean_query_hints_by_app[app_key] = derived_query_hints
+                if app_key and not clean_semantic_hotkeys_by_app.get(app_key):
+                    derived_hotkeys = self._dedupe_strings(
+                        [
+                            *[
+                                str(hotkey).strip()
+                                for hotkey in memory_mission.get("hotkey_hints", [])
+                                if isinstance(memory_mission.get("hotkey_hints", []), list)
+                                and str(hotkey).strip()
+                            ],
+                            *[
+                                str(hotkey).strip()
+                                for hotkey in item.get("semantic_guidance_top_hotkeys", [])
+                                if isinstance(item.get("semantic_guidance_top_hotkeys", []), list)
+                                and str(hotkey).strip()
+                            ],
+                        ]
+                    )[:8]
+                    if derived_hotkeys:
+                        clean_semantic_hotkeys_by_app[app_key] = derived_hotkeys
             memory_underused_count = self._coerce_int(
                 memory_route_alignment_counts.get("underused", 0),
                 minimum=0,
                 maximum=1_000_000,
                 default=0,
             )
+            memory_mission_status_counts: Dict[str, int] = {}
+            top_memory_mission_queries: Dict[str, int] = {}
+            top_memory_mission_hotkeys: Dict[str, int] = {}
+            preferred_memory_mission_queries: List[str] = []
+            memory_mission_followthrough_count = 0
+            for item in clean_adaptive_profiles:
+                memory_mission = (
+                    dict(item.get("memory_mission", {}))
+                    if isinstance(item.get("memory_mission", {}), dict)
+                    else {}
+                )
+                memory_mission_status = str(
+                    memory_mission.get("status", "")
+                    or item.get("semantic_guidance_status", "")
+                    or item.get("memory_guidance_status", "")
+                    or "cold"
+                ).strip().lower() or "cold"
+                memory_mission_status_counts[memory_mission_status] = int(
+                    memory_mission_status_counts.get(memory_mission_status, 0) or 0
+                ) + 1
+                if bool(memory_mission.get("followthrough_recommended", False)) or str(
+                    item.get("memory_route_alignment_status", "") or ""
+                ).strip().lower() in {"underused", "assisted"}:
+                    memory_mission_followthrough_count += 1
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                if seed_query:
+                    preferred_memory_mission_queries = self._dedupe_strings(
+                        [*preferred_memory_mission_queries, seed_query]
+                    )
+                app_key = str(
+                    item.get("app_name", "")
+                    or item.get("profile_name", "")
+                    or item.get("profile_id", "")
+                    or ""
+                ).strip()
+                query_rows = clean_query_hints_by_app.get(app_key, [])
+                for query_hint in query_rows:
+                    clean_query_hint = str(query_hint or "").strip()
+                    if clean_query_hint:
+                        top_memory_mission_queries[clean_query_hint] = int(
+                            top_memory_mission_queries.get(clean_query_hint, 0) or 0
+                        ) + 1
+                hotkey_rows = clean_semantic_hotkeys_by_app.get(app_key, [])
+                for hotkey_hint in hotkey_rows:
+                    clean_hotkey_hint = str(hotkey_hint or "").strip()
+                    if clean_hotkey_hint:
+                        top_memory_mission_hotkeys[clean_hotkey_hint] = int(
+                            top_memory_mission_hotkeys.get(clean_hotkey_hint, 0) or 0
+                        ) + 1
             memory_aligned_count = self._coerce_int(
                 memory_route_alignment_counts.get("aligned", 0),
                 minimum=0,
@@ -814,6 +946,29 @@ class DesktopAppMemorySupervisor:
                     effective_max_probe_controls,
                     min(12, effective_max_probe_controls + probe_bonus),
                 )
+            effective_query = str(query or "").strip()
+            if not effective_query:
+                effective_query = (
+                    next(
+                        (
+                            query_hint
+                            for query_hint in preferred_memory_mission_queries
+                            if str(query_hint).strip()
+                        ),
+                        "",
+                    )
+                    or next(
+                        (
+                            query_hint
+                            for query_hint, _count in sorted(
+                                top_memory_mission_queries.items(),
+                                key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                            )
+                            if str(query_hint).strip()
+                        ),
+                        "",
+                    )
+                )
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
             campaign = {
@@ -822,7 +977,7 @@ class DesktopAppMemorySupervisor:
                 "status": "pending",
                 "created_at": now,
                 "updated_at": now,
-                "query": str(query or "").strip(),
+                "query": effective_query,
                 "category": str(category or "").strip(),
                 "target_apps": ordered_target_apps,
                 "pending_apps": ordered_target_apps[:],
@@ -917,11 +1072,40 @@ class DesktopAppMemorySupervisor:
                 "memory_guided_route_count": int(memory_guided_route_count),
                 "memory_assisted_route_count": int(memory_assisted_route_count),
                 "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "memory_mission_followthrough_count": int(memory_mission_followthrough_count),
                 "memory_underused_count": int(memory_underused_count),
                 "memory_aligned_count": int(memory_aligned_count),
                 "memory_guided_app_names": memory_guided_app_names[:8],
                 "memory_underused_app_names": memory_underused_app_names[:8],
                 "memory_followthrough_preferred_wave_actions": memory_followthrough_preferred_wave_actions[:8],
+                "query_hints_by_app": {
+                    str(key): list(value)
+                    for key, value in clean_query_hints_by_app.items()
+                    if str(key).strip() and isinstance(value, list)
+                },
+                "semantic_hotkeys_by_app": {
+                    str(key): list(value)
+                    for key, value in clean_semantic_hotkeys_by_app.items()
+                    if str(key).strip() and isinstance(value, list)
+                },
+                "top_memory_mission_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_memory_mission_queries.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_memory_mission_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_memory_mission_hotkeys.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
                 "target_selection_summary": dict(target_summary.get("summary", {})) if isinstance(target_summary, dict) else {},
                 "revalidation_focus_summary": {
                     "top_container_roles": [
@@ -1173,6 +1357,16 @@ class DesktopAppMemorySupervisor:
                 revalidate_known_controls=bool(campaign.get("revalidate_known_controls", True)),
                 prefer_failure_memory=bool(campaign.get("prioritize_failure_hotspots", True)),
                 adaptive_app_profiles=effective_adaptive_profiles[: len(target_batch) + 4],
+                query_hints_by_app=(
+                    dict(campaign.get("query_hints_by_app", {}))
+                    if isinstance(campaign.get("query_hints_by_app", {}), dict)
+                    else {}
+                ),
+                semantic_hotkeys_by_app=(
+                    dict(campaign.get("semantic_hotkeys_by_app", {}))
+                    if isinstance(campaign.get("semantic_hotkeys_by_app", {}), dict)
+                    else {}
+                ),
                 source=str(source or "manual").strip().lower() or "manual",
             )
             result = dict(result) if isinstance(result, dict) else {"status": "error", "message": "invalid campaign execution payload"}
@@ -1728,11 +1922,51 @@ class DesktopAppMemorySupervisor:
                 "memory_guided_route_count": memory_guided_route_count,
                 "memory_assisted_route_count": memory_assisted_route_count,
                 "memory_followthrough_enabled": memory_followthrough_enabled,
+                "memory_mission_status_counts": (
+                    dict(campaign.get("memory_mission_status_counts", {}))
+                    if isinstance(campaign.get("memory_mission_status_counts", {}), dict)
+                    else {}
+                ),
+                "memory_mission_followthrough_count": self._coerce_int(
+                    campaign.get("memory_mission_followthrough_count", 0),
+                    minimum=0,
+                    maximum=1_000_000,
+                    default=0,
+                ),
                 "memory_underused_count": memory_underused_count,
                 "memory_aligned_count": memory_aligned_count,
                 "memory_guided_app_names": memory_guided_app_names[:8],
                 "memory_underused_app_names": memory_underused_app_names[:8],
                 "memory_followthrough_preferred_wave_actions": memory_followthrough_preferred_wave_actions[:8],
+                "query_hint_app_count": self._coerce_int(
+                    dict(result.get("targeting", {})).get("query_hint_app_count", len(dict(campaign.get("query_hints_by_app", {}))))
+                    if isinstance(result.get("targeting", {}), dict)
+                    else len(dict(campaign.get("query_hints_by_app", {}))),
+                    minimum=0,
+                    maximum=1_000_000,
+                    default=0,
+                ),
+                "semantic_hotkey_hint_app_count": self._coerce_int(
+                    dict(result.get("targeting", {})).get(
+                        "semantic_hotkey_hint_app_count",
+                        len(dict(campaign.get("semantic_hotkeys_by_app", {}))),
+                    )
+                    if isinstance(result.get("targeting", {}), dict)
+                    else len(dict(campaign.get("semantic_hotkeys_by_app", {}))),
+                    minimum=0,
+                    maximum=1_000_000,
+                    default=0,
+                ),
+                "top_memory_mission_queries": (
+                    dict(campaign.get("top_memory_mission_queries", {}))
+                    if isinstance(campaign.get("top_memory_mission_queries", {}), dict)
+                    else {}
+                ),
+                "top_memory_mission_hotkeys": (
+                    dict(campaign.get("top_memory_mission_hotkeys", {}))
+                    if isinstance(campaign.get("top_memory_mission_hotkeys", {}), dict)
+                    else {}
+                ),
                 "route_fallback_app_count": route_fallback_app_count,
                 "max_surface_waves": effective_max_surface_waves,
                 "adaptive_surface_wave_depth": adaptive_surface_wave_depth,

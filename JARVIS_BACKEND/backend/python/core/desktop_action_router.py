@@ -8890,6 +8890,8 @@ class DesktopActionRouter:
         revalidate_known_controls: bool = True,
         prefer_failure_memory: bool = True,
         adaptive_app_profiles: Optional[List[Dict[str, Any]]] = None,
+        query_hints_by_app: Optional[Dict[str, List[str]]] = None,
+        semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "batch",
     ) -> Dict[str, Any]:
         bounded_max_apps = max(1, min(int(max_apps or 4), 32))
@@ -8953,6 +8955,11 @@ class DesktopActionRouter:
         ai_route_fallback_count = 0
         memory_guided_route_app_count = 0
         memory_assisted_route_app_count = 0
+        query_hint_app_count = 0
+        semantic_hotkey_hint_app_count = 0
+        memory_mission_status_counts: Dict[str, int] = {}
+        query_hint_counts: Dict[str, int] = {}
+        semantic_hotkey_hint_counts: Dict[str, int] = {}
         role_attempt_counts: Dict[str, int] = {}
         role_learned_counts: Dict[str, int] = {}
         failed_apps: List[Dict[str, Any]] = []
@@ -8961,6 +8968,28 @@ class DesktopActionRouter:
             for item in (adaptive_app_profiles or [])
             if isinstance(item, dict)
         ]
+
+        def _normalize_hint_map(raw_map: Optional[Dict[str, List[str]]]) -> Dict[str, List[str]]:
+            normalized: Dict[str, List[str]] = {}
+            if not isinstance(raw_map, dict):
+                return normalized
+            for raw_name, raw_values in raw_map.items():
+                clean_name = str(raw_name or "").strip().lower()
+                if not clean_name:
+                    continue
+                normalized_values = self._dedupe_strings(
+                    [
+                        str(item).strip()
+                        for item in (raw_values or [])
+                        if isinstance(raw_values, list) and str(item).strip()
+                    ]
+                )[:8]
+                if normalized_values:
+                    normalized[clean_name] = normalized_values
+            return normalized
+
+        normalized_query_hints_by_app = _normalize_hint_map(query_hints_by_app)
+        normalized_semantic_hotkeys_by_app = _normalize_hint_map(semantic_hotkeys_by_app)
 
         def _adaptive_profile_for_target(target_name: str, profile_row: Dict[str, Any]) -> Dict[str, Any]:
             normalized_target_keys = {
@@ -8989,6 +9018,108 @@ class DesktopActionRouter:
             if not target_app_name:
                 continue
             matched_adaptive_profile = _adaptive_profile_for_target(target_app_name, profile)
+            memory_mission = (
+                dict(matched_adaptive_profile.get("memory_mission", {}))
+                if isinstance(matched_adaptive_profile.get("memory_mission", {}), dict)
+                else {}
+            )
+            normalized_profile_name = str(profile.get("name", "") or "").strip().lower()
+            normalized_profile_id = str(profile.get("profile_id", "") or "").strip().lower()
+            normalized_category = str(profile.get("category", "") or "").strip().lower()
+            normalized_target_name = str(target_app_name or "").strip().lower()
+            mission_status = str(memory_mission.get("status", "") or "").strip().lower()
+            semantic_query_hints = self._dedupe_strings(
+                [
+                    *(
+                        [
+                            str(item).strip()
+                            for item in memory_mission.get("query_hints", [])
+                            if isinstance(memory_mission.get("query_hints", []), list) and str(item).strip()
+                        ]
+                        if isinstance(memory_mission, dict)
+                        else []
+                    ),
+                    *normalized_query_hints_by_app.get(normalized_target_name, []),
+                    *normalized_query_hints_by_app.get(normalized_profile_name, []),
+                    *normalized_query_hints_by_app.get(normalized_profile_id, []),
+                    str(memory_mission.get("seed_query", "") or "").strip(),
+                    str(matched_adaptive_profile.get("semantic_memory_query", "") or "").strip(),
+                    *[
+                        str(item).strip()
+                        for item in matched_adaptive_profile.get("semantic_guidance_top_labels", [])
+                        if isinstance(matched_adaptive_profile.get("semantic_guidance_top_labels", []), list)
+                        and str(item).strip()
+                    ],
+                ]
+            )[:8]
+            semantic_hotkey_hints = self._dedupe_strings(
+                [
+                    *(
+                        [
+                            str(item).strip()
+                            for item in memory_mission.get("hotkey_hints", [])
+                            if isinstance(memory_mission.get("hotkey_hints", []), list) and str(item).strip()
+                        ]
+                        if isinstance(memory_mission, dict)
+                        else []
+                    ),
+                    *normalized_semantic_hotkeys_by_app.get(normalized_target_name, []),
+                    *normalized_semantic_hotkeys_by_app.get(normalized_profile_name, []),
+                    *normalized_semantic_hotkeys_by_app.get(normalized_profile_id, []),
+                    *[
+                        str(item).strip()
+                        for item in matched_adaptive_profile.get("semantic_guidance_top_hotkeys", [])
+                        if isinstance(matched_adaptive_profile.get("semantic_guidance_top_hotkeys", []), list)
+                        and str(item).strip()
+                    ],
+                ]
+            )[:8]
+            if semantic_query_hints:
+                query_hint_app_count += 1
+                for hint in semantic_query_hints:
+                    clean_hint = str(hint or "").strip()
+                    if clean_hint:
+                        query_hint_counts[clean_hint] = int(query_hint_counts.get(clean_hint, 0) or 0) + 1
+            if semantic_hotkey_hints:
+                semantic_hotkey_hint_app_count += 1
+                for hotkey in semantic_hotkey_hints:
+                    clean_hotkey = str(hotkey or "").strip()
+                    if clean_hotkey:
+                        semantic_hotkey_hint_counts[clean_hotkey] = int(
+                            semantic_hotkey_hint_counts.get(clean_hotkey, 0) or 0
+                        ) + 1
+            if mission_status:
+                memory_mission_status_counts[mission_status] = int(
+                    memory_mission_status_counts.get(mission_status, 0) or 0
+                ) + 1
+            normalized_clean_query = clean_query.strip().lower()
+            generic_query_terms = {
+                "",
+                "settings",
+                "preferences",
+                "help",
+                "menu",
+                "dialog",
+                "search",
+                "open",
+                normalized_target_name,
+                normalized_profile_name,
+                normalized_profile_id,
+                normalized_category,
+            }
+            effective_query = clean_query
+            if semantic_query_hints and normalized_clean_query in generic_query_terms:
+                effective_query = next(
+                    (
+                        str(item).strip()
+                        for item in [
+                            str(memory_mission.get("seed_query", "") or "").strip(),
+                            *semantic_query_hints,
+                        ]
+                        if str(item).strip()
+                    ),
+                    clean_query,
+                )
             adaptive_targeting = self._app_memory_batch_targeting(
                 app_name=target_app_name,
                 profile_id=str(profile.get("profile_id", "") or "").strip(),
@@ -9003,7 +9134,7 @@ class DesktopActionRouter:
                 survey_payload = self.survey_app_memory(
                     app_name=target_app_name,
                     window_title="",
-                    query=clean_query,
+                    query=effective_query,
                     limit=bounded_per_app_limit,
                     ensure_app_launch=ensure_app_launch,
                     include_observation=include_observation,
@@ -9109,6 +9240,16 @@ class DesktopActionRouter:
                 if isinstance(survey_payload.get("targeting", {}), dict)
                 else {}
             )
+            survey_targeting = {
+                **survey_targeting,
+                "effective_query": str(effective_query or "").strip(),
+                "semantic_query_hints": semantic_query_hints[:8],
+                "semantic_hotkey_hints": semantic_hotkey_hints[:8],
+                "memory_mission_status": mission_status or str(memory_mission.get("status", "") or "").strip().lower(),
+                "memory_mission_followthrough_recommended": bool(
+                    memory_mission.get("followthrough_recommended", False)
+                ),
+            }
             adaptive_learning_runtime = (
                 dict(survey_payload.get("adaptive_learning_runtime", {}))
                 if isinstance(survey_payload.get("adaptive_learning_runtime", {}), dict)
@@ -9520,6 +9661,7 @@ class DesktopActionRouter:
                     **survey_targeting,
                 },
                 "adaptive_profile": matched_adaptive_profile,
+                "memory_mission": memory_mission,
                 "adaptive_learning_runtime": adaptive_learning_runtime,
                 "memory_route_guidance": memory_route_guidance,
                 "revalidation": (
@@ -9692,6 +9834,10 @@ class DesktopActionRouter:
                     str(key): int(value)
                     for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
                 },
+                "memory_mission_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
+                },
                 "memory_guidance_reason_counts": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -9712,6 +9858,22 @@ class DesktopActionRouter:
                 "ai_route_fallback_count": int(ai_route_fallback_count),
                 "memory_guided_route_app_count": int(memory_guided_route_app_count),
                 "memory_assisted_route_app_count": int(memory_assisted_route_app_count),
+                "query_hint_app_count": int(query_hint_app_count),
+                "semantic_hotkey_hint_app_count": int(semantic_hotkey_hint_app_count),
+                "top_query_hints": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        query_hint_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
+                "top_semantic_hotkey_hints": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        semantic_hotkey_hint_counts.items(),
+                        key=lambda entry: (-int(entry[1]), str(entry[0]).lower()),
+                    )[:8]
+                },
                 "setup_constrained_app_count": int(setup_constrained_app_count),
                 "provider_blocked_app_count": int(provider_blocked_app_count),
                 "recommended_wave_container_roles": recommended_wave_container_roles[:8],

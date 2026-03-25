@@ -616,6 +616,13 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
         adaptive_app_profiles=[
             {
                 "app_name": "notepad",
+                "memory_mission": {
+                    "status": "strong",
+                    "seed_query": "settings",
+                    "query_hints": ["settings", "preferences"],
+                    "hotkey_hints": ["Alt+F", "Ctrl+F"],
+                    "followthrough_recommended": True,
+                },
                 "learning_profile": "hybrid_guided_explore",
                 "execution_mode": "hybrid_ready",
                 "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
@@ -645,6 +652,7 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
 
     assert payload["status"] == "success"
     assert captured[-1]["app_name"] == "notepad"
+    assert captured[-1]["query"] == "settings"
     assert captured[-1]["target_container_roles"][:2] == ["dialog", "menu"]
     assert "sidebar" in captured[-1]["target_container_roles"]
     assert captured[-1]["preferred_wave_actions"] == ["command"]
@@ -665,12 +673,20 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert payload["targeting"]["ai_route_fallback_count"] == 0
     assert payload["targeting"]["memory_guidance_status_counts"]["strong"] == 1
     assert payload["targeting"]["memory_route_alignment_counts"]["aligned"] == 1
+    assert payload["targeting"]["memory_mission_status_counts"]["strong"] == 1
     assert payload["targeting"]["memory_guided_route_app_count"] == 1
     assert payload["targeting"]["memory_assisted_route_app_count"] == 0
+    assert payload["targeting"]["query_hint_app_count"] == 1
+    assert payload["targeting"]["semantic_hotkey_hint_app_count"] == 1
+    assert payload["targeting"]["top_query_hints"]["settings"] >= 1
+    assert payload["targeting"]["top_semantic_hotkey_hints"]["Alt+F"] >= 1
     assert payload["targeting"]["route_fallback_app_count"] == 0
     assert payload["items"][0]["targeting"]["target_container_roles"][:2] == ["dialog", "menu"]
     assert "sidebar" in payload["items"][0]["targeting"]["target_container_roles"]
     assert payload["items"][0]["targeting"]["preferred_wave_actions"] == ["command"]
+    assert payload["items"][0]["targeting"]["effective_query"] == "settings"
+    assert payload["items"][0]["targeting"]["semantic_query_hints"][0] == "settings"
+    assert "Alt+F" in payload["items"][0]["targeting"]["semantic_hotkey_hints"]
     assert payload["items"][0]["adaptive_learning_runtime"]["strategy_profile"] == "balanced_hybrid_guided_explore"
     assert payload["items"][0]["adaptive_learning_runtime"]["selected_runtime_band"] == "hybrid"
     assert payload["items"][0]["adaptive_learning_runtime"]["route_profile"] == "memory_guided_local_vision_assist_native_stabilized"
@@ -688,6 +704,7 @@ def test_desktop_action_router_batch_adapts_targeting_from_revalidation_hotspots
     assert payload["items"][0]["adaptive_learning_runtime"]["memory_guidance_status"] == "strong"
     assert payload["items"][0]["adaptive_learning_runtime"]["memory_guided_route"] is True
     assert payload["items"][0]["adaptive_learning_runtime"]["memory_route_alignment_status"] == "aligned"
+    assert payload["items"][0]["memory_mission"]["seed_query"] == "settings"
     assert payload["items"][0]["memory_route_guidance"]["guidance_status"] == "strong"
     assert payload["items"][0]["memory_route_guidance"]["memory_guided_route"] is True
     assert payload["targeting"]["route_resolution_counts"]["matched"] == 1
