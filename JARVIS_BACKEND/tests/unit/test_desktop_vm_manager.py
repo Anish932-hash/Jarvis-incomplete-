@@ -91,6 +91,8 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["multimodal_memory_pressure"] == 3
     assert plan["items"][0]["provider_model_readiness"]["structured_memory_control_count"] == 18
     assert plan["items"][0]["provider_model_readiness"]["structured_memory_vector_count"] == 27
+    assert plan["items"][0]["provider_model_readiness"]["memory_guidance_status"] == "partial"
+    assert "semantic_memory_ready" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert plan["items"][0]["provider_model_readiness"]["ai_runtime_blocked_stack_count"] == 1
     assert "warm_local_reasoning_runtime" in plan["items"][0]["provider_model_readiness"]["setup_followup_codes"]
@@ -98,6 +100,7 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["selected_ai_runtime_band"] == "accessibility"
     assert plan["summary"]["ai_route_status_counts"]["fallback"] == 1
     assert plan["summary"]["ai_route_runtime_band_counts"]["accessibility"] == 1
+    assert plan["summary"]["memory_guidance_status_counts"]["partial"] == 1
 
     prepared = manager.prepare_guest_control(
         inventory=inventory,
@@ -117,5 +120,6 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["provider_model_readiness"]["vision_runtime_available"] is True
     assert prepared["summary"]["provider_model_readiness"]["ai_runtime_status"] == "partial"
     assert prepared["summary"]["provider_model_readiness"]["structured_memory_semantic_ready_count"] == 3
+    assert prepared["summary"]["memory_guidance_status"] == "partial"
     assert prepared["summary"]["ai_route_status"] == "fallback"
     assert prepared["summary"]["selected_ai_runtime_band"] == "accessibility"

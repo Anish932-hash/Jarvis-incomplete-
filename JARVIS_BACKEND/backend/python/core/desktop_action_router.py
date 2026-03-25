@@ -8411,6 +8411,15 @@ class DesktopActionRouter:
             surface_fingerprint=str(snapshot.get("surface_fingerprint", "") or "").strip(),
             query=clean_query,
         )
+        semantic_memory_guidance = self._semantic_memory_guidance_from_matches(
+            [
+                dict(item)
+                for item in surface_hint.get("semantic_matches", [])
+                if isinstance(surface_hint.get("semantic_matches", []), list) and isinstance(item, dict)
+            ]
+            if isinstance(surface_hint, dict)
+            else []
+        )
         normalized_target_container_roles = self._dedupe_strings(
             [
                 self._normalize_probe_text(item)
@@ -8457,7 +8466,14 @@ class DesktopActionRouter:
                         else []
                     )
                     if isinstance(item, dict) and self._normalize_probe_text(item.get("value", ""))
-                ] + normalized_preferred_traversal_paths
+                ]
+                + normalized_preferred_traversal_paths
+                + [
+                    self._normalize_probe_text(item)
+                    for item in semantic_memory_guidance.get("recommended_container_roles", [])
+                    if isinstance(semantic_memory_guidance.get("recommended_container_roles", []), list)
+                    and self._normalize_probe_text(item)
+                ]
             )[:4]
         adaptive_container_roles = bool(effective_target_container_roles and not normalized_target_container_roles)
         effective_preferred_traversal_paths = self._dedupe_strings(
@@ -8466,10 +8482,16 @@ class DesktopActionRouter:
                 *[
                     self._normalize_probe_text(item)
                     for item in surface_hint.get("recommended_traversal_paths", [])
-                    if isinstance(surface_hint.get("recommended_traversal_paths", []), list)
-                    and self._normalize_probe_text(item)
-                ],
-                *effective_target_container_roles,
+                        if isinstance(surface_hint.get("recommended_traversal_paths", []), list)
+                        and self._normalize_probe_text(item)
+                    ],
+                    *[
+                        self._normalize_probe_text(item)
+                        for item in semantic_memory_guidance.get("recommended_traversal_paths", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_traversal_paths", []), list)
+                        and self._normalize_probe_text(item)
+                    ],
+                    *effective_target_container_roles,
             ]
         )[:8]
         effective_preferred_wave_actions = self._dedupe_strings(
@@ -8479,6 +8501,12 @@ class DesktopActionRouter:
                     str(item).strip().lower()
                     for item in surface_hint.get("recommended_wave_actions", [])
                     if isinstance(surface_hint.get("recommended_wave_actions", []), list)
+                    and str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in semantic_memory_guidance.get("recommended_wave_actions", [])
+                    if isinstance(semantic_memory_guidance.get("recommended_wave_actions", []), list)
                     and str(item).strip().lower() in APP_MEMORY_SAFE_WAVE_ACTIONS
                 ],
             ]
@@ -8665,6 +8693,31 @@ class DesktopActionRouter:
                 )
         if isinstance(surface_hint, dict) and bool(surface_hint.get("known")):
             message_parts.append("Known surface memory was reused, so JARVIS aligned the live surface with previously learned controls, commands, and shortcuts before probing.")
+        if int(semantic_memory_guidance.get("count", 0) or 0) > 0:
+            semantic_guidance_bits = [
+                *[
+                    str(item).strip()
+                    for item in semantic_memory_guidance.get("recommended_container_roles", [])
+                    if isinstance(semantic_memory_guidance.get("recommended_container_roles", []), list) and str(item).strip()
+                ][:3],
+                *[
+                    str(item).strip()
+                    for item in semantic_memory_guidance.get("recommended_wave_actions", [])
+                    if isinstance(semantic_memory_guidance.get("recommended_wave_actions", []), list) and str(item).strip()
+                ][:2],
+            ]
+            message_parts.append(
+                (
+                    f"Vector memory surfaced {int(semantic_memory_guidance.get('count', 0) or 0)} semantic match"
+                    f"{'es' if int(semantic_memory_guidance.get('count', 0) or 0) != 1 else ''}"
+                    + (
+                        f" and biased traversal toward {', '.join(semantic_guidance_bits[:4])}"
+                        if semantic_guidance_bits
+                        else ""
+                    )
+                    + "."
+                )
+            )
         if revalidation_targets:
             message_parts.append(
                 f"Revalidation memory prioritized {len(revalidation_targets)} stale or uncertain learned control"
@@ -8738,12 +8791,15 @@ class DesktopActionRouter:
                 if isinstance(snapshot.get("vision_learning_route", {}), dict)
                 else {}
             ),
+            "semantic_memory_guidance": semantic_memory_guidance,
             "revalidation": revalidation_payload if isinstance(revalidation_payload, dict) else {},
             "targeting": {
                 "target_container_roles": effective_target_container_roles[:8],
                 "adaptive_container_roles": adaptive_container_roles,
                 "preferred_wave_actions": effective_preferred_wave_actions[:8],
                 "recommended_traversal_paths": effective_preferred_traversal_paths[:8],
+                "semantic_guidance_status": str(semantic_memory_guidance.get("guidance_status", "") or "").strip().lower(),
+                "semantic_guidance_match_count": int(semantic_memory_guidance.get("count", 0) or 0),
                 "recommended_wave_container_roles": [
                     self._normalize_probe_text(item)
                     for item in (
@@ -24342,6 +24398,93 @@ class DesktopActionRouter:
     @staticmethod
     def _normalize_probe_text(value: Any) -> str:
         return " ".join(str(value or "").strip().lower().split())
+
+    @classmethod
+    def _semantic_memory_guidance_from_matches(cls, matches: List[Dict[str, Any]]) -> Dict[str, Any]:
+        rows = [dict(item) for item in matches if isinstance(item, dict)]
+        recommended_container_roles: List[str] = []
+        recommended_wave_actions: List[str] = []
+        recommended_traversal_paths: List[str] = []
+        top_match_labels: List[str] = []
+        top_hotkeys: List[str] = []
+        top_similarity = 0.0
+        for item in rows:
+            label = str(item.get("label", "") or "").strip()
+            control_type = cls._normalize_probe_text(item.get("control_type", ""))
+            semantic_role = cls._normalize_probe_text(item.get("semantic_role", ""))
+            container_role = cls._normalize_probe_text(item.get("container_role", ""))
+            haystack = " ".join(part for part in [label.lower(), control_type, semantic_role, container_role] if part)
+            if not container_role:
+                if control_type in {"menuitem", "menu", "menubar"}:
+                    container_role = "menu"
+                elif control_type in {"toolbar", "toolbutton", "splitbutton", "commandbar"}:
+                    container_role = "toolbar"
+                elif control_type in {"treeitem", "tree", "outlineitem"}:
+                    container_role = "tree"
+                elif control_type in {"listitem", "list", "listbox"}:
+                    container_role = "list"
+                elif control_type in {"table", "datagrid", "grid"}:
+                    container_role = "table"
+                elif control_type in {"dialog", "window"} or "dialog" in haystack:
+                    container_role = "dialog"
+                elif any(token in haystack for token in ("sidebar", "nav pane", "navigation pane")):
+                    container_role = "sidebar"
+                elif any(token in haystack for token in ("form", "field", "input", "textbox", "edit")):
+                    container_role = "form"
+            actions: List[str] = []
+            if any(token in haystack for token in ("command palette", "command")):
+                actions.append("command")
+            if any(token in haystack for token in ("quick open", "open recent")):
+                actions.append("quick_open")
+            if any(token in haystack for token in ("workspace search", "global search")):
+                actions.append("workspace_search")
+            if any(token in haystack for token in ("go to symbol", "symbol")):
+                actions.append("go_to_symbol")
+            if any(token in haystack for token in ("search", "find")):
+                actions.extend(["focus_search_box", "search"])
+            if container_role == "sidebar":
+                actions.append("focus_sidebar")
+            elif container_role == "tree":
+                actions.append("focus_navigation_tree")
+            elif container_role == "list":
+                actions.append("focus_file_list" if "file" in haystack else "focus_list_surface")
+            elif container_role == "table":
+                actions.append("focus_data_table")
+            elif container_role in {"menu", "toolbar"}:
+                actions.append("focus_toolbar")
+            elif container_role in {"dialog", "form"}:
+                actions.append("focus_form_surface")
+            elif "address" in haystack or "url" in haystack or "location bar" in haystack:
+                actions.append("focus_address_bar")
+            elif "input" in haystack or control_type in {"edit", "textbox", "document"}:
+                actions.append("focus_input_field")
+            if label:
+                top_match_labels.append(label)
+            if container_role:
+                recommended_container_roles.append(container_role)
+                recommended_traversal_paths.append(container_role)
+            recommended_wave_actions.extend(
+                [item for item in actions if item in APP_MEMORY_SAFE_WAVE_ACTIONS]
+            )
+            similarity = float(item.get("similarity", 0.0) or 0.0)
+            top_similarity = max(top_similarity, similarity)
+            for hotkey in item.get("hotkeys", []):
+                clean_hotkey = str(hotkey or "").strip()
+                if clean_hotkey:
+                    top_hotkeys.append(clean_hotkey)
+        guidance_status = "cold"
+        if rows:
+            guidance_status = "strong" if top_similarity >= 0.86 or len(rows) >= 3 else "partial"
+        return {
+            "count": len(rows),
+            "guidance_status": guidance_status,
+            "top_similarity": round(top_similarity, 4),
+            "top_match_labels": cls._dedupe_strings(top_match_labels)[:6],
+            "top_hotkeys": cls._dedupe_strings(top_hotkeys)[:8],
+            "recommended_container_roles": cls._dedupe_strings(recommended_container_roles)[:6],
+            "recommended_wave_actions": cls._dedupe_strings(recommended_wave_actions)[:8],
+            "recommended_traversal_paths": cls._dedupe_strings(recommended_traversal_paths)[:8],
+        }
 
     @staticmethod
     def _coerce_surface_bool(value: Any) -> Optional[bool]:

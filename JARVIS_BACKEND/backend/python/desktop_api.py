@@ -241,6 +241,31 @@ class DesktopBackendService:
             "queries": ["settings", "preferences", "advanced"],
         },
     }
+    _MACHINE_SAFE_WAVE_ACTIONS = frozenset(
+        {
+            "search",
+            "focus_search_box",
+            "command",
+            "quick_open",
+            "workspace_search",
+            "go_to_symbol",
+            "open_tab_search",
+            "search_tabs",
+            "focus_sidebar",
+            "focus_navigation_tree",
+            "focus_list_surface",
+            "focus_data_table",
+            "focus_toolbar",
+            "focus_main_content",
+            "focus_form_surface",
+            "focus_address_bar",
+            "focus_file_list",
+            "focus_input_field",
+            "open_mail_view",
+            "open_calendar_view",
+            "toggle_terminal",
+        }
+    )
 
     def __init__(self) -> None:
         self.log = Logger.get_logger("DesktopAPI")
@@ -9934,6 +9959,195 @@ class DesktopBackendService:
                 break
         return rows
 
+    @classmethod
+    def _desktop_machine_semantic_container_role(cls, match: Dict[str, Any]) -> str:
+        container_role = cls._machine_text(match.get("container_role", ""))
+        control_type = cls._machine_text(match.get("control_type", ""))
+        semantic_role = cls._machine_text(match.get("semantic_role", ""))
+        label = cls._machine_text(match.get("label", ""))
+        haystack = " ".join(part for part in [container_role, control_type, semantic_role, label] if part)
+        if container_role in {"menu", "toolbar", "ribbon", "sidebar", "tree", "list", "table", "dialog", "form", "tab"}:
+            return container_role
+        if control_type in {"menuitem", "menu", "menubar"}:
+            return "menu"
+        if control_type in {"toolbar", "toolbutton", "splitbutton", "commandbar"}:
+            return "toolbar"
+        if control_type in {"treeitem", "tree", "outlineitem"}:
+            return "tree"
+        if control_type in {"listitem", "list", "listbox"}:
+            return "list"
+        if control_type in {"table", "datagrid", "grid"}:
+            return "table"
+        if control_type in {"tab", "tabitem", "pagetab"}:
+            return "tab"
+        if control_type in {"dialog", "window"} or "dialog" in haystack:
+            return "dialog"
+        if control_type in {"pane", "navigationviewitem", "navigationitem"} or any(
+            token in haystack for token in ("sidebar", "nav pane", "navigation pane")
+        ):
+            return "sidebar"
+        if any(token in haystack for token in ("form", "field", "input", "textbox", "edit")):
+            return "form"
+        return ""
+
+    @classmethod
+    def _desktop_machine_semantic_wave_actions(
+        cls,
+        *,
+        container_role: str,
+        match: Dict[str, Any],
+    ) -> List[str]:
+        clean_role = cls._machine_text(container_role)
+        label = cls._machine_text(match.get("label", ""))
+        control_type = cls._machine_text(match.get("control_type", ""))
+        semantic_role = cls._machine_text(match.get("semantic_role", ""))
+        haystack = " ".join(part for part in [label, control_type, semantic_role, clean_role] if part)
+        actions: List[str] = []
+        if any(token in haystack for token in ("command palette", "command")):
+            actions.append("command")
+        if any(token in haystack for token in ("quick open", "open recent")):
+            actions.append("quick_open")
+        if any(token in haystack for token in ("workspace search", "global search")):
+            actions.append("workspace_search")
+        if any(token in haystack for token in ("go to symbol", "symbol")):
+            actions.append("go_to_symbol")
+        if any(token in haystack for token in ("search", "find")):
+            actions.extend(["focus_search_box", "search"])
+        if clean_role == "sidebar":
+            actions.append("focus_sidebar")
+        elif clean_role == "tree":
+            actions.append("focus_navigation_tree")
+        elif clean_role == "list":
+            actions.append("focus_file_list" if "file" in haystack else "focus_list_surface")
+        elif clean_role == "table":
+            actions.append("focus_data_table")
+        elif clean_role in {"menu", "toolbar"}:
+            actions.append("focus_toolbar")
+        elif clean_role in {"dialog", "form"}:
+            actions.append("focus_form_surface")
+        elif "address" in haystack or "url" in haystack or "location bar" in haystack:
+            actions.append("focus_address_bar")
+        elif "input" in haystack or control_type in {"edit", "textbox", "document"}:
+            actions.append("focus_input_field")
+        return cls._machine_dedupe(
+            [item for item in actions if item in cls._MACHINE_SAFE_WAVE_ACTIONS],
+            limit=6,
+        )
+
+    def _desktop_machine_semantic_memory_guidance(
+        self,
+        *,
+        app_name: str = "",
+        profile_id: str = "",
+        query: str = "",
+        limit: int = 6,
+    ) -> Dict[str, Any]:
+        clean_query = str(query or "").strip()
+        clean_app_name = str(app_name or "").strip()
+        clean_profile_id = str(profile_id or "").strip().lower()
+        if not clean_query:
+            return {
+                "status": "success",
+                "query": "",
+                "count": 0,
+                "items": [],
+                "guidance_status": "cold",
+                "recommended_container_roles": [],
+                "recommended_wave_actions": [],
+                "recommended_traversal_paths": [],
+                "recommended_queries": [],
+                "top_match_labels": [],
+                "top_hotkeys": [],
+                "reason_codes": ["missing_query"],
+            }
+        lookup = self.desktop_app_memory_semantic_search(
+            query=clean_query,
+            app_name=clean_app_name,
+            profile_id=clean_profile_id,
+            limit=max(1, min(int(limit or 6), 12)),
+        )
+        if not isinstance(lookup, dict) or lookup.get("status") != "success":
+            return {
+                "status": "error",
+                "query": clean_query,
+                "count": 0,
+                "items": [],
+                "guidance_status": "cold",
+                "recommended_container_roles": [],
+                "recommended_wave_actions": [],
+                "recommended_traversal_paths": [],
+                "recommended_queries": [clean_query.lower()],
+                "top_match_labels": [],
+                "top_hotkeys": [],
+                "reason_codes": ["lookup_error"],
+                "message": str((lookup or {}).get("message", "") or "semantic lookup failed").strip(),
+            }
+        items = [
+            dict(item)
+            for item in lookup.get("items", [])
+            if isinstance(lookup.get("items", []), list) and isinstance(item, dict)
+        ]
+        recommended_container_roles: List[str] = []
+        recommended_wave_actions: List[str] = []
+        recommended_traversal_paths: List[str] = []
+        top_match_labels: List[str] = []
+        top_hotkeys: List[str] = []
+        reason_codes: List[str] = []
+        top_similarity = 0.0
+        for item in items:
+            container_role = self._desktop_machine_semantic_container_role(item)
+            wave_actions = self._desktop_machine_semantic_wave_actions(
+                container_role=container_role,
+                match=item,
+            )
+            label = str(item.get("label", "") or "").strip()
+            similarity = float(item.get("similarity", 0.0) or 0.0)
+            semantic_role = self._machine_text(item.get("semantic_role", ""))
+            top_similarity = max(top_similarity, similarity)
+            if label:
+                top_match_labels.append(label)
+            if container_role:
+                recommended_container_roles.append(container_role)
+                recommended_traversal_paths.append(container_role)
+                reason_codes.append(f"semantic_role_{container_role}")
+            if semantic_role:
+                reason_codes.append(f"semantic_match_{semantic_role}")
+            recommended_wave_actions.extend(wave_actions)
+            hotkeys = item.get("hotkeys", []) if isinstance(item.get("hotkeys", []), list) else []
+            for hotkey in hotkeys:
+                clean_hotkey = str(hotkey or "").strip()
+                if clean_hotkey:
+                    top_hotkeys.append(clean_hotkey)
+        if not items:
+            guidance_status = "cold"
+            reason_codes.append("no_semantic_match")
+        elif top_similarity >= 0.86 or len(items) >= 3:
+            guidance_status = "strong"
+            reason_codes.append("high_confidence_semantic_match")
+        else:
+            guidance_status = "partial"
+            reason_codes.append("semantic_match_available")
+        return {
+            "status": "success",
+            "query": clean_query,
+            "app_name": clean_app_name,
+            "profile_id": clean_profile_id,
+            "count": len(items),
+            "items": items[: max(1, min(int(limit or 6), 12))],
+            "guidance_status": guidance_status,
+            "top_similarity": round(top_similarity, 4),
+            "recommended_container_roles": self._machine_dedupe(recommended_container_roles, limit=6),
+            "recommended_wave_actions": self._machine_dedupe(recommended_wave_actions, limit=6),
+            "recommended_traversal_paths": self._machine_dedupe(recommended_traversal_paths, limit=6),
+            "recommended_queries": self._machine_dedupe(
+                [clean_query.lower(), *[str(label).strip().lower() for label in top_match_labels if str(label).strip()]],
+                limit=6,
+            ),
+            "top_match_labels": self._machine_dedupe(top_match_labels, limit=6),
+            "top_hotkeys": self._machine_dedupe(top_hotkeys, limit=8),
+            "reason_codes": self._machine_dedupe(reason_codes, limit=10),
+        }
+
     def _desktop_machine_app_learning_defaults(
         self,
         *,
@@ -10625,6 +10839,49 @@ class DesktopBackendService:
                 route_alignment_status = "fallback"
             else:
                 route_alignment_status = "shifted"
+        semantic_memory_guidance = (
+            dict(selected_target.get("semantic_memory_guidance", {}))
+            if isinstance(selected_target.get("semantic_memory_guidance", {}), dict)
+            else {}
+        )
+        survey_targeting = (
+            dict(survey.get("targeting", {}))
+            if isinstance(survey.get("targeting", {}), dict)
+            else {}
+        )
+        semantic_guidance_roles = [
+            str(item).strip().lower()
+            for item in semantic_memory_guidance.get("recommended_container_roles", [])
+            if isinstance(semantic_memory_guidance.get("recommended_container_roles", []), list) and str(item).strip()
+        ][:8]
+        semantic_guidance_actions = [
+            str(item).strip().lower()
+            for item in semantic_memory_guidance.get("recommended_wave_actions", [])
+            if isinstance(semantic_memory_guidance.get("recommended_wave_actions", []), list) and str(item).strip()
+        ][:8]
+        semantic_guidance_paths = [
+            str(item).strip().lower()
+            for item in semantic_memory_guidance.get("recommended_traversal_paths", [])
+            if isinstance(semantic_memory_guidance.get("recommended_traversal_paths", []), list) and str(item).strip()
+        ][:8]
+        applied_target_roles = {
+            str(item).strip().lower()
+            for item in survey_targeting.get("target_container_roles", [])
+            if isinstance(survey_targeting.get("target_container_roles", []), list) and str(item).strip()
+        }
+        applied_wave_actions = {
+            str(item).strip().lower()
+            for item in survey_targeting.get("preferred_wave_actions", [])
+            if isinstance(survey_targeting.get("preferred_wave_actions", []), list) and str(item).strip()
+        }
+        semantic_guidance_alignment = "none"
+        if int(semantic_memory_guidance.get("count", 0) or 0) > 0:
+            if applied_target_roles.intersection(semantic_guidance_roles) or applied_wave_actions.intersection(
+                semantic_guidance_actions
+            ):
+                semantic_guidance_alignment = "matched"
+            else:
+                semantic_guidance_alignment = "unapplied"
         return {
             "app_name": effective_app_name,
             "launch_resolution": str(resolved.get("resolution", "") or resolved.get("kind", "") or "").strip(),
@@ -10770,6 +11027,27 @@ class DesktopBackendService:
                 for item in selected_target.get("knowledge_gap_reasons", [])
                 if isinstance(selected_target.get("knowledge_gap_reasons", []), list) and str(item).strip()
             ][:10],
+            "semantic_guidance_status": str(
+                semantic_memory_guidance.get("guidance_status", "")
+                or selected_target.get("semantic_guidance_status", "")
+                or ""
+            ).strip().lower(),
+            "semantic_guidance_match_count": int(semantic_memory_guidance.get("count", 0) or 0),
+            "semantic_guidance_alignment": semantic_guidance_alignment,
+            "semantic_guidance_top_similarity": float(semantic_memory_guidance.get("top_similarity", 0.0) or 0.0),
+            "semantic_guidance_top_labels": [
+                str(item).strip()
+                for item in semantic_memory_guidance.get("top_match_labels", [])
+                if isinstance(semantic_memory_guidance.get("top_match_labels", []), list) and str(item).strip()
+            ][:6],
+            "semantic_guidance_top_hotkeys": [
+                str(item).strip()
+                for item in semantic_memory_guidance.get("top_hotkeys", [])
+                if isinstance(semantic_memory_guidance.get("top_hotkeys", []), list) and str(item).strip()
+            ][:8],
+            "semantic_guidance_container_roles": semantic_guidance_roles,
+            "semantic_guidance_wave_actions": semantic_guidance_actions,
+            "semantic_guidance_traversal_paths": semantic_guidance_paths,
             "surface_node_count": int(selected_target.get("surface_node_count", 0) or 0),
             "surface_transition_count": int(selected_target.get("surface_transition_count", 0) or 0),
             "discovered_control_count": int(memory_entry.get("discovered_control_count", 0) or 0),
@@ -10967,6 +11245,93 @@ class DesktopBackendService:
             if str(item).strip()
         ]
         effective_query = clean_query or (recommended_queries[0] if recommended_queries else "")
+        semantic_memory_guidance = self._desktop_machine_semantic_memory_guidance(
+            app_name=effective_app_name,
+            query=effective_query or requested_app_name,
+            limit=8,
+        )
+        selected_target["semantic_memory_guidance"] = semantic_memory_guidance
+        selected_target["semantic_guidance_status"] = str(
+            semantic_memory_guidance.get("guidance_status", "") or ""
+        ).strip().lower()
+        selected_target["semantic_guidance_match_count"] = int(
+            semantic_memory_guidance.get("count", 0) or 0
+        )
+        selected_target["semantic_guidance_top_labels"] = [
+            str(label).strip()
+            for label in semantic_memory_guidance.get("top_match_labels", [])
+            if isinstance(semantic_memory_guidance.get("top_match_labels", []), list) and str(label).strip()
+        ][:6]
+        selected_target["semantic_guidance_top_hotkeys"] = [
+            str(hotkey).strip()
+            for hotkey in semantic_memory_guidance.get("top_hotkeys", [])
+            if isinstance(semantic_memory_guidance.get("top_hotkeys", []), list) and str(hotkey).strip()
+        ][:8]
+        if selected_target["semantic_guidance_match_count"] > 0:
+            target_container_roles = self._machine_dedupe(
+                [
+                    *target_container_roles,
+                    *(
+                        semantic_memory_guidance.get("recommended_container_roles", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_container_roles", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            preferred_wave_actions = self._machine_dedupe(
+                [
+                    *preferred_wave_actions,
+                    *(
+                        semantic_memory_guidance.get("recommended_wave_actions", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_wave_actions", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            preferred_traversal_paths = self._machine_dedupe(
+                [
+                    *preferred_traversal_paths,
+                    *(
+                        semantic_memory_guidance.get("recommended_traversal_paths", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_traversal_paths", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            selected_target["target_container_roles"] = target_container_roles
+            selected_target["preferred_wave_actions"] = preferred_wave_actions
+            selected_target["preferred_traversal_paths"] = preferred_traversal_paths
+            selected_target["reason_codes"] = self._machine_dedupe(
+                [
+                    *(
+                        selected_target.get("reason_codes", [])
+                        if isinstance(selected_target.get("reason_codes", []), list)
+                        else []
+                    ),
+                    "semantic_memory_guided",
+                    *(
+                        semantic_memory_guidance.get("reason_codes", [])
+                        if isinstance(semantic_memory_guidance.get("reason_codes", []), list)
+                        else []
+                    ),
+                ],
+                limit=12,
+            )
+            if str(selected_target.get("semantic_guidance_status", "") or "") == "strong":
+                selected_target["effective_max_surface_waves"] = min(
+                    8,
+                    max(
+                        int(selected_target.get("effective_max_surface_waves", 3) or 3),
+                        int(selected_target.get("recommended_max_surface_waves", 3) or 3) + 1,
+                    ),
+                )
+                selected_target["effective_per_app_limit"] = min(
+                    64,
+                    int(selected_target.get("effective_per_app_limit", survey_limit or 28) or survey_limit or 28) + 2,
+                )
         survey_result = self.survey_desktop_app_memory(
             app_name=effective_app_name,
             query=effective_query,
@@ -11146,6 +11511,7 @@ class DesktopBackendService:
                 "resolved_target": resolved,
                 "launch": launch_result,
                 "survey": survey_result,
+                "semantic_memory_guidance": semantic_memory_guidance,
                 "app_memory": memory_snapshot,
                 "launch_memory": launch_memory,
                 "summary": summary,
@@ -14401,6 +14767,79 @@ class DesktopBackendService:
                     if isinstance(row.get("remediation_related_setup_action_codes", []), list) and str(item).strip()
                 ],
             }
+            semantic_memory_guidance = self._desktop_machine_semantic_memory_guidance(
+                app_name=app_name,
+                query=prepare_query,
+                limit=6,
+            )
+            item_payload["semantic_memory_guidance"] = semantic_memory_guidance
+            item_payload["semantic_guidance_status"] = str(
+                semantic_memory_guidance.get("guidance_status", "") or ""
+            ).strip().lower()
+            item_payload["semantic_guidance_match_count"] = int(
+                semantic_memory_guidance.get("count", 0) or 0
+            )
+            item_payload["semantic_guidance_top_labels"] = [
+                str(label).strip()
+                for label in semantic_memory_guidance.get("top_match_labels", [])
+                if isinstance(semantic_memory_guidance.get("top_match_labels", []), list) and str(label).strip()
+            ][:6]
+            item_payload["semantic_guidance_top_hotkeys"] = [
+                str(hotkey).strip()
+                for hotkey in semantic_memory_guidance.get("top_hotkeys", [])
+                if isinstance(semantic_memory_guidance.get("top_hotkeys", []), list) and str(hotkey).strip()
+            ][:8]
+            item_payload["target_container_roles"] = self._machine_dedupe(
+                [
+                    *item_payload.get("target_container_roles", []),
+                    *(
+                        semantic_memory_guidance.get("recommended_container_roles", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_container_roles", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            item_payload["preferred_wave_actions"] = self._machine_dedupe(
+                [
+                    *item_payload.get("preferred_wave_actions", []),
+                    *(
+                        semantic_memory_guidance.get("recommended_wave_actions", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_wave_actions", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            item_payload["preferred_traversal_paths"] = self._machine_dedupe(
+                [
+                    *item_payload.get("preferred_traversal_paths", []),
+                    *(
+                        semantic_memory_guidance.get("recommended_traversal_paths", [])
+                        if isinstance(semantic_memory_guidance.get("recommended_traversal_paths", []), list)
+                        else []
+                    ),
+                ],
+                limit=8,
+            )
+            if item_payload["semantic_guidance_match_count"] > 0:
+                item_payload["reason_codes"] = self._machine_dedupe(
+                    [
+                        *item_payload.get("reason_codes", []),
+                        "semantic_memory_guided",
+                        *(
+                            semantic_memory_guidance.get("reason_codes", [])
+                            if isinstance(semantic_memory_guidance.get("reason_codes", []), list)
+                            else []
+                        ),
+                    ],
+                    limit=12,
+                )
+                if item_payload["semantic_guidance_status"] == "strong":
+                    item_payload["recommended_max_surface_waves"] = min(
+                        8,
+                        int(item_payload.get("recommended_max_surface_waves", 3) or 3) + 1,
+                    )
             item_payload.update(
                 self._desktop_machine_prepare_readiness_annotation(
                     profile=profile,
@@ -14430,6 +14869,10 @@ class DesktopBackendService:
                     runtime_strategy=runtime_strategy,
                 )
             )
+            if int(item_payload.get("semantic_guidance_match_count", 0) or 0) > 0:
+                item_payload["prepare_priority_score"] = float(
+                    item_payload.get("prepare_priority_score", 0.0) or 0.0
+                ) + (4.0 if str(item_payload.get("semantic_guidance_status", "") or "") == "strong" else 2.0)
             annotated_items.append(item_payload)
         execution_rank = {
             "local_ready": 0,
@@ -14458,6 +14901,10 @@ class DesktopBackendService:
         expected_provider_source_counts: Dict[str, int] = {}
         remediation_feedback_status_counts: Dict[str, int] = {}
         remediation_recent_action_code_counts: Dict[str, int] = {}
+        semantic_guidance_status_counts: Dict[str, int] = {}
+        semantic_label_counts: Dict[str, int] = {}
+        semantic_hotkey_counts: Dict[str, int] = {}
+        semantic_guided_count = 0
         remediation_retry_count = 0
         remediation_provider_blocked_count = 0
         remediation_setup_followup_count = 0
@@ -14492,6 +14939,20 @@ class DesktopBackendService:
                 expected_provider_source_counts[expected_provider_source] = int(
                     expected_provider_source_counts.get(expected_provider_source, 0) or 0
                 ) + 1
+            semantic_guidance_status = str(item.get("semantic_guidance_status", "") or "").strip().lower() or "cold"
+            semantic_guidance_status_counts[semantic_guidance_status] = int(
+                semantic_guidance_status_counts.get(semantic_guidance_status, 0) or 0
+            ) + 1
+            if int(item.get("semantic_guidance_match_count", 0) or 0) > 0:
+                semantic_guided_count += 1
+            for label in item.get("semantic_guidance_top_labels", []):
+                clean_label = str(label or "").strip()
+                if clean_label:
+                    semantic_label_counts[clean_label] = int(semantic_label_counts.get(clean_label, 0) or 0) + 1
+            for hotkey in item.get("semantic_guidance_top_hotkeys", []):
+                clean_hotkey = str(hotkey or "").strip()
+                if clean_hotkey:
+                    semantic_hotkey_counts[clean_hotkey] = int(semantic_hotkey_counts.get(clean_hotkey, 0) or 0) + 1
             remediation_status = str(item.get("remediation_progress_status", "") or "").strip().lower()
             if remediation_status:
                 remediation_feedback_status_counts[remediation_status] = int(
@@ -14541,6 +15002,19 @@ class DesktopBackendService:
                 "expected_provider_source_counts": {
                     str(key): int(value)
                     for key, value in sorted(expected_provider_source_counts.items(), key=lambda entry: entry[0])
+                },
+                "semantic_guided_count": semantic_guided_count,
+                "semantic_guidance_status_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
+                },
+                "top_semantic_match_labels": {
+                    str(key): int(value)
+                    for key, value in sorted(semantic_label_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:6]
+                },
+                "top_semantic_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(semantic_hotkey_counts.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
                 },
                 "remediation_feedback_status_counts": {
                     str(key): int(value)
@@ -16365,6 +16839,14 @@ class DesktopBackendService:
                     "app_control_prepare_runnable_count": int(prepare_plan_summary.get("runnable_count", 0) or 0),
                     "app_control_prepare_blocked_count": int(prepare_plan_summary.get("blocked_count", 0) or 0),
                     "app_control_prepare_degraded_count": int(prepare_plan_summary.get("degraded_count", 0) or 0),
+                    "app_control_prepare_semantic_guided_count": int(
+                        prepare_plan_summary.get("semantic_guided_count", 0) or 0
+                    ),
+                    "app_control_prepare_semantic_status_counts": dict(
+                        prepare_plan_summary.get("semantic_guidance_status_counts", {})
+                    )
+                    if isinstance(prepare_plan_summary.get("semantic_guidance_status_counts", {}), dict)
+                    else {},
                     "vm_provider_count": int(vm_control_plan_summary.get("provider_counts", {}) and len(vm_control_plan_summary.get("provider_counts", {})) or 0),
                     "vm_guest_count": int(vm_control_plan_summary.get("ready_count", 0) or 0)
                     + int(vm_control_plan_summary.get("attention_count", 0) or 0)
@@ -17890,6 +18372,16 @@ class DesktopBackendService:
                     dict(app_control_prepare_result.get("summary", {})).get("degraded_count", 0)
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else 0
+                ),
+                "prepared_semantic_guided_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("semantic_guided_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "prepared_semantic_status_counts": dict(
+                    dict(app_control_prepare_result.get("summary", {})).get("semantic_guidance_status_counts", {})
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else {}
                 ),
                 "prepared_setup_aligned_count": int(
                     dict(app_control_prepare_result.get("summary", {})).get("setup_aligned_app_count", 0)

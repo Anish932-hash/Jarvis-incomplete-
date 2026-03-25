@@ -293,6 +293,7 @@ class DesktopVMManager:
                         and int(row.get("provider_model_readiness", {}).get("structured_memory_semantic_ready_count", 0) or 0) > 0
                     ]
                 ),
+                "memory_guidance_status_counts": self._count_values(selected, "memory_guidance_status"),
                 "setup_followup_guest_count": len(
                     [
                         row
@@ -409,6 +410,10 @@ class DesktopVMManager:
                 "selected_ai_runtime_band": _norm_text(target.get("selected_ai_runtime_band", "")),
                 "selected_ai_route_profile": _norm_text(target.get("selected_ai_route_profile", "")),
                 "selected_ai_provider_source": _norm_text(target.get("selected_ai_provider_source", "")),
+                "memory_guidance_status": _norm_text(target.get("memory_guidance_status", "")),
+                "memory_guidance_reason_codes": list(target.get("memory_guidance_reason_codes", []))
+                if isinstance(target.get("memory_guidance_reason_codes", []), list)
+                else [],
                 "route_resolution_status": _norm_text(target.get("route_resolution_status", "")),
                 "remediation_kind": _norm_text(target.get("remediation_kind", "")),
                 "remediation_action_code": _clean_text(target.get("remediation_action_code", "")),
@@ -911,6 +916,20 @@ class DesktopVMManager:
         structured_memory_vector_count = int(multimodal_summary.get("knowledge_store_vector_count", 0) or 0)
         structured_memory_low_coverage_count = int(multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0)
         structured_memory_semantic_ready_count = int(multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0)
+        if structured_memory_semantic_ready_count > 0 and structured_memory_low_coverage_count <= 0:
+            memory_guidance_status = "strong"
+        elif structured_memory_semantic_ready_count > 0 or structured_memory_vector_count > 0:
+            memory_guidance_status = "partial"
+        else:
+            memory_guidance_status = "cold"
+        memory_guidance_reason_codes = _dedupe_strings(
+            [
+                "semantic_memory_ready" if structured_memory_semantic_ready_count > 0 else "",
+                "vector_memory_available" if structured_memory_vector_count > 0 else "",
+                "memory_low_coverage_pressure" if structured_memory_low_coverage_count > 0 else "",
+            ],
+            limit=6,
+        )
         expected_route_profile = cls._expected_route_profile(row, task=task)
         expected_model_preference = cls._expected_model_preference(row, task=task)
         runtime_band_preference = cls._runtime_band_preference(row)
@@ -1059,6 +1078,8 @@ class DesktopVMManager:
             "structured_memory_vector_count": structured_memory_vector_count,
             "structured_memory_low_coverage_count": structured_memory_low_coverage_count,
             "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
+            "memory_guidance_status": memory_guidance_status,
+            "memory_guidance_reason_codes": memory_guidance_reason_codes,
             "remote_endpoint_ready": remote_endpoint_ready,
             "execution_mode": execution_mode,
             "runtime_band_preference": runtime_band_preference,
@@ -1145,6 +1166,10 @@ class DesktopVMManager:
             "selected_ai_route_profile": _norm_text(provider_model_readiness.get("selected_ai_route_profile", "")),
             "selected_ai_model_preference": _norm_text(provider_model_readiness.get("selected_ai_model_preference", "")),
             "selected_ai_provider_source": _norm_text(provider_model_readiness.get("selected_ai_provider_source", "")),
+            "memory_guidance_status": _norm_text(provider_model_readiness.get("memory_guidance_status", "")),
+            "memory_guidance_reason_codes": list(provider_model_readiness.get("memory_guidance_reason_codes", []))
+            if isinstance(provider_model_readiness.get("memory_guidance_reason_codes", []), list)
+            else [],
             "provider_model_readiness": provider_model_readiness,
             "recommended_traversal_roles": cls._recommended_traversal_roles(base),
             "preferred_wave_actions": cls._preferred_wave_actions(base),

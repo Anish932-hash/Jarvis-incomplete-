@@ -160,7 +160,10 @@ def test_desktop_action_router_surveys_app_memory_and_returns_snapshot() -> None
 
     assert repeated["status"] == "success"
     assert bool(dict(repeated.get("surface_hint", {})).get("known", False)) is True
+    assert int(dict(repeated.get("semantic_memory_guidance", {})).get("count", 0) or 0) >= 1
+    assert "Save" in list(dict(repeated.get("semantic_memory_guidance", {})).get("top_match_labels", []))
     assert "Known surface memory was reused" in str(repeated["message"])
+    assert "Vector memory surfaced" in str(repeated["message"])
 
 
 def test_desktop_app_memory_surfaces_revalidation_targets_for_uncertain_controls(tmp_path: Path) -> None:
