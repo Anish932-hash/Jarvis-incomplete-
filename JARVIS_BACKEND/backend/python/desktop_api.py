@@ -8613,7 +8613,12 @@ class DesktopBackendService:
                 )
                 or bool(
                     isinstance(recent_setup_followthrough_memory, dict)
-                    and recent_setup_followthrough_memory.get("followthrough_recommended", False)
+                    and (
+                        recent_setup_followthrough_memory.get("followthrough_recommended", False)
+                        or recent_setup_followthrough_memory.get("model_setup_resume_ready", False)
+                        or recent_setup_followthrough_memory.get("model_setup_can_auto_resume_now", False)
+                        or int(recent_setup_followthrough_memory.get("model_setup_resume_action_count", 0) or 0) > 0
+                    )
                 )
             )
         )
@@ -8722,6 +8727,26 @@ class DesktopBackendService:
                     "setup_followthrough_model_action_count": int(
                         setup_followthrough.get("selected_model_action_count", 0) or 0
                     ),
+                    "setup_followthrough_resume_ready": bool(
+                        dict(setup_followthrough.get("model_setup", {})).get("resume_ready", False)
+                        if isinstance(setup_followthrough.get("model_setup", {}), dict)
+                        else False
+                    ),
+                    "setup_followthrough_resume_action_count": int(
+                        dict(setup_followthrough.get("model_setup", {})).get("remaining_ready_action_count", 0)
+                        if isinstance(setup_followthrough.get("model_setup", {}), dict)
+                        else 0
+                    ),
+                    "setup_followthrough_top_resume_action_ids": [
+                        str(item).strip().lower()
+                        for item in (
+                            dict(setup_followthrough.get("model_setup", {})).get("remaining_ready_action_ids", [])
+                            if isinstance(setup_followthrough.get("model_setup", {}), dict)
+                            and isinstance(dict(setup_followthrough.get("model_setup", {})).get("remaining_ready_action_ids", []), list)
+                            else []
+                        )
+                        if str(item).strip()
+                    ][:8],
                     "setup_followthrough_ai_runtime_action_count": int(
                         setup_followthrough.get("selected_ai_runtime_action_count", 0) or 0
                     ),
@@ -8761,6 +8786,35 @@ class DesktopBackendService:
                     )
                     if isinstance(recent_setup_followthrough_memory, dict)
                     else 0,
+                    "recent_setup_resume_ready": bool(
+                        isinstance(recent_setup_followthrough_memory, dict)
+                        and recent_setup_followthrough_memory.get("model_setup_resume_ready", False)
+                    ),
+                    "recent_setup_auto_resume_ready": bool(
+                        isinstance(recent_setup_followthrough_memory, dict)
+                        and recent_setup_followthrough_memory.get("model_setup_can_auto_resume_now", False)
+                    ),
+                    "recent_setup_resume_action_count": int(
+                        recent_setup_followthrough_memory.get("model_setup_resume_action_count", 0) or 0
+                    )
+                    if isinstance(recent_setup_followthrough_memory, dict)
+                    else 0,
+                    "recent_setup_resume_action_ids": [
+                        str(item).strip().lower()
+                        for item in recent_setup_followthrough_memory.get("top_model_resume_action_ids", [])
+                        if isinstance(recent_setup_followthrough_memory.get("top_model_resume_action_ids", []), list)
+                        and str(item).strip()
+                    ][:8]
+                    if isinstance(recent_setup_followthrough_memory, dict)
+                    else [],
+                    "recent_setup_resume_blockers": [
+                        str(item).strip().lower()
+                        for item in recent_setup_followthrough_memory.get("top_model_resume_blockers", [])
+                        if isinstance(recent_setup_followthrough_memory.get("top_model_resume_blockers", []), list)
+                        and str(item).strip()
+                    ][:8]
+                    if isinstance(recent_setup_followthrough_memory, dict)
+                    else [],
                     "recent_continuation_status": str(
                         recent_continuation_memory.get("continuation_status", "") or ""
                     ).strip().lower()
@@ -12870,6 +12924,26 @@ class DesktopBackendService:
                 for item in followthrough_payload.get("selected_model_item_keys", [])
                 if isinstance(followthrough_payload.get("selected_model_item_keys", []), list) and str(item).strip()
             ][:8],
+            "setup_followthrough_resume_ready": bool(
+                dict(followthrough_payload.get("model_setup", {})).get("resume_ready", False)
+                if isinstance(followthrough_payload.get("model_setup", {}), dict)
+                else False
+            ),
+            "setup_followthrough_resume_action_count": int(
+                dict(followthrough_payload.get("model_setup", {})).get("remaining_ready_action_count", 0)
+                if isinstance(followthrough_payload.get("model_setup", {}), dict)
+                else 0
+            ),
+            "setup_followthrough_top_resume_action_ids": [
+                str(item).strip().lower()
+                for item in (
+                    dict(followthrough_payload.get("model_setup", {})).get("remaining_ready_action_ids", [])
+                    if isinstance(followthrough_payload.get("model_setup", {}), dict)
+                    and isinstance(dict(followthrough_payload.get("model_setup", {})).get("remaining_ready_action_ids", []), list)
+                    else []
+                )
+                if str(item).strip()
+            ][:8],
             "setup_followthrough_top_ai_runtime_setup_codes": [
                 str(item).strip().lower()
                 for item in followthrough_payload.get("selected_ai_runtime_action_codes", [])
@@ -12959,6 +13033,33 @@ class DesktopBackendService:
                 if isinstance(selected_target.get("recent_setup_top_model_action_ids", []), list)
                 and str(item).strip()
             ][:8],
+            "recent_setup_resume_ready": bool(
+                selected_target.get("recent_setup_resume_ready", False)
+            ),
+            "recent_setup_auto_resume_ready": bool(
+                selected_target.get("recent_setup_auto_resume_ready", False)
+            ),
+            "recent_setup_resume_action_count": int(
+                selected_target.get("recent_setup_resume_action_count", 0) or 0
+            ),
+            "recent_setup_resume_action_ids": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_resume_action_ids", [])
+                if isinstance(selected_target.get("recent_setup_resume_action_ids", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_resume_blockers": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_resume_blockers", [])
+                if isinstance(selected_target.get("recent_setup_resume_blockers", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_resume_trigger": str(
+                selected_target.get("recent_setup_resume_trigger", "") or ""
+            ).strip().lower(),
+            "recent_setup_resume_hint": str(
+                selected_target.get("recent_setup_resume_hint", "") or ""
+            ).strip(),
             "recent_setup_top_ai_runtime_setup_codes": [
                 str(item).strip().lower()
                 for item in selected_target.get("recent_setup_top_ai_runtime_setup_codes", [])
@@ -13233,6 +13334,8 @@ class DesktopBackendService:
             or str(selected_target.get("execution_mode", "") or "").strip().lower() in {"degraded", "remote_assist", "blocked"}
             or int(selected_target.get("setup_execution_remaining_ready_count", 0) or 0) > 0
             or bool(selected_target.get("setup_execution_resume_ready", False))
+            or bool(selected_target.get("recent_setup_auto_resume_ready", False))
+            or int(selected_target.get("recent_setup_resume_action_count", 0) or 0) > 0
             or bool(selected_target.get("recent_setup_followthrough_recommended", False))
             or bool(selected_target.get("recent_setup_followthrough_required", False))
             or int(selected_target.get("recent_setup_remaining_ready_count", 0) or 0) > 0
@@ -17442,6 +17545,11 @@ class DesktopBackendService:
             if isinstance(latest_run.get("model_install", {}), dict)
             else {}
         )
+        latest_model_resume_advice = (
+            dict(latest_model_install.get("resume_advice", {}))
+            if isinstance(latest_model_install.get("resume_advice", {}), dict)
+            else {}
+        )
         latest_ai_runtime_setup = (
             dict(latest_run.get("ai_runtime_setup_result", {}))
             if isinstance(latest_run.get("ai_runtime_setup_result", {}), dict)
@@ -17528,12 +17636,33 @@ class DesktopBackendService:
             suggested_followthrough_waves = 3
         if setup_execution_remaining_ready_total > 2 or provider_blocked_total > 1:
             suggested_followthrough_waves = min(4, suggested_followthrough_waves + 1)
+        model_setup_resume_ready = bool(
+            latest_model_install.get("resume_ready", False)
+            or latest_model_resume_advice.get("resume_ready", False)
+            or latest_model_resume_advice.get("can_resume_now", False)
+            or latest_model_resume_advice.get("can_auto_resume_now", False)
+        )
+        model_setup_can_auto_resume_now = bool(
+            latest_model_resume_advice.get("can_auto_resume_now", False)
+        )
+        top_model_resume_blockers = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in latest_model_resume_advice.get("resume_blockers", [])
+                if isinstance(latest_model_resume_advice.get("resume_blockers", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
         reason_codes = self._machine_dedupe(
             [
                 "recent_setup_followthrough_required" if followthrough_required else "",
                 "recent_setup_followthrough_recommended" if followthrough_recommended else "",
                 "recent_setup_ready_actions_pending" if setup_execution_remaining_ready_total > 0 else "",
                 "recent_setup_resume_ready" if setup_execution_resume_ready_total > 0 else "",
+                "recent_model_setup_resume_ready" if model_setup_resume_ready else "",
+                "recent_model_setup_auto_resume_ready" if model_setup_can_auto_resume_now else "",
+                "recent_model_setup_resume_blocked" if top_model_resume_blockers else "",
                 "recent_provider_blocked_pressure" if provider_blocked_total > 0 else "",
                 "recent_ai_runtime_setup_errors" if ai_runtime_setup_error_total > 0 else "",
                 "recent_multimodal_setup_pressure" if multimodal_setup_action_total > 0 else "",
@@ -17608,6 +17737,56 @@ class DesktopBackendService:
             ],
             limit=8,
         )
+        model_setup_resume_ready = bool(
+            latest_model_install.get("resume_ready", False)
+            or latest_model_resume_advice.get("resume_ready", False)
+            or latest_model_resume_advice.get("can_resume_now", False)
+            or latest_model_resume_advice.get("can_auto_resume_now", False)
+        )
+        model_setup_can_auto_resume_now = bool(
+            latest_model_resume_advice.get("can_auto_resume_now", False)
+        )
+        top_model_resume_action_ids = self._machine_dedupe(
+            [
+                *selected_model_action_ids,
+                *[
+                    str(item).strip()
+                    for item in latest_model_install.get("remaining_ready_action_ids", [])
+                    if isinstance(latest_model_install.get("remaining_ready_action_ids", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in latest_model_resume_advice.get("selected_action_ids", [])
+                    if isinstance(latest_model_resume_advice.get("selected_action_ids", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in latest_model_resume_advice.get("auto_selected_action_ids", [])
+                    if isinstance(latest_model_resume_advice.get("auto_selected_action_ids", []), list)
+                    and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        top_model_resume_blockers = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in latest_model_resume_advice.get("resume_blockers", [])
+                if isinstance(latest_model_resume_advice.get("resume_blockers", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        model_setup_resume_trigger = self._machine_text(
+            latest_model_resume_advice.get("resume_trigger", "")
+        )
+        model_setup_resume_hint = str(
+            latest_model_resume_advice.get("recovery_hint", "")
+            or latest_model_resume_advice.get("message", "")
+            or ""
+        ).strip()
         ai_runtime_setup_codes = self._machine_dedupe(
             [
                 *[
@@ -17651,6 +17830,7 @@ class DesktopBackendService:
                 *(["recent_provider_manual_input"] if manual_input_provider_names else []),
                 *(["recent_provider_attention"] if attention_provider_names else []),
                 *(["recent_model_selection_available"] if selected_model_item_keys else []),
+                *(["recent_model_setup_resume_available"] if top_model_resume_action_ids else []),
                 *(["recent_ai_runtime_setup_available"] if ai_runtime_setup_codes else []),
                 *(["recent_multimodal_setup_available"] if multimodal_setup_codes else []),
                 *reason_codes,
@@ -17666,6 +17846,23 @@ class DesktopBackendService:
                 next_actions.append(dict(item))
                 if len(next_actions) >= 4:
                     break
+        if model_setup_resume_ready:
+            next_actions = [
+                {
+                    "id": "recent_model_setup_resume",
+                    "kind": "model_setup_resume",
+                    "action": "resume_model_setup",
+                    "target": "model_setup",
+                    "auto_runnable": bool(model_setup_can_auto_resume_now),
+                    "required": bool(model_setup_can_auto_resume_now),
+                    "summary": model_setup_resume_hint
+                    or "Resume model setup followthrough before deeper app or VM control passes.",
+                    "resume_trigger": model_setup_resume_trigger,
+                    "selected_action_ids": top_model_resume_action_ids[:8],
+                    "resume_blockers": top_model_resume_blockers[:8],
+                },
+                *next_actions,
+            ][:4]
         if not next_actions and followthrough_recommended:
             next_actions.append(
                 {
@@ -17730,6 +17927,13 @@ class DesktopBackendService:
             "top_attention_provider_names": self._machine_dedupe(attention_provider_names, limit=8),
             "top_selected_model_item_keys": selected_model_item_keys[:8],
             "top_selected_model_action_ids": selected_model_action_ids[:8],
+            "model_setup_resume_ready": model_setup_resume_ready,
+            "model_setup_can_auto_resume_now": model_setup_can_auto_resume_now,
+            "model_setup_resume_action_count": len(top_model_resume_action_ids),
+            "top_model_resume_action_ids": top_model_resume_action_ids[:8],
+            "top_model_resume_blockers": top_model_resume_blockers[:8],
+            "model_setup_resume_trigger": model_setup_resume_trigger,
+            "model_setup_resume_hint": model_setup_resume_hint,
             "top_ai_runtime_setup_action_codes": ai_runtime_setup_codes[:8],
             "top_multimodal_setup_action_codes": multimodal_setup_codes[:8],
             "setup_guidance_status": setup_guidance_status,
@@ -17823,6 +18027,26 @@ class DesktopBackendService:
             ],
             limit=8,
         )
+        model_setup_resume_ready = bool(memory_payload.get("model_setup_resume_ready", False))
+        model_setup_can_auto_resume_now = bool(memory_payload.get("model_setup_can_auto_resume_now", False))
+        top_model_resume_action_ids = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_model_resume_action_ids", [])
+                if isinstance(memory_payload.get("top_model_resume_action_ids", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_model_resume_blockers = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_model_resume_blockers", [])
+                if isinstance(memory_payload.get("top_model_resume_blockers", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        model_setup_resume_trigger = self._machine_text(memory_payload.get("model_setup_resume_trigger", ""))
+        model_setup_resume_hint = str(memory_payload.get("model_setup_resume_hint", "") or "").strip()
         setup_guidance_status = str(memory_payload.get("setup_guidance_status", "") or "").strip().lower()
         setup_guidance_reason_codes = [
             str(item).strip().lower()
@@ -17844,6 +18068,13 @@ class DesktopBackendService:
         item_payload["recent_setup_top_multimodal_setup_codes"] = top_multimodal_setup_action_codes
         item_payload["recent_setup_guidance_status"] = setup_guidance_status
         item_payload["recent_setup_guidance_reason_codes"] = setup_guidance_reason_codes
+        item_payload["recent_setup_resume_ready"] = model_setup_resume_ready
+        item_payload["recent_setup_auto_resume_ready"] = model_setup_can_auto_resume_now
+        item_payload["recent_setup_resume_action_ids"] = top_model_resume_action_ids[:8]
+        item_payload["recent_setup_resume_action_count"] = len(top_model_resume_action_ids)
+        item_payload["recent_setup_resume_blockers"] = top_model_resume_blockers[:8]
+        item_payload["recent_setup_resume_trigger"] = model_setup_resume_trigger
+        item_payload["recent_setup_resume_hint"] = model_setup_resume_hint
         item_payload["recent_setup_remaining_ready_count"] = int(
             memory_payload.get("setup_execution_remaining_ready_total", 0) or 0
         )
@@ -17871,6 +18102,18 @@ class DesktopBackendService:
         item_payload["recent_setup_multimodal_action_count"] = int(
             memory_payload.get("multimodal_setup_action_total", 0) or 0
         )
+        if top_model_resume_action_ids:
+            existing_resume_action_ids = [
+                str(item).strip().lower()
+                for item in item_payload.get("setup_execution_resume_action_ids", [])
+                if isinstance(item_payload.get("setup_execution_resume_action_ids", []), list) and str(item).strip()
+            ]
+            item_payload["setup_execution_resume_action_ids"] = self._machine_dedupe(
+                [*existing_resume_action_ids, *top_model_resume_action_ids],
+                limit=8,
+            )
+        if model_setup_resume_ready:
+            item_payload["setup_execution_resume_ready"] = True
         required_tasks = {
             str(item).strip().lower()
             for item in item_payload.get("required_tasks", [])
@@ -17969,6 +18212,11 @@ class DesktopBackendService:
             guided_wave_actions: List[str] = []
             guided_container_roles: List[str] = []
             guided_traversal_paths: List[str] = []
+            if model_setup_resume_ready:
+                guided_queries.extend(["models", "runtime", "provider"])
+                guided_wave_actions.extend(["command", "focus_search_box"])
+                guided_container_roles.extend(["dialog", "menu"])
+                guided_traversal_paths.extend(["dialog", "menu"])
             if {"reasoning", "intent", "control"}.intersection(guided_task_names):
                 guided_queries.extend(["settings", "preferences", "advanced"])
                 guided_wave_actions.extend(
@@ -18039,7 +18287,11 @@ class DesktopBackendService:
             )
             current_policy = str(item_payload.get("setup_execution_policy", "") or "").strip().lower()
             preferred_policy = (
-                "auto_followthrough_required" if followthrough_required else "auto_followthrough_preferred"
+                "auto_followthrough_resume"
+                if model_setup_can_auto_resume_now
+                else "auto_followthrough_required"
+                if followthrough_required
+                else "auto_followthrough_preferred"
             )
             if current_policy in {"", "manual_only", "observation_first", "deferred"}:
                 item_payload["setup_execution_policy"] = preferred_policy
@@ -18049,7 +18301,14 @@ class DesktopBackendService:
                 else []
             )
             item_payload["reason_codes"] = self._machine_dedupe(
-                [*existing_reason_codes, *reason_codes, *setup_guidance_reason_codes],
+                [
+                    *existing_reason_codes,
+                    *reason_codes,
+                    *setup_guidance_reason_codes,
+                    *(["recent_model_setup_resume_ready"] if model_setup_resume_ready else []),
+                    *(["recent_model_setup_auto_resume_ready"] if model_setup_can_auto_resume_now else []),
+                    *(["recent_model_setup_resume_blocked"] if top_model_resume_blockers else []),
+                ],
                 limit=16,
             )
             existing_queries = (
@@ -18096,7 +18355,7 @@ class DesktopBackendService:
                 )
                 current_probe_controls = max(
                     int(item_payload.get("effective_max_probe_controls", 0) or 0),
-                    3,
+                    4 if model_setup_resume_ready else 3,
                 )
                 item_payload["effective_max_surface_waves"] = min(
                     8,
@@ -18107,7 +18366,7 @@ class DesktopBackendService:
                 )
                 item_payload["effective_max_probe_controls"] = min(
                     8,
-                    max(current_probe_controls, 4 if followthrough_required else 3),
+                    max(current_probe_controls, 5 if model_setup_can_auto_resume_now else 4 if followthrough_required else 3),
                 )
         return item_payload
 
@@ -22073,11 +22332,13 @@ class DesktopBackendService:
                     int(setup_followthrough_memory.get("setup_action_auto_runnable_total", 0) or 0) > 0
                     or int(setup_followthrough_memory.get("ai_runtime_setup_auto_runnable_total", 0) or 0) > 0
                     or int(setup_followthrough_memory.get("multimodal_setup_auto_runnable_total", 0) or 0) > 0
+                    or bool(setup_followthrough_memory.get("model_setup_can_auto_resume_now", False))
                 ),
                 "required": bool(setup_followthrough_memory.get("followthrough_required", False)),
                 "count": int(setup_followthrough_memory.get("setup_action_total", 0) or 0)
                 + int(setup_followthrough_memory.get("ai_runtime_setup_action_total", 0) or 0)
-                + int(setup_followthrough_memory.get("multimodal_setup_action_total", 0) or 0),
+                + int(setup_followthrough_memory.get("multimodal_setup_action_total", 0) or 0)
+                + int(setup_followthrough_memory.get("model_setup_resume_action_count", 0) or 0),
             },
             {
                 "id": "recent_continuation_followthrough",
@@ -22293,6 +22554,27 @@ class DesktopBackendService:
                     "recent_setup_followup_count": int(
                         setup_followthrough_memory.get("setup_followup_total", 0) or 0
                     ),
+                    "recent_setup_resume_ready": bool(
+                        setup_followthrough_memory.get("model_setup_resume_ready", False)
+                    ),
+                    "recent_setup_auto_resume_ready": bool(
+                        setup_followthrough_memory.get("model_setup_can_auto_resume_now", False)
+                    ),
+                    "recent_setup_resume_action_count": int(
+                        setup_followthrough_memory.get("model_setup_resume_action_count", 0) or 0
+                    ),
+                    "recent_setup_top_resume_action_ids": [
+                        str(item).strip().lower()
+                        for item in setup_followthrough_memory.get("top_model_resume_action_ids", [])
+                        if isinstance(setup_followthrough_memory.get("top_model_resume_action_ids", []), list)
+                        and str(item).strip()
+                    ][:8],
+                    "recent_setup_top_resume_blockers": [
+                        str(item).strip().lower()
+                        for item in setup_followthrough_memory.get("top_model_resume_blockers", [])
+                        if isinstance(setup_followthrough_memory.get("top_model_resume_blockers", []), list)
+                        and str(item).strip()
+                    ][:8],
                     "recent_setup_memory_followthrough_count": int(
                         setup_followthrough_memory.get("memory_followthrough_total", 0) or 0
                     ),
@@ -24228,6 +24510,15 @@ class DesktopBackendService:
                 ),
                 "recent_setup_followup_count": int(
                     final_setup_followthrough_memory.get("setup_followup_total", 0) or 0
+                ),
+                "recent_setup_resume_ready": bool(
+                    final_setup_followthrough_memory.get("model_setup_resume_ready", False)
+                ),
+                "recent_setup_auto_resume_ready": bool(
+                    final_setup_followthrough_memory.get("model_setup_can_auto_resume_now", False)
+                ),
+                "recent_setup_resume_action_count": int(
+                    final_setup_followthrough_memory.get("model_setup_resume_action_count", 0) or 0
                 ),
                 "recent_setup_memory_followthrough_count": int(
                     final_setup_followthrough_memory.get("memory_followthrough_total", 0) or 0

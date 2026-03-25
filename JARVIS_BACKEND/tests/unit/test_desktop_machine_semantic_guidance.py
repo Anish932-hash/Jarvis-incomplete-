@@ -218,6 +218,16 @@ def test_desktop_machine_recent_setup_followthrough_memory_collects_provider_and
                         "selected_item_keys": ["reasoning-llama", "vision-ocr"],
                         "selected_action_ids": ["install_reasoning", "install_vision"],
                         "executed_action_ids": ["install_reasoning"],
+                        "remaining_ready_action_ids": ["install_vision"],
+                        "resume_ready": True,
+                        "resume_advice": {
+                            "can_auto_resume_now": True,
+                            "resume_ready": True,
+                            "resume_trigger": "after_active_runs",
+                            "recovery_hint": "Resume model downloads after the active run finishes.",
+                            "selected_action_ids": ["install_vision"],
+                            "resume_blockers": ["active_runs"],
+                        },
                     },
                     "ai_runtime_setup_result": {
                         "selected_action_codes": ["warm_local_reasoning_runtime"],
@@ -275,10 +285,17 @@ def test_desktop_machine_recent_setup_followthrough_memory_collects_provider_and
     assert payload["top_attention_provider_names"] == ["anthropic"]
     assert payload["top_selected_model_item_keys"] == ["reasoning-llama", "vision-ocr"]
     assert payload["top_selected_model_action_ids"][0] == "install_reasoning"
+    assert payload["model_setup_resume_ready"] is True
+    assert payload["model_setup_can_auto_resume_now"] is True
+    assert payload["model_setup_resume_action_count"] >= 1
+    assert "install_vision" in payload["top_model_resume_action_ids"]
+    assert "active_runs" in payload["top_model_resume_blockers"]
+    assert payload["model_setup_resume_trigger"] == "after_active_runs"
     assert payload["top_ai_runtime_setup_action_codes"] == ["warm_local_reasoning_runtime"]
     assert payload["top_multimodal_setup_action_codes"] == ["warm_local_vision_runtime"]
     assert payload["setup_guidance_status"] == "strong"
     assert "recent_provider_verified" in payload["setup_guidance_reason_codes"]
+    assert "recent_model_setup_resume_available" in payload["setup_guidance_reason_codes"]
 
 
 def test_desktop_machine_prepare_readiness_annotation_uses_recent_setup_memory_hints() -> None:
@@ -367,14 +384,25 @@ def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_que
             "top_selected_model_item_keys": ["reasoning-llama", "vision-ocr"],
             "top_ai_runtime_setup_action_codes": ["warm_local_reasoning_runtime"],
             "top_multimodal_setup_action_codes": ["warm_local_vision_runtime"],
+            "model_setup_resume_ready": True,
+            "model_setup_can_auto_resume_now": True,
+            "top_model_resume_action_ids": ["install_vision"],
+            "top_model_resume_blockers": ["active_runs"],
+            "model_setup_resume_trigger": "after_active_runs",
+            "model_setup_resume_hint": "Resume model downloads after the active run finishes.",
             "setup_guidance_status": "strong",
             "setup_guidance_reason_codes": ["recent_provider_verified"],
         },
     )
 
     assert payload["setup_followthrough_recommended"] is True
-    assert payload["setup_execution_policy"] == "auto_followthrough_required"
+    assert payload["setup_execution_policy"] == "auto_followthrough_resume"
+    assert payload["recent_setup_auto_resume_ready"] is True
+    assert payload["recent_setup_resume_action_count"] == 1
+    assert payload["setup_execution_resume_ready"] is True
+    assert "install_vision" in payload["setup_execution_resume_action_ids"]
     assert "settings" in payload["recent_setup_guided_queries"]
+    assert "models" in payload["recent_setup_guided_queries"]
     assert "preferences" in payload["recent_setup_guided_queries"]
     assert "focus_toolbar" in payload["recent_setup_guided_wave_actions"]
     assert "focus_navigation_tree" in payload["recent_setup_guided_wave_actions"]
