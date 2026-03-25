@@ -21767,6 +21767,18 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                           {' • '}plan degraded:{Number(desktopMachineAppLearningSummary.degraded_count ?? 0)}
                                           {' • '}plan blocked:{Number(desktopMachineAppLearningSummary.blocked_count ?? 0)}
                                         </p>
+                                        {(Number(desktopMachineOnboardingSummary.app_learning_memory_followthrough_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingSummary.app_control_prepare_memory_followthrough_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingSummary.vm_memory_followthrough_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            memory followthrough:
+                                            {' learn '}{Number(desktopMachineOnboardingSummary.app_learning_memory_followthrough_count ?? 0)}
+                                            {' • '}prepare:{Number(
+                                              desktopMachineOnboardingSummary.app_control_prepare_memory_followthrough_count ?? 0
+                                            )}
+                                            {' • '}vm:{Number(desktopMachineOnboardingSummary.vm_memory_followthrough_count ?? 0)}
+                                          </p>
+                                        ) : null}
                                         {(Number(desktopMachineAppLearningSummary.remediation_retry_count ?? 0) > 0 ||
                                           Number(desktopMachineAppLearningSummary.remediation_provider_blocked_count ?? 0) > 0 ||
                                           Number(desktopMachineAppLearningSummary.remediation_setup_followup_count ?? 0) > 0) ? (
@@ -22317,6 +22329,23 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                               .slice(0, 4)
                                               .map((item) => String(item))
                                               .join(' • ')}
+                                          </p>
+                                        ) : null}
+                                        {(Number(desktopMachineOnboardingSummary.continuation_memory_followthrough_count ?? 0) > 0 ||
+                                          Number(desktopMachineOnboardingExecutionSummary.memory_followthrough_count ?? 0) > 0) ? (
+                                          <p className="mt-1">
+                                            memory continuation:{Number(
+                                              desktopMachineOnboardingSummary.continuation_memory_followthrough_count ?? 0
+                                            )}
+                                            {' • '}execution:{Number(
+                                              desktopMachineOnboardingExecutionSummary.memory_followthrough_count ?? 0
+                                            )}
+                                            {' • '}memory-first:{Number(
+                                              desktopMachineOnboardingExecutionSummary.memory_guided_route_count ?? 0
+                                            )}
+                                            {' • '}assisted:{Number(
+                                              desktopMachineOnboardingExecutionSummary.memory_assisted_route_count ?? 0
+                                            )}
                                           </p>
                                         ) : null}
                                         {desktopMachineOnboardingContinuationRows.length > 0 ? (
@@ -23644,6 +23673,14 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                   desktopLatestAppMemoryCampaign.max_surface_waves ??
                                                   0
                                               )}
+                                              {' • '}effective probes:{Number(
+                                                desktopLatestAppMemoryCampaign.effective_max_probe_controls ??
+                                                  desktopLatestAppMemoryCampaign.max_probe_controls ??
+                                                  0
+                                              )}
+                                              {' • '}followthrough:{String(
+                                                Boolean(desktopLatestAppMemoryCampaign.memory_followthrough_enabled)
+                                              )}
                                               {' • '}adaptive roles:{String(
                                                 Boolean(desktopLatestAppMemoryCampaign.adaptive_target_container_roles)
                                               )}
@@ -23777,6 +23814,8 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                 : ' n/a'}
                                               {' • '}memory-first:{Number(desktopLatestAppMemoryCampaign.memory_guided_route_count ?? 0)}
                                               {' • '}assisted:{Number(desktopLatestAppMemoryCampaign.memory_assisted_route_count ?? 0)}
+                                              {' • '}underused:{Number(desktopLatestAppMemoryCampaign.memory_underused_count ?? 0)}
+                                              {' • '}aligned:{Number(desktopLatestAppMemoryCampaign.memory_aligned_count ?? 0)}
                                             </p>
                                             {desktopAppMemoryCampaignRows.length > 0 ? (
                                               <div className="mt-2 rounded border border-primary/10 bg-background/10 p-2">
@@ -23817,6 +23856,10 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                       </p>
                                                       <p className="mt-1 text-[10px] text-muted-foreground">
                                                         effective waves:{Number(campaign.effective_max_surface_waves ?? campaign.max_surface_waves ?? 0)}
+                                                        {' • '}effective probes:{Number(
+                                                          campaign.effective_max_probe_controls ?? campaign.max_probe_controls ?? 0
+                                                        )}
+                                                        {' • '}followthrough:{String(Boolean(campaign.memory_followthrough_enabled))}
                                                         {' • '}adaptive roles:{String(Boolean(campaign.adaptive_target_container_roles))}
                                                         {' • '}roles:
                                                         {Array.isArray(campaign.target_container_roles) && campaign.target_container_roles.length > 0
@@ -23872,6 +23915,9 @@ void refreshModelBridgeProfiles({ quiet: true, task: 'reasoning' });
                                                               .join(' • ')}`
                                                           : ' n/a'}
                                                         {' • '}memory-first:{Number(campaign.memory_guided_route_count ?? 0)}
+                                                        {' • '}assisted:{Number(campaign.memory_assisted_route_count ?? 0)}
+                                                        {' • '}underused:{Number(campaign.memory_underused_count ?? 0)}
+                                                        {' • '}aligned:{Number(campaign.memory_aligned_count ?? 0)}
                                                       </p>
                                                     </div>
                                                   ))}

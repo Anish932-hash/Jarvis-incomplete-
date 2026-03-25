@@ -56,6 +56,9 @@ class DesktopOnboardingManager:
         execution_manual_total = 0
         execution_blocked_total = 0
         execution_error_total = 0
+        execution_memory_followthrough_total = 0
+        execution_memory_guided_route_total = 0
+        execution_memory_assisted_route_total = 0
         setup_action_total = 0
         setup_action_auto_runnable_total = 0
         setup_action_success_total = 0
@@ -78,15 +81,18 @@ class DesktopOnboardingManager:
         app_learning_setup_aligned_total = 0
         app_learning_setup_boosted_total = 0
         app_learning_setup_constrained_total = 0
+        app_learning_memory_followthrough_total = 0
         prepared_setup_aligned_total = 0
         prepared_setup_boosted_total = 0
         prepared_setup_constrained_total = 0
+        prepared_memory_followthrough_total = 0
         vm_prepare_total = 0
         prepared_vm_control_total = 0
         vm_ready_guest_total = 0
         vm_attention_guest_total = 0
         vm_blocked_guest_total = 0
         vm_setup_followup_guest_total = 0
+        vm_memory_followthrough_total = 0
         route_remediation_total = 0
         route_remediation_blocked_total = 0
         route_remediation_degraded_total = 0
@@ -140,6 +146,15 @@ class DesktopOnboardingManager:
             execution_manual_total += int(summary.get("execution_manual_count", 0) or 0)
             execution_blocked_total += int(summary.get("execution_blocked_count", 0) or 0)
             execution_error_total += int(summary.get("execution_error_count", 0) or 0)
+            execution_memory_followthrough_total += int(
+                summary.get("execution_memory_followthrough_count", 0) or 0
+            )
+            execution_memory_guided_route_total += int(
+                summary.get("execution_memory_guided_route_count", 0) or 0
+            )
+            execution_memory_assisted_route_total += int(
+                summary.get("execution_memory_assisted_route_count", 0) or 0
+            )
             setup_action_total += int(summary.get("setup_action_count", 0) or 0)
             setup_action_auto_runnable_total += int(summary.get("setup_action_auto_runnable_count", 0) or 0)
             setup_action_success_total += int(summary.get("setup_action_success_count", 0) or 0)
@@ -167,6 +182,9 @@ class DesktopOnboardingManager:
             app_learning_setup_aligned_total += int(summary.get("app_learning_setup_aligned_count", 0) or 0)
             app_learning_setup_boosted_total += int(summary.get("app_learning_setup_boosted_count", 0) or 0)
             app_learning_setup_constrained_total += int(summary.get("app_learning_setup_constrained_count", 0) or 0)
+            app_learning_memory_followthrough_total += int(
+                summary.get("app_learning_memory_followthrough_count", 0) or 0
+            )
             app_learning_remediation_retry_total += int(
                 summary.get("app_learning_remediation_retry_count", 0) or 0
             )
@@ -179,12 +197,16 @@ class DesktopOnboardingManager:
             prepared_setup_aligned_total += int(summary.get("prepared_setup_aligned_count", 0) or 0)
             prepared_setup_boosted_total += int(summary.get("prepared_setup_boosted_count", 0) or 0)
             prepared_setup_constrained_total += int(summary.get("prepared_setup_constrained_count", 0) or 0)
+            prepared_memory_followthrough_total += int(
+                summary.get("prepared_memory_followthrough_count", 0) or 0
+            )
             vm_prepare_total += int(summary.get("vm_prepare_count", 0) or 0)
             prepared_vm_control_total += int(summary.get("prepared_vm_control_count", 0) or 0)
             vm_ready_guest_total += int(summary.get("vm_ready_guest_count", 0) or 0)
             vm_attention_guest_total += int(summary.get("vm_attention_guest_count", 0) or 0)
             vm_blocked_guest_total += int(summary.get("vm_blocked_guest_count", 0) or 0)
             vm_setup_followup_guest_total += int(summary.get("vm_setup_followup_guest_count", 0) or 0)
+            vm_memory_followthrough_total += int(summary.get("vm_memory_followthrough_count", 0) or 0)
             prepared_remediation_retry_total += int(summary.get("prepared_remediation_retry_count", 0) or 0)
             prepared_remediation_provider_blocked_total += int(
                 summary.get("prepared_remediation_provider_blocked_count", 0) or 0
@@ -269,6 +291,9 @@ class DesktopOnboardingManager:
                 "execution_manual_total": execution_manual_total,
                 "execution_blocked_total": execution_blocked_total,
                 "execution_error_total": execution_error_total,
+                "execution_memory_followthrough_total": execution_memory_followthrough_total,
+                "execution_memory_guided_route_total": execution_memory_guided_route_total,
+                "execution_memory_assisted_route_total": execution_memory_assisted_route_total,
                 "setup_action_total": setup_action_total,
                 "setup_action_auto_runnable_total": setup_action_auto_runnable_total,
                 "setup_action_success_total": setup_action_success_total,
@@ -291,18 +316,21 @@ class DesktopOnboardingManager:
                 "app_learning_setup_aligned_total": app_learning_setup_aligned_total,
                 "app_learning_setup_boosted_total": app_learning_setup_boosted_total,
                 "app_learning_setup_constrained_total": app_learning_setup_constrained_total,
+                "app_learning_memory_followthrough_total": app_learning_memory_followthrough_total,
                 "app_learning_remediation_retry_total": app_learning_remediation_retry_total,
                 "app_learning_remediation_provider_blocked_total": app_learning_remediation_provider_blocked_total,
                 "app_learning_remediation_setup_followup_total": app_learning_remediation_setup_followup_total,
                 "prepared_setup_aligned_total": prepared_setup_aligned_total,
                 "prepared_setup_boosted_total": prepared_setup_boosted_total,
                 "prepared_setup_constrained_total": prepared_setup_constrained_total,
+                "prepared_memory_followthrough_total": prepared_memory_followthrough_total,
                 "vm_prepare_total": vm_prepare_total,
                 "prepared_vm_control_total": prepared_vm_control_total,
                 "vm_ready_guest_total": vm_ready_guest_total,
                 "vm_attention_guest_total": vm_attention_guest_total,
                 "vm_blocked_guest_total": vm_blocked_guest_total,
                 "vm_setup_followup_guest_total": vm_setup_followup_guest_total,
+                "vm_memory_followthrough_total": vm_memory_followthrough_total,
                 "prepared_remediation_retry_total": prepared_remediation_retry_total,
                 "prepared_remediation_provider_blocked_total": prepared_remediation_provider_blocked_total,
                 "prepared_remediation_setup_followup_total": prepared_remediation_setup_followup_total,

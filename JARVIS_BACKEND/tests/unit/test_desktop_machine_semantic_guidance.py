@@ -457,6 +457,71 @@ def test_desktop_machine_onboarding_continuation_plan_adds_memory_followthrough(
     assert continuation["summary"]["memory_route_alignment_counts"]["underused"] == 1
 
 
+def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_vm_items() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    queue = service._desktop_machine_onboarding_execution_queue(
+        provider_actions={"items": []},
+        task_preference_plan={"items": []},
+        model_selection={"selected_item_keys": []},
+        model_setup_mission=None,
+        ai_runtime_setup_actions=[],
+        multimodal_setup_actions=[],
+        launch_seed_plan={"items": []},
+        app_learning_plan={
+            "plan": {"summary": {"memory_followthrough_enabled": True}},
+            "campaign_defaults": {"memory_followthrough_enabled": True},
+        },
+        app_control_prepare_plan={
+            "items": [
+                {
+                    "app_name": "Notepad",
+                    "auto_prepare_allowed": True,
+                    "memory_followthrough_recommended": True,
+                    "memory_guided_route": False,
+                    "memory_assisted_route": True,
+                    "memory_route_alignment_status": "underused",
+                    "execution_mode": "hybrid_ready",
+                    "expected_route_profile": "local_vision_assist",
+                }
+            ]
+        },
+        vm_control_plan={
+            "items": [
+                {
+                    "guest_name": "Ubuntu Dev VM",
+                    "auto_prepare_allowed": True,
+                    "memory_followthrough_recommended": True,
+                    "memory_guided_route": False,
+                    "memory_assisted_route": True,
+                    "memory_route_alignment_status": "assisted",
+                    "execution_mode": "hybrid_ready",
+                    "expected_route_profile": "linux_vm_desktop_control",
+                }
+            ]
+        },
+        auto_create_app_learning_campaign=True,
+        auto_run_app_learning_campaign=True,
+        auto_prepare_app_controls=True,
+        auto_prepare_vm_controls=True,
+    )
+
+    assert queue["status"] == "success"
+    vm_item = next(item for item in queue["items"] if item.get("stage") == "vm_prepare")
+    assert vm_item["kind"] == "deepen_vm_control_learning"
+    assert vm_item["memory_followthrough_recommended"] is True
+
+    summary = service._desktop_machine_onboarding_execution_queue_summary(items=queue["items"])
+    assert summary["memory_followthrough_count"] == 3
+    assert summary["memory_guided_route_count"] == 0
+    assert summary["memory_assisted_route_count"] == 2
+    assert summary["memory_followthrough_stage_counts"]["app_learning"] == 2
+    assert summary["memory_followthrough_stage_counts"]["vm_prepare"] == 1
+    assert summary["memory_route_alignment_counts"]["cold"] == 2
+    assert summary["memory_route_alignment_counts"]["underused"] == 1
+    assert summary["memory_route_alignment_counts"]["assisted"] == 1
+
+
 def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
 

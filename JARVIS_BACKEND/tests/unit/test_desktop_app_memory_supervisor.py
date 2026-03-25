@@ -506,6 +506,10 @@ def test_desktop_app_memory_supervisor_campaign_tracks_memory_guided_routes(tmp_
         assert created["campaign"]["memory_route_alignment_counts"]["aligned"] == 1
         assert created["campaign"]["memory_guided_route_count"] == 1
         assert created["campaign"]["memory_assisted_route_count"] == 0
+        assert created["campaign"]["memory_followthrough_enabled"] is False
+        assert created["campaign"]["memory_underused_count"] == 0
+        assert created["campaign"]["memory_aligned_count"] == 1
+        assert created["campaign"]["effective_max_probe_controls"] == 4
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
@@ -514,8 +518,103 @@ def test_desktop_app_memory_supervisor_campaign_tracks_memory_guided_routes(tmp_
         assert executed["campaign"]["memory_route_alignment_counts"]["aligned"] == 1
         assert executed["campaign"]["memory_guided_route_count"] == 1
         assert executed["campaign"]["memory_assisted_route_count"] == 0
+        assert executed["campaign"]["memory_followthrough_enabled"] is False
+        assert executed["campaign"]["memory_underused_count"] == 0
+        assert executed["campaign"]["memory_aligned_count"] == 1
+        assert executed["campaign"]["effective_max_probe_controls"] == 4
         assert executed["campaigns"]["summary"]["memory_guided_route_total"] >= 1
         assert executed["campaigns"]["summary"]["memory_guidance_status_counts"]["strong"] >= 1
+    finally:
+        supervisor.stop()
+
+
+def test_desktop_app_memory_supervisor_memory_followthrough_boosts_campaign_depth(tmp_path: Path) -> None:
+    supervisor = DesktopAppMemorySupervisor(
+        state_path=str(Path(tmp_path) / "desktop_app_memory_supervisor.json"),
+        enabled=False,
+        max_apps=1,
+        per_app_limit=24,
+    )
+
+    captured: list[dict[str, object]] = []
+
+    def _execute(**kwargs: object) -> dict[str, object]:
+        captured.append(dict(kwargs))
+        names = [str(item) for item in kwargs.get("app_names", [])] if isinstance(kwargs.get("app_names", []), list) else []
+        return {
+            "status": "success",
+            "message": "memory followthrough campaign",
+            "surveyed_app_count": len(names),
+            "success_count": len(names),
+            "partial_count": 0,
+            "error_count": 0,
+            "skipped_app_count": 0,
+            "items": [
+                {
+                    "app_name": name,
+                    "status": "success",
+                    "message": "ok",
+                    "memory_guided_route": False,
+                    "memory_assisted_route": False,
+                    "memory_route_alignment_status": "underused",
+                }
+                for name in names
+            ],
+            "failed_apps": [],
+            "wave_summary": {
+                "wave_attempt_total": len(names),
+                "learned_surface_total": len(names),
+                "known_surface_total": 0,
+            },
+        }
+
+    supervisor.start(_execute)
+    try:
+        created = supervisor.create_campaign(
+            app_names=["notepad"],
+            label="Memory followthrough learner",
+            max_probe_controls=3,
+            adaptive_app_profiles=[
+                {
+                    "app_name": "notepad",
+                    "learning_profile": "hybrid_guided_explore",
+                    "execution_mode": "hybrid_ready",
+                    "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
+                    "runtime_band_preference": "hybrid",
+                    "semantic_guidance_status": "strong",
+                    "memory_guided_route": False,
+                    "memory_assisted_route": False,
+                    "memory_route_alignment_status": "underused",
+                    "provider_model_readiness": {
+                        "ai_route_status": "matched",
+                        "selected_ai_runtime_band": "hybrid",
+                        "selected_ai_route_profile": "local_vision_assist_native_stabilized",
+                        "selected_ai_provider_source": "local_runtime_plus_ocr",
+                        "selected_ai_stack_names": ["desktop_agent", "perception", "memory"],
+                    },
+                }
+            ],
+        )
+        assert created["status"] == "success"
+        assert created["campaign"]["memory_followthrough_enabled"] is True
+        assert created["campaign"]["memory_underused_count"] == 1
+        assert created["campaign"]["memory_aligned_count"] == 0
+        assert created["campaign"]["effective_max_probe_controls"] == 5
+        assert created["campaign"]["memory_followthrough_preferred_wave_actions"][:2] == [
+            "focus_navigation_tree",
+            "focus_list_surface",
+        ]
+
+        campaign_id = str(created["campaign"]["campaign_id"])
+        executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
+        assert executed["status"] == "success"
+        assert captured[-1]["max_probe_controls"] == 5
+        assert executed["campaign"]["memory_followthrough_enabled"] is True
+        assert executed["campaign"]["memory_underused_count"] == 1
+        assert executed["campaign"]["effective_max_probe_controls"] == 5
+        assert executed["campaign"]["memory_route_alignment_counts"]["underused"] == 1
+        assert executed["campaigns"]["summary"]["memory_followthrough_total"] >= 1
+        assert executed["campaigns"]["summary"]["memory_underused_total"] >= 1
     finally:
         supervisor.stop()
 

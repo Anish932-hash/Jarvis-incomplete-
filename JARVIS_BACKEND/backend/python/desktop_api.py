@@ -10997,7 +10997,13 @@ class DesktopBackendService:
             per_app_limit=int(campaign_defaults.get("per_app_limit", 28) or 28),
             ensure_app_launch=bool(campaign_defaults.get("ensure_app_launch", True)),
             probe_controls=bool(campaign_defaults.get("probe_controls", True)),
-            max_probe_controls=int(campaign_defaults.get("max_probe_controls", 4) or 4),
+            max_probe_controls=int(
+                campaign_defaults.get(
+                    "effective_max_probe_controls",
+                    campaign_defaults.get("max_probe_controls", 4),
+                )
+                or 4
+            ),
             follow_surface_waves=bool(campaign_defaults.get("follow_surface_waves", True)),
             max_surface_waves=int(campaign_defaults.get("max_surface_waves", 4) or 4),
             allow_risky_probes=bool(campaign_defaults.get("allow_risky_probes", False)),
@@ -11052,10 +11058,44 @@ class DesktopBackendService:
                     "memory_underused_count": int(
                         campaign_defaults.get("memory_underused_count", 0) or 0
                     ),
+                    "memory_aligned_count": int(
+                        campaign_defaults.get("memory_aligned_count", 0) or 0
+                    ),
                     "memory_route_alignment_counts": (
                         dict(campaign_defaults.get("memory_route_alignment_counts", {}))
                         if isinstance(campaign_defaults.get("memory_route_alignment_counts", {}), dict)
                         else {}
+                    ),
+                    "memory_guided_app_names": [
+                        str(item).strip()
+                        for item in campaign_defaults.get("memory_guided_app_names", [])
+                        if isinstance(campaign_defaults.get("memory_guided_app_names", []), list)
+                        and str(item).strip()
+                    ][:8],
+                    "memory_underused_app_names": [
+                        str(item).strip()
+                        for item in campaign_defaults.get("memory_underused_app_names", [])
+                        if isinstance(campaign_defaults.get("memory_underused_app_names", []), list)
+                        and str(item).strip()
+                    ][:8],
+                    "memory_followthrough_preferred_wave_actions": [
+                        str(item).strip().lower()
+                        for item in campaign_defaults.get("memory_followthrough_preferred_wave_actions", [])
+                        if isinstance(
+                            campaign_defaults.get("memory_followthrough_preferred_wave_actions", []),
+                            list,
+                        )
+                        and str(item).strip()
+                    ][:8],
+                    "effective_max_probe_controls": int(
+                        campaign_defaults.get(
+                            "effective_max_probe_controls",
+                            campaign_defaults.get("max_probe_controls", 4),
+                        )
+                        or 4
+                    ),
+                    "effective_max_surface_waves": int(
+                        campaign_defaults.get("max_surface_waves", 4) or 4
                     ),
                     "execution_mode_counts": (
                         dict(campaign_defaults.get("execution_mode_counts", {}))
@@ -12274,6 +12314,11 @@ class DesktopBackendService:
         setup_action_manual_count = 0
         setup_action_blocked_count = 0
         setup_action_code_counts: Dict[str, int] = {}
+        memory_followthrough_count = 0
+        memory_guided_route_count = 0
+        memory_assisted_route_count = 0
+        memory_route_alignment_counts: Dict[str, int] = {}
+        memory_followthrough_stage_counts: Dict[str, int] = {}
         for row in items:
             if not isinstance(row, dict):
                 continue
@@ -12293,6 +12338,22 @@ class DesktopBackendService:
                 blocked_count += 1
             elif status_name in {"error", "failed"}:
                 error_count += 1
+            memory_alignment_status = str(
+                row.get("memory_route_alignment_status", "") or ""
+            ).strip().lower()
+            if memory_alignment_status:
+                memory_route_alignment_counts[memory_alignment_status] = int(
+                    memory_route_alignment_counts.get(memory_alignment_status, 0) or 0
+                ) + 1
+            if bool(row.get("memory_followthrough_recommended", False)):
+                memory_followthrough_count += 1
+                memory_followthrough_stage_counts[stage_name] = int(
+                    memory_followthrough_stage_counts.get(stage_name, 0) or 0
+                ) + 1
+            if bool(row.get("memory_guided_route", False)):
+                memory_guided_route_count += 1
+            if bool(row.get("memory_assisted_route", False)):
+                memory_assisted_route_count += 1
             if stage_name == "setup_action":
                 setup_action_count += 1
                 if bool(row.get("auto_runnable", False)):
@@ -12323,6 +12384,9 @@ class DesktopBackendService:
             "setup_action_success_count": setup_action_success_count,
             "setup_action_manual_count": setup_action_manual_count,
             "setup_action_blocked_count": setup_action_blocked_count,
+            "memory_followthrough_count": memory_followthrough_count,
+            "memory_guided_route_count": memory_guided_route_count,
+            "memory_assisted_route_count": memory_assisted_route_count,
             "status_counts": {
                 str(key): int(value)
                 for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
@@ -12330,6 +12394,14 @@ class DesktopBackendService:
             "stage_counts": {
                 str(key): int(value)
                 for key, value in sorted(stage_counts.items(), key=lambda entry: entry[0])
+            },
+            "memory_route_alignment_counts": {
+                str(key): int(value)
+                for key, value in sorted(memory_route_alignment_counts.items(), key=lambda entry: entry[0])
+            },
+            "memory_followthrough_stage_counts": {
+                str(key): int(value)
+                for key, value in sorted(memory_followthrough_stage_counts.items(), key=lambda entry: entry[0])
             },
             "setup_action_code_counts": {
                 str(key): int(value)
@@ -12813,6 +12885,7 @@ class DesktopBackendService:
         launch_seed_plan: Dict[str, Any],
         app_learning_plan: Dict[str, Any],
         app_control_prepare_plan: Dict[str, Any],
+        vm_control_plan: Optional[Dict[str, Any]] = None,
         effective_item_keys: Optional[List[str]] = None,
         workspace_scaffold_enabled: bool = True,
         seed_launch_memory: bool = True,
@@ -12820,6 +12893,7 @@ class DesktopBackendService:
         auto_create_app_learning_campaign: bool = True,
         auto_run_app_learning_campaign: bool = True,
         auto_prepare_app_controls: bool = True,
+        auto_prepare_vm_controls: bool = True,
         provider_updates: Optional[Dict[str, Any]] = None,
         task_preference_update: Optional[Dict[str, Any]] = None,
         workspace_scaffold: Optional[Dict[str, Any]] = None,
@@ -12829,6 +12903,7 @@ class DesktopBackendService:
         multimodal_setup_result: Optional[Dict[str, Any]] = None,
         app_learning_result: Optional[Dict[str, Any]] = None,
         app_control_prepare_result: Optional[Dict[str, Any]] = None,
+        vm_control_prepare_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         items: List[Dict[str, Any]] = []
         provider_rows = [
@@ -13143,6 +13218,17 @@ class DesktopBackendService:
             if isinstance((app_learning_result or {}).get("run", {}), dict)
             else {}
         )
+        app_learning_strategy = (
+            dict((app_learning_result or {}).get("strategy", {}))
+            if isinstance((app_learning_result or {}).get("strategy", {}), dict)
+            else {}
+        )
+        app_learning_plan_summary = (
+            dict(app_learning_plan.get("plan", {}).get("summary", {}))
+            if isinstance(app_learning_plan.get("plan", {}), dict)
+            and isinstance(app_learning_plan.get("plan", {}).get("summary", {}), dict)
+            else {}
+        )
         items.append(
             {
                 "id": "app_learning:create",
@@ -13158,6 +13244,27 @@ class DesktopBackendService:
                     and isinstance(app_learning_plan.get("plan", {}).get("campaign_defaults", {}), dict)
                     else ""
                 ).strip().lower(),
+                "memory_followthrough_recommended": bool(
+                    app_learning_strategy.get(
+                        "memory_followthrough_enabled",
+                        app_learning_plan_summary.get("memory_followthrough_enabled", False),
+                    )
+                ),
+                "memory_guided_route": bool(
+                    int(app_learning_strategy.get("memory_guided_route_count", 0) or 0) > 0
+                ),
+                "memory_assisted_route": bool(
+                    int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
+                ),
+                "memory_route_alignment_status": (
+                    "underused"
+                    if int(app_learning_strategy.get("memory_underused_count", 0) or 0) > 0
+                    else "aligned"
+                    if int(app_learning_strategy.get("memory_aligned_count", 0) or 0) > 0
+                    else "assisted"
+                    if int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
+                    else "cold"
+                ),
             }
         )
         items.append(
@@ -13170,6 +13277,27 @@ class DesktopBackendService:
                 "title": "Run installed-app learning campaign",
                 "required": False,
                 "auto_runnable": bool(auto_create_app_learning_campaign and auto_run_app_learning_campaign),
+                "memory_followthrough_recommended": bool(
+                    app_learning_strategy.get(
+                        "memory_followthrough_enabled",
+                        app_learning_plan_summary.get("memory_followthrough_enabled", False),
+                    )
+                ),
+                "memory_guided_route": bool(
+                    int(app_learning_strategy.get("memory_guided_route_count", 0) or 0) > 0
+                ),
+                "memory_assisted_route": bool(
+                    int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
+                ),
+                "memory_route_alignment_status": (
+                    "underused"
+                    if int(app_learning_strategy.get("memory_underused_count", 0) or 0) > 0
+                    else "aligned"
+                    if int(app_learning_strategy.get("memory_aligned_count", 0) or 0) > 0
+                    else "assisted"
+                    if int(app_learning_strategy.get("memory_assisted_route_count", 0) or 0) > 0
+                    else "cold"
+                ),
             }
         )
 
@@ -13207,6 +13335,69 @@ class DesktopBackendService:
                     "readiness_status": str(row.get("readiness_status", "") or "").strip().lower(),
                     "prepare_priority_band": str(row.get("prepare_priority_band", "") or "").strip().lower(),
                     "expected_route_profile": str(row.get("expected_route_profile", "") or "").strip().lower(),
+                    "memory_followthrough_recommended": bool(
+                        row.get("memory_route_alignment_status", "") in {"underused", "assisted"}
+                        and row.get("semantic_guidance_status", "") in {"strong", "partial"}
+                    ),
+                    "memory_guided_route": bool(row.get("memory_guided_route", False)),
+                    "memory_assisted_route": bool(row.get("memory_assisted_route", False)),
+                    "memory_route_alignment_status": str(
+                        row.get("memory_route_alignment_status", "") or ""
+                    ).strip().lower(),
+                }
+            )
+
+        vm_prepare_result_map = {
+            self._machine_text(item.get("guest_name", "") or item.get("guest_id", "")): dict(item)
+            for item in (vm_control_prepare_result or {}).get("items", [])
+            if isinstance((vm_control_prepare_result or {}).get("items", []), list)
+            and isinstance(item, dict)
+        }
+        for row in [
+            dict(item)
+            for item in (vm_control_plan or {}).get("items", [])
+            if isinstance((vm_control_plan or {}).get("items", []), list) and isinstance(item, dict)
+        ]:
+            guest_name = str(row.get("guest_name", "") or "").strip()
+            if not guest_name:
+                continue
+            prepared_vm_result = vm_prepare_result_map.get(
+                self._machine_text(guest_name or row.get("guest_id", ""))
+            ) or {}
+            base_status = "ready"
+            if not bool(row.get("auto_prepare_allowed", True)):
+                base_status = "blocked"
+            elif str(row.get("execution_mode", "") or "").strip().lower() in {"degraded", "partial"}:
+                base_status = "attention"
+            items.append(
+                {
+                    "id": f"vm_prepare:{self._machine_text(guest_name)}",
+                    "stage": "vm_prepare",
+                    "kind": (
+                        "deepen_vm_control_learning"
+                        if bool(row.get("memory_followthrough_recommended", False))
+                        else "prepare_vm_control"
+                    ),
+                    "status": str(prepared_vm_result.get("status", "") or "").strip().lower()
+                    or (base_status if auto_prepare_vm_controls else "skipped"),
+                    "title": (
+                        f"Deepen VM control learning for {guest_name}"
+                        if bool(row.get("memory_followthrough_recommended", False))
+                        else f"Prepare {guest_name} for control"
+                    ),
+                    "app_name": guest_name,
+                    "required": False,
+                    "auto_runnable": bool(auto_prepare_vm_controls and row.get("auto_prepare_allowed", True)),
+                    "execution_mode": str(row.get("execution_mode", "") or "").strip().lower(),
+                    "readiness_status": str(row.get("route_resolution_status", "") or "").strip().lower()
+                    or str(row.get("execution_mode", "") or "").strip().lower(),
+                    "expected_route_profile": str(row.get("expected_route_profile", "") or "").strip().lower(),
+                    "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
+                    "memory_guided_route": bool(row.get("memory_guided_route", False)),
+                    "memory_assisted_route": bool(row.get("memory_assisted_route", False)),
+                    "memory_route_alignment_status": str(
+                        row.get("memory_route_alignment_status", "") or ""
+                    ).strip().lower(),
                 }
             )
 
@@ -13226,6 +13417,7 @@ class DesktopBackendService:
         execution_queue: Optional[Dict[str, Any]] = None,
         app_learning_plan: Optional[Dict[str, Any]] = None,
         app_control_prepare_plan: Optional[Dict[str, Any]] = None,
+        vm_control_plan: Optional[Dict[str, Any]] = None,
         route_remediation: Optional[Dict[str, Any]] = None,
         route_remediation_progress: Optional[Dict[str, Any]] = None,
         limit: int = 8,
@@ -13253,6 +13445,11 @@ class DesktopBackendService:
             dict(item)
             for item in (app_control_prepare_plan or {}).get("items", [])
             if isinstance((app_control_prepare_plan or {}).get("items", []), list) and isinstance(item, dict)
+        ]
+        vm_prepare_items = [
+            dict(item)
+            for item in (vm_control_plan or {}).get("items", [])
+            if isinstance((vm_control_plan or {}).get("items", []), list) and isinstance(item, dict)
         ]
         remediation_items = [
             dict(item)
@@ -13439,6 +13636,71 @@ class DesktopBackendService:
                     "knowledge_gap_level": "",
                     "recent_action_code": str(row.get("remediation_recent_action_code", "") or "").strip().lower(),
                     "continuation_source": "app_prepare",
+                }
+            )
+
+        for row in vm_prepare_items:
+            guest_name = str(row.get("guest_name", "") or "").strip()
+            if not guest_name:
+                continue
+            route_status = str(row.get("route_resolution_status", "") or "").strip().lower()
+            execution_mode = str(row.get("execution_mode", "") or "").strip().lower()
+            setup_followup_required = bool(
+                isinstance(row.get("provider_model_readiness", {}), dict)
+                and isinstance(
+                    dict(row.get("provider_model_readiness", {})).get("setup_followup_codes", []),
+                    list,
+                )
+                and dict(row.get("provider_model_readiness", {})).get("setup_followup_codes", [])
+            )
+            memory_route_alignment_status = (
+                str(row.get("memory_route_alignment_status", "") or "").strip().lower() or "cold"
+            )
+            memory_guided_route = bool(row.get("memory_guided_route", False))
+            memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            memory_followthrough_recommended = bool(row.get("auto_prepare_allowed", False)) and (
+                bool(row.get("memory_followthrough_recommended", False))
+                or memory_route_alignment_status in {"underused", "assisted"}
+            )
+            retry_recommended = route_status in {"degraded", "fallback", "setup_constrained", "setup_waiting"}
+            if not (
+                memory_followthrough_recommended
+                or setup_followup_required
+                or retry_recommended
+                or route_status in {"blocked", "degraded"}
+            ):
+                continue
+            _append_item(
+                {
+                    "id": f"continuation:vm_prepare:{self._machine_text(guest_name)}",
+                    "stage": "vm_prepare",
+                    "kind": (
+                        "deepen_vm_control_learning"
+                        if memory_followthrough_recommended
+                        else "retry_vm_prepare"
+                    ),
+                    "status": route_status or execution_mode or "attention",
+                    "title": f"Continue VM control prep for {guest_name}",
+                    "auto_runnable": bool(row.get("auto_prepare_allowed", False)),
+                    "required": False,
+                    "app_name": guest_name,
+                    "provider": str(row.get("provider", "") or "").strip().lower(),
+                    "target": str(
+                        row.get("remediation_action_code", "")
+                        or ("memory-followthrough" if memory_followthrough_recommended else guest_name)
+                    ).strip(),
+                    "retry_recommended": retry_recommended,
+                    "provider_blocked": False,
+                    "setup_followup_required": setup_followup_required,
+                    "memory_followthrough_recommended": memory_followthrough_recommended,
+                    "memory_guided_route": memory_guided_route,
+                    "memory_assisted_route": memory_assisted_route,
+                    "memory_route_alignment_status": memory_route_alignment_status,
+                    "semantic_followup_recommended": False,
+                    "semantic_guidance_status": "",
+                    "knowledge_gap_level": "",
+                    "recent_action_code": str(row.get("remediation_action_code", "") or "").strip().lower(),
+                    "continuation_source": "vm_prepare",
                 }
             )
 
@@ -17339,6 +17601,7 @@ class DesktopBackendService:
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
+            vm_control_plan=vm_control_plan if isinstance(vm_control_plan, dict) else {},
             effective_item_keys=selected_item_keys,
             workspace_scaffold_enabled=True,
             seed_launch_memory=True,
@@ -17346,6 +17609,7 @@ class DesktopBackendService:
             auto_create_app_learning_campaign=True,
             auto_run_app_learning_campaign=True,
             auto_prepare_app_controls=True,
+            auto_prepare_vm_controls=True,
         )
         execution_queue_summary = (
             dict(execution_queue.get("summary", {}))
@@ -17361,6 +17625,7 @@ class DesktopBackendService:
             execution_queue=execution_queue if isinstance(execution_queue, dict) else {},
             app_learning_plan=app_learning_plan if isinstance(app_learning_plan, dict) else {},
             app_control_prepare_plan=app_control_prepare_plan if isinstance(app_control_prepare_plan, dict) else {},
+            vm_control_plan=vm_control_plan if isinstance(vm_control_plan, dict) else {},
             route_remediation=route_remediation if isinstance(route_remediation, dict) else {},
             limit=continuation_limit,
         )
@@ -17669,6 +17934,12 @@ class DesktopBackendService:
                     "app_learning_memory_assisted_route_count": int(
                         learning_plan_summary.get("memory_assisted_route_count", 0) or 0
                     ),
+                    "app_learning_memory_followthrough_count": int(
+                        learning_plan_summary.get("memory_underused_count", 0) or 0
+                    ),
+                    "app_learning_memory_underused_count": int(
+                        learning_plan_summary.get("memory_underused_count", 0) or 0
+                    ),
                     "app_learning_memory_route_alignment_counts": dict(
                         learning_plan_summary.get("memory_route_alignment_counts", {})
                     )
@@ -17784,6 +18055,9 @@ class DesktopBackendService:
                     "app_control_prepare_memory_assisted_route_count": int(
                         prepare_plan_summary.get("memory_assisted_route_count", 0) or 0
                     ),
+                    "app_control_prepare_memory_followthrough_count": int(
+                        prepare_plan_summary.get("memory_underused_count", 0) or 0
+                    ),
                     "app_control_prepare_memory_route_alignment_counts": dict(
                         prepare_plan_summary.get("memory_route_alignment_counts", {})
                     )
@@ -17811,6 +18085,9 @@ class DesktopBackendService:
                     ),
                     "vm_memory_assisted_route_count": int(
                         vm_control_plan_summary.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "vm_memory_followthrough_count": int(
+                        vm_control_plan_summary.get("memory_followthrough_guest_count", 0) or 0
                     ),
                     "vm_memory_route_alignment_counts": dict(
                         vm_control_plan_summary.get("memory_route_alignment_counts", {})
@@ -17899,6 +18176,11 @@ class DesktopBackendService:
                         if isinstance(continuation_plan.get("summary", {}), dict)
                         else 0
                     ),
+                    "continuation_memory_followthrough_count": int(
+                        dict(continuation_plan.get("summary", {})).get("memory_followthrough_count", 0)
+                        if isinstance(continuation_plan.get("summary", {}), dict)
+                        else 0
+                    ),
                     "continuation_semantic_followup_count": int(
                         dict(continuation_plan.get("summary", {})).get("semantic_followup_count", 0)
                         if isinstance(continuation_plan.get("summary", {}), dict)
@@ -17920,6 +18202,20 @@ class DesktopBackendService:
                     "execution_manual_count": int(execution_queue_summary.get("manual_count", 0) or 0),
                     "execution_blocked_count": int(execution_queue_summary.get("blocked_count", 0) or 0),
                     "execution_error_count": int(execution_queue_summary.get("error_count", 0) or 0),
+                    "execution_memory_followthrough_count": int(
+                        execution_queue_summary.get("memory_followthrough_count", 0) or 0
+                    ),
+                    "execution_memory_guided_route_count": int(
+                        execution_queue_summary.get("memory_guided_route_count", 0) or 0
+                    ),
+                    "execution_memory_assisted_route_count": int(
+                        execution_queue_summary.get("memory_assisted_route_count", 0) or 0
+                    ),
+                    "execution_memory_route_alignment_counts": dict(
+                        execution_queue_summary.get("memory_route_alignment_counts", {})
+                    )
+                    if isinstance(execution_queue_summary.get("memory_route_alignment_counts", {}), dict)
+                    else {},
                     "setup_action_count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
                     "setup_action_auto_runnable_count": int(
                         execution_queue_summary.get("setup_action_auto_runnable_count", 0) or 0
@@ -18952,6 +19248,7 @@ class DesktopBackendService:
             launch_seed_plan=launch_seed_plan if isinstance(launch_seed_plan, dict) else {},
             app_learning_plan=app_learning_plan_payload if isinstance(app_learning_plan_payload, dict) else {},
             app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
+            vm_control_plan=runtime_vm_control_plan if isinstance(runtime_vm_control_plan, dict) else {},
             effective_item_keys=effective_item_keys,
             workspace_scaffold_enabled=bool(scaffold_workspace),
             seed_launch_memory=bool(seed_launch_memory),
@@ -18959,6 +19256,7 @@ class DesktopBackendService:
             auto_create_app_learning_campaign=bool(auto_create_app_learning_campaign),
             auto_run_app_learning_campaign=bool(auto_run_app_learning_campaign),
             auto_prepare_app_controls=bool(auto_prepare_app_controls),
+            auto_prepare_vm_controls=bool(auto_prepare_vm_controls),
             provider_updates=provider_updates if isinstance(provider_updates, dict) else None,
             task_preference_update=task_preference_update if isinstance(task_preference_update, dict) else None,
             workspace_scaffold=workspace_scaffold if isinstance(workspace_scaffold, dict) else None,
@@ -18968,6 +19266,7 @@ class DesktopBackendService:
             multimodal_setup_result=multimodal_setup_result if isinstance(multimodal_setup_result, dict) else None,
             app_learning_result=app_learning_result if isinstance(app_learning_result, dict) else None,
             app_control_prepare_result=app_control_prepare_result if isinstance(app_control_prepare_result, dict) else None,
+            vm_control_prepare_result=vm_control_prepare_result if isinstance(vm_control_prepare_result, dict) else None,
         )
         execution_queue_summary = (
             dict(execution_queue.get("summary", {}))
@@ -18989,6 +19288,7 @@ class DesktopBackendService:
             execution_queue=execution_queue if isinstance(execution_queue, dict) else {},
             app_learning_plan=runtime_app_learning_plan_payload if isinstance(runtime_app_learning_plan_payload, dict) else {},
             app_control_prepare_plan=runtime_app_control_prepare_plan if isinstance(runtime_app_control_prepare_plan, dict) else {},
+            vm_control_plan=runtime_vm_control_plan if isinstance(runtime_vm_control_plan, dict) else {},
             route_remediation=route_remediation if isinstance(route_remediation, dict) else {},
             route_remediation_progress=route_remediation_progress if isinstance(route_remediation_progress, dict) else {},
             limit=continuation_limit,
@@ -19248,6 +19548,12 @@ class DesktopBackendService:
                 "app_learning_memory_assisted_route_count": int(
                     runtime_app_learning_plan_summary.get("memory_assisted_route_count", 0) or 0
                 ),
+                "app_learning_memory_followthrough_count": int(
+                    runtime_app_learning_plan_summary.get("memory_underused_count", 0) or 0
+                ),
+                "app_learning_memory_underused_count": int(
+                    runtime_app_learning_plan_summary.get("memory_underused_count", 0) or 0
+                ),
                 "app_learning_memory_route_alignment_counts": dict(
                     runtime_app_learning_plan_summary.get("memory_route_alignment_counts", {})
                 )
@@ -19373,6 +19679,11 @@ class DesktopBackendService:
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
                     else 0
                 ),
+                "prepared_memory_followthrough_count": int(
+                    dict(app_control_prepare_result.get("summary", {})).get("memory_underused_count", 0)
+                    if isinstance(app_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
                 "prepared_memory_route_alignment_counts": dict(
                     dict(app_control_prepare_result.get("summary", {})).get("memory_route_alignment_counts", {})
                     if isinstance(app_control_prepare_result.get("summary", {}), dict)
@@ -19426,6 +19737,11 @@ class DesktopBackendService:
                 ),
                 "vm_memory_assisted_route_count": int(
                     dict(vm_control_prepare_result.get("summary", {})).get("memory_assisted_route_count", 0)
+                    if isinstance(vm_control_prepare_result.get("summary", {}), dict)
+                    else 0
+                ),
+                "vm_memory_followthrough_count": int(
+                    dict(vm_control_prepare_result.get("summary", {})).get("memory_followthrough_guest_count", 0)
                     if isinstance(vm_control_prepare_result.get("summary", {}), dict)
                     else 0
                 ),
@@ -19572,6 +19888,11 @@ class DesktopBackendService:
                     if isinstance(continuation_plan.get("summary", {}), dict)
                     else 0
                 ),
+                "continuation_memory_followthrough_count": int(
+                    dict(continuation_plan.get("summary", {})).get("memory_followthrough_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
                 "continuation_semantic_followup_count": int(
                     dict(continuation_plan.get("summary", {})).get("semantic_followup_count", 0)
                     if isinstance(continuation_plan.get("summary", {}), dict)
@@ -19589,6 +19910,20 @@ class DesktopBackendService:
                 "execution_manual_count": int(execution_queue_summary.get("manual_count", 0) or 0),
                 "execution_blocked_count": int(execution_queue_summary.get("blocked_count", 0) or 0),
                 "execution_error_count": int(execution_queue_summary.get("error_count", 0) or 0),
+                "execution_memory_followthrough_count": int(
+                    execution_queue_summary.get("memory_followthrough_count", 0) or 0
+                ),
+                "execution_memory_guided_route_count": int(
+                    execution_queue_summary.get("memory_guided_route_count", 0) or 0
+                ),
+                "execution_memory_assisted_route_count": int(
+                    execution_queue_summary.get("memory_assisted_route_count", 0) or 0
+                ),
+                "execution_memory_route_alignment_counts": dict(
+                    execution_queue_summary.get("memory_route_alignment_counts", {})
+                )
+                if isinstance(execution_queue_summary.get("memory_route_alignment_counts", {}), dict)
+                else {},
                 "setup_action_count": int(execution_queue_summary.get("setup_action_count", 0) or 0),
                 "setup_action_auto_runnable_count": int(
                     execution_queue_summary.get("setup_action_auto_runnable_count", 0) or 0

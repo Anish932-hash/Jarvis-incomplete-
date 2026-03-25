@@ -23,6 +23,9 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "execution_manual_count": 1,
                 "execution_blocked_count": 1,
                 "execution_error_count": 0,
+                "execution_memory_followthrough_count": 3,
+                "execution_memory_guided_route_count": 2,
+                "execution_memory_assisted_route_count": 1,
                 "setup_action_count": 3,
                 "setup_action_auto_runnable_count": 1,
                 "setup_action_success_count": 1,
@@ -57,12 +60,14 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "app_learning_setup_aligned_count": 2,
                 "app_learning_setup_boosted_count": 1,
                 "app_learning_setup_constrained_count": 1,
+                "app_learning_memory_followthrough_count": 2,
                 "app_learning_remediation_retry_count": 1,
                 "app_learning_remediation_provider_blocked_count": 1,
                 "app_learning_remediation_setup_followup_count": 1,
                 "prepared_setup_aligned_count": 2,
                 "prepared_setup_boosted_count": 1,
                 "prepared_setup_constrained_count": 1,
+                "prepared_memory_followthrough_count": 2,
                 "prepared_remediation_retry_count": 1,
                 "prepared_remediation_provider_blocked_count": 0,
                 "prepared_remediation_setup_followup_count": 1,
@@ -89,6 +94,7 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "vm_attention_guest_count": 1,
                 "vm_blocked_guest_count": 0,
                 "vm_setup_followup_guest_count": 1,
+                "vm_memory_followthrough_count": 1,
             },
         },
         source="machine_onboarding",
@@ -118,6 +124,9 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["execution_manual_total"] == 1
     assert history["summary"]["execution_blocked_total"] == 1
     assert history["summary"]["execution_error_total"] == 0
+    assert history["summary"]["execution_memory_followthrough_total"] == 3
+    assert history["summary"]["execution_memory_guided_route_total"] == 2
+    assert history["summary"]["execution_memory_assisted_route_total"] == 1
     assert history["summary"]["setup_action_total"] == 3
     assert history["summary"]["setup_action_auto_runnable_total"] == 1
     assert history["summary"]["setup_action_success_total"] == 1
@@ -153,12 +162,14 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 1
+    assert history["summary"]["app_learning_memory_followthrough_total"] == 2
     assert history["summary"]["app_learning_remediation_retry_total"] == 1
     assert history["summary"]["app_learning_remediation_provider_blocked_total"] == 1
     assert history["summary"]["app_learning_remediation_setup_followup_total"] == 1
     assert history["summary"]["prepared_setup_aligned_total"] == 2
     assert history["summary"]["prepared_setup_boosted_total"] == 1
     assert history["summary"]["prepared_setup_constrained_total"] == 1
+    assert history["summary"]["prepared_memory_followthrough_total"] == 2
     assert history["summary"]["prepared_remediation_retry_total"] == 1
     assert history["summary"]["prepared_remediation_provider_blocked_total"] == 0
     assert history["summary"]["prepared_remediation_setup_followup_total"] == 1
@@ -185,3 +196,4 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["vm_attention_guest_total"] == 1
     assert history["summary"]["vm_blocked_guest_total"] == 0
     assert history["summary"]["vm_setup_followup_guest_total"] == 1
+    assert history["summary"]["vm_memory_followthrough_total"] == 1

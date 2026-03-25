@@ -14331,6 +14331,11 @@ class FakeDesktopService:
                 "manual_count": 2,
                 "blocked_count": 0,
                 "error_count": 0,
+                "memory_followthrough_count": 4,
+                "memory_guided_route_count": 1,
+                "memory_assisted_route_count": 2,
+                "memory_route_alignment_counts": {"aligned": 1, "assisted": 2, "underused": 1},
+                "memory_followthrough_stage_counts": {"app_learning": 2, "app_prepare": 1, "vm_prepare": 1},
                 "setup_action_count": 3,
                 "setup_action_auto_runnable_count": 3,
                 "setup_action_success_count": 0,
@@ -14395,6 +14400,7 @@ class FakeDesktopService:
                 "app_learning_auto_target_count": 2,
                 "app_learning_blocked_count": 0,
                 "app_learning_degraded_count": 1,
+                "app_learning_memory_followthrough_count": 1,
                 "app_learning_strategy_profile": "hybrid_guided_explore",
                 "multimodal_memory_app_count": 2,
                 "multimodal_ocr_memory_app_count": 2,
@@ -14419,12 +14425,14 @@ class FakeDesktopService:
                 "app_control_prepare_runnable_count": 2,
                 "app_control_prepare_blocked_count": 0,
                 "app_control_prepare_degraded_count": 1,
+                "app_control_prepare_memory_followthrough_count": 1,
                 "vm_provider_count": 1,
                 "vm_guest_count": 1,
                 "vm_ready_guest_count": 1,
                 "vm_attention_guest_count": 0,
                 "vm_blocked_guest_count": 0,
                 "vm_prepare_count": 1,
+                "vm_memory_followthrough_count": 1,
                 "vm_learning_profile_counts": {"linux_desktop_explore": 1},
                 "vm_execution_mode_counts": {"hybrid_ready": 1},
                 "vm_runtime_band_counts": {"hybrid": 1},
@@ -14444,6 +14452,7 @@ class FakeDesktopService:
                 "continuation_retry_count": 2,
                 "continuation_provider_blocked_count": 3,
                 "continuation_setup_followup_count": 2,
+                "continuation_memory_followthrough_count": 2,
                 "continuation_focus_app_count": 1,
                 "top_route_remediation_kinds": {"provider_setup": 1},
                 "execution_action_count": 7,
@@ -14452,6 +14461,10 @@ class FakeDesktopService:
                 "execution_manual_count": 2,
                 "execution_blocked_count": 0,
                 "execution_error_count": 0,
+                "execution_memory_followthrough_count": 4,
+                "execution_memory_guided_route_count": 1,
+                "execution_memory_assisted_route_count": 2,
+                "execution_memory_route_alignment_counts": {"aligned": 1, "assisted": 2, "underused": 1},
                 "setup_action_count": 2,
                 "setup_action_auto_runnable_count": 2,
                 "setup_action_success_count": 0,
@@ -14504,6 +14517,7 @@ class FakeDesktopService:
                         "launch_seed_count": 2,
                         "app_learning_target_count": 2,
                         "app_learning_strategy_profile": "hybrid_guided_explore",
+                        "app_learning_memory_followthrough_count": 1,
                         "multimodal_memory_app_count": 2,
                         "multimodal_ocr_memory_app_count": 2,
                         "multimodal_local_runtime_ready_app_count": 1,
@@ -14518,6 +14532,7 @@ class FakeDesktopService:
                         "prepared_app_count": 2,
                         "prepared_blocked_count": 0,
                         "prepared_degraded_count": 1,
+                        "prepared_memory_followthrough_count": 1,
                         "prepared_setup_aligned_count": 2,
                         "prepared_setup_boosted_count": 1,
                         "prepared_setup_constrained_count": 0,
@@ -14539,12 +14554,16 @@ class FakeDesktopService:
                         "continuation_provider_blocked_count": 0,
                         "continuation_setup_followup_count": 0,
                         "vm_setup_followup_guest_count": 0,
+                        "vm_memory_followthrough_count": 1,
                         "top_route_remediation_kinds": {"route_tuning": 1},
                         "execution_action_count": 7,
                         "execution_success_count": 4,
                         "execution_manual_count": 1,
                         "execution_blocked_count": 0,
                         "execution_error_count": 0,
+                        "execution_memory_followthrough_count": 3,
+                        "execution_memory_guided_route_count": 1,
+                        "execution_memory_assisted_route_count": 1,
                         "setup_action_count": 1,
                         "setup_action_auto_runnable_count": 1,
                         "setup_action_success_count": 1,
@@ -14563,6 +14582,9 @@ class FakeDesktopService:
                         "error_count": 0,
                         "setup_action_count": 1,
                         "setup_action_success_count": 1,
+                        "memory_followthrough_count": 2,
+                        "memory_guided_route_count": 1,
+                        "memory_assisted_route_count": 1,
                         "setup_action_code_counts": {"verify_provider:huggingface": 1},
                     },
                     "next_actions": [
@@ -14599,6 +14621,7 @@ class FakeDesktopService:
                             "retry_count": 1,
                             "provider_blocked_count": 0,
                             "setup_followup_count": 0,
+                            "memory_followthrough_count": 1,
                             "focus_app_names": ["Visual Studio Code"],
                             "focus_app_count": 1,
                         },
@@ -14628,6 +14651,7 @@ class FakeDesktopService:
                     "launch_seed_count": 2,
                     "app_learning_target_count": 2,
                     "app_learning_strategy_profile": "hybrid_guided_explore",
+                    "app_learning_memory_followthrough_count": 1,
                     "multimodal_memory_app_count": 2,
                     "multimodal_ocr_memory_app_count": 2,
                     "multimodal_local_runtime_ready_app_count": 1,
@@ -14642,6 +14666,7 @@ class FakeDesktopService:
                     "prepared_app_count": 2,
                     "prepared_blocked_count": 0,
                     "prepared_degraded_count": 1,
+                        "prepared_memory_followthrough_count": 1,
                         "prepared_setup_aligned_count": 2,
                         "prepared_setup_boosted_count": 1,
                         "prepared_setup_constrained_count": 0,
@@ -14662,12 +14687,16 @@ class FakeDesktopService:
                         "continuation_retry_count": 1,
                         "continuation_provider_blocked_count": 0,
                         "continuation_setup_followup_count": 0,
+                        "continuation_memory_followthrough_count": 1,
                         "top_route_remediation_kinds": {"route_tuning": 1},
                         "execution_action_count": 6,
                         "execution_success_count": 4,
                     "execution_manual_count": 1,
                     "execution_blocked_count": 0,
                     "execution_error_count": 0,
+                    "execution_memory_followthrough_count": 3,
+                    "execution_memory_guided_route_count": 1,
+                    "execution_memory_assisted_route_count": 1,
                     "setup_action_count": 1,
                     "setup_action_auto_runnable_count": 1,
                     "setup_action_success_count": 1,
@@ -14682,6 +14711,9 @@ class FakeDesktopService:
                     "error_count": 0,
                     "setup_action_count": 2,
                     "setup_action_success_count": 2,
+                    "memory_followthrough_count": 2,
+                    "memory_guided_route_count": 1,
+                    "memory_assisted_route_count": 1,
                     "setup_action_code_counts": {
                         "verify_provider:huggingface": 1,
                         "warm_local_reasoning_runtime": 1,
@@ -14721,6 +14753,7 @@ class FakeDesktopService:
                         "retry_count": 1,
                         "provider_blocked_count": 0,
                         "setup_followup_count": 0,
+                        "memory_followthrough_count": 1,
                         "focus_app_names": ["Visual Studio Code"],
                         "focus_app_count": 1,
                     },
@@ -14737,6 +14770,9 @@ class FakeDesktopService:
                 "execution_manual_total": 1,
                 "execution_blocked_total": 0,
                 "execution_error_total": 0,
+                "execution_memory_followthrough_total": 3,
+                "execution_memory_guided_route_total": 1,
+                "execution_memory_assisted_route_total": 1,
                 "setup_action_total": 2,
                 "setup_action_auto_runnable_total": 2,
                 "setup_action_success_total": 2,
@@ -14772,15 +14808,18 @@ class FakeDesktopService:
                 "app_learning_setup_aligned_total": 2,
                 "app_learning_setup_boosted_total": 1,
                 "app_learning_setup_constrained_total": 0,
+                "app_learning_memory_followthrough_total": 1,
                 "prepared_setup_aligned_total": 2,
                 "prepared_setup_boosted_total": 1,
                 "prepared_setup_constrained_total": 0,
+                "prepared_memory_followthrough_total": 1,
                 "vm_prepare_total": 1,
                 "prepared_vm_control_total": 1,
                 "vm_ready_guest_total": 1,
                 "vm_attention_guest_total": 0,
                 "vm_blocked_guest_total": 0,
                 "vm_setup_followup_guest_total": 0,
+                "vm_memory_followthrough_total": 1,
                 "route_remediation_total": 1,
                 "route_remediation_blocked_total": 0,
                 "route_remediation_degraded_total": 1,
@@ -14798,6 +14837,7 @@ class FakeDesktopService:
                 "continuation_retry_total": 1,
                 "continuation_provider_blocked_total": 0,
                 "continuation_setup_followup_total": 0,
+                "continuation_memory_followthrough_total": 1,
             },
         }
 
@@ -15406,6 +15446,11 @@ class FakeDesktopService:
                 "manual_count": 0,
                 "blocked_count": 0,
                 "error_count": 0,
+                "memory_followthrough_count": 4,
+                "memory_guided_route_count": 1,
+                "memory_assisted_route_count": 2,
+                "memory_route_alignment_counts": {"aligned": 1, "assisted": 2, "underused": 1},
+                "memory_followthrough_stage_counts": {"app_learning": 2, "app_prepare": 1, "vm_prepare": 1},
                 "setup_action_count": 3,
                 "setup_action_auto_runnable_count": 3,
                 "setup_action_success_count": 3,
@@ -15507,6 +15552,7 @@ class FakeDesktopService:
                 "app_learning_auto_target_count": 2,
                 "app_learning_blocked_count": 0,
                 "app_learning_degraded_count": 1,
+                "app_learning_memory_followthrough_count": 1,
                 "multimodal_memory_app_count": 2,
                 "multimodal_ocr_memory_app_count": 2,
                 "multimodal_local_runtime_ready_app_count": 1,
@@ -15540,11 +15586,13 @@ class FakeDesktopService:
                 "prepared_setup_aligned_count": 2 if auto_prepare_app_controls else 0,
                 "prepared_setup_boosted_count": 1 if auto_prepare_app_controls else 0,
                 "prepared_setup_constrained_count": 0,
+                "prepared_memory_followthrough_count": 1 if auto_prepare_app_controls else 0,
                 "vm_prepare_count": 1 if auto_prepare_vm_controls else 0,
                 "prepared_vm_control_count": 1 if auto_prepare_vm_controls else 0,
                 "vm_ready_guest_count": 1 if auto_prepare_vm_controls else 0,
                 "vm_attention_guest_count": 0,
                 "vm_blocked_guest_count": 0,
+                "vm_memory_followthrough_count": 1 if auto_prepare_vm_controls else 0,
                 "vm_learning_profile_counts": {"linux_desktop_explore": 1} if auto_prepare_vm_controls else {},
                 "vm_execution_mode_counts": {"hybrid_ready": 1} if auto_prepare_vm_controls else {},
                 "vm_runtime_band_counts": {"hybrid": 1} if auto_prepare_vm_controls else {},
@@ -15572,6 +15620,7 @@ class FakeDesktopService:
                 "continuation_retry_count": 1 if auto_prepare_app_controls else 0,
                 "continuation_provider_blocked_count": 0,
                 "continuation_setup_followup_count": 0,
+                "continuation_memory_followthrough_count": 1 if auto_prepare_app_controls else 0,
                 "continuation_focus_app_count": 1 if auto_prepare_app_controls else 0,
                 "execution_action_count": 8,
                 "execution_auto_runnable_count": 7,
@@ -15580,6 +15629,9 @@ class FakeDesktopService:
                 "execution_manual_count": 0,
                 "execution_blocked_count": 0,
                 "execution_error_count": 0,
+                "execution_memory_followthrough_count": 4,
+                "execution_memory_guided_route_count": 1,
+                "execution_memory_assisted_route_count": 2,
                 "setup_action_count": 3,
                 "setup_action_auto_runnable_count": 3,
                 "setup_action_success_count": 3,
@@ -26075,6 +26127,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["app_control_prepare_plan"]["count"] == 2
     assert plan["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert plan["summary"]["app_learning_degraded_count"] == 1
+    assert plan["summary"]["app_learning_memory_followthrough_count"] == 1
     assert plan["summary"]["ai_runtime_stack_count"] == 3
     assert plan["summary"]["ai_runtime_setup_action_count"] == 1
     assert plan["summary"]["ai_runtime_setup_auto_runnable_count"] == 1
@@ -26098,11 +26151,13 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["vm_control_plan"]["count"] == 1
     assert plan["summary"]["vm_prepare_count"] == 1
     assert plan["summary"]["vm_ready_guest_count"] == 1
+    assert plan["summary"]["vm_memory_followthrough_count"] == 1
     assert plan["summary"]["vm_execution_mode_counts"]["hybrid_ready"] == 1
     assert plan["summary"]["vm_expected_route_profile_counts"]["linux_vm_desktop_control"] == 1
     assert plan["continuation_plan"]["count"] == 3
     assert plan["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
     assert plan["summary"]["continuation_count"] == 3
+    assert plan["summary"]["continuation_memory_followthrough_count"] == 2
     assert plan["summary"]["continuation_manual_count"] == 1
     assert plan["summary"]["continuation_provider_blocked_count"] == 3
     assert plan["summary"]["route_remediation_count"] == 1
@@ -26110,6 +26165,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert plan["summary"]["route_remediation_provider_blocked_count"] == 1
     assert len(plan["execution_queue"]) == 8
     assert plan["execution_queue_summary"]["manual_count"] == 2
+    assert plan["execution_queue_summary"]["memory_followthrough_count"] == 4
+    assert plan["execution_queue_summary"]["memory_guided_route_count"] == 1
+    assert plan["execution_queue_summary"]["memory_assisted_route_count"] == 2
     assert plan["execution_queue_summary"]["setup_action_count"] == 3
     assert plan["execution_queue_summary"]["setup_action_auto_runnable_count"] == 3
     assert plan["execution_queue_summary"]["stage_counts"]["provider"] == 1
@@ -26151,6 +26209,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["model_install"]["continued_action_count"] == 1
     assert launched["summary"]["app_learning_strategy_profile"] == "hybrid_guided_explore"
     assert launched["summary"]["app_learning_degraded_count"] == 1
+    assert launched["summary"]["app_learning_memory_followthrough_count"] == 1
     assert launched["summary"]["ai_runtime_stack_count"] == 3
     assert launched["summary"]["ai_runtime_setup_action_count"] == 1
     assert launched["summary"]["ai_runtime_setup_executed_count"] == 1
@@ -26175,7 +26234,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["vm_control_plan"]["count"] == 1
     assert launched["vm_control_prepare"]["count"] == 1
     assert launched["summary"]["prepared_app_count"] == 2
+    assert launched["summary"]["prepared_memory_followthrough_count"] == 1
     assert launched["summary"]["prepared_vm_control_count"] == 1
+    assert launched["summary"]["vm_memory_followthrough_count"] == 1
     assert launched["summary"]["vm_ready_guest_count"] == 1
     assert launched["summary"]["vm_execution_mode_counts"]["hybrid_ready"] == 1
     assert launched["summary"]["vm_expected_route_profile_counts"]["linux_vm_desktop_control"] == 1
@@ -26189,6 +26250,7 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["continuation_plan"]["count"] == 1
     assert launched["continuation_plan"]["summary"]["focus_app_names"] == ["Visual Studio Code"]
     assert launched["summary"]["continuation_count"] == 1
+    assert launched["summary"]["continuation_memory_followthrough_count"] == 1
     assert launched["summary"]["continuation_auto_continue_enabled"] is True
     assert launched["summary"]["route_remediation_count"] == 1
     assert launched["summary"]["route_remediation_provider_blocked_count"] == 0
@@ -26198,6 +26260,9 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert launched["app_control_prepare"]["summary"]["setup_boosted_app_count"] == 1
     assert launched["task_preference_plan"]["count"] == 1
     assert launched["execution_queue_summary"]["success_count"] == 8
+    assert launched["execution_queue_summary"]["memory_followthrough_count"] == 4
+    assert launched["execution_queue_summary"]["memory_guided_route_count"] == 1
+    assert launched["execution_queue_summary"]["memory_assisted_route_count"] == 2
     assert launched["execution_queue_summary"]["setup_action_success_count"] == 3
     assert launched["summary"]["execution_action_count"] == 8
     assert launched["summary"]["execution_success_count"] == 8
@@ -26221,7 +26286,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["prepared_vm_control_total"] == 1
     assert history["summary"]["vm_ready_guest_total"] == 1
     assert history["summary"]["vm_setup_followup_guest_total"] == 0
+    assert history["summary"]["vm_memory_followthrough_total"] == 1
     assert history["summary"]["execution_action_total"] == 7
+    assert history["summary"]["execution_memory_followthrough_total"] == 3
+    assert history["summary"]["execution_memory_guided_route_total"] == 1
+    assert history["summary"]["execution_memory_assisted_route_total"] == 1
     assert history["summary"]["ai_runtime_stack_total"] == 3
     assert history["summary"]["ai_runtime_setup_action_total"] == 1
     assert history["summary"]["ai_runtime_setup_executed_total"] == 1
@@ -26237,9 +26306,11 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["app_learning_setup_aligned_total"] == 2
     assert history["summary"]["app_learning_setup_boosted_total"] == 1
     assert history["summary"]["app_learning_setup_constrained_total"] == 0
+    assert history["summary"]["app_learning_memory_followthrough_total"] == 1
     assert history["summary"]["prepared_setup_aligned_total"] == 2
     assert history["summary"]["prepared_setup_boosted_total"] == 1
     assert history["summary"]["prepared_setup_constrained_total"] == 0
+    assert history["summary"]["prepared_memory_followthrough_total"] == 1
     assert history["summary"]["route_remediation_total"] == 1
     assert history["summary"]["route_remediation_degraded_total"] == 1
     assert history["summary"]["route_remediation_setup_followup_total"] == 0
@@ -26247,15 +26318,20 @@ def test_desktop_machine_onboarding_routes(api_server: tuple[str, FakeDesktopSer
     assert history["summary"]["route_remediation_improved_total"] == 1
     assert history["summary"]["route_remediation_resolved_setup_followup_total"] == 1
     assert history["summary"]["continuation_total"] == 1
+    assert history["summary"]["continuation_memory_followthrough_total"] == 1
     assert history["summary"]["continuation_retry_total"] == 1
     assert history["summary"]["setup_action_total"] == 2
     assert history["latest_run"]["execution_queue_summary"]["success_count"] == 4
+    assert history["latest_run"]["execution_queue_summary"]["memory_followthrough_count"] == 2
     assert history["latest_run"]["summary"]["ai_runtime_setup_action_count"] == 1
     assert history["latest_run"]["summary"]["app_learning_setup_boosted_count"] == 1
+    assert history["latest_run"]["summary"]["app_learning_memory_followthrough_count"] == 1
     assert history["latest_run"]["summary"]["prepared_setup_boosted_count"] == 1
+    assert history["latest_run"]["summary"]["prepared_memory_followthrough_count"] == 1
     assert history["latest_run"]["summary"]["route_remediation_count"] == 1
     assert history["latest_run"]["summary"]["route_remediation_improved_count"] == 1
     assert history["latest_run"]["summary"]["continuation_count"] == 1
+    assert history["latest_run"]["summary"]["execution_memory_followthrough_count"] == 3
     assert history["latest_run"]["next_actions"][0]["target"] == "huggingface"
     assert service.machine_onboarding_history_calls[-1]["source"] == "machine_onboarding"
 
