@@ -1085,6 +1085,60 @@ class DesktopVMManager:
             if isinstance(machine_profile.get("continuation_memory", {}), dict)
             else {}
         )
+        recent_setup_verified_provider_names = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_verified_provider_names", [])
+                if isinstance(setup_followthrough_memory.get("top_verified_provider_names", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_manual_input_provider_names = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_manual_input_provider_names", [])
+                if isinstance(setup_followthrough_memory.get("top_manual_input_provider_names", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_attention_provider_names = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_attention_provider_names", [])
+                if isinstance(setup_followthrough_memory.get("top_attention_provider_names", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_model_item_keys = _dedupe_strings(
+            [
+                str(item).strip()
+                for item in setup_followthrough_memory.get("top_selected_model_item_keys", [])
+                if isinstance(setup_followthrough_memory.get("top_selected_model_item_keys", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_ai_runtime_codes = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_ai_runtime_setup_action_codes", [])
+                if isinstance(setup_followthrough_memory.get("top_ai_runtime_setup_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_multimodal_codes = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_multimodal_setup_action_codes", [])
+                if isinstance(setup_followthrough_memory.get("top_multimodal_setup_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
         app_learning_memory_mission_status_counts = (
             dict(app_learning_summary.get("memory_mission_status_counts", {}))
             if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
@@ -1146,6 +1200,7 @@ class DesktopVMManager:
         recent_setup_followup_count = int(
             setup_followthrough_memory.get("setup_followup_total", 0) or 0
         )
+        effective_verified_provider_count = max(verified_provider_count, len(recent_setup_verified_provider_names))
         recent_setup_reason_codes = [
             str(item).strip().lower()
             for item in setup_followthrough_memory.get("reason_codes", [])
@@ -1218,6 +1273,8 @@ class DesktopVMManager:
                 "memory_low_coverage_pressure" if structured_memory_low_coverage_count > 0 else "",
                 "learning_semantic_guidance_available" if app_learning_semantic_guided_count > 0 else "",
                 "learning_semantic_followup_pending" if app_learning_semantic_followup_count > 0 else "",
+                "recent_setup_provider_ready" if recent_setup_verified_provider_names else "",
+                "recent_setup_model_selection_available" if recent_setup_model_item_keys else "",
             ],
             limit=6,
         )
@@ -1247,7 +1304,11 @@ class DesktopVMManager:
             setup_followup_codes.append("initialize_local_vision_runtime")
         elif expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and vision_loaded_model_count <= 0:
             setup_followup_codes.append("warm_local_vision_runtime")
-        if expected_model_preference in {"hybrid_runtime", "api_vision_runtime"} and local_model_count <= 0 and verified_provider_count <= 0:
+        if (
+            expected_model_preference in {"hybrid_runtime", "api_vision_runtime"}
+            and local_model_count <= 0
+            and effective_verified_provider_count <= 0
+        ):
             setup_followup_codes.append("configure_multimodal_runtime")
         if "reasoning" in required_tasks and not ai_reasoning_ready:
             setup_followup_codes.append("warm_local_reasoning_runtime")
@@ -1268,13 +1329,13 @@ class DesktopVMManager:
             ai_route_fallback_applied = True
             ai_route_reason_codes.append("ai_reasoning_runtime_gap")
             if selected_ai_runtime_band == "local":
-                selected_ai_runtime_band = "hybrid" if verified_provider_count > 0 else "accessibility"
-            elif verified_provider_count <= 0:
+                selected_ai_runtime_band = "hybrid" if effective_verified_provider_count > 0 else "accessibility"
+            elif effective_verified_provider_count <= 0:
                 selected_ai_runtime_band = "accessibility"
         if "vision" in required_tasks and not local_vision_ready and selected_ai_runtime_band in {"local", "hybrid"}:
             ai_route_fallback_applied = True
             ai_route_reason_codes.append("ai_vision_runtime_gap")
-            selected_ai_runtime_band = "api" if verified_provider_count > 0 else "accessibility"
+            selected_ai_runtime_band = "api" if effective_verified_provider_count > 0 else "accessibility"
         if ai_runtime_blocked_stack_count > 0:
             ai_route_reason_codes.append("ai_runtime_stack_attention")
             if ai_route_status == "matched":
@@ -1319,6 +1380,14 @@ class DesktopVMManager:
             ai_route_reason_codes.append("memory_guided_vm_route")
         elif memory_guidance_status == "partial":
             ai_route_reason_codes.append("memory_assisted_vm_route")
+        if recent_setup_verified_provider_names:
+            ai_route_reason_codes.append("recent_setup_provider_ready")
+        if recent_setup_model_item_keys:
+            ai_route_reason_codes.append("recent_setup_model_selection_available")
+        if recent_setup_ai_runtime_codes and "reasoning" in required_tasks and not ai_reasoning_ready:
+            ai_route_reason_codes.append("recent_setup_reasoning_warmup_available")
+        if recent_setup_multimodal_codes and "vision" in required_tasks and not local_vision_ready:
+            ai_route_reason_codes.append("recent_setup_multimodal_warmup_available")
 
         selected_ai_reasoning_stack = "desktop_agent" if ai_reasoning_ready else ""
         selected_ai_vision_stack = "perception" if local_vision_ready and family != "terminal" else ""
@@ -1367,7 +1436,7 @@ class DesktopVMManager:
             "required_tasks": _dedupe_strings(required_tasks, limit=6),
             "local_ready_tasks": _dedupe_strings(local_ready_tasks, limit=6),
             "provider_ready": provider_ready,
-            "verified_provider_count": verified_provider_count,
+            "verified_provider_count": effective_verified_provider_count,
             "local_model_count": local_model_count,
             "vision_runtime_available": vision_runtime_available,
             "vision_loaded_model_count": vision_loaded_model_count,
@@ -1404,6 +1473,12 @@ class DesktopVMManager:
             "recent_setup_provider_blocked_count": recent_setup_provider_blocked_count,
             "recent_setup_followup_count": recent_setup_followup_count,
             "recent_setup_reason_codes": recent_setup_reason_codes,
+            "recent_setup_verified_provider_names": recent_setup_verified_provider_names,
+            "recent_setup_manual_input_provider_names": recent_setup_manual_input_provider_names,
+            "recent_setup_attention_provider_names": recent_setup_attention_provider_names,
+            "recent_setup_model_item_keys": recent_setup_model_item_keys,
+            "recent_setup_ai_runtime_setup_codes": recent_setup_ai_runtime_codes,
+            "recent_setup_multimodal_setup_codes": recent_setup_multimodal_codes,
             "recent_continuation_status": recent_continuation_status,
             "recent_continuation_recommended": recent_continuation_recommended,
             "recent_continuation_required": recent_continuation_required,

@@ -204,3 +204,86 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["memory_followthrough_recommended"] is True
     assert prepared["summary"]["recommended_max_surface_waves"] == 5
     assert prepared["summary"]["recommended_max_probe_controls"] == 4
+
+
+def test_desktop_vm_manager_uses_recent_setup_provider_memory_for_api_route(tmp_path, monkeypatch) -> None:
+    manager = DesktopVMManager(store_path=str(tmp_path / "desktop_vm_manager_setup_memory.json"))
+    monkeypatch.setattr("backend.python.core.desktop_vm_manager.shutil.which", lambda value: r"C:\Tools\VBoxManage.exe" if value == "VBoxManage.exe" else "")
+
+    manager.update_guest_profile(
+        guest_name="Ubuntu Dev VM",
+        provider="virtualbox",
+        guest_os="linux",
+        control_mode="provider_console",
+        provider_app_name="VirtualBox",
+        remote_endpoint="",
+        enable_learning=True,
+        source="unit_test",
+    )
+
+    inventory = manager.inventory_snapshot(
+        system_profile={"virtualization": {"virtualization_firmware_enabled": True}},
+        app_inventory={
+            "items": [
+                {"display_name": "VirtualBox", "canonical_name": "virtualbox", "path": r"C:\Program Files\Oracle\VirtualBox\VirtualBox.exe"},
+            ]
+        },
+        launch_memory={"items": []},
+        query="ubuntu",
+        limit=12,
+        task="linux",
+        source="unit_test",
+    )
+
+    machine_profile = {
+        "providers": {"summary": {"verified_count": 0}},
+        "ai_runtime_profile": {
+            "status": "attention",
+            "summary": {
+                "ready_stack_count": 0,
+                "blocked_stack_count": 0,
+                "action_required_task_count": 1,
+                "reasoning_runtime_ready": False,
+            },
+        },
+        "multimodal_memory": {
+            "summary": {
+                "vision_runtime_available": False,
+                "vision_loaded_model_count": 0,
+                "vision_memory_app_count": 0,
+                "weird_app_memory_app_count": 0,
+                "knowledge_store_entry_count": 0,
+                "knowledge_store_control_count": 0,
+                "knowledge_store_command_count": 0,
+                "knowledge_store_vector_count": 0,
+                "knowledge_low_coverage_app_count": 0,
+                "knowledge_semantic_ready_app_count": 0,
+            }
+        },
+        "app_learning_plan": {"plan": {"summary": {}}},
+        "setup_followthrough_memory": {
+            "followthrough_status": "recommended",
+            "followthrough_recommended": True,
+            "followthrough_required": False,
+            "top_verified_provider_names": ["huggingface"],
+            "top_selected_model_item_keys": ["reasoning-llama", "vision-ocr"],
+            "top_ai_runtime_setup_action_codes": ["warm_local_reasoning_runtime"],
+            "top_multimodal_setup_action_codes": ["warm_local_vision_runtime"],
+        },
+        "continuation_memory": {},
+    }
+
+    plan = manager.build_vm_control_plan(
+        inventory=inventory,
+        task="linux",
+        query="ubuntu",
+        max_targets=2,
+        machine_profile=machine_profile,
+    )
+
+    readiness = plan["items"][0]["provider_model_readiness"]
+    assert readiness["verified_provider_count"] == 1
+    assert readiness["selected_ai_runtime_band"] == "api"
+    assert readiness["selected_ai_provider_source"] == "api_assist_plus_ocr"
+    assert "recent_setup_provider_ready" in readiness["ai_route_reason_codes"]
+    assert "recent_setup_multimodal_warmup_available" in readiness["ai_route_reason_codes"]

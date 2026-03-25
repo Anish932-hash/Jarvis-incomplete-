@@ -9,6 +9,7 @@ import html
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import threading
 import time
@@ -12841,6 +12842,55 @@ class DesktopBackendService:
             "setup_followthrough_multimodal_action_count": int(
                 followthrough_payload.get("selected_multimodal_action_count", 0) or 0
             ),
+            "setup_followthrough_provider_status_counts": dict(
+                followthrough_payload.get("provider_status_counts", {})
+                if isinstance(followthrough_payload.get("provider_status_counts", {}), dict)
+                else {}
+            ),
+            "setup_followthrough_top_verified_providers": [
+                str(item).strip().lower()
+                for item in followthrough_payload.get("top_verified_provider_names", [])
+                if isinstance(followthrough_payload.get("top_verified_provider_names", []), list)
+                and str(item).strip()
+            ][:8],
+            "setup_followthrough_top_manual_input_providers": [
+                str(item).strip().lower()
+                for item in followthrough_payload.get("top_manual_input_provider_names", [])
+                if isinstance(followthrough_payload.get("top_manual_input_provider_names", []), list)
+                and str(item).strip()
+            ][:8],
+            "setup_followthrough_top_attention_providers": [
+                str(item).strip().lower()
+                for item in followthrough_payload.get("top_attention_provider_names", [])
+                if isinstance(followthrough_payload.get("top_attention_provider_names", []), list)
+                and str(item).strip()
+            ][:8],
+            "setup_followthrough_selected_model_item_keys": [
+                str(item).strip()
+                for item in followthrough_payload.get("selected_model_item_keys", [])
+                if isinstance(followthrough_payload.get("selected_model_item_keys", []), list) and str(item).strip()
+            ][:8],
+            "setup_followthrough_top_ai_runtime_setup_codes": [
+                str(item).strip().lower()
+                for item in followthrough_payload.get("selected_ai_runtime_action_codes", [])
+                if isinstance(followthrough_payload.get("selected_ai_runtime_action_codes", []), list)
+                and str(item).strip()
+            ][:8],
+            "setup_followthrough_top_multimodal_setup_codes": [
+                str(item).strip().lower()
+                for item in followthrough_payload.get("selected_multimodal_action_codes", [])
+                if isinstance(followthrough_payload.get("selected_multimodal_action_codes", []), list)
+                and str(item).strip()
+            ][:8],
+            "setup_followthrough_guidance_status": str(
+                followthrough_payload.get("setup_guidance_status", "") or ""
+            ).strip().lower(),
+            "setup_followthrough_guidance_reason_codes": [
+                str(code).strip().lower()
+                for code in followthrough_payload.get("setup_guidance_reason_codes", [])
+                if isinstance(followthrough_payload.get("setup_guidance_reason_codes", []), list)
+                and str(code).strip()
+            ][:12],
             "recent_setup_followthrough_status": str(
                 selected_target.get("recent_setup_followthrough_status", "") or ""
             ).strip().lower(),
@@ -12874,6 +12924,62 @@ class DesktopBackendService:
             "recent_setup_followup_count": int(
                 selected_target.get("recent_setup_followup_count", 0) or 0
             ),
+            "recent_setup_provider_status_counts": dict(
+                selected_target.get("recent_setup_provider_status_counts", {})
+                if isinstance(selected_target.get("recent_setup_provider_status_counts", {}), dict)
+                else {}
+            ),
+            "recent_setup_top_verified_providers": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_top_verified_providers", [])
+                if isinstance(selected_target.get("recent_setup_top_verified_providers", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_manual_input_providers": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_top_manual_input_providers", [])
+                if isinstance(selected_target.get("recent_setup_top_manual_input_providers", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_attention_providers": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_top_attention_providers", [])
+                if isinstance(selected_target.get("recent_setup_top_attention_providers", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_model_item_keys": [
+                str(item).strip()
+                for item in selected_target.get("recent_setup_top_model_item_keys", [])
+                if isinstance(selected_target.get("recent_setup_top_model_item_keys", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_model_action_ids": [
+                str(item).strip()
+                for item in selected_target.get("recent_setup_top_model_action_ids", [])
+                if isinstance(selected_target.get("recent_setup_top_model_action_ids", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_ai_runtime_setup_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_top_ai_runtime_setup_codes", [])
+                if isinstance(selected_target.get("recent_setup_top_ai_runtime_setup_codes", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_top_multimodal_setup_codes": [
+                str(item).strip().lower()
+                for item in selected_target.get("recent_setup_top_multimodal_setup_codes", [])
+                if isinstance(selected_target.get("recent_setup_top_multimodal_setup_codes", []), list)
+                and str(item).strip()
+            ][:8],
+            "recent_setup_guidance_status": str(
+                selected_target.get("recent_setup_guidance_status", "") or ""
+            ).strip().lower(),
+            "recent_setup_guidance_reason_codes": [
+                str(code).strip().lower()
+                for code in selected_target.get("recent_setup_guidance_reason_codes", [])
+                if isinstance(selected_target.get("recent_setup_guidance_reason_codes", []), list)
+                and str(code).strip()
+            ][:12],
             "recent_continuation_status": str(
                 selected_target.get("recent_continuation_status", "") or ""
             ).strip().lower(),
@@ -14090,6 +14196,40 @@ class DesktopBackendService:
             else [],
             limit=6,
         )
+        provider_status_counts: Dict[str, int] = {}
+        top_verified_provider_names: List[str] = []
+        top_manual_input_provider_names: List[str] = []
+        top_attention_provider_names: List[str] = []
+        for item in provider_followthrough.get("items", []):
+            if not isinstance(provider_followthrough.get("items", []), list) or not isinstance(item, dict):
+                continue
+            provider_name = self._machine_text(item.get("provider", ""))
+            status_value = self._machine_text(item.get("status", "")) or "unknown"
+            provider_status_counts[status_value] = int(provider_status_counts.get(status_value, 0) or 0) + 1
+            if provider_name and bool(item.get("verified", False)):
+                top_verified_provider_names.append(provider_name)
+            elif provider_name and status_value == "manual_input_required":
+                top_manual_input_provider_names.append(provider_name)
+            elif provider_name and status_value not in {"success", "skipped", "planned"}:
+                top_attention_provider_names.append(provider_name)
+        setup_guidance_status = (
+            "strong"
+            if top_verified_provider_names or model_selection.get("selected_item_keys", []) or ai_selected_action_codes or multimodal_selected_action_codes
+            else "partial"
+            if executed_count > 0 or bool(provider_status_counts)
+            else "cold"
+        )
+        setup_guidance_reason_codes = self._machine_dedupe(
+            [
+                *(["recent_provider_verified"] if top_verified_provider_names else []),
+                *(["recent_provider_manual_input"] if top_manual_input_provider_names else []),
+                *(["recent_provider_attention"] if top_attention_provider_names else []),
+                *(["recent_model_selection_available"] if model_selection.get("selected_item_keys", []) else []),
+                *(["recent_ai_runtime_setup_available"] if ai_selected_action_codes else []),
+                *(["recent_multimodal_setup_available"] if multimodal_selected_action_codes else []),
+            ],
+            limit=12,
+        )
         return {
             "status": status_name,
             "source": str(source or "machine_prepare").strip().lower() or "machine_prepare",
@@ -14104,6 +14244,20 @@ class DesktopBackendService:
             "selected_ai_runtime_action_count": len(ai_selected_action_codes),
             "selected_multimodal_action_codes": multimodal_selected_action_codes,
             "selected_multimodal_action_count": len(multimodal_selected_action_codes),
+            "provider_status_counts": {
+                str(key): int(value)
+                for key, value in sorted(provider_status_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_verified_provider_names": self._machine_dedupe(top_verified_provider_names, limit=8),
+            "top_manual_input_provider_names": self._machine_dedupe(top_manual_input_provider_names, limit=8),
+            "top_attention_provider_names": self._machine_dedupe(top_attention_provider_names, limit=8),
+            "selected_model_item_keys": [
+                str(item).strip()
+                for item in model_selection.get("selected_item_keys", [])
+                if isinstance(model_selection.get("selected_item_keys", []), list) and str(item).strip()
+            ][:8],
+            "setup_guidance_status": setup_guidance_status,
+            "setup_guidance_reason_codes": setup_guidance_reason_codes[:12],
             "next_actions": next_actions,
             "message": (
                 "Executed setup followthrough for the selected control target."
@@ -17278,6 +17432,26 @@ class DesktopBackendService:
             if isinstance(latest_run.get("summary", {}), dict)
             else {}
         )
+        latest_provider_followthrough = (
+            dict(latest_run.get("provider_followthrough", {}))
+            if isinstance(latest_run.get("provider_followthrough", {}), dict)
+            else {}
+        )
+        latest_model_install = (
+            dict(latest_run.get("model_install", {}))
+            if isinstance(latest_run.get("model_install", {}), dict)
+            else {}
+        )
+        latest_ai_runtime_setup = (
+            dict(latest_run.get("ai_runtime_setup_result", {}))
+            if isinstance(latest_run.get("ai_runtime_setup_result", {}), dict)
+            else {}
+        )
+        latest_multimodal_setup = (
+            dict(latest_run.get("multimodal_setup_result", {}))
+            if isinstance(latest_run.get("multimodal_setup_result", {}), dict)
+            else {}
+        )
         recent_run_count = int(history_payload.get("count", 0) or 0)
         setup_action_total = int(summary.get("setup_action_total", 0) or 0)
         setup_action_auto_runnable_total = int(summary.get("setup_action_auto_runnable_total", 0) or 0)
@@ -17369,6 +17543,120 @@ class DesktopBackendService:
             ],
             limit=10,
         )
+        provider_status_counts: Dict[str, int] = {}
+        verified_provider_names: List[str] = []
+        manual_input_provider_names: List[str] = []
+        attention_provider_names: List[str] = []
+        for item in latest_provider_followthrough.get("items", []):
+            if not isinstance(latest_provider_followthrough.get("items", []), list) or not isinstance(item, dict):
+                continue
+            provider_name = self._machine_text(item.get("provider", ""))
+            status_name = self._machine_text(item.get("status", "")) or "unknown"
+            if status_name:
+                provider_status_counts[status_name] = int(provider_status_counts.get(status_name, 0) or 0) + 1
+            if provider_name and bool(item.get("verified", False)):
+                verified_provider_names.append(provider_name)
+            elif provider_name and status_name == "manual_input_required":
+                manual_input_provider_names.append(provider_name)
+            elif provider_name and status_name not in {"success", "skipped", "planned"}:
+                attention_provider_names.append(provider_name)
+        selected_model_item_keys = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in latest_model_install.get("selected_item_keys", [])
+                    if isinstance(latest_model_install.get("selected_item_keys", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in dict(latest_model_install.get("selection", {})).get("selected_item_keys", [])
+                    if isinstance(latest_model_install.get("selection", {}), dict)
+                    and isinstance(dict(latest_model_install.get("selection", {})).get("selected_item_keys", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in dict(dict(latest_run.get("plan", {})).get("model_setup", {})).get("selected_item_keys", [])
+                    if isinstance(latest_run.get("plan", {}), dict)
+                    and isinstance(dict(latest_run.get("plan", {})).get("model_setup", {}), dict)
+                    and isinstance(
+                        dict(dict(latest_run.get("plan", {})).get("model_setup", {})).get("selected_item_keys", []),
+                        list,
+                    )
+                    and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        selected_model_action_ids = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip()
+                    for item in latest_model_install.get("selected_action_ids", [])
+                    if isinstance(latest_model_install.get("selected_action_ids", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in latest_model_install.get("executed_action_ids", [])
+                    if isinstance(latest_model_install.get("executed_action_ids", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip()
+                    for item in latest_model_install.get("continued_action_ids", [])
+                    if isinstance(latest_model_install.get("continued_action_ids", []), list) and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        ai_runtime_setup_codes = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in latest_ai_runtime_setup.get("selected_action_codes", [])
+                    if isinstance(latest_ai_runtime_setup.get("selected_action_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in dict(latest_summary.get("ai_runtime_setup_top_codes", {})).keys()
+                    if isinstance(latest_summary.get("ai_runtime_setup_top_codes", {}), dict) and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        multimodal_setup_codes = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in latest_multimodal_setup.get("selected_action_codes", [])
+                    if isinstance(latest_multimodal_setup.get("selected_action_codes", []), list) and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in dict(latest_summary.get("multimodal_setup_top_codes", {})).keys()
+                    if isinstance(latest_summary.get("multimodal_setup_top_codes", {}), dict) and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        setup_guidance_status = (
+            "strong"
+            if verified_provider_names or selected_model_item_keys or ai_runtime_setup_codes or multimodal_setup_codes
+            else "partial"
+            if followthrough_recommended or bool(provider_status_counts)
+            else "cold"
+        )
+        setup_guidance_reason_codes = self._machine_dedupe(
+            [
+                *(["recent_provider_verified"] if verified_provider_names else []),
+                *(["recent_provider_manual_input"] if manual_input_provider_names else []),
+                *(["recent_provider_attention"] if attention_provider_names else []),
+                *(["recent_model_selection_available"] if selected_model_item_keys else []),
+                *(["recent_ai_runtime_setup_available"] if ai_runtime_setup_codes else []),
+                *(["recent_multimodal_setup_available"] if multimodal_setup_codes else []),
+                *reason_codes,
+            ],
+            limit=12,
+        )
         next_actions: List[Dict[str, Any]] = []
         latest_next_actions = latest_run.get("next_actions", [])
         if isinstance(latest_next_actions, list):
@@ -17433,6 +17721,19 @@ class DesktopBackendService:
                 if isinstance(latest_summary.get("multimodal_setup_top_codes", {}), dict)
                 else {}
             ),
+            "provider_status_counts": {
+                str(key): int(value)
+                for key, value in sorted(provider_status_counts.items(), key=lambda entry: entry[0])
+            },
+            "top_verified_provider_names": verified_provider_names[:8],
+            "top_manual_input_provider_names": self._machine_dedupe(manual_input_provider_names, limit=8),
+            "top_attention_provider_names": self._machine_dedupe(attention_provider_names, limit=8),
+            "top_selected_model_item_keys": selected_model_item_keys[:8],
+            "top_selected_model_action_ids": selected_model_action_ids[:8],
+            "top_ai_runtime_setup_action_codes": ai_runtime_setup_codes[:8],
+            "top_multimodal_setup_action_codes": multimodal_setup_codes[:8],
+            "setup_guidance_status": setup_guidance_status,
+            "setup_guidance_reason_codes": setup_guidance_reason_codes[:12],
             "reason_codes": reason_codes,
             "next_actions": next_actions[:4],
         }
@@ -17457,11 +17758,92 @@ class DesktopBackendService:
             for item in memory_payload.get("reason_codes", [])
             if isinstance(memory_payload.get("reason_codes", []), list) and str(item).strip()
         ][:10]
+        provider_status_counts = (
+            {
+                str(key).strip().lower(): int(value)
+                for key, value in dict(memory_payload.get("provider_status_counts", {})).items()
+                if str(key).strip()
+            }
+            if isinstance(memory_payload.get("provider_status_counts", {}), dict)
+            else {}
+        )
+        top_verified_provider_names = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_verified_provider_names", [])
+                if isinstance(memory_payload.get("top_verified_provider_names", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_manual_input_provider_names = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_manual_input_provider_names", [])
+                if isinstance(memory_payload.get("top_manual_input_provider_names", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_attention_provider_names = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_attention_provider_names", [])
+                if isinstance(memory_payload.get("top_attention_provider_names", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_selected_model_item_keys = self._machine_dedupe(
+            [
+                str(item).strip()
+                for item in memory_payload.get("top_selected_model_item_keys", [])
+                if isinstance(memory_payload.get("top_selected_model_item_keys", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_selected_model_action_ids = self._machine_dedupe(
+            [
+                str(item).strip()
+                for item in memory_payload.get("top_selected_model_action_ids", [])
+                if isinstance(memory_payload.get("top_selected_model_action_ids", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_ai_runtime_setup_action_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_ai_runtime_setup_action_codes", [])
+                if isinstance(memory_payload.get("top_ai_runtime_setup_action_codes", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        top_multimodal_setup_action_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in memory_payload.get("top_multimodal_setup_action_codes", [])
+                if isinstance(memory_payload.get("top_multimodal_setup_action_codes", []), list) and str(item).strip()
+            ],
+            limit=8,
+        )
+        setup_guidance_status = str(memory_payload.get("setup_guidance_status", "") or "").strip().lower()
+        setup_guidance_reason_codes = [
+            str(item).strip().lower()
+            for item in memory_payload.get("setup_guidance_reason_codes", [])
+            if isinstance(memory_payload.get("setup_guidance_reason_codes", []), list) and str(item).strip()
+        ][:12]
         item_payload["recent_setup_followthrough_status"] = followthrough_status
         item_payload["recent_setup_followthrough_recommended"] = followthrough_recommended
         item_payload["recent_setup_followthrough_required"] = followthrough_required
         item_payload["recent_setup_suggested_followthrough_waves"] = suggested_followthrough_waves
         item_payload["recent_setup_reason_codes"] = reason_codes
+        item_payload["recent_setup_provider_status_counts"] = provider_status_counts
+        item_payload["recent_setup_top_verified_providers"] = top_verified_provider_names
+        item_payload["recent_setup_top_manual_input_providers"] = top_manual_input_provider_names
+        item_payload["recent_setup_top_attention_providers"] = top_attention_provider_names
+        item_payload["recent_setup_top_model_item_keys"] = top_selected_model_item_keys
+        item_payload["recent_setup_top_model_action_ids"] = top_selected_model_action_ids
+        item_payload["recent_setup_top_ai_runtime_setup_codes"] = top_ai_runtime_setup_action_codes
+        item_payload["recent_setup_top_multimodal_setup_codes"] = top_multimodal_setup_action_codes
+        item_payload["recent_setup_guidance_status"] = setup_guidance_status
+        item_payload["recent_setup_guidance_reason_codes"] = setup_guidance_reason_codes
         item_payload["recent_setup_remaining_ready_count"] = int(
             memory_payload.get("setup_execution_remaining_ready_total", 0) or 0
         )
@@ -17489,6 +17871,96 @@ class DesktopBackendService:
         item_payload["recent_setup_multimodal_action_count"] = int(
             memory_payload.get("multimodal_setup_action_total", 0) or 0
         )
+        required_tasks = {
+            str(item).strip().lower()
+            for item in item_payload.get("required_tasks", [])
+            if isinstance(item_payload.get("required_tasks", []), list) and str(item).strip()
+        }
+        existing_ready_provider_names = [
+            str(item).strip().lower()
+            for item in item_payload.get("ready_provider_names", [])
+            if isinstance(item_payload.get("ready_provider_names", []), list) and str(item).strip()
+        ]
+        existing_attention_provider_names = [
+            str(item).strip().lower()
+            for item in item_payload.get("attention_provider_names", [])
+            if isinstance(item_payload.get("attention_provider_names", []), list) and str(item).strip()
+        ]
+        item_payload["ready_provider_names"] = self._machine_dedupe(
+            [*existing_ready_provider_names, *top_verified_provider_names],
+            limit=8,
+        )
+        item_payload["attention_provider_names"] = self._machine_dedupe(
+            [
+                *existing_attention_provider_names,
+                *top_manual_input_provider_names,
+                *top_attention_provider_names,
+            ],
+            limit=8,
+        )
+        inferred_model_tasks = self._desktop_machine_task_names_from_model_item_keys(top_selected_model_item_keys)
+        if inferred_model_tasks:
+            item_payload["recent_setup_model_tasks"] = inferred_model_tasks
+            item_payload["selected_model_tasks"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in item_payload.get("selected_model_tasks", [])
+                        if isinstance(item_payload.get("selected_model_tasks", []), list) and str(item).strip()
+                    ],
+                    *inferred_model_tasks,
+                ],
+                limit=8,
+            )
+            item_payload["install_ready_tasks"] = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in item_payload.get("install_ready_tasks", [])
+                        if isinstance(item_payload.get("install_ready_tasks", []), list) and str(item).strip()
+                    ],
+                    *[task_name for task_name in inferred_model_tasks if task_name in required_tasks],
+                ],
+                limit=8,
+            )
+        relevant_ai_codes: List[str] = []
+        if {"reasoning", "intent", "control"}.intersection(required_tasks):
+            relevant_ai_codes.extend(
+                [
+                    code
+                    for code in top_ai_runtime_setup_action_codes
+                    if code in {"warm_local_reasoning_runtime", "recover_desktop_agent_stack"}
+                ]
+            )
+        relevant_multimodal_codes: List[str] = []
+        if {"vision", "ocr"}.intersection(required_tasks):
+            relevant_multimodal_codes.extend(
+                [
+                    code
+                    for code in top_multimodal_setup_action_codes
+                    if code in {"initialize_local_vision_runtime", "warm_local_vision_runtime", "install_ocr_runtime"}
+                ]
+            )
+        existing_ai_runtime_setup_codes = [
+            str(item).strip().lower()
+            for item in item_payload.get("ai_runtime_setup_action_codes", [])
+            if isinstance(item_payload.get("ai_runtime_setup_action_codes", []), list) and str(item).strip()
+        ]
+        item_payload["ai_runtime_setup_action_codes"] = self._machine_dedupe(
+            [*existing_ai_runtime_setup_codes, *relevant_ai_codes],
+            limit=8,
+        )
+        existing_related_setup_action_codes = [
+            str(item).strip().lower()
+            for item in item_payload.get("related_setup_action_codes", [])
+            if isinstance(item_payload.get("related_setup_action_codes", []), list) and str(item).strip()
+        ]
+        item_payload["related_setup_action_codes"] = self._machine_dedupe(
+            [*existing_related_setup_action_codes, *relevant_ai_codes, *relevant_multimodal_codes],
+            limit=8,
+        )
+        item_payload["related_setup_action_count"] = len(item_payload["related_setup_action_codes"])
+        item_payload["ai_runtime_setup_action_count"] = len(item_payload["ai_runtime_setup_action_codes"])
         if followthrough_recommended:
             item_payload["setup_followthrough_recommended"] = True
             current_policy = str(item_payload.get("setup_execution_policy", "") or "").strip().lower()
@@ -17503,7 +17975,7 @@ class DesktopBackendService:
                 else []
             )
             item_payload["reason_codes"] = self._machine_dedupe(
-                [*existing_reason_codes, *reason_codes],
+                [*existing_reason_codes, *reason_codes, *setup_guidance_reason_codes],
                 limit=16,
             )
             if str(item_payload.get("readiness_status", "") or "").strip().lower() not in {"blocked"}:
@@ -18088,6 +18560,72 @@ class DesktopBackendService:
         }
         return list(hints.get(clean_task, []))
 
+    @staticmethod
+    def _desktop_machine_task_names_from_model_item_keys(item_keys: List[str]) -> List[str]:
+        task_names: List[str] = []
+        aliases = {
+            "vision": "vision",
+            "ocr": "vision",
+            "reasoning": "reasoning",
+            "embed": "embedding",
+            "embedding": "embedding",
+            "stt": "stt",
+            "speech_to_text": "stt",
+            "tts": "tts",
+            "text_to_speech": "tts",
+            "intent": "intent",
+            "control": "control",
+        }
+        for item_key in item_keys or []:
+            clean_key = str(item_key or "").strip().lower()
+            if not clean_key:
+                continue
+            fragments = [
+                fragment
+                for fragment in re.split(r"[-_:/\\\\]+", clean_key)
+                if isinstance(fragment, str) and fragment.strip()
+            ]
+            if not fragments:
+                fragments = [clean_key]
+            for fragment in fragments:
+                if fragment in aliases:
+                    task_names.append(aliases[fragment])
+                    break
+        return DesktopBackendService._machine_dedupe(task_names, limit=8)
+
+    @staticmethod
+    def _desktop_machine_task_names_from_model_item_keys(item_keys: List[str]) -> List[str]:
+        task_names: List[str] = []
+        aliases = {
+            "vision": "vision",
+            "ocr": "vision",
+            "reasoning": "reasoning",
+            "embed": "embedding",
+            "embedding": "embedding",
+            "stt": "stt",
+            "speech_to_text": "stt",
+            "tts": "tts",
+            "text_to_speech": "tts",
+            "intent": "intent",
+            "control": "control",
+        }
+        for item_key in item_keys or []:
+            clean_key = str(item_key or "").strip().lower()
+            if not clean_key:
+                continue
+            fragments = [
+                fragment
+                for fragment in re.split(r"[-_:/\\]+", clean_key)
+                if isinstance(fragment, str) and fragment.strip()
+            ]
+            if not fragments:
+                fragments = [clean_key]
+            for fragment in fragments:
+                if fragment in aliases:
+                    task_names.append(aliases[fragment])
+                    break
+        return DesktopBackendService._machine_dedupe(task_names, limit=8)
+
     def _desktop_machine_related_setup_action_codes(
         self,
         *,
@@ -18157,6 +18695,11 @@ class DesktopBackendService:
             if isinstance(ai_runtime_profile.get("summary", {}), dict)
             else {}
         )
+        setup_followthrough_memory = (
+            dict(profile.get("setup_followthrough_memory", {}))
+            if isinstance(profile.get("setup_followthrough_memory", {}), dict)
+            else {}
+        )
         ai_runtime_setup_actions = self._desktop_machine_ai_runtime_setup_actions(
             ai_runtime_profile=ai_runtime_profile if isinstance(ai_runtime_profile, dict) else {},
             task=str(target_row.get("prepare_query", "") or target_row.get("app_name", "") or "").strip().lower(),
@@ -18177,6 +18720,62 @@ class DesktopBackendService:
         ai_runtime_action_required_task_count = int(ai_runtime_summary.get("action_required_task_count", 0) or 0)
         ai_runtime_reasoning_ready = bool(ai_runtime_summary.get("reasoning_runtime_ready", False))
         ai_runtime_vision_ready = bool(ai_runtime_summary.get("vision_runtime_ready", False))
+        recent_setup_verified_provider_names = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_verified_provider_names", [])
+                if isinstance(setup_followthrough_memory.get("top_verified_provider_names", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_attention_provider_names = self._machine_dedupe(
+            [
+                *[
+                    str(item).strip().lower()
+                    for item in setup_followthrough_memory.get("top_attention_provider_names", [])
+                    if isinstance(setup_followthrough_memory.get("top_attention_provider_names", []), list)
+                    and str(item).strip()
+                ],
+                *[
+                    str(item).strip().lower()
+                    for item in setup_followthrough_memory.get("top_manual_input_provider_names", [])
+                    if isinstance(setup_followthrough_memory.get("top_manual_input_provider_names", []), list)
+                    and str(item).strip()
+                ],
+            ],
+            limit=8,
+        )
+        recent_setup_model_item_keys = self._machine_dedupe(
+            [
+                str(item).strip()
+                for item in setup_followthrough_memory.get("top_selected_model_item_keys", [])
+                if isinstance(setup_followthrough_memory.get("top_selected_model_item_keys", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_model_tasks = self._desktop_machine_task_names_from_model_item_keys(
+            recent_setup_model_item_keys
+        )
+        recent_setup_ai_runtime_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_ai_runtime_setup_action_codes", [])
+                if isinstance(setup_followthrough_memory.get("top_ai_runtime_setup_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_multimodal_codes = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_multimodal_setup_action_codes", [])
+                if isinstance(setup_followthrough_memory.get("top_multimodal_setup_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
         semantic_guidance_status = str(target_row.get("semantic_guidance_status", "") or "cold").strip().lower() or "cold"
         semantic_guidance_match_count = int(target_row.get("semantic_guidance_match_count", 0) or 0)
         semantic_memory_available = bool(target_row.get("semantic_memory_available", False))
@@ -18229,12 +18828,20 @@ class DesktopBackendService:
                 if str(item.get("state", "") or "").strip().lower() == "ready"
             ]
         )
+        ready_provider_names = self._machine_dedupe(
+            [*ready_provider_names, *recent_setup_verified_provider_names],
+            limit=8,
+        )
         attention_provider_names = sorted(
             [
                 name
                 for name, item in provider_map.items()
                 if str(item.get("state", "") or "").strip().lower() == "needs_attention"
             ]
+        )
+        attention_provider_names = self._machine_dedupe(
+            [*attention_provider_names, *recent_setup_attention_provider_names],
+            limit=8,
         )
         missing_provider_names = sorted(
             [
@@ -18276,6 +18883,14 @@ class DesktopBackendService:
                 for item in (model_selection or {}).get("selected_item_keys", [])
                 if isinstance((model_selection or {}).get("selected_item_keys", []), list) and str(item).strip()
             }
+        selected_model_tasks = {
+            *selected_model_tasks,
+            *{
+                str(item).strip().lower()
+                for item in recent_setup_model_tasks
+                if str(item).strip()
+            },
+        }
         local_ready_tasks = []
         for task_name in required_tasks:
             if int(task_counts.get(task_name, 0) or 0) > 0:
@@ -18446,6 +19061,18 @@ class DesktopBackendService:
                     attention_provider_names=attention_provider_names,
                 ),
                 *ai_runtime_setup_action_codes,
+                *[
+                    code
+                    for code in recent_setup_ai_runtime_codes
+                    if code in {"warm_local_reasoning_runtime", "recover_desktop_agent_stack"}
+                    and any(task_name in {"reasoning", "intent", "control"} for task_name in required_tasks)
+                ],
+                *[
+                    code
+                    for code in recent_setup_multimodal_codes
+                    if code in {"initialize_local_vision_runtime", "warm_local_vision_runtime", "install_ocr_runtime"}
+                    and any(task_name in {"vision", "ocr"} for task_name in required_tasks)
+                ],
                 *remediation_related_setup_action_codes,
             ],
             limit=8,
@@ -18468,6 +19095,12 @@ class DesktopBackendService:
             "remote_provider_candidates": remote_provider_candidates,
             "selected_model_tasks": sorted(selected_model_tasks),
             "blocked_model_tasks": sorted(blocked_model_tasks),
+            "recent_setup_top_verified_providers": recent_setup_verified_provider_names,
+            "recent_setup_top_attention_providers": recent_setup_attention_provider_names,
+            "recent_setup_top_model_item_keys": recent_setup_model_item_keys,
+            "recent_setup_model_tasks": recent_setup_model_tasks,
+            "recent_setup_top_ai_runtime_setup_codes": recent_setup_ai_runtime_codes,
+            "recent_setup_top_multimodal_setup_codes": recent_setup_multimodal_codes,
             "execution_mode": execution_mode,
             "readiness_status": readiness_status,
             "auto_prepare_allowed": bool(auto_prepare_allowed),

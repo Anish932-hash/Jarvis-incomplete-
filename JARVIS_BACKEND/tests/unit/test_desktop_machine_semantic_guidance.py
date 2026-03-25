@@ -198,6 +198,151 @@ def test_desktop_machine_prepare_app_control_uses_semantic_memory_guidance() -> 
     assert "focus_navigation_tree" in list(captured_survey.get("preferred_wave_actions", []))
 
 
+def test_desktop_machine_recent_setup_followthrough_memory_collects_provider_and_model_hints() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    class _StubOnboardingManager:
+        def history(self, **_kwargs):
+            return {
+                "status": "success",
+                "count": 1,
+                "latest_run": {
+                    "provider_followthrough": {
+                        "items": [
+                            {"provider": "huggingface", "status": "success", "verified": True},
+                            {"provider": "openai", "status": "manual_input_required", "verified": False},
+                            {"provider": "anthropic", "status": "error", "verified": False},
+                        ]
+                    },
+                    "model_install": {
+                        "selected_item_keys": ["reasoning-llama", "vision-ocr"],
+                        "selected_action_ids": ["install_reasoning", "install_vision"],
+                        "executed_action_ids": ["install_reasoning"],
+                    },
+                    "ai_runtime_setup_result": {
+                        "selected_action_codes": ["warm_local_reasoning_runtime"],
+                    },
+                    "multimodal_setup_result": {
+                        "selected_action_codes": ["warm_local_vision_runtime"],
+                    },
+                    "summary": {
+                        "setup_action_top_codes": {"configure_huggingface_token": 1},
+                        "ai_runtime_setup_top_codes": {"warm_local_reasoning_runtime": 1},
+                        "multimodal_setup_top_codes": {"warm_local_vision_runtime": 1},
+                    },
+                },
+                "summary": {
+                    "setup_action_total": 2,
+                    "setup_action_auto_runnable_total": 1,
+                    "setup_action_manual_total": 0,
+                    "setup_action_blocked_total": 0,
+                    "ai_runtime_setup_action_total": 1,
+                    "ai_runtime_setup_auto_runnable_total": 1,
+                    "ai_runtime_setup_error_total": 0,
+                    "multimodal_setup_action_total": 1,
+                    "multimodal_setup_auto_runnable_total": 1,
+                    "setup_execution_remaining_ready_total": 1,
+                    "setup_execution_resume_ready_total": 0,
+                    "route_remediation_provider_blocked_total": 1,
+                    "route_remediation_persistent_provider_blocked_total": 0,
+                    "continuation_provider_blocked_total": 0,
+                    "app_learning_remediation_provider_blocked_total": 0,
+                    "prepared_remediation_provider_blocked_total": 0,
+                    "route_remediation_setup_followup_total": 0,
+                    "continuation_setup_followup_total": 0,
+                    "app_learning_remediation_setup_followup_total": 0,
+                    "prepared_remediation_setup_followup_total": 0,
+                    "vm_setup_followup_guest_total": 0,
+                    "execution_memory_followthrough_total": 0,
+                    "app_learning_memory_followthrough_total": 0,
+                    "prepared_memory_followthrough_total": 0,
+                    "vm_memory_followthrough_total": 0,
+                    "continuation_manual_total": 0,
+                    "route_remediation_blocked_total": 0,
+                    "continuation_retry_total": 0,
+                },
+            }
+
+    service.desktop_onboarding_manager = _StubOnboardingManager()
+
+    payload = service._desktop_machine_recent_setup_followthrough_memory(limit=4)
+
+    assert payload["followthrough_status"] == "required"
+    assert payload["provider_status_counts"]["success"] == 1
+    assert payload["provider_status_counts"]["manual_input_required"] == 1
+    assert payload["top_verified_provider_names"] == ["huggingface"]
+    assert payload["top_manual_input_provider_names"] == ["openai"]
+    assert payload["top_attention_provider_names"] == ["anthropic"]
+    assert payload["top_selected_model_item_keys"] == ["reasoning-llama", "vision-ocr"]
+    assert payload["top_selected_model_action_ids"][0] == "install_reasoning"
+    assert payload["top_ai_runtime_setup_action_codes"] == ["warm_local_reasoning_runtime"]
+    assert payload["top_multimodal_setup_action_codes"] == ["warm_local_vision_runtime"]
+    assert payload["setup_guidance_status"] == "strong"
+    assert "recent_provider_verified" in payload["setup_guidance_reason_codes"]
+
+
+def test_desktop_machine_prepare_readiness_annotation_uses_recent_setup_memory_hints() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    service._desktop_machine_ai_runtime_setup_actions = lambda **_kwargs: []
+    service._desktop_machine_provider_action_items = lambda **_kwargs: []
+    service._desktop_machine_profile_setup_actions = lambda **_kwargs: [
+        {"setup_action_code": "configure_huggingface_token"},
+        {"setup_action_code": "warm_local_reasoning_runtime"},
+        {"setup_action_code": "warm_local_vision_runtime"},
+    ]
+
+    profile = {
+        "ai_runtime_profile": {
+            "status": "attention",
+            "summary": {
+                "ready_stack_count": 0,
+                "blocked_stack_count": 0,
+                "action_required_task_count": 1,
+                "reasoning_runtime_ready": False,
+                "vision_runtime_ready": False,
+            },
+        },
+        "models": {
+            "local_inventory": {"task_counts": {}, "inventory": {"items": []}},
+            "task_preferences": {"by_task": {}},
+            "recommended_models": [],
+        },
+        "setup_followthrough_memory": {
+            "top_verified_provider_names": ["huggingface"],
+            "top_selected_model_item_keys": ["reasoning-llama", "vision-ocr"],
+            "top_ai_runtime_setup_action_codes": ["warm_local_reasoning_runtime"],
+            "top_multimodal_setup_action_codes": ["warm_local_vision_runtime"],
+        },
+    }
+
+    payload = service._desktop_machine_prepare_readiness_annotation(
+        profile=profile,
+        target_row={
+            "app_name": "Notepad",
+            "prepare_query": "settings",
+            "category": "",
+            "target_container_roles": ["dialog"],
+            "preferred_wave_actions": ["command_palette"],
+            "preferred_traversal_paths": ["dialog"],
+            "reason_codes": [],
+            "semantic_guidance_status": "cold",
+            "semantic_guidance_match_count": 0,
+        },
+        path=r"C:\Windows\notepad.exe",
+        provider_actions={},
+        model_selection={},
+    )
+
+    assert "huggingface" in payload["ready_provider_names"]
+    assert "reasoning" in payload["selected_model_tasks"]
+    assert "vision" in payload["selected_model_tasks"]
+    assert "reasoning" in payload["install_ready_tasks"]
+    assert "vision" in payload["install_ready_tasks"]
+    assert payload["execution_mode"] == "remote_assist"
+    assert "warm_local_reasoning_runtime" in payload["related_setup_action_codes"]
+    assert "warm_local_vision_runtime" in payload["related_setup_action_codes"]
+
+
 def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     profile_calls = []
@@ -318,9 +463,16 @@ def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_s
         "status": "success",
         "executed_count": 4,
         "provider_followthrough": {"verified_count": 1, "recovery_continued_count": 1},
+        "provider_status_counts": {"success": 1},
+        "top_verified_provider_names": ["huggingface"],
+        "selected_model_item_keys": ["reasoning-llama"],
         "selected_model_action_count": 2,
+        "selected_ai_runtime_action_codes": ["warm_local_reasoning_runtime"],
         "selected_ai_runtime_action_count": 1,
+        "selected_multimodal_action_codes": ["warm_local_vision_runtime"],
         "selected_multimodal_action_count": 1,
+        "setup_guidance_status": "strong",
+        "setup_guidance_reason_codes": ["recent_provider_verified", "recent_model_selection_available"],
         "next_actions": [{"kind": "continue_setup"}],
     }
     service.desktop_app_launcher_launch = lambda **_kwargs: {
@@ -382,6 +534,9 @@ def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_s
     assert payload["summary"]["recent_setup_remaining_ready_count"] == 2
     assert payload["summary"]["recent_setup_provider_blocked_count"] == 1
     assert payload["summary"]["recent_setup_followup_count"] == 1
+    assert payload["summary"]["setup_followthrough_top_verified_providers"] == ["huggingface"]
+    assert payload["summary"]["setup_followthrough_selected_model_item_keys"] == ["reasoning-llama"]
+    assert payload["summary"]["setup_followthrough_guidance_status"] == "strong"
     assert len(profile_calls) == 2
 
 
