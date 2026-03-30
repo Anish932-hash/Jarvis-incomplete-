@@ -8316,6 +8316,32 @@ class DesktopActionRouter:
             entity_types=entity_types or [],
         )
 
+    def app_memory_maintain(
+        self,
+        *,
+        force: bool = False,
+        reason: str = "manual",
+    ) -> Dict[str, Any]:
+        maintenance = self._app_memory.maintain_knowledge_store(
+            force=bool(force),
+            reason=str(reason or "manual").strip() or "manual",
+        )
+        maintenance_payload = dict(maintenance) if isinstance(maintenance, dict) else {}
+        snapshot = self._app_memory.snapshot(limit=0)
+        knowledge_store = (
+            dict(snapshot.get("knowledge_store", {}))
+            if isinstance(snapshot, dict) and isinstance(snapshot.get("knowledge_store", {}), dict)
+            else {}
+        )
+        return {
+            "status": str(maintenance_payload.get("status", "success") or "success").strip().lower() or "success",
+            "performed": bool(maintenance_payload.get("performed", False)),
+            "force": bool(force),
+            "reason": str(maintenance_payload.get("reason", reason) or reason or "manual").strip() or "manual",
+            "maintenance": maintenance_payload,
+            "knowledge_store": knowledge_store,
+        }
+
     def survey_app_memory(
         self,
         *,

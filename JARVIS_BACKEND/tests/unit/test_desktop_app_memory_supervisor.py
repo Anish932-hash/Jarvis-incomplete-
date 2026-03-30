@@ -30,6 +30,13 @@ def test_desktop_app_memory_supervisor_trigger_and_history(tmp_path: Path) -> No
                 "learned_surface_total": 3,
                 "known_surface_total": 1,
             },
+            "maintenance_status": "success",
+            "maintenance_performed": True,
+            "maintenance_due": True,
+            "maintenance_removed_count": 2,
+            "maintenance_added_count": 4,
+            "maintenance_reason": "supervisor:manual",
+            "maintenance_last_at": "2026-03-30T12:00:00Z",
         }
 
     supervisor.start(_execute)
@@ -38,6 +45,8 @@ def test_desktop_app_memory_supervisor_trigger_and_history(tmp_path: Path) -> No
         assert payload["status"] == "success"
         assert payload["supervisor"]["status"] == "success"
         assert payload["supervisor"]["latest_run"]["surveyed_app_count"] == 2
+        assert payload["supervisor"]["latest_run"]["maintenance_performed"] is True
+        assert payload["supervisor"]["last_summary"]["maintenance_removed_count"] == 2
 
         history = supervisor.history(limit=4)
         assert history["status"] == "success"
@@ -45,6 +54,10 @@ def test_desktop_app_memory_supervisor_trigger_and_history(tmp_path: Path) -> No
         assert history["summary"]["success_total"] == 2
         assert history["summary"]["wave_attempt_total"] == 4
         assert history["summary"]["learned_surface_total"] == 3
+        assert history["summary"]["maintenance_run_total"] == 1
+        assert history["summary"]["maintenance_due_total"] == 1
+        assert history["summary"]["maintenance_removed_total"] == 2
+        assert history["summary"]["maintenance_added_total"] == 4
     finally:
         supervisor.stop()
 
@@ -251,6 +264,10 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
                         "hotkey_hints": ["Alt+F", "Ctrl+F"],
                         "followthrough_recommended": True,
                     },
+                    "recent_setup_resume_ready": True,
+                    "recent_setup_auto_resume_ready": True,
+                    "knowledge_store_maintenance_due": True,
+                    "knowledge_store_recent_cleanup_count": 2,
                     "learning_profile": "hybrid_guided_explore",
                     "execution_mode": "hybrid_ready",
                     "adaptive_runtime_strategy_profile": "balanced_hybrid_guided_explore",
@@ -278,15 +295,24 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
             ],
         )
         assert created["status"] == "success"
-        assert created["campaign"]["target_container_roles"] == ["dialog", "menu"]
+        assert {"dialog", "menu", "toolbar", "tree", "sidebar"}.issubset(
+            set(created["campaign"]["target_container_roles"])
+        )
         assert created["campaign"]["adaptive_target_container_roles"] is True
         assert int(created["campaign"]["effective_max_surface_waves"] or 0) > 2
         assert created["campaign"]["adaptive_surface_wave_depth"] is True
-        assert created["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
+        assert {"open_command_palette", "focus_sidebar", "command", "focus_search_box"}.issubset(
+            set(created["campaign"]["preferred_wave_actions"])
+        )
         assert created["campaign"]["adaptive_preferred_wave_actions"] is True
         assert created["campaign"]["adaptive_preferred_traversal_paths"] is True
-        assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["preferred_traversal_paths"]))
+        assert {"menu", "dialog", "tree", "toolbar", "sidebar"}.issubset(set(created["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(created["campaign"]["recommended_traversal_paths"]))
+        assert created["campaign"]["setup_resume_guided_target_count"] == 1
+        assert created["campaign"]["setup_auto_resume_guided_target_count"] == 1
+        assert created["campaign"]["maintenance_guided_target_count"] == 1
+        assert created["campaign"]["maintenance_cleanup_target_count"] == 1
+        assert created["campaign"]["effective_max_probe_controls"] >= 6
         assert created["campaign"]["adaptive_runtime_strategy_counts"]["balanced_hybrid_guided_explore"] == 1
         assert created["campaign"]["runtime_band_counts"]["hybrid"] == 1
         assert created["campaign"]["expected_route_profile_counts"]["local_vision_assist"] == 1
@@ -312,10 +338,15 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
 
         assert executed["status"] == "success"
         assert captured[-1]["query"] == "settings"
-        assert captured[-1]["target_container_roles"] == ["dialog", "menu"]
-        assert captured[-1]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
-        assert {"menu", "dialog", "tree"}.issubset(set(captured[-1]["preferred_traversal_paths"]))
+        assert {"dialog", "menu", "toolbar", "tree", "sidebar"}.issubset(
+            set(captured[-1]["target_container_roles"])
+        )
+        assert {"open_command_palette", "focus_sidebar", "command", "focus_search_box"}.issubset(
+            set(captured[-1]["preferred_wave_actions"])
+        )
+        assert {"menu", "dialog", "tree", "toolbar", "sidebar"}.issubset(set(captured[-1]["preferred_traversal_paths"]))
         assert int(captured[-1]["max_surface_waves"] or 0) > 2
+        assert int(captured[-1]["max_probe_controls"] or 0) >= 6
         assert captured[-1]["query_hints_by_app"]["notepad"][0] == "settings"
         assert "ctrl+f" in {str(item).strip().lower() for item in captured[-1]["semantic_hotkeys_by_app"]["notepad"]}
         assert captured[-1]["adaptive_app_profiles"][0]["adaptive_runtime_strategy_profile"] == "balanced_hybrid_guided_explore"
@@ -336,9 +367,15 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
         assert executed["campaign"]["ai_route_confident_count"] == 1
         assert executed["campaign"]["ai_route_fallback_count"] == 0
         assert executed["campaign"]["memory_mission_status_counts"]["strong"] == 1
+        assert executed["campaign"]["setup_resume_guided_target_count"] == 1
+        assert executed["campaign"]["setup_auto_resume_guided_target_count"] == 1
+        assert executed["campaign"]["maintenance_guided_target_count"] == 1
+        assert executed["campaign"]["maintenance_cleanup_target_count"] == 1
         assert int(executed["campaign"].get("route_fallback_app_count", 0) or 0) == 0
-        assert executed["campaign"]["preferred_wave_actions"] == ["open_command_palette", "focus_sidebar"]
-        assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))
+        assert {"open_command_palette", "focus_sidebar", "command", "focus_search_box"}.issubset(
+            set(executed["campaign"]["preferred_wave_actions"])
+        )
+        assert {"menu", "dialog", "tree", "toolbar", "sidebar"}.issubset(set(executed["campaign"]["preferred_traversal_paths"]))
         assert {"menu", "dialog", "tree"}.issubset(set(executed["campaign"]["recommended_traversal_paths"]))
         assert executed["campaign"]["traversed_container_roles"] == ["dialog", "menu"]
         assert executed["campaign"]["executed_traversal_paths"] == ["dialog", "tree"]
@@ -359,6 +396,8 @@ def test_desktop_app_memory_supervisor_campaign_adapts_hotspot_roles_and_wave_de
             if isinstance(item, dict)
         }
         assert int(top_preferred_actions.get("open_command_palette", 0) or 0) >= 1
+        assert executed["campaigns"]["summary"]["setup_resume_guided_total"] >= 1
+        assert executed["campaigns"]["summary"]["maintenance_guided_total"] >= 1
     finally:
         supervisor.stop()
 

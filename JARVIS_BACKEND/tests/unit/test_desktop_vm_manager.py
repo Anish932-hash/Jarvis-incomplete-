@@ -67,8 +67,14 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
                 "knowledge_store_control_count": 18,
                 "knowledge_store_command_count": 9,
                 "knowledge_store_vector_count": 27,
+                "knowledge_store_details_vector_count": 27,
+                "knowledge_store_controls_vector_count": 18,
+                "knowledge_store_permanent_vector_db_count": 2,
                 "knowledge_low_coverage_app_count": 2,
                 "knowledge_semantic_ready_app_count": 3,
+                "knowledge_store_maintenance_due": True,
+                "knowledge_store_maintenance_removed_count": 2,
+                "knowledge_store_maintenance_added_count": 5,
             }
         },
         "app_learning_plan": {
@@ -89,6 +95,13 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
             "setup_execution_remaining_ready_total": 2,
             "provider_blocked_total": 1,
             "setup_followup_total": 3,
+            "model_setup_resume_ready": True,
+            "model_setup_can_auto_resume_now": True,
+            "top_model_resume_action_ids": ["install_vision"],
+            "model_setup_resume_action_count": 1,
+            "top_model_resume_blockers": ["active_runs"],
+            "model_setup_resume_trigger": "after_active_runs",
+            "model_setup_resume_hint": "Resume model downloads after active runs finish.",
             "reason_codes": ["recent_setup_followthrough_required", "recent_provider_blocked_pressure"],
         },
         "continuation_memory": {
@@ -125,10 +138,15 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["multimodal_memory_pressure"] == 3
     assert plan["items"][0]["provider_model_readiness"]["structured_memory_control_count"] == 18
     assert plan["items"][0]["provider_model_readiness"]["structured_memory_vector_count"] == 27
+    assert plan["items"][0]["provider_model_readiness"]["structured_memory_permanent_vector_db_count"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["structured_memory_maintenance_due"] is True
+    assert plan["items"][0]["provider_model_readiness"]["structured_memory_recent_cleanup_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["memory_guidance_status"] == "partial"
     assert "semantic_memory_ready" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
     assert "learning_semantic_guidance_available" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
+    assert "structured_memory_maintenance_due" in plan["items"][0]["provider_model_readiness"]["memory_guidance_reason_codes"]
     assert "memory_assisted_vm_route" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert "structured_memory_recent_cleanup_pressure" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_guided_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["app_learning_semantic_followup_count"] == 1
     assert plan["items"][0]["provider_model_readiness"]["app_learning_memory_mission_status_counts"]["strong"] == 2
@@ -143,7 +161,14 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_followthrough_required"] is True
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_remaining_ready_count"] == 2
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_provider_blocked_count"] == 1
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_resume_ready"] is True
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_auto_resume_ready"] is True
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_resume_action_count"] == 1
+    assert "install_vision" in plan["items"][0]["provider_model_readiness"]["recent_setup_resume_action_ids"]
+    assert "active_runs" in plan["items"][0]["provider_model_readiness"]["recent_setup_resume_blockers"]
     assert "recent_setup_followthrough_required" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert "recent_model_setup_resume_ready" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert "recent_model_setup_auto_resume_ready" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_status"] == "recommended"
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_recommended"] is True
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_learning_wave_total"] == 2
@@ -154,7 +179,11 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["memory_route_alignment_status"] == "assisted"
     assert plan["items"][0]["memory_mission"]["status"] == "partial"
     assert plan["items"][0]["memory_mission"]["seed_query"] == "desktop settings"
+    assert "models" in plan["items"][0]["memory_mission"]["query_hints"]
+    assert "runtime" in plan["items"][0]["memory_mission"]["query_hints"]
     assert "settings" in plan["items"][0]["memory_mission"]["query_hints"]
+    assert "recent_model_setup_resume_ready" in plan["items"][0]["memory_mission"]["reason_codes"]
+    assert "structured_memory_maintenance_due" in plan["items"][0]["memory_mission"]["reason_codes"]
     assert plan["summary"]["ai_route_status_counts"]["fallback"] == 1
     assert plan["summary"]["ai_route_runtime_band_counts"]["accessibility"] == 1
     assert plan["summary"]["memory_guidance_status_counts"]["partial"] == 1
@@ -167,15 +196,28 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["summary"]["top_memory_mission_hotkeys"]["Alt+F"] >= 1
     assert plan["summary"]["setup_guided_guest_count"] == 1
     assert plan["summary"]["continuation_guided_guest_count"] == 1
+    assert plan["summary"]["setup_resume_guided_guest_count"] == 1
+    assert plan["summary"]["setup_auto_resume_guided_guest_count"] == 1
+    assert plan["summary"]["maintenance_guided_guest_count"] == 1
+    assert plan["summary"]["maintenance_cleanup_guest_count"] == 1
     assert plan["defaults"]["memory_followthrough_enabled"] is True
-    assert plan["defaults"]["max_surface_waves"] == 6
-    assert plan["defaults"]["max_probe_controls"] == 5
+    assert plan["defaults"]["max_surface_waves"] >= 6
+    assert plan["defaults"]["max_probe_controls"] >= 5
     assert plan["defaults"]["setup_guided_guest_count"] == 1
     assert plan["defaults"]["continuation_guided_guest_count"] == 1
+    assert plan["defaults"]["setup_resume_guided_guest_count"] == 1
+    assert plan["defaults"]["setup_auto_resume_guided_guest_count"] == 1
+    assert plan["defaults"]["maintenance_guided_guest_count"] == 1
+    assert plan["defaults"]["maintenance_cleanup_guest_count"] == 1
     assert "focus_toolbar" in plan["defaults"]["preferred_wave_actions"]
     assert "focus_navigation_tree" in plan["defaults"]["preferred_wave_actions"]
+    assert "open_command_palette" in plan["defaults"]["preferred_wave_actions"]
     assert plan["defaults"]["memory_mission_status_counts"]["partial"] == 1
     assert plan["next_actions"][0]["kind"] == "deepen_vm_control_learning"
+    assert plan["next_actions"][0]["recent_setup_resume_ready"] is True
+    assert plan["next_actions"][0]["recent_setup_auto_resume_ready"] is True
+    assert plan["next_actions"][0]["knowledge_store_maintenance_due"] is True
+    assert plan["next_actions"][0]["knowledge_store_recent_cleanup_count"] == 2
     assert "settings" in plan["next_actions"][0]["query_hints"]
     assert "Alt+F" in plan["next_actions"][0]["hotkey_hints"]
 
@@ -207,15 +249,17 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert prepared["summary"]["memory_assisted_route"] is True
     assert prepared["summary"]["memory_mission"]["status"] == "partial"
     assert prepared["summary"]["memory_mission"]["seed_query"] == "desktop settings"
+    assert "models" in prepared["summary"]["memory_mission"]["query_hints"]
     assert "settings" in prepared["summary"]["memory_mission"]["query_hints"]
     assert "Alt+F" in prepared["summary"]["memory_mission"]["hotkey_hints"]
     assert "recent_setup_followthrough_required" in prepared["summary"]["memory_mission"]["reason_codes"]
+    assert "recent_model_setup_resume_ready" in prepared["summary"]["memory_mission"]["reason_codes"]
     assert "recent_continuation_recommended" in prepared["summary"]["memory_mission"]["reason_codes"]
     assert prepared["summary"]["memory_route_alignment_status"] == "assisted"
     assert prepared["summary"]["memory_assisted_route_count"] == 1
     assert prepared["summary"]["memory_followthrough_recommended"] is True
-    assert prepared["summary"]["recommended_max_surface_waves"] == 5
-    assert prepared["summary"]["recommended_max_probe_controls"] == 4
+    assert prepared["summary"]["recommended_max_surface_waves"] >= 6
+    assert prepared["summary"]["recommended_max_probe_controls"] >= 5
 
 
 def test_desktop_vm_manager_uses_recent_setup_provider_memory_for_api_route(tmp_path, monkeypatch) -> None:

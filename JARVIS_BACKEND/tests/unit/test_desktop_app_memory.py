@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from typing import Any, Dict
@@ -1597,6 +1599,12 @@ def test_desktop_app_memory_populates_sqlite_knowledge_store_and_semantic_lookup
     assert int(snapshot["knowledge_store"]["entry_count"] or 0) >= 1
     assert int(snapshot["knowledge_store"]["control_count"] or 0) >= 2
     assert int(snapshot["knowledge_store"]["vector_count"] or 0) >= 2
+    assert int(snapshot["knowledge_store"]["details_vector_count"] or 0) >= 2
+    assert int(snapshot["knowledge_store"]["controls_vector_count"] or 0) >= 2
+    assert int(snapshot["knowledge_store"]["permanent_vector_db_count"] or 0) == 2
+    assert Path(str(snapshot["knowledge_store"]["temporary_sqlite_path"])).exists()
+    assert Path(str(snapshot["knowledge_store"]["detail_vector_db_path"])).exists()
+    assert Path(str(snapshot["knowledge_store"]["controls_vector_db_path"])).exists()
     assert snapshot["items"]
     item_knowledge = dict(snapshot["items"][0].get("knowledge_store", {}))
     assert int(item_knowledge.get("control_count", 0) or 0) >= 2
@@ -1611,6 +1619,100 @@ def test_desktop_app_memory_populates_sqlite_knowledge_store_and_semantic_lookup
     hint = memory.surface_hint(app_name="notepad", query="save")
     assert hint["knowledge_store"]["status"] == "success"
     assert any("save" in str(item.get("label", "")).lower() for item in hint["semantic_matches"])
+
+
+def test_desktop_app_memory_updates_dual_vector_dbs_and_prunes_deprecated_items(tmp_path: Path) -> None:
+    memory = DesktopAppMemory(
+        store_path=str(tmp_path / "desktop_app_memory.json"),
+        knowledge_store_path=str(tmp_path / "desktop_app_memory.sqlite3"),
+    )
+
+    memory.record_survey(
+        app_name="notepad",
+        query="export",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|main|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_inventory": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Legacy Export", "control_type": "menuitem", "automation_id": "LegacyExportMenu"},
+                ],
+                "recommended_actions": ["save", "export"],
+            },
+            "elements": {
+                "items": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Legacy Export", "control_type": "menuitem", "automation_id": "LegacyExportMenu"},
+                ]
+            },
+        },
+        source="manual",
+    )
+
+    memory.record_survey(
+        app_name="notepad",
+        query="print document",
+        app_profile={"profile_id": "notepad", "name": "Notepad", "category": "utility"},
+        snapshot={
+            "surface_fingerprint": "notepad|main|surface",
+            "target_window": {"title": "Untitled - Notepad"},
+            "active_window": {"title": "Untitled - Notepad"},
+            "surface_summary": {
+                "control_inventory": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Print", "control_type": "menuitem", "automation_id": "PrintMenu"},
+                ],
+                "recommended_actions": ["save", "print"],
+            },
+            "elements": {
+                "items": [
+                    {"name": "Save", "control_type": "button", "automation_id": "SaveButton"},
+                    {"name": "Print", "control_type": "menuitem", "automation_id": "PrintMenu"},
+                ]
+            },
+        },
+        source="manual",
+    )
+
+    snapshot = memory.snapshot(app_name="notepad", limit=4)
+    detail_path = Path(str(snapshot["knowledge_store"]["detail_vector_db_path"]))
+    controls_path = Path(str(snapshot["knowledge_store"]["controls_vector_db_path"]))
+
+    with detail_path.open("r", encoding="utf-8") as handle:
+        detail_payload = json.load(handle)
+    with controls_path.open("r", encoding="utf-8") as handle:
+        controls_payload = json.load(handle)
+
+    assert any(str(item.get("label", "")) == "Print" for item in detail_payload.get("items", []))
+    assert any(str(item.get("label", "")) == "Print" for item in controls_payload.get("items", []))
+
+    entry_key = next(iter(memory._entries))
+    entry = memory._entries[entry_key]
+    entry.setdefault("metrics", {})["survey_count"] = 5
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    for row in entry.get("controls", {}).values():
+        if str(row.get("label", "") or "").strip() == "Legacy Export":
+            row["last_seen_at"] = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+            row["probe_error_count"] = 3
+            row["revalidation_due"] = True
+            row["deprecated"] = True
+
+    maintenance = memory.maintain_knowledge_store(force=True, reason="unit_test_daily_prune")
+    assert maintenance["status"] == "success"
+    assert int(maintenance["removed_count"] or 0) >= 2
+
+    with detail_path.open("r", encoding="utf-8") as handle:
+        detail_payload = json.load(handle)
+    with controls_path.open("r", encoding="utf-8") as handle:
+        controls_payload = json.load(handle)
+
+    assert not any(str(item.get("label", "")) == "Legacy Export" for item in detail_payload.get("items", []))
+    assert not any(str(item.get("label", "")) == "Legacy Export" for item in controls_payload.get("items", []))
+    assert any(str(item.get("label", "")) == "Print" for item in detail_payload.get("items", []))
+    assert any(str(item.get("label", "")) == "Print" for item in controls_payload.get("items", []))
 
 
 def test_desktop_app_memory_records_adaptive_wave_strategies(tmp_path: Path) -> None:

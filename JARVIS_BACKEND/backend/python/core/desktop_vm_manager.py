@@ -254,6 +254,58 @@ class DesktopVMManager:
         memory_followthrough_guest_count = len(
             [row for row in selected if bool(row.get("memory_followthrough_recommended", False))]
         )
+        setup_resume_guided_guest_count = len(
+            [
+                row
+                for row in selected
+                if bool(row.get("recent_setup_resume_ready", False))
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and bool(row.get("provider_model_readiness", {}).get("recent_setup_resume_ready", False))
+                )
+            ]
+        )
+        setup_auto_resume_guided_guest_count = len(
+            [
+                row
+                for row in selected
+                if bool(row.get("recent_setup_auto_resume_ready", False))
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and bool(
+                        row.get("provider_model_readiness", {}).get("recent_setup_auto_resume_ready", False)
+                    )
+                )
+            ]
+        )
+        maintenance_guided_guest_count = len(
+            [
+                row
+                for row in selected
+                if bool(row.get("knowledge_store_maintenance_due", False))
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and bool(
+                        row.get("provider_model_readiness", {}).get("structured_memory_maintenance_due", False)
+                    )
+                )
+            ]
+        )
+        maintenance_cleanup_guest_count = len(
+            [
+                row
+                for row in selected
+                if int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
+                or (
+                    isinstance(row.get("provider_model_readiness", {}), dict)
+                    and int(
+                        row.get("provider_model_readiness", {}).get("structured_memory_recent_cleanup_count", 0)
+                        or 0
+                    )
+                    > 0
+                )
+            ]
+        )
         setup_guided_guest_count = len(
             [
                 row
@@ -300,6 +352,16 @@ class DesktopVMManager:
             default_max_surface_waves = max(default_max_surface_waves, 5)
         if continuation_guided_guest_count > 0:
             default_max_surface_waves = max(default_max_surface_waves, 6)
+        if setup_resume_guided_guest_count > 0:
+            default_max_surface_waves = max(
+                default_max_surface_waves,
+                7 if setup_auto_resume_guided_guest_count > 0 else 6,
+            )
+        if maintenance_guided_guest_count > 0 or maintenance_cleanup_guest_count > 0:
+            default_max_surface_waves = max(
+                default_max_surface_waves,
+                7 if maintenance_cleanup_guest_count > 0 else 6,
+            )
         default_max_probe_controls = (
             5 if memory_underused_guest_count > 0 else 4 if memory_followthrough_guest_count > 0 else 3
         )
@@ -307,6 +369,16 @@ class DesktopVMManager:
             default_max_probe_controls = max(default_max_probe_controls, 4)
         if continuation_guided_guest_count > 0:
             default_max_probe_controls = max(default_max_probe_controls, 5)
+        if setup_resume_guided_guest_count > 0:
+            default_max_probe_controls = max(
+                default_max_probe_controls,
+                6 if setup_auto_resume_guided_guest_count > 0 else 5,
+            )
+        if maintenance_guided_guest_count > 0 or maintenance_cleanup_guest_count > 0:
+            default_max_probe_controls = max(
+                default_max_probe_controls,
+                6 if maintenance_cleanup_guest_count > 0 else 5,
+            )
         preferred_wave_actions = _dedupe_strings(
             [
                 str(action_name).strip().lower()
@@ -329,12 +401,22 @@ class DesktopVMManager:
             )
         if setup_guided_guest_count > 0:
             preferred_wave_actions = _dedupe_strings(
-                [*preferred_wave_actions, "focus_toolbar", "focus_search_box", "command"],
+                ["focus_toolbar", "focus_search_box", "command", *preferred_wave_actions],
                 limit=8,
             )
         if continuation_guided_guest_count > 0:
             preferred_wave_actions = _dedupe_strings(
-                [*preferred_wave_actions, "focus_navigation_tree", "focus_list_surface", "focus_sidebar"],
+                ["focus_navigation_tree", "focus_list_surface", "focus_sidebar", *preferred_wave_actions],
+                limit=8,
+            )
+        if setup_resume_guided_guest_count > 0:
+            preferred_wave_actions = _dedupe_strings(
+                ["open_command_palette", "focus_search_box", "command", *preferred_wave_actions],
+                limit=8,
+            )
+        if maintenance_guided_guest_count > 0 or maintenance_cleanup_guest_count > 0:
+            preferred_wave_actions = _dedupe_strings(
+                ["focus_toolbar", "focus_navigation_tree", "focus_sidebar", *preferred_wave_actions],
                 limit=8,
             )
         memory_mission_status_counts: Dict[str, int] = {}
@@ -417,6 +499,10 @@ class DesktopVMManager:
                 "memory_followthrough_guest_count": memory_followthrough_guest_count,
                 "setup_guided_guest_count": setup_guided_guest_count,
                 "continuation_guided_guest_count": continuation_guided_guest_count,
+                "setup_resume_guided_guest_count": setup_resume_guided_guest_count,
+                "setup_auto_resume_guided_guest_count": setup_auto_resume_guided_guest_count,
+                "maintenance_guided_guest_count": maintenance_guided_guest_count,
+                "maintenance_cleanup_guest_count": maintenance_cleanup_guest_count,
                 "top_memory_mission_queries": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -452,6 +538,10 @@ class DesktopVMManager:
                 "memory_followthrough_enabled": bool(memory_followthrough_guest_count > 0),
                 "setup_guided_guest_count": setup_guided_guest_count,
                 "continuation_guided_guest_count": continuation_guided_guest_count,
+                "setup_resume_guided_guest_count": setup_resume_guided_guest_count,
+                "setup_auto_resume_guided_guest_count": setup_auto_resume_guided_guest_count,
+                "maintenance_guided_guest_count": maintenance_guided_guest_count,
+                "maintenance_cleanup_guest_count": maintenance_cleanup_guest_count,
                 "memory_mission_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(memory_mission_status_counts.items(), key=lambda entry: entry[0])
@@ -471,6 +561,46 @@ class DesktopVMManager:
                     "status": "ready" if bool(row.get("auto_prepare_allowed", False)) else "attention",
                     "recommended_action_code": _clean_text(row.get("remediation_action_code", "")),
                     "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
+                    "recent_setup_resume_ready": bool(
+                        row.get("recent_setup_resume_ready", False)
+                        or (
+                            isinstance(row.get("provider_model_readiness", {}), dict)
+                            and bool(row.get("provider_model_readiness", {}).get("recent_setup_resume_ready", False))
+                        )
+                    ),
+                    "recent_setup_auto_resume_ready": bool(
+                        row.get("recent_setup_auto_resume_ready", False)
+                        or (
+                            isinstance(row.get("provider_model_readiness", {}), dict)
+                            and bool(
+                                row.get("provider_model_readiness", {}).get("recent_setup_auto_resume_ready", False)
+                            )
+                        )
+                    ),
+                    "knowledge_store_maintenance_due": bool(
+                        row.get("knowledge_store_maintenance_due", False)
+                        or (
+                            isinstance(row.get("provider_model_readiness", {}), dict)
+                            and bool(
+                                row.get("provider_model_readiness", {}).get(
+                                    "structured_memory_maintenance_due",
+                                    False,
+                                )
+                            )
+                        )
+                    ),
+                    "knowledge_store_recent_cleanup_count": int(
+                        row.get("knowledge_store_recent_cleanup_count", 0)
+                        or (
+                            row.get("provider_model_readiness", {}).get(
+                                "structured_memory_recent_cleanup_count",
+                                0,
+                            )
+                            if isinstance(row.get("provider_model_readiness", {}), dict)
+                            else 0
+                        )
+                        or 0
+                    ),
                     "query_hints": list(
                         dict(row.get("memory_mission", {})).get("query_hints", [])
                         if isinstance(row.get("memory_mission", {}), dict)
@@ -1212,6 +1342,35 @@ class DesktopVMManager:
             ],
             limit=8,
         )
+        recent_setup_resume_ready = bool(setup_followthrough_memory.get("model_setup_resume_ready", False))
+        recent_setup_auto_resume_ready = bool(setup_followthrough_memory.get("model_setup_can_auto_resume_now", False))
+        recent_setup_resume_action_ids = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_model_resume_action_ids", [])
+                if isinstance(setup_followthrough_memory.get("top_model_resume_action_ids", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_resume_action_count = max(
+            0,
+            int(
+                setup_followthrough_memory.get("model_setup_resume_action_count", len(recent_setup_resume_action_ids))
+                or 0
+            ),
+        )
+        recent_setup_resume_blockers = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_model_resume_blockers", [])
+                if isinstance(setup_followthrough_memory.get("top_model_resume_blockers", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
+        recent_setup_resume_trigger = _norm_text(setup_followthrough_memory.get("model_setup_resume_trigger", ""))
+        recent_setup_resume_hint = _clean_text(setup_followthrough_memory.get("model_setup_resume_hint", ""))
         app_learning_memory_mission_status_counts = (
             dict(app_learning_summary.get("memory_mission_status_counts", {}))
             if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
@@ -1253,6 +1412,12 @@ class DesktopVMManager:
         structured_memory_vector_count = int(multimodal_summary.get("knowledge_store_vector_count", 0) or 0)
         structured_memory_low_coverage_count = int(multimodal_summary.get("knowledge_low_coverage_app_count", 0) or 0)
         structured_memory_semantic_ready_count = int(multimodal_summary.get("knowledge_semantic_ready_app_count", 0) or 0)
+        structured_memory_details_vector_count = int(multimodal_summary.get("knowledge_store_details_vector_count", 0) or 0)
+        structured_memory_controls_vector_count = int(multimodal_summary.get("knowledge_store_controls_vector_count", 0) or 0)
+        structured_memory_permanent_vector_db_count = int(multimodal_summary.get("knowledge_store_permanent_vector_db_count", 0) or 0)
+        structured_memory_maintenance_due = bool(multimodal_summary.get("knowledge_store_maintenance_due", False))
+        structured_memory_recent_cleanup_count = int(multimodal_summary.get("knowledge_store_maintenance_removed_count", 0) or 0)
+        structured_memory_recent_refresh_count = int(multimodal_summary.get("knowledge_store_maintenance_added_count", 0) or 0)
         app_learning_semantic_guided_count = int(app_learning_summary.get("semantic_guided_count", 0) or 0)
         app_learning_semantic_followup_count = int(app_learning_summary.get("semantic_followup_count", 0) or 0)
         recent_setup_followthrough_status = _norm_text(
@@ -1339,6 +1504,10 @@ class DesktopVMManager:
             memory_guidance_status = "partial"
         else:
             memory_guidance_status = "cold"
+        if memory_guidance_status == "strong" and (
+            structured_memory_maintenance_due or structured_memory_recent_cleanup_count > 0
+        ):
+            memory_guidance_status = "partial"
         memory_guidance_reason_codes = _dedupe_strings(
             [
                 "semantic_memory_ready" if structured_memory_semantic_ready_count > 0 else "",
@@ -1348,8 +1517,12 @@ class DesktopVMManager:
                 "learning_semantic_followup_pending" if app_learning_semantic_followup_count > 0 else "",
                 "recent_setup_provider_ready" if recent_setup_verified_provider_names else "",
                 "recent_setup_model_selection_available" if recent_setup_model_item_keys else "",
+                "recent_model_setup_resume_ready" if recent_setup_resume_ready else "",
+                "recent_model_setup_auto_resume_ready" if recent_setup_auto_resume_ready else "",
+                "structured_memory_maintenance_due" if structured_memory_maintenance_due else "",
+                "structured_memory_recent_cleanup_pressure" if structured_memory_recent_cleanup_count > 0 else "",
             ],
-            limit=6,
+            limit=8,
         )
         expected_route_profile = cls._expected_route_profile(row, task=task)
         expected_model_preference = cls._expected_model_preference(row, task=task)
@@ -1419,6 +1592,12 @@ class DesktopVMManager:
                 ai_route_status = "setup_waiting"
         elif recent_setup_followthrough_recommended:
             ai_route_reason_codes.append("recent_setup_followthrough_recommended")
+        if recent_setup_resume_ready:
+            ai_route_reason_codes.append("recent_model_setup_resume_ready")
+            if ai_route_status in {"matched", "setup_constrained"}:
+                ai_route_status = "setup_waiting"
+        if recent_setup_auto_resume_ready:
+            ai_route_reason_codes.append("recent_model_setup_auto_resume_ready")
         if recent_continuation_required:
             ai_route_reason_codes.append("recent_continuation_required")
             if ai_route_status == "matched":
@@ -1461,6 +1640,10 @@ class DesktopVMManager:
             ai_route_reason_codes.append("recent_setup_reasoning_warmup_available")
         if recent_setup_multimodal_codes and "vision" in required_tasks and not local_vision_ready:
             ai_route_reason_codes.append("recent_setup_multimodal_warmup_available")
+        if structured_memory_maintenance_due:
+            ai_route_reason_codes.append("structured_memory_maintenance_due")
+        if structured_memory_recent_cleanup_count > 0:
+            ai_route_reason_codes.append("structured_memory_recent_cleanup_pressure")
 
         selected_ai_reasoning_stack = "desktop_agent" if ai_reasoning_ready else ""
         selected_ai_vision_stack = "perception" if local_vision_ready and family != "terminal" else ""
@@ -1477,6 +1660,8 @@ class DesktopVMManager:
         ai_route_confidence -= 0.08 if ai_route_status == "setup_constrained" else 0.0
         ai_route_confidence -= 0.18 if ai_route_status == "blocked" else 0.0
         ai_route_confidence -= 0.04 if structured_memory_low_coverage_count > 0 and family != "terminal" else 0.0
+        ai_route_confidence -= 0.05 if structured_memory_maintenance_due else 0.0
+        ai_route_confidence -= min(structured_memory_recent_cleanup_count, 4) * 0.01
         ai_route_confidence += 0.05 if memory_guidance_status == "strong" else 0.02 if memory_guidance_status == "partial" else 0.0
         ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
         memory_route_guidance = cls._memory_route_guidance_summary(
@@ -1535,8 +1720,14 @@ class DesktopVMManager:
             "structured_memory_control_count": structured_memory_control_count,
             "structured_memory_command_count": structured_memory_command_count,
             "structured_memory_vector_count": structured_memory_vector_count,
+            "structured_memory_details_vector_count": structured_memory_details_vector_count,
+            "structured_memory_controls_vector_count": structured_memory_controls_vector_count,
+            "structured_memory_permanent_vector_db_count": structured_memory_permanent_vector_db_count,
             "structured_memory_low_coverage_count": structured_memory_low_coverage_count,
             "structured_memory_semantic_ready_count": structured_memory_semantic_ready_count,
+            "structured_memory_maintenance_due": structured_memory_maintenance_due,
+            "structured_memory_recent_cleanup_count": structured_memory_recent_cleanup_count,
+            "structured_memory_recent_refresh_count": structured_memory_recent_refresh_count,
             "app_learning_semantic_guided_count": app_learning_semantic_guided_count,
             "app_learning_semantic_followup_count": app_learning_semantic_followup_count,
             "recent_setup_followthrough_status": recent_setup_followthrough_status,
@@ -1552,6 +1743,13 @@ class DesktopVMManager:
             "recent_setup_model_item_keys": recent_setup_model_item_keys,
             "recent_setup_ai_runtime_setup_codes": recent_setup_ai_runtime_codes,
             "recent_setup_multimodal_setup_codes": recent_setup_multimodal_codes,
+            "recent_setup_resume_ready": recent_setup_resume_ready,
+            "recent_setup_auto_resume_ready": recent_setup_auto_resume_ready,
+            "recent_setup_resume_action_ids": recent_setup_resume_action_ids,
+            "recent_setup_resume_action_count": recent_setup_resume_action_count,
+            "recent_setup_resume_blockers": recent_setup_resume_blockers,
+            "recent_setup_resume_trigger": recent_setup_resume_trigger,
+            "recent_setup_resume_hint": recent_setup_resume_hint,
             "recent_continuation_status": recent_continuation_status,
             "recent_continuation_recommended": recent_continuation_recommended,
             "recent_continuation_required": recent_continuation_required,
@@ -1642,13 +1840,48 @@ class DesktopVMManager:
         remediation_kind = _norm_text(provider_model_readiness.get("remediation_kind", "")) or "observe"
         remediation_action_code = str(remediation_kind or "").strip().replace(" ", "_")
         memory_route_alignment_status = _norm_text(provider_model_readiness.get("memory_route_alignment_status", ""))
-        memory_followthrough_recommended = memory_route_alignment_status in {"underused", "assisted"}
+        recent_setup_resume_ready = bool(provider_model_readiness.get("recent_setup_resume_ready", False))
+        recent_setup_auto_resume_ready = bool(provider_model_readiness.get("recent_setup_auto_resume_ready", False))
+        structured_memory_maintenance_due = bool(provider_model_readiness.get("structured_memory_maintenance_due", False))
+        structured_memory_recent_cleanup_count = int(
+            provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+        )
+        memory_followthrough_recommended = (
+            memory_route_alignment_status in {"underused", "assisted"}
+            or recent_setup_resume_ready
+            or structured_memory_maintenance_due
+            or structured_memory_recent_cleanup_count > 0
+        )
         recommended_max_surface_waves = (
             6 if memory_route_alignment_status == "underused" else 5 if memory_followthrough_recommended else 4
         )
         recommended_max_probe_controls = (
             5 if memory_route_alignment_status == "underused" else 4 if memory_followthrough_recommended else 3
         )
+        if recent_setup_resume_ready:
+            recommended_max_surface_waves = max(
+                recommended_max_surface_waves,
+                6 if recent_setup_auto_resume_ready else 5,
+            )
+            recommended_max_probe_controls = max(
+                recommended_max_probe_controls,
+                5 if recent_setup_auto_resume_ready else 4,
+            )
+            reason_codes.append("recent_setup_resume_ready")
+        if structured_memory_maintenance_due or structured_memory_recent_cleanup_count > 0:
+            recommended_max_surface_waves = max(
+                recommended_max_surface_waves,
+                6 if structured_memory_recent_cleanup_count > 0 else 5,
+            )
+            recommended_max_probe_controls = max(
+                recommended_max_probe_controls,
+                5 if structured_memory_recent_cleanup_count > 0 else 4,
+            )
+            reason_codes.append(
+                "structured_memory_recent_cleanup_pressure"
+                if structured_memory_recent_cleanup_count > 0
+                else "structured_memory_maintenance_due"
+            )
         memory_mission = cls._guest_memory_mission(
             {**base, "learning_query": cls._guest_learning_query(base)},
             provider_model_readiness=provider_model_readiness,
@@ -1735,6 +1968,8 @@ class DesktopVMManager:
         query_hints = _dedupe_strings(
             [
                 learning_query,
+                *(["models", "runtime", "provider"] if bool(readiness.get("recent_setup_resume_ready", False)) else []),
+                *(["settings", "preferences", "toolbar", "navigation"] if bool(readiness.get("structured_memory_maintenance_due", False)) else []),
                 *[
                     str(item).strip()
                     for item in readiness.get("recent_continuation_top_memory_mission_queries", [])
@@ -1774,8 +2009,11 @@ class DesktopVMManager:
             or mission_status == "cold"
             or bool(readiness.get("recent_setup_followthrough_recommended", False))
             or bool(readiness.get("recent_setup_followthrough_required", False))
+            or bool(readiness.get("recent_setup_resume_ready", False))
             or bool(readiness.get("recent_continuation_recommended", False))
             or bool(readiness.get("recent_continuation_required", False))
+            or bool(readiness.get("structured_memory_maintenance_due", False))
+            or int(readiness.get("structured_memory_recent_cleanup_count", 0) or 0) > 0
         )
         return {
             "guest_name": guest_name,
@@ -1806,6 +2044,16 @@ class DesktopVMManager:
                         else []
                     ),
                     *(
+                        ["recent_model_setup_resume_ready"]
+                        if bool(readiness.get("recent_setup_resume_ready", False))
+                        else []
+                    ),
+                    *(
+                        ["recent_model_setup_auto_resume_ready"]
+                        if bool(readiness.get("recent_setup_auto_resume_ready", False))
+                        else []
+                    ),
+                    *(
                         ["recent_continuation_required"]
                         if bool(readiness.get("recent_continuation_required", False))
                         else []
@@ -1813,6 +2061,16 @@ class DesktopVMManager:
                     *(
                         ["recent_continuation_recommended"]
                         if bool(readiness.get("recent_continuation_recommended", False))
+                        else []
+                    ),
+                    *(
+                        ["structured_memory_maintenance_due"]
+                        if bool(readiness.get("structured_memory_maintenance_due", False))
+                        else []
+                    ),
+                    *(
+                        ["structured_memory_recent_cleanup_pressure"]
+                        if int(readiness.get("structured_memory_recent_cleanup_count", 0) or 0) > 0
                         else []
                     ),
                     *(["guest_memory_followthrough_recommended"] if followthrough_recommended else []),

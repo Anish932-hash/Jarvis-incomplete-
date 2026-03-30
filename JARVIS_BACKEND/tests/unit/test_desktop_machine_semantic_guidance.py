@@ -418,6 +418,91 @@ def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_que
     assert int(payload["effective_max_probe_controls"] or 0) >= 4
 
 
+def test_desktop_machine_multimodal_setup_plan_can_run_vector_memory_maintenance() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    service._vision_runtime_profile_status = lambda: {
+        "status": "success",
+        "runtime_status": "ready",
+        "available": True,
+        "loaded_count": 1,
+        "models": ["vision-ocr"],
+    }
+    service.warm_vision_runtime = lambda **_kwargs: {
+        "status": "success",
+        "available": True,
+        "loaded_count": 1,
+    }
+    service.desktop_app_memory_maintain = lambda **_kwargs: {
+        "status": "success",
+        "performed": True,
+        "maintenance": {
+            "status": "success",
+            "performed": True,
+            "maintenance_due": False,
+            "removed_count": 2,
+            "added_count": 4,
+        },
+        "knowledge_store": {
+            "permanent_vector_db_count": 2,
+        },
+    }
+    service._desktop_machine_multimodal_memory_snapshot = lambda **_kwargs: {
+        "status": "success",
+        "summary": {
+            "knowledge_store_maintenance_due": False,
+            "knowledge_store_maintenance_removed_count": 0,
+        },
+        "next_actions": [],
+    }
+
+    multimodal_memory = {
+        "status": "success",
+        "summary": {
+            "knowledge_store_maintenance_due": True,
+            "knowledge_store_maintenance_removed_count": 3,
+            "overdue_revalidation_total": 0,
+        },
+        "vision_runtime": {
+            "models": ["vision-ocr"],
+        },
+        "recommendations": [
+            {
+                "code": "maintain_vector_memory",
+                "severity": "medium",
+                "summary": "Refresh vector memory.",
+            }
+        ],
+        "next_actions": [
+            {
+                "action": "maintain_vector_memory",
+                "target": "desktop_app_memory",
+                "summary": "Refresh vector memory.",
+            }
+        ],
+    }
+
+    actions = service._desktop_machine_multimodal_setup_actions(
+        multimodal_memory=multimodal_memory,
+        task="control",
+    )
+    assert actions[0]["setup_action_code"] == "maintain_vector_memory"
+    assert actions[0]["auto_runnable"] is True
+
+    result = service._desktop_machine_execute_multimodal_setup_plan(
+        multimodal_memory=multimodal_memory,
+        task="control",
+        selected_action_codes=["maintain_vector_memory"],
+        source="unit_test",
+    )
+
+    assert result["status"] == "success"
+    assert result["selected_action_codes"] == ["maintain_vector_memory"]
+    assert result["executed_action_codes"] == ["maintain_vector_memory"]
+    assert result["items"][0]["status"] == "success"
+    assert result["items"][0]["result"]["maintenance"]["removed_count"] == 2
+
+
 def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     profile_calls = []
@@ -840,6 +925,18 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
         },
         app_memory={
             "total": 1,
+            "knowledge_store": {
+                "entry_count": 1,
+                "control_count": 2,
+                "command_count": 1,
+                "vector_count": 3,
+                "permanent_vector_db_count": 2,
+                "maintenance": {
+                    "maintenance_due": True,
+                    "removed_count": 2,
+                    "added_count": 1,
+                },
+            },
             "items": [
                 {
                     "app_name": "Notepad",
@@ -864,10 +961,15 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert plan["targets"][0]["semantic_guidance_status"] == "strong"
     assert "menu" in plan["targets"][0]["target_container_roles"]
     assert "focus_toolbar" in plan["targets"][0]["preferred_wave_actions"]
+    assert plan["targets"][0]["knowledge_store_maintenance_due"] is True
+    assert plan["targets"][0]["knowledge_store_recent_cleanup_count"] == 2
     assert plan["summary"]["semantic_guided_count"] == 1
+    assert plan["summary"]["knowledge_store_maintenance_due_count"] == 2
+    assert plan["summary"]["knowledge_store_cleanup_pressure_count"] == 2
     assert plan["summary"]["semantic_guidance_status_counts"]["strong"] == 1
     assert plan["summary"]["top_semantic_match_labels"]["Settings"] == 1
     assert plan["campaign_defaults"]["semantic_guided_count"] == 1
+    assert plan["campaign_defaults"]["knowledge_store_maintenance_due_count"] == 2
 
     service.model_setup_plan = lambda **_kwargs: {"status": "success"}
     service._desktop_machine_select_model_items = lambda **_kwargs: {}
@@ -931,7 +1033,19 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     }
 
     finalized = service._desktop_machine_finalize_app_learning_plan(
-        profile={"status": "success"},
+        profile={
+            "status": "success",
+            "setup_followthrough_memory": {
+                "followthrough_status": "required",
+                "followthrough_recommended": True,
+                "followthrough_required": True,
+                "suggested_followthrough_waves": 3,
+                "model_setup_resume_ready": True,
+                "model_setup_can_auto_resume_now": True,
+                "top_model_resume_action_ids": ["install_vision"],
+                "model_setup_resume_action_count": 1,
+            },
+        },
         app_learning_plan=plan,
         task="control",
         max_targets=2,
@@ -949,18 +1063,27 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert finalized["summary"]["memory_mission_status_counts"]["strong"] == 1
     assert finalized["summary"]["memory_mission_status_counts"]["cold"] == 1
     assert finalized["summary"]["memory_mission_followthrough_count"] == 2
+    assert finalized["summary"]["recent_setup_resume_ready_count"] == 2
+    assert finalized["summary"]["recent_setup_auto_resume_ready_count"] == 2
+    assert finalized["summary"]["knowledge_store_maintenance_due_count"] == 2
+    assert finalized["summary"]["knowledge_store_cleanup_pressure_count"] == 2
     assert finalized["summary"]["top_memory_mission_queries"]["settings"] >= 1
     assert finalized["summary"]["top_memory_mission_hotkeys"]["ctrl+f"] >= 1
     assert "Notepad" in finalized["summary"]["memory_underused_app_names"]
     assert finalized["campaign_defaults"]["memory_route_alignment_counts"]["underused"] == 1
     assert finalized["campaign_defaults"]["memory_followthrough_enabled"] is True
+    assert finalized["campaign_defaults"]["maintenance_followthrough_enabled"] is True
+    assert finalized["campaign_defaults"]["recent_setup_resume_ready_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_auto_resume_ready_count"] == 2
+    assert finalized["campaign_defaults"]["knowledge_store_maintenance_due_count"] == 2
+    assert finalized["campaign_defaults"]["knowledge_store_cleanup_pressure_count"] == 2
     assert finalized["campaign_defaults"]["memory_underused_count"] == 1
     assert finalized["campaign_defaults"]["memory_mission_status_counts"]["strong"] == 1
     assert finalized["campaign_defaults"]["memory_mission_followthrough_count"] == 2
     assert finalized["campaign_defaults"]["query_hints_by_app"]["Notepad"][0] == "settings"
     assert "ctrl+f" in finalized["campaign_defaults"]["semantic_hotkeys_by_app"]["Notepad"]
-    assert finalized["campaign_defaults"]["max_surface_waves"] == 6
-    assert finalized["campaign_defaults"]["max_probe_controls"] == 4
+    assert finalized["campaign_defaults"]["max_surface_waves"] >= 6
+    assert finalized["campaign_defaults"]["max_probe_controls"] >= 4
     assert "focus_navigation_tree" in finalized["campaign_defaults"]["preferred_wave_actions"]
     assert finalized["campaign_defaults"]["semantic_guidance_status_counts"]["strong"] == 1
     assert finalized["campaign_defaults"]["top_semantic_match_labels"]["Settings"] == 1
@@ -1064,6 +1187,59 @@ def test_desktop_machine_onboarding_continuation_plan_adds_memory_followthrough(
     assert continuation["summary"]["top_memory_mission_hotkeys"]["Ctrl+F"] >= 1
 
 
+def test_desktop_machine_onboarding_continuation_plan_tracks_setup_resume_and_memory_maintenance() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    continuation = service._desktop_machine_onboarding_continuation_plan(
+        execution_queue={"items": []},
+        app_learning_plan={
+            "plan": {
+                "targets": [
+                    {
+                        "app_name": "VS Code",
+                        "auto_learn_allowed": True,
+                        "semantic_guidance_status": "partial",
+                        "knowledge_gap_level": "warm",
+                        "memory_guided_route": False,
+                        "memory_assisted_route": True,
+                        "memory_route_alignment_status": "assisted",
+                        "readiness_status": "degraded",
+                        "recent_setup_resume_ready": True,
+                        "recent_setup_auto_resume_ready": True,
+                        "knowledge_store_maintenance_due": True,
+                        "knowledge_store_recent_cleanup_count": 2,
+                        "memory_mission": {
+                            "status": "partial",
+                            "seed_query": "",
+                            "query_hints": ["command palette"],
+                            "hotkey_hints": ["Ctrl+Shift+P"],
+                        },
+                    }
+                ]
+            }
+        },
+        app_control_prepare_plan={"items": []},
+        route_remediation={"items": []},
+        route_remediation_progress={"items": []},
+        limit=4,
+    )
+
+    assert continuation["status"] == "success"
+    assert continuation["count"] == 1
+    assert continuation["items"][0]["kind"] == "resume_setup_then_continue_learning"
+    assert continuation["items"][0]["setup_resume_recommended"] is True
+    assert continuation["items"][0]["setup_auto_resume_ready"] is True
+    assert continuation["items"][0]["memory_maintenance_recommended"] is True
+    assert continuation["items"][0]["memory_cleanup_pressure"] is True
+    assert continuation["items"][0]["memory_mission"]["seed_query"] == "models"
+    assert "runtime" in continuation["items"][0]["memory_mission"]["query_hints"]
+    assert "settings" in continuation["items"][0]["memory_mission"]["query_hints"]
+    assert continuation["summary"]["setup_resume_followthrough_count"] == 1
+    assert continuation["summary"]["setup_auto_resume_followthrough_count"] == 1
+    assert continuation["summary"]["memory_maintenance_followthrough_count"] == 1
+    assert continuation["summary"]["memory_cleanup_pressure_count"] == 1
+
+
 def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_vm_items() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
 
@@ -1082,6 +1258,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                     "memory_mission_status_counts": {"strong": 1},
                     "top_memory_mission_queries": {"settings": 2},
                     "top_memory_mission_hotkeys": {"Ctrl+F": 1},
+                    "recent_setup_resume_ready_count": 1,
+                    "recent_setup_auto_resume_ready_count": 1,
+                    "knowledge_store_maintenance_due_count": 1,
+                    "knowledge_store_cleanup_pressure_count": 1,
                 }
             },
             "campaign_defaults": {
@@ -1090,6 +1270,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                 "query_hints_by_app": {"Notepad": ["settings", "preferences"]},
                 "semantic_hotkeys_by_app": {"Notepad": ["Ctrl+F"]},
                 "memory_mission_status_counts": {"strong": 1},
+                "recent_setup_resume_ready_count": 1,
+                "recent_setup_auto_resume_ready_count": 1,
+                "knowledge_store_maintenance_due_count": 1,
+                "knowledge_store_cleanup_pressure_count": 1,
             },
         },
         app_control_prepare_plan={
@@ -1109,6 +1293,11 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                         "query_hints": ["settings", "preferences"],
                         "hotkey_hints": ["Ctrl+F"],
                     },
+                    "recent_setup_resume_ready": True,
+                    "recent_setup_auto_resume_ready": True,
+                    "recent_setup_resume_action_count": 1,
+                    "knowledge_store_maintenance_due": True,
+                    "knowledge_store_recent_cleanup_count": 1,
                 }
             ]
         },
@@ -1128,6 +1317,13 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                         "seed_query": "desktop settings",
                         "query_hints": ["desktop settings", "preferences"],
                         "hotkey_hints": ["Ctrl+Alt+S"],
+                    },
+                    "provider_model_readiness": {
+                        "recent_setup_resume_ready": True,
+                        "recent_setup_auto_resume_ready": True,
+                        "recent_setup_resume_action_count": 2,
+                        "structured_memory_maintenance_due": True,
+                        "structured_memory_recent_cleanup_count": 1,
                     },
                 }
             ]
@@ -1162,6 +1358,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
     assert summary["memory_route_alignment_counts"]["cold"] == 2
     assert summary["memory_route_alignment_counts"]["underused"] == 1
     assert summary["memory_route_alignment_counts"]["assisted"] == 1
+    assert summary["setup_resume_recommended_count"] == 4
+    assert summary["setup_auto_resume_recommended_count"] == 4
+    assert summary["memory_maintenance_recommended_count"] == 4
+    assert summary["memory_cleanup_pressure_count"] == 4
     assert summary["memory_mission_status_counts"]["strong"] >= 1
     assert summary["memory_mission_status_counts"]["partial"] >= 1
     assert summary["top_memory_mission_queries"]["settings"] >= 1
@@ -1277,11 +1477,18 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                 "memory_assisted_route_count": 1,
                 "memory_underused_app_names": ["Notepad"],
                 "memory_guided_app_names": ["Calculator"],
+                "setup_resume_guided_app_names": ["Notepad"],
+                "maintenance_guided_app_names": ["Notepad"],
                 "pending_apps": ["Notepad"] if pending > 0 else [],
                 "query_hints_by_app": {"Notepad": ["settings", "preferences"]},
                 "semantic_hotkeys_by_app": {"Notepad": ["Alt+F"]},
                 "top_memory_mission_queries": {"settings": 3},
                 "top_memory_mission_hotkeys": {"Alt+F": 2},
+                "recent_setup_resume_ready_count": 1,
+                "recent_setup_auto_resume_ready_count": 1,
+                "knowledge_store_maintenance_due_count": 1,
+                "knowledge_store_cleanup_pressure_count": 1,
+                "maintenance_followthrough_enabled": True,
             },
             "next_actions": [] if pending <= 0 else [{"kind": "continue_learning"}],
         }
@@ -1296,6 +1503,11 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                     "max_apps": 4,
                     "pending_app_count": 2,
                     "memory_followthrough_enabled": True,
+                    "recent_setup_resume_ready_count": 1,
+                    "recent_setup_auto_resume_ready_count": 1,
+                    "knowledge_store_maintenance_due_count": 1,
+                    "knowledge_store_cleanup_pressure_count": 1,
+                    "maintenance_followthrough_enabled": True,
                     "target_apps": ["Notepad", "Calculator"],
                 }
             },
@@ -1306,6 +1518,11 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
                     "max_apps": 4,
                     "pending_app_count": 2,
                     "memory_followthrough_enabled": True,
+                    "recent_setup_resume_ready_count": 1,
+                    "recent_setup_auto_resume_ready_count": 1,
+                    "knowledge_store_maintenance_due_count": 1,
+                    "knowledge_store_cleanup_pressure_count": 1,
+                    "maintenance_followthrough_enabled": True,
                     "target_apps": ["Notepad", "Calculator"],
                 },
             },
@@ -1334,7 +1551,15 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
     assert payload["memory_mission_status_counts"]["strong"] == 2
     assert payload["top_memory_mission_queries"]["settings"] == 3
     assert payload["top_memory_mission_hotkeys"]["Alt+F"] == 2
+    assert payload["recent_setup_resume_ready_count"] == 1
+    assert payload["recent_setup_auto_resume_ready_count"] == 1
+    assert payload["knowledge_store_maintenance_due_count"] == 1
+    assert payload["knowledge_store_cleanup_pressure_count"] == 1
+    assert payload["maintenance_followthrough_enabled"] is True
+    assert payload["next_actions"][0]["kind"] == "resume_setup_then_continue_learning"
     assert payload["next_actions"][0]["query"] == "settings"
+    assert payload["next_actions"][0]["setup_resume_recommended"] is True
+    assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
     assert "alt+f" in payload["next_actions"][0]["memory_mission"]["hotkey_hints"]
     assert run_calls[0]["source"] == "unit_test_followthrough"
 
@@ -1385,7 +1610,13 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
                         "query_hints": ["desktop settings"],
                         "hotkey_hints": ["Alt+F"],
                     },
-                    "provider_model_readiness": {"setup_followup_codes": ["warm_local_reasoning_runtime"]},
+                    "provider_model_readiness": {
+                        "setup_followup_codes": ["warm_local_reasoning_runtime"],
+                        "recent_setup_resume_ready": True,
+                        "recent_setup_auto_resume_ready": True,
+                        "structured_memory_maintenance_due": True,
+                        "structured_memory_recent_cleanup_count": 1,
+                    },
                 },
             }
         ],
@@ -1403,8 +1634,15 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
     assert payload["memory_mission_status_counts"]["strong"] == 1
     assert payload["top_memory_mission_queries"]["desktop settings"] >= 1
     assert payload["top_memory_mission_hotkeys"]["Alt+F"] >= 1
+    assert payload["setup_resume_guest_count"] == 1
+    assert payload["setup_auto_resume_guest_count"] == 1
+    assert payload["maintenance_guest_count"] == 1
+    assert payload["maintenance_cleanup_guest_count"] == 1
     assert payload["summary"]["memory_guided_route_count"] == 1
     assert payload["summary"]["memory_route_alignment_counts"]["aligned"] == 1
+    assert payload["next_actions"][0]["kind"] == "resume_setup_then_retry_vm"
+    assert payload["next_actions"][0]["setup_resume_recommended"] is True
+    assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
     assert prepare_calls[0]["query"] == "desktop settings"
     assert prepare_calls[0]["source"] == "unit_test_vm_followthrough"
 

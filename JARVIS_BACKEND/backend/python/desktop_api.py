@@ -9115,6 +9115,11 @@ class DesktopBackendService:
             self._desktop_machine_memory_knowledge_profile(memory_entry=item)
             for item in memory_items
         ]
+        knowledge_store_maintenance = (
+            dict(knowledge_store_summary.get("maintenance", {}))
+            if isinstance(knowledge_store_summary.get("maintenance", {}), dict)
+            else {}
+        )
         runtime_profile = self._vision_runtime_profile_status()
         runtime_status = str(
             runtime_profile.get("runtime_status", runtime_profile.get("status", "idle")) or "idle"
@@ -9176,10 +9181,21 @@ class DesktopBackendService:
             "knowledge_store_control_count": max(0, int(knowledge_store_summary.get("control_count", 0) or 0)),
             "knowledge_store_command_count": max(0, int(knowledge_store_summary.get("command_count", 0) or 0)),
             "knowledge_store_vector_count": max(0, int(knowledge_store_summary.get("vector_count", 0) or 0)),
+            "knowledge_store_details_vector_count": max(0, int(knowledge_store_summary.get("details_vector_count", 0) or 0)),
+            "knowledge_store_controls_vector_count": max(0, int(knowledge_store_summary.get("controls_vector_count", 0) or 0)),
+            "knowledge_store_permanent_vector_db_count": max(0, int(knowledge_store_summary.get("permanent_vector_db_count", 0) or 0)),
             "knowledge_semantic_ready_app_count": knowledge_semantic_ready_count,
             "knowledge_low_coverage_app_count": knowledge_low_coverage_count,
             "knowledge_partial_coverage_app_count": knowledge_partial_coverage_count,
             "knowledge_strong_coverage_app_count": knowledge_strong_coverage_count,
+            "knowledge_store_maintenance_status": str(
+                knowledge_store_maintenance.get("status", "unknown") or "unknown"
+            ).strip().lower() or "unknown",
+            "knowledge_store_maintenance_due": bool(knowledge_store_maintenance.get("maintenance_due", False)),
+            "knowledge_store_maintenance_performed": bool(knowledge_store_maintenance.get("performed", False)),
+            "knowledge_store_maintenance_added_count": max(0, int(knowledge_store_maintenance.get("added_count", 0) or 0)),
+            "knowledge_store_maintenance_removed_count": max(0, int(knowledge_store_maintenance.get("removed_count", 0) or 0)),
+            "knowledge_store_last_maintenance_at": str(knowledge_store_maintenance.get("last_maintenance_at", "") or "").strip(),
         }
         needs_multimodal_runtime = bool(
             summary["vision_memory_app_count"]
@@ -9234,6 +9250,23 @@ class DesktopBackendService:
                     "target": "app_memory",
                     "auto_runnable": True,
                     "summary": "Run stale multimodal app-memory revalidation on learned surfaces before wider campaigns.",
+                }
+            )
+        if summary["knowledge_store_maintenance_due"] or summary["knowledge_store_maintenance_removed_count"] > 0:
+            recommendations.append(
+                {
+                    "code": "maintain_vector_memory",
+                    "severity": "medium" if summary["knowledge_store_maintenance_due"] else "low",
+                    "summary": "Refresh permanent vector memory so deprecated controls are pruned and new semantic entries stay aligned with current app knowledge.",
+                }
+            )
+            next_actions.append(
+                {
+                    "kind": "multimodal_memory",
+                    "action": "maintain_vector_memory",
+                    "target": "desktop_app_memory",
+                    "auto_runnable": True,
+                    "summary": "Refresh the permanent vector memory stores before the next wider autonomous learning pass.",
                 }
             )
         if summary["entry_count"] > 0 and summary["knowledge_low_coverage_app_count"] > 0:
@@ -9962,6 +9995,12 @@ class DesktopBackendService:
                 "required": False,
                 "auto_runnable": False,
             },
+            "maintain_vector_memory": {
+                "kind": "multimodal_memory",
+                "title": "Maintain permanent vector memory",
+                "required": False,
+                "auto_runnable": True,
+            },
         }
         runtime_models = [
             str(item).strip()
@@ -10021,6 +10060,30 @@ class DesktopBackendService:
                     "task": self._machine_text(task),
                     "target": "app_memory",
                     "summary": "Revisit stale multimodal controls before broad autonomous learning waves.",
+                    "models": runtime_models,
+                    "source": "multimodal_memory",
+                }
+            )
+        if (
+            (
+                bool(summary.get("knowledge_store_maintenance_due", False))
+                or int(summary.get("knowledge_store_maintenance_removed_count", 0) or 0) > 0
+            )
+            and "maintain_vector_memory" not in seen_codes
+        ):
+            items.append(
+                {
+                    "id": "multimodal:maintain_vector_memory",
+                    "setup_action_code": "maintain_vector_memory",
+                    "kind": "multimodal_memory",
+                    "title": "Maintain permanent vector memory",
+                    "status": "ready",
+                    "severity": "medium" if bool(summary.get("knowledge_store_maintenance_due", False)) else "low",
+                    "required": False,
+                    "auto_runnable": True,
+                    "task": self._machine_text(task),
+                    "target": "desktop_app_memory",
+                    "summary": "Refresh permanent vector memory so new app features are captured and deprecated controls are pruned.",
                     "models": runtime_models,
                     "source": "multimodal_memory",
                 }
@@ -10175,14 +10238,20 @@ class DesktopBackendService:
         error_count = 0
         for row in runnable_actions:
             setup_action_code = self._machine_text(row.get("setup_action_code", "") or row.get("id", ""))
-            result_payload = self.warm_vision_runtime(
-                models=[
-                    str(item).strip()
-                    for item in row.get("models", [])
-                    if isinstance(row.get("models", []), list) and str(item).strip()
-                ] or None,
-                force_reload=bool(force_reload and setup_action_code == "initialize_local_vision_runtime"),
-            )
+            if setup_action_code == "maintain_vector_memory":
+                result_payload = self.desktop_app_memory_maintain(
+                    force=True,
+                    reason=f"{str(source or 'machine_onboarding').strip().lower() or 'machine_onboarding'}:multimodal_memory",
+                )
+            else:
+                result_payload = self.warm_vision_runtime(
+                    models=[
+                        str(item).strip()
+                        for item in row.get("models", [])
+                        if isinstance(row.get("models", []), list) and str(item).strip()
+                    ] or None,
+                    force_reload=bool(force_reload and setup_action_code == "initialize_local_vision_runtime"),
+                )
             result_payload = dict(result_payload) if isinstance(result_payload, dict) else {}
             result_status = self._machine_text(result_payload.get("status", "")) or "unknown"
             executed_codes.append(setup_action_code)
@@ -11150,6 +11219,19 @@ class DesktopBackendService:
     ) -> Dict[str, Any]:
         inventory_items = app_inventory.get("items", []) if isinstance(app_inventory.get("items", []), list) else []
         memory_items = app_memory.get("items", []) if isinstance(app_memory.get("items", []), list) else []
+        knowledge_store_summary = (
+            dict(app_memory.get("knowledge_store", {}))
+            if isinstance(app_memory.get("knowledge_store", {}), dict)
+            else {}
+        )
+        knowledge_store_maintenance = (
+            dict(knowledge_store_summary.get("maintenance", {}))
+            if isinstance(knowledge_store_summary.get("maintenance", {}), dict)
+            else {}
+        )
+        knowledge_store_maintenance_due = bool(knowledge_store_maintenance.get("maintenance_due", False))
+        knowledge_store_recent_cleanup_count = max(0, int(knowledge_store_maintenance.get("removed_count", 0) or 0))
+        knowledge_store_recent_refresh_count = max(0, int(knowledge_store_maintenance.get("added_count", 0) or 0))
         bounded_targets = max(1, min(int(max_targets or 8), 24))
         task_focus_tasks = [
             self._machine_text(item.get("task", ""))
@@ -11221,6 +11303,15 @@ class DesktopBackendService:
                 reason_codes.append("semantic_memory_cold")
             if hotkey_count <= 0:
                 reason_codes.append("hotkey_memory_thin")
+            if knowledge_store_maintenance_due:
+                reason_codes.append("permanent_vector_memory_maintenance_due")
+            if knowledge_store_recent_cleanup_count > 0:
+                reason_codes.append("recent_vector_cleanup")
+            recommended_max_surface_waves = max(2, min(int(plan_defaults.get("recommended_max_surface_waves", 3) or 3), 6))
+            if knowledge_store_maintenance_due:
+                recommended_max_surface_waves = min(6, max(recommended_max_surface_waves, recommended_max_surface_waves + 1))
+            elif knowledge_store_recent_cleanup_count > 0:
+                recommended_max_surface_waves = min(6, max(recommended_max_surface_waves, recommended_max_surface_waves + 1))
             targets.append(
                 {
                     "app_name": display_name,
@@ -11243,6 +11334,10 @@ class DesktopBackendService:
                     "surface_transition_count": surface_transition_count,
                     "path": str(item.get("path", "") or "").strip(),
                     "reason_codes": self._machine_dedupe(reason_codes, limit=10),
+                    "knowledge_store_maintenance_due": knowledge_store_maintenance_due,
+                    "knowledge_store_recent_cleanup_count": knowledge_store_recent_cleanup_count,
+                    "knowledge_store_recent_refresh_count": knowledge_store_recent_refresh_count,
+                    "knowledge_store_permanent_vector_db_count": max(0, int(knowledge_store_summary.get("permanent_vector_db_count", 0) or 0)),
                     "semantic_memory_query": "",
                     "semantic_memory_guidance": {
                         "status": "success",
@@ -11265,7 +11360,10 @@ class DesktopBackendService:
                     "semantic_guidance_top_hotkeys": [],
                     "semantic_guidance_priority_boost": 0.0,
                     "semantic_guided": False,
-                    **plan_defaults,
+                    **{
+                        **plan_defaults,
+                        "recommended_max_surface_waves": recommended_max_surface_waves,
+                    },
                 }
             )
         targets.sort(
@@ -11319,6 +11417,8 @@ class DesktopBackendService:
         semantic_guidance_status_counts: Dict[str, int] = {}
         semantic_match_label_counts: Dict[str, int] = {}
         semantic_hotkey_counts: Dict[str, int] = {}
+        maintenance_due_count = 0
+        maintenance_cleanup_count = 0
         for row in selected:
             combined_roles.extend([str(item).strip().lower() for item in row.get("target_container_roles", []) if str(item).strip()])
             combined_actions.extend([str(item).strip().lower() for item in row.get("preferred_wave_actions", []) if str(item).strip()])
@@ -11341,6 +11441,10 @@ class DesktopBackendService:
                 clean_hotkey = str(hotkey or "").strip()
                 if clean_hotkey:
                     semantic_hotkey_counts[clean_hotkey] = int(semantic_hotkey_counts.get(clean_hotkey, 0) or 0) + 1
+            if bool(row.get("knowledge_store_maintenance_due", False)):
+                maintenance_due_count += 1
+            if int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0:
+                maintenance_cleanup_count += 1
         unknown_count = len([row for row in selected if str(row.get("status", "") or "") == "unknown"])
         attention_count = len([row for row in selected if str(row.get("status", "") or "") == "attention"])
         known_count = len([row for row in selected if str(row.get("status", "") or "") == "known"])
@@ -11373,6 +11477,8 @@ class DesktopBackendService:
                 "semantic_memory_ready_count": semantic_memory_ready_count,
                 "hotkey_ready_count": hotkey_ready_count,
                 "semantic_guided_count": semantic_guided_count,
+                "knowledge_store_maintenance_due_count": maintenance_due_count,
+                "knowledge_store_cleanup_pressure_count": maintenance_cleanup_count,
                 "semantic_guidance_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
@@ -11425,6 +11531,8 @@ class DesktopBackendService:
                 "semantic_memory_ready_count": semantic_memory_ready_count,
                 "hotkey_ready_count": hotkey_ready_count,
                 "semantic_guided_count": semantic_guided_count,
+                "knowledge_store_maintenance_due_count": maintenance_due_count,
+                "knowledge_store_cleanup_pressure_count": maintenance_cleanup_count,
                 "semantic_guidance_status_counts": {
                     str(key): int(value)
                     for key, value in sorted(semantic_guidance_status_counts.items(), key=lambda entry: entry[0])
@@ -11947,6 +12055,17 @@ class DesktopBackendService:
                 "items": [],
                 "next_actions": [],
             }
+        recent_setup_resume_ready_count = int(latest_campaign.get("recent_setup_resume_ready_count", 0) or 0)
+        recent_setup_auto_resume_ready_count = int(
+            latest_campaign.get("recent_setup_auto_resume_ready_count", 0) or 0
+        )
+        knowledge_store_maintenance_due_count = int(
+            latest_campaign.get("knowledge_store_maintenance_due_count", 0) or 0
+        )
+        knowledge_store_cleanup_pressure_count = int(
+            latest_campaign.get("knowledge_store_cleanup_pressure_count", 0) or 0
+        )
+        maintenance_followthrough_enabled = bool(latest_campaign.get("maintenance_followthrough_enabled", False))
         should_followthrough = bool(latest_campaign.get("memory_followthrough_enabled", False)) or any(
             int(latest_campaign.get(field_name, 0) or 0) > 0
             for field_name in (
@@ -11956,8 +12075,12 @@ class DesktopBackendService:
                 "revalidation_target_count",
                 "pending_app_count",
                 "memory_mission_followthrough_count",
+                "recent_setup_resume_ready_count",
+                "recent_setup_auto_resume_ready_count",
+                "knowledge_store_maintenance_due_count",
+                "knowledge_store_cleanup_pressure_count",
             )
-        )
+        ) or maintenance_followthrough_enabled
         if not should_followthrough:
             return {
                 "status": "skipped",
@@ -12054,6 +12177,16 @@ class DesktopBackendService:
         focus_seen: set[str] = set()
         for candidate in [
             *(
+                list(final_campaign.get("setup_resume_guided_app_names", []))
+                if isinstance(final_campaign.get("setup_resume_guided_app_names", []), list)
+                else []
+            ),
+            *(
+                list(final_campaign.get("maintenance_guided_app_names", []))
+                if isinstance(final_campaign.get("maintenance_guided_app_names", []), list)
+                else []
+            ),
+            *(
                 list(final_campaign.get("memory_underused_app_names", []))
                 if isinstance(final_campaign.get("memory_underused_app_names", []), list)
                 else []
@@ -12103,6 +12236,24 @@ class DesktopBackendService:
             if isinstance(latest_run.get("next_actions", []), list)
             else []
         )[:8]
+        setup_resume_guided_names = {
+            self._machine_text(item)
+            for item in (
+                list(final_campaign.get("setup_resume_guided_app_names", []))
+                if isinstance(final_campaign.get("setup_resume_guided_app_names", []), list)
+                else []
+            )
+            if self._machine_text(item)
+        }
+        maintenance_guided_names = {
+            self._machine_text(item)
+            for item in (
+                list(final_campaign.get("maintenance_guided_app_names", []))
+                if isinstance(final_campaign.get("maintenance_guided_app_names", []), list)
+                else []
+            )
+            if self._machine_text(item)
+        }
         generated_next_actions: List[Dict[str, Any]] = []
         for app_name in focus_app_names:
             app_query_hints = _lookup_hints(query_hints_by_app, app_name)
@@ -12112,10 +12263,40 @@ class DesktopBackendService:
                 "",
             ) or str(final_memory_mission.get("seed_query", "") or app_name).strip()
             memory_mission = dict(final_memory_mission)
+            app_key = self._machine_text(app_name)
+            setup_resume_recommended = bool(
+                app_key in setup_resume_guided_names or recent_setup_resume_ready_count > 0
+            )
+            setup_auto_resume_ready = bool(
+                app_key in setup_resume_guided_names and recent_setup_auto_resume_ready_count > 0
+            ) or bool(recent_setup_auto_resume_ready_count > 0 and app_key in setup_resume_guided_names)
+            memory_maintenance_recommended = bool(
+                app_key in maintenance_guided_names or knowledge_store_maintenance_due_count > 0
+            )
+            memory_cleanup_pressure = bool(
+                (app_key in maintenance_guided_names and knowledge_store_cleanup_pressure_count > 0)
+                or knowledge_store_cleanup_pressure_count > 0
+            )
             memory_mission["app_name"] = str(app_name).strip()
-            memory_mission["seed_query"] = seed_query
+            memory_mission["seed_query"] = (
+                "models"
+                if setup_resume_recommended and not seed_query
+                else "settings"
+                if (memory_maintenance_recommended or memory_cleanup_pressure) and not seed_query
+                else seed_query
+            )
             memory_mission["query_hints"] = self._machine_dedupe(
-                [seed_query, *app_query_hints, *memory_mission.get("query_hints", [])],
+                [
+                    str(memory_mission.get("seed_query", "") or "").strip(),
+                    *app_query_hints,
+                    *memory_mission.get("query_hints", []),
+                    *(["models", "runtime", "provider"] if setup_resume_recommended else []),
+                    *(
+                        ["settings", "preferences", "toolbar", "navigation"]
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else []
+                    ),
+                ],
                 limit=8,
             )
             memory_mission["hotkey_hints"] = self._machine_dedupe(
@@ -12127,13 +12308,18 @@ class DesktopBackendService:
                     "id": f"learning_followthrough:{self._machine_text(app_name)}",
                     "stage": "app_learning_followthrough",
                     "kind": (
+                        "resume_setup_then_continue_learning"
+                        if setup_resume_recommended
+                        else "maintain_vector_memory_then_continue_learning"
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else
                         "activate_memory_guided_learning"
                         if bool(final_campaign.get("memory_followthrough_enabled", False))
                         else "continue_app_learning"
                     ),
                     "title": f"Continue app learning for {app_name}",
                     "target": str(app_name).strip(),
-                    "query": seed_query,
+                    "query": str(memory_mission.get("seed_query", "") or "").strip(),
                     "hotkey_hints": list(memory_mission.get("hotkey_hints", []))[:8],
                     "status": (
                         "ready"
@@ -12148,6 +12334,10 @@ class DesktopBackendService:
                         }
                         else "attention"
                     ),
+                    "setup_resume_recommended": setup_resume_recommended,
+                    "setup_auto_resume_ready": setup_auto_resume_ready,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
                     "memory_mission": memory_mission,
                     "reason_codes": self._machine_dedupe(
                         [
@@ -12205,6 +12395,11 @@ class DesktopBackendService:
             "memory_underused_count": int(final_campaign.get("memory_underused_count", 0) or 0),
             "memory_guided_route_count": int(final_campaign.get("memory_guided_route_count", 0) or 0),
             "memory_assisted_route_count": int(final_campaign.get("memory_assisted_route_count", 0) or 0),
+            "recent_setup_resume_ready_count": recent_setup_resume_ready_count,
+            "recent_setup_auto_resume_ready_count": recent_setup_auto_resume_ready_count,
+            "knowledge_store_maintenance_due_count": knowledge_store_maintenance_due_count,
+            "knowledge_store_cleanup_pressure_count": knowledge_store_cleanup_pressure_count,
+            "maintenance_followthrough_enabled": maintenance_followthrough_enabled,
             "focus_app_names": focus_app_names[:8],
             "focus_app_count": len(focus_app_names),
             "reason_codes": self._machine_dedupe(
@@ -12217,6 +12412,14 @@ class DesktopBackendService:
                     else "",
                     "campaign_memory_followthrough_enabled"
                     if bool(final_campaign.get("memory_followthrough_enabled", False))
+                    else "",
+                    "campaign_setup_resume_followthrough"
+                    if recent_setup_resume_ready_count > 0
+                    else "",
+                    "campaign_memory_maintenance_followthrough"
+                    if maintenance_followthrough_enabled
+                    or knowledge_store_maintenance_due_count > 0
+                    or knowledge_store_cleanup_pressure_count > 0
                     else "",
                 ]
             ),
@@ -12249,6 +12452,10 @@ class DesktopBackendService:
         vm_memory_guided_route_count = 0
         vm_memory_assisted_route_count = 0
         vm_memory_followthrough_guest_count = 0
+        vm_setup_resume_guest_count = 0
+        vm_setup_auto_resume_guest_count = 0
+        vm_maintenance_guest_count = 0
+        vm_maintenance_cleanup_guest_count = 0
 
         for prepared_vm in vm_items:
             if not isinstance(prepared_vm, dict):
@@ -12280,6 +12487,14 @@ class DesktopBackendService:
                 if isinstance(vm_summary.get("provider_model_readiness", {}), dict)
                 else {}
             )
+            if bool(provider_model_readiness.get("recent_setup_resume_ready", False)):
+                vm_setup_resume_guest_count += 1
+            if bool(provider_model_readiness.get("recent_setup_auto_resume_ready", False)):
+                vm_setup_auto_resume_guest_count += 1
+            if bool(provider_model_readiness.get("structured_memory_maintenance_due", False)):
+                vm_maintenance_guest_count += 1
+            if int(provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0) > 0:
+                vm_maintenance_cleanup_guest_count += 1
             if isinstance(provider_model_readiness.get("setup_followup_codes", []), list) and provider_model_readiness.get("setup_followup_codes", []):
                 vm_setup_followup_guest_count += 1
             if bool(vm_summary.get("memory_guided_route", False)):
@@ -12342,6 +12557,10 @@ class DesktopBackendService:
             "memory_guided_route_count": vm_memory_guided_route_count,
             "memory_assisted_route_count": vm_memory_assisted_route_count,
             "memory_followthrough_guest_count": vm_memory_followthrough_guest_count,
+            "setup_resume_guest_count": vm_setup_resume_guest_count,
+            "setup_auto_resume_guest_count": vm_setup_auto_resume_guest_count,
+            "maintenance_guest_count": vm_maintenance_guest_count,
+            "maintenance_cleanup_guest_count": vm_maintenance_cleanup_guest_count,
             "memory_route_alignment_counts": {str(key): int(value) for key, value in sorted(vm_memory_route_alignment_counts.items(), key=lambda entry: entry[0])},
             "memory_mission_status_counts": {str(key): int(value) for key, value in sorted(vm_memory_mission_status_counts.items(), key=lambda entry: entry[0])},
             "top_memory_mission_queries": {
@@ -12409,11 +12628,33 @@ class DesktopBackendService:
                 readiness_status = str(summary.get("readiness_status", "") or "").strip().lower()
                 ai_route_status = str(summary.get("ai_route_status", "") or "").strip().lower()
                 memory_alignment = str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
+                provider_model_readiness = (
+                    dict(summary.get("provider_model_readiness", {}))
+                    if isinstance(summary.get("provider_model_readiness", {}), dict)
+                    else {}
+                )
                 should_retry = bool(summary.get("memory_followthrough_recommended", False))
                 should_retry = should_retry or bool(summary.get("recent_setup_followthrough_recommended", False))
+                should_retry = should_retry or bool(provider_model_readiness.get("recent_setup_resume_ready", False))
+                should_retry = should_retry or bool(
+                    provider_model_readiness.get("recent_setup_auto_resume_ready", False)
+                )
+                should_retry = should_retry or bool(
+                    provider_model_readiness.get("structured_memory_maintenance_due", False)
+                )
+                should_retry = should_retry or int(
+                    provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+                ) > 0
                 should_retry = should_retry or readiness_status in {"attention", "degraded"}
                 should_retry = should_retry or ai_route_status in {"fallback", "setup_waiting", "setup_constrained"}
                 should_retry = should_retry or memory_alignment in {"underused", "assisted"}
+                if (
+                    readiness_status == "ready"
+                    and ai_route_status in {"matched", "ready", "success"}
+                    and memory_alignment == "aligned"
+                    and not bool(summary.get("memory_followthrough_recommended", False))
+                ):
+                    should_retry = False
                 if should_retry:
                     target_rows.append(dict(row))
             if not target_rows:
@@ -12428,7 +12669,23 @@ class DesktopBackendService:
                     continue
                 continued_guest_names.add(guest_name.lower())
                 memory_mission = dict(summary.get("memory_mission", {})) if isinstance(summary.get("memory_mission", {}), dict) else {}
+                provider_model_readiness = (
+                    dict(summary.get("provider_model_readiness", {}))
+                    if isinstance(summary.get("provider_model_readiness", {}), dict)
+                    else {}
+                )
+                setup_resume_recommended = bool(provider_model_readiness.get("recent_setup_resume_ready", False))
+                memory_maintenance_recommended = bool(
+                    provider_model_readiness.get("structured_memory_maintenance_due", False)
+                )
+                memory_cleanup_pressure = int(
+                    provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+                ) > 0
                 prepare_query = str(memory_mission.get("seed_query", "") or row.get("query", "") or "").strip()
+                if not prepare_query and setup_resume_recommended:
+                    prepare_query = "models"
+                if not prepare_query and (memory_maintenance_recommended or memory_cleanup_pressure):
+                    prepare_query = "desktop settings"
                 prepared_payload = self.desktop_machine_prepare_vm_control(
                     task=str(task or "").strip().lower(),
                     guest_name=guest_name,
@@ -12450,6 +12707,20 @@ class DesktopBackendService:
                     if isinstance(prepared_payload.get("summary", {}), dict)
                     else {}
                 )
+                if not isinstance(latest_summary.get("provider_model_readiness", {}), dict):
+                    latest_summary["provider_model_readiness"] = {}
+                previous_provider_model_readiness = (
+                    dict(summary.get("provider_model_readiness", {}))
+                    if isinstance(summary.get("provider_model_readiness", {}), dict)
+                    else {}
+                )
+                if previous_provider_model_readiness:
+                    merged_provider_model_readiness = {
+                        **previous_provider_model_readiness,
+                        **dict(latest_summary.get("provider_model_readiness", {})),
+                    }
+                    latest_summary["provider_model_readiness"] = merged_provider_model_readiness
+                    prepared_payload["summary"] = latest_summary
                 latest_alignment = str(latest_summary.get("memory_route_alignment_status", "") or "").strip().lower()
                 latest_readiness = str(latest_summary.get("readiness_status", "") or "").strip().lower()
                 latest_followthrough = bool(latest_summary.get("memory_followthrough_recommended", False))
@@ -12477,8 +12748,25 @@ class DesktopBackendService:
             memory_alignment = str(summary.get("memory_route_alignment_status", "") or "").strip().lower()
             readiness_status = str(summary.get("readiness_status", "") or "").strip().lower()
             followthrough_recommended = bool(summary.get("memory_followthrough_recommended", False))
+            provider_model_readiness = (
+                dict(summary.get("provider_model_readiness", {}))
+                if isinstance(summary.get("provider_model_readiness", {}), dict)
+                else {}
+            )
+            setup_resume_recommended = bool(provider_model_readiness.get("recent_setup_resume_ready", False))
+            setup_auto_resume_ready = bool(provider_model_readiness.get("recent_setup_auto_resume_ready", False))
+            memory_maintenance_recommended = bool(
+                provider_model_readiness.get("structured_memory_maintenance_due", False)
+            )
+            memory_cleanup_pressure = int(
+                provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+            ) > 0
             needs_attention = (
                 followthrough_recommended
+                or setup_resume_recommended
+                or setup_auto_resume_ready
+                or memory_maintenance_recommended
+                or memory_cleanup_pressure
                 or memory_alignment in {"underused", "assisted"}
                 or readiness_status in {"attention", "degraded"}
             )
@@ -12490,11 +12778,23 @@ class DesktopBackendService:
             if not needs_attention:
                 continue
             seed_query = str(memory_mission.get("seed_query", "") or summary.get("learning_query", "") or "").strip()
+            if not seed_query and setup_resume_recommended:
+                seed_query = "models"
+            if not seed_query and (memory_maintenance_recommended or memory_cleanup_pressure):
+                seed_query = "desktop settings"
             continuation_next_actions.append(
                 {
                     "id": f"vm_followthrough:{self._machine_text(guest_name)}",
                     "stage": "vm_prepare_followthrough",
-                    "kind": "deepen_vm_control_learning" if followthrough_recommended else "retry_vm_prepare",
+                    "kind": (
+                        "resume_setup_then_retry_vm"
+                        if setup_resume_recommended or setup_auto_resume_ready
+                        else "maintain_vector_memory_then_retry_vm"
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else "deepen_vm_control_learning"
+                        if followthrough_recommended
+                        else "retry_vm_prepare"
+                    ),
                     "title": f"Continue VM control learning for {guest_name}",
                     "target": guest_name,
                     "query": seed_query,
@@ -12503,6 +12803,10 @@ class DesktopBackendService:
                         for item in memory_mission.get("hotkey_hints", [])
                         if isinstance(memory_mission.get("hotkey_hints", []), list) and str(item).strip()
                     ][:8],
+                    "setup_resume_recommended": setup_resume_recommended,
+                    "setup_auto_resume_ready": setup_auto_resume_ready,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
                     "memory_mission": memory_mission,
                     "status": (
                         "ready"
@@ -12541,6 +12845,12 @@ class DesktopBackendService:
             ),
             "focus_guest_names": focus_guest_names[:8],
             "focus_guest_count": len(focus_guest_names),
+            "setup_resume_guest_count": int(latest_summary.get("setup_resume_guest_count", 0) or 0),
+            "setup_auto_resume_guest_count": int(latest_summary.get("setup_auto_resume_guest_count", 0) or 0),
+            "maintenance_guest_count": int(latest_summary.get("maintenance_guest_count", 0) or 0),
+            "maintenance_cleanup_guest_count": int(
+                latest_summary.get("maintenance_cleanup_guest_count", 0) or 0
+            ),
             "memory_mission": self._desktop_machine_memory_mission_from_summary(
                 summary=(
                     dict(latest_summary)
@@ -14754,6 +15064,10 @@ class DesktopBackendService:
         memory_mission_status_counts: Dict[str, int] = {}
         memory_mission_query_counts: Dict[str, int] = {}
         memory_mission_hotkey_counts: Dict[str, int] = {}
+        setup_resume_recommended_count = 0
+        setup_auto_resume_recommended_count = 0
+        memory_maintenance_recommended_count = 0
+        memory_cleanup_pressure_count = 0
         for row in items:
             if not isinstance(row, dict):
                 continue
@@ -14789,6 +15103,14 @@ class DesktopBackendService:
                 memory_guided_route_count += 1
             if bool(row.get("memory_assisted_route", False)):
                 memory_assisted_route_count += 1
+            if bool(row.get("recent_setup_resume_ready", False)):
+                setup_resume_recommended_count += 1
+            if bool(row.get("recent_setup_auto_resume_ready", False)):
+                setup_auto_resume_recommended_count += 1
+            if bool(row.get("knowledge_store_maintenance_due", False)):
+                memory_maintenance_recommended_count += 1
+            if int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0:
+                memory_cleanup_pressure_count += 1
             memory_mission = dict(row.get("memory_mission", {})) if isinstance(row.get("memory_mission", {}), dict) else {}
             memory_mission_status = str(
                 memory_mission.get("status", "") or row.get("memory_guidance_status", "") or ""
@@ -14847,6 +15169,10 @@ class DesktopBackendService:
             "memory_followthrough_count": memory_followthrough_count,
             "memory_guided_route_count": memory_guided_route_count,
             "memory_assisted_route_count": memory_assisted_route_count,
+            "setup_resume_recommended_count": setup_resume_recommended_count,
+            "setup_auto_resume_recommended_count": setup_auto_resume_recommended_count,
+            "memory_maintenance_recommended_count": memory_maintenance_recommended_count,
+            "memory_cleanup_pressure_count": memory_cleanup_pressure_count,
             "status_counts": {
                 str(key): int(value)
                 for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
@@ -15362,6 +15688,20 @@ class DesktopBackendService:
                         row.get("memory_route_alignment_status", "") or memory_mission.get("memory_route_alignment_status", "") or ""
                     ).strip().lower(),
                     "memory_followthrough_recommended": bool(row.get("memory_followthrough_recommended", False)),
+                    "setup_resume_recommended": bool(
+                        row.get("setup_resume_recommended", False) or row.get("recent_setup_resume_ready", False)
+                    ),
+                    "setup_auto_resume_ready": bool(
+                        row.get("setup_auto_resume_ready", False) or row.get("recent_setup_auto_resume_ready", False)
+                    ),
+                    "memory_maintenance_recommended": bool(
+                        row.get("memory_maintenance_recommended", False)
+                        or row.get("knowledge_store_maintenance_due", False)
+                    ),
+                    "memory_cleanup_pressure": bool(
+                        row.get("memory_cleanup_pressure", False)
+                        or int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
+                    ),
                 }
             )
             if len(selected) >= max(1, min(int(limit or 6), 12)):
@@ -15773,6 +16113,28 @@ class DesktopBackendService:
                 ),
                 "memory_mission": app_learning_memory_mission,
                 "target_query": str(app_learning_memory_mission.get("seed_query", "") or "").strip(),
+                "recent_setup_resume_ready": bool(
+                    app_learning_plan_summary.get("recent_setup_resume_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_resume_ready_count", 0)
+                ),
+                "recent_setup_auto_resume_ready": bool(
+                    app_learning_plan_summary.get("recent_setup_auto_resume_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_auto_resume_ready_count", 0)
+                ),
+                "recent_setup_resume_action_count": int(
+                    app_learning_plan_summary.get("recent_setup_remaining_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_remaining_ready_count", 0)
+                    or 0
+                ),
+                "knowledge_store_maintenance_due": bool(
+                    app_learning_plan_summary.get("knowledge_store_maintenance_due_count", 0)
+                    or app_learning_campaign_defaults.get("knowledge_store_maintenance_due_count", 0)
+                ),
+                "knowledge_store_recent_cleanup_count": int(
+                    app_learning_plan_summary.get("knowledge_store_cleanup_pressure_count", 0)
+                    or app_learning_campaign_defaults.get("knowledge_store_cleanup_pressure_count", 0)
+                    or 0
+                ),
             }
         )
         items.append(
@@ -15808,6 +16170,28 @@ class DesktopBackendService:
                 ),
                 "memory_mission": app_learning_memory_mission,
                 "target_query": str(app_learning_memory_mission.get("seed_query", "") or "").strip(),
+                "recent_setup_resume_ready": bool(
+                    app_learning_plan_summary.get("recent_setup_resume_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_resume_ready_count", 0)
+                ),
+                "recent_setup_auto_resume_ready": bool(
+                    app_learning_plan_summary.get("recent_setup_auto_resume_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_auto_resume_ready_count", 0)
+                ),
+                "recent_setup_resume_action_count": int(
+                    app_learning_plan_summary.get("recent_setup_remaining_ready_count", 0)
+                    or app_learning_campaign_defaults.get("recent_setup_remaining_ready_count", 0)
+                    or 0
+                ),
+                "knowledge_store_maintenance_due": bool(
+                    app_learning_plan_summary.get("knowledge_store_maintenance_due_count", 0)
+                    or app_learning_campaign_defaults.get("knowledge_store_maintenance_due_count", 0)
+                ),
+                "knowledge_store_recent_cleanup_count": int(
+                    app_learning_plan_summary.get("knowledge_store_cleanup_pressure_count", 0)
+                    or app_learning_campaign_defaults.get("knowledge_store_cleanup_pressure_count", 0)
+                    or 0
+                ),
             }
         )
 
@@ -15861,6 +16245,13 @@ class DesktopBackendService:
                     ).strip().lower(),
                     "memory_mission": memory_mission,
                     "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
+                    "recent_setup_resume_ready": bool(row.get("recent_setup_resume_ready", False)),
+                    "recent_setup_auto_resume_ready": bool(row.get("recent_setup_auto_resume_ready", False)),
+                    "recent_setup_resume_action_count": int(row.get("recent_setup_resume_action_count", 0) or 0),
+                    "knowledge_store_maintenance_due": bool(row.get("knowledge_store_maintenance_due", False)),
+                    "knowledge_store_recent_cleanup_count": int(
+                        row.get("knowledge_store_recent_cleanup_count", 0) or 0
+                    ),
                 }
             )
 
@@ -15889,6 +16280,11 @@ class DesktopBackendService:
             memory_mission = (
                 dict(row.get("memory_mission", {}))
                 if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
+            provider_model_readiness = (
+                dict(row.get("provider_model_readiness", {}))
+                if isinstance(row.get("provider_model_readiness", {}), dict)
                 else {}
             )
             items.append(
@@ -15922,6 +16318,21 @@ class DesktopBackendService:
                     ).strip().lower(),
                     "memory_mission": memory_mission,
                     "target_query": str(memory_mission.get("seed_query", "") or "").strip(),
+                    "recent_setup_resume_ready": bool(
+                        provider_model_readiness.get("recent_setup_resume_ready", False)
+                    ),
+                    "recent_setup_auto_resume_ready": bool(
+                        provider_model_readiness.get("recent_setup_auto_resume_ready", False)
+                    ),
+                    "recent_setup_resume_action_count": int(
+                        provider_model_readiness.get("recent_setup_resume_action_count", 0) or 0
+                    ),
+                    "knowledge_store_maintenance_due": bool(
+                        provider_model_readiness.get("structured_memory_maintenance_due", False)
+                    ),
+                    "knowledge_store_recent_cleanup_count": int(
+                        provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+                    ),
                 }
             )
 
@@ -16031,6 +16442,12 @@ class DesktopBackendService:
                     "retry_recommended": False,
                     "provider_blocked": clean_provider == "huggingface" and status_name in {"manual_input_required", "blocked"},
                     "setup_followup_required": str(row.get("stage", "") or "").strip().lower() == "setup_action",
+                    "setup_resume_recommended": bool(row.get("recent_setup_resume_ready", False)),
+                    "setup_auto_resume_ready": bool(row.get("recent_setup_auto_resume_ready", False)),
+                    "memory_maintenance_recommended": bool(row.get("knowledge_store_maintenance_due", False)),
+                    "memory_cleanup_pressure": bool(
+                        int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
+                    ),
                     "recent_action_code": str(row.get("setup_action_code", "") or row.get("recommended_next_action", "") or "").strip().lower(),
                     "memory_mission": queue_memory_mission,
                     "target_query": str(row.get("target_query", "") or queue_memory_mission.get("seed_query", "") or "").strip(),
@@ -16059,6 +16476,10 @@ class DesktopBackendService:
                 if isinstance(row.get("memory_mission", {}), dict)
                 else self._desktop_machine_memory_mission_for_target(target_row=row)
             )
+            setup_resume_recommended = bool(row.get("recent_setup_resume_ready", False))
+            setup_auto_resume_ready = bool(row.get("recent_setup_auto_resume_ready", False))
+            memory_maintenance_recommended = bool(row.get("knowledge_store_maintenance_due", False))
+            memory_cleanup_pressure = int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
             memory_followthrough_recommended = bool(row.get("auto_learn_allowed", False)) and (
                 memory_route_alignment_status in {"underused", "assisted"}
                 and semantic_guidance_status in {"strong", "partial"}
@@ -16066,10 +16487,51 @@ class DesktopBackendService:
             semantic_followup_recommended = bool(row.get("auto_learn_allowed", False)) and (
                 semantic_guidance_status == "cold" and knowledge_gap_level in {"cold", "thin"}
             )
+            if setup_resume_recommended or setup_auto_resume_ready:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "models"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "models",
+                        "runtime",
+                        "provider",
+                    ],
+                    limit=8,
+                )
+            if memory_maintenance_recommended or memory_cleanup_pressure:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "settings"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "settings",
+                        "preferences",
+                        "toolbar",
+                        "navigation",
+                    ],
+                    limit=8,
+                )
             if not (
                 retry_recommended
                 or provider_blocked
                 or setup_followup_required
+                or setup_resume_recommended
+                or setup_auto_resume_ready
+                or memory_maintenance_recommended
+                or memory_cleanup_pressure
                 or memory_followthrough_recommended
                 or semantic_followup_recommended
                 or remediation_status in {"persistent", "regressed", "new"}
@@ -16081,7 +16543,11 @@ class DesktopBackendService:
                     "id": f"continuation:learn:{self._machine_text(app_name)}",
                     "stage": "app_learning",
                     "kind": (
-                        "activate_memory_guided_learning"
+                        "resume_setup_then_continue_learning"
+                        if setup_resume_recommended or setup_auto_resume_ready
+                        else "maintain_vector_memory_then_continue_learning"
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else "activate_memory_guided_learning"
                         if memory_followthrough_recommended
                         else "deepen_app_learning" if semantic_followup_recommended else "retry_app_learning"
                     ),
@@ -16099,6 +16565,10 @@ class DesktopBackendService:
                     "retry_recommended": retry_recommended,
                     "provider_blocked": provider_blocked,
                     "setup_followup_required": setup_followup_required,
+                    "setup_resume_recommended": setup_resume_recommended,
+                    "setup_auto_resume_ready": setup_auto_resume_ready,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
                     "memory_followthrough_recommended": memory_followthrough_recommended,
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
@@ -16133,6 +16603,10 @@ class DesktopBackendService:
             )
             memory_guided_route = bool(row.get("memory_guided_route", False))
             memory_assisted_route = bool(row.get("memory_assisted_route", False))
+            setup_resume_recommended = bool(row.get("recent_setup_resume_ready", False))
+            setup_auto_resume_ready = bool(row.get("recent_setup_auto_resume_ready", False))
+            memory_maintenance_recommended = bool(row.get("knowledge_store_maintenance_due", False))
+            memory_cleanup_pressure = int(row.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
             memory_followthrough_recommended = bool(row.get("auto_prepare_allowed", False)) and (
                 memory_route_alignment_status in {"underused", "assisted"}
                 and semantic_guidance_status in {"strong", "partial"}
@@ -16141,10 +16615,51 @@ class DesktopBackendService:
                 semantic_guidance_status == "cold"
                 and int(row.get("semantic_guidance_match_count", 0) or 0) <= 0
             )
+            if setup_resume_recommended or setup_auto_resume_ready:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "models"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "models",
+                        "runtime",
+                        "provider",
+                    ],
+                    limit=8,
+                )
+            if memory_maintenance_recommended or memory_cleanup_pressure:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "settings"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "settings",
+                        "preferences",
+                        "toolbar",
+                        "navigation",
+                    ],
+                    limit=8,
+                )
             if not (
                 retry_recommended
                 or provider_blocked
                 or setup_followup_required
+                or setup_resume_recommended
+                or setup_auto_resume_ready
+                or memory_maintenance_recommended
+                or memory_cleanup_pressure
                 or memory_followthrough_recommended
                 or semantic_followup_recommended
                 or remediation_status in {"persistent", "regressed", "new"}
@@ -16156,7 +16671,11 @@ class DesktopBackendService:
                     "id": f"continuation:prepare:{self._machine_text(app_name)}",
                     "stage": "app_prepare",
                     "kind": (
-                        "activate_memory_guided_prepare"
+                        "resume_setup_then_prepare_app"
+                        if setup_resume_recommended or setup_auto_resume_ready
+                        else "maintain_vector_memory_then_prepare_app"
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else "activate_memory_guided_prepare"
                         if memory_followthrough_recommended
                         else "deepen_app_prepare" if semantic_followup_recommended else "retry_app_prepare"
                     ),
@@ -16174,6 +16693,10 @@ class DesktopBackendService:
                     "retry_recommended": retry_recommended,
                     "provider_blocked": provider_blocked,
                     "setup_followup_required": setup_followup_required,
+                    "setup_resume_recommended": setup_resume_recommended,
+                    "setup_auto_resume_ready": setup_auto_resume_ready,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
                     "memory_followthrough_recommended": memory_followthrough_recommended,
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
@@ -16212,6 +16735,56 @@ class DesktopBackendService:
                 if isinstance(row.get("memory_mission", {}), dict)
                 else {}
             )
+            provider_model_readiness = (
+                dict(row.get("provider_model_readiness", {}))
+                if isinstance(row.get("provider_model_readiness", {}), dict)
+                else {}
+            )
+            setup_resume_recommended = bool(provider_model_readiness.get("recent_setup_resume_ready", False))
+            setup_auto_resume_ready = bool(provider_model_readiness.get("recent_setup_auto_resume_ready", False))
+            memory_maintenance_recommended = bool(
+                provider_model_readiness.get("structured_memory_maintenance_due", False)
+            )
+            memory_cleanup_pressure = (
+                int(provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0) > 0
+            )
+            if setup_resume_recommended or setup_auto_resume_ready:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "models"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "models",
+                        "runtime",
+                        "provider",
+                    ],
+                    limit=8,
+                )
+            if memory_maintenance_recommended or memory_cleanup_pressure:
+                memory_mission = dict(memory_mission)
+                seed_query = str(memory_mission.get("seed_query", "") or "").strip()
+                memory_mission["seed_query"] = seed_query or "desktop settings"
+                memory_mission["query_hints"] = self._machine_dedupe(
+                    [
+                        str(memory_mission.get("seed_query", "") or "").strip(),
+                        *(
+                            list(memory_mission.get("query_hints", []))
+                            if isinstance(memory_mission.get("query_hints", []), list)
+                            else []
+                        ),
+                        "desktop settings",
+                        "preferences",
+                        "toolbar",
+                        "navigation",
+                    ],
+                    limit=8,
+                )
             memory_followthrough_recommended = bool(row.get("auto_prepare_allowed", False)) and (
                 bool(row.get("memory_followthrough_recommended", False))
                 or memory_route_alignment_status in {"underused", "assisted"}
@@ -16220,6 +16793,10 @@ class DesktopBackendService:
             if not (
                 memory_followthrough_recommended
                 or setup_followup_required
+                or setup_resume_recommended
+                or setup_auto_resume_ready
+                or memory_maintenance_recommended
+                or memory_cleanup_pressure
                 or retry_recommended
                 or route_status in {"blocked", "degraded"}
             ):
@@ -16229,7 +16806,11 @@ class DesktopBackendService:
                     "id": f"continuation:vm_prepare:{self._machine_text(guest_name)}",
                     "stage": "vm_prepare",
                     "kind": (
-                        "deepen_vm_control_learning"
+                        "resume_setup_then_retry_vm"
+                        if setup_resume_recommended or setup_auto_resume_ready
+                        else "maintain_vector_memory_then_retry_vm"
+                        if memory_maintenance_recommended or memory_cleanup_pressure
+                        else "deepen_vm_control_learning"
                         if memory_followthrough_recommended
                         else "retry_vm_prepare"
                     ),
@@ -16247,6 +16828,10 @@ class DesktopBackendService:
                     "retry_recommended": retry_recommended,
                     "provider_blocked": False,
                     "setup_followup_required": setup_followup_required,
+                    "setup_resume_recommended": setup_resume_recommended,
+                    "setup_auto_resume_ready": setup_auto_resume_ready,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
                     "memory_followthrough_recommended": memory_followthrough_recommended,
                     "memory_guided_route": memory_guided_route,
                     "memory_assisted_route": memory_assisted_route,
@@ -16357,6 +16942,10 @@ class DesktopBackendService:
         retry_count = 0
         provider_blocked_count = 0
         setup_followup_count = 0
+        setup_resume_followthrough_count = 0
+        setup_auto_resume_followthrough_count = 0
+        memory_maintenance_followthrough_count = 0
+        memory_cleanup_pressure_count = 0
         semantic_followup_count = 0
         memory_followthrough_count = 0
         memory_guided_route_count = 0
@@ -16413,6 +17002,14 @@ class DesktopBackendService:
                 provider_blocked_count += 1
             if bool(row.get("setup_followup_required", False)):
                 setup_followup_count += 1
+            if bool(row.get("setup_resume_recommended", False)):
+                setup_resume_followthrough_count += 1
+            if bool(row.get("setup_auto_resume_ready", False)):
+                setup_auto_resume_followthrough_count += 1
+            if bool(row.get("memory_maintenance_recommended", False)):
+                memory_maintenance_followthrough_count += 1
+            if bool(row.get("memory_cleanup_pressure", False)):
+                memory_cleanup_pressure_count += 1
             if bool(row.get("semantic_followup_recommended", False)):
                 semantic_followup_count += 1
             if bool(row.get("memory_followthrough_recommended", False)):
@@ -16442,6 +17039,10 @@ class DesktopBackendService:
                 "retry_count": retry_count,
                 "provider_blocked_count": provider_blocked_count,
                 "setup_followup_count": setup_followup_count,
+                "setup_resume_followthrough_count": setup_resume_followthrough_count,
+                "setup_auto_resume_followthrough_count": setup_auto_resume_followthrough_count,
+                "memory_maintenance_followthrough_count": memory_maintenance_followthrough_count,
+                "memory_cleanup_pressure_count": memory_cleanup_pressure_count,
                 "semantic_followup_count": semantic_followup_count,
                 "memory_followthrough_count": memory_followthrough_count,
                 "memory_guided_route_count": memory_guided_route_count,
@@ -20872,8 +21473,12 @@ class DesktopBackendService:
         strategy_notes: List[str] = []
         recent_setup_followthrough_recommended_count = 0
         recent_setup_followthrough_required_count = 0
+        recent_setup_resume_ready_count = 0
+        recent_setup_auto_resume_ready_count = 0
         recent_continuation_recommended_count = 0
         recent_continuation_required_count = 0
+        knowledge_store_maintenance_due_count = 0
+        knowledge_store_cleanup_pressure_count = 0
         for item in selected_targets:
             execution_mode = str(item.get("execution_mode", "") or "unknown").strip().lower() or "unknown"
             learning_profile = str(item.get("learning_profile", "") or "unknown").strip().lower() or "unknown"
@@ -20957,10 +21562,18 @@ class DesktopBackendService:
                 recent_setup_followthrough_recommended_count += 1
             if bool(item.get("recent_setup_followthrough_required", False)):
                 recent_setup_followthrough_required_count += 1
+            if bool(item.get("recent_setup_resume_ready", False)):
+                recent_setup_resume_ready_count += 1
+            if bool(item.get("recent_setup_auto_resume_ready", False)):
+                recent_setup_auto_resume_ready_count += 1
             if bool(item.get("recent_continuation_recommended", False)):
                 recent_continuation_recommended_count += 1
             if bool(item.get("recent_continuation_required", False)):
                 recent_continuation_required_count += 1
+            if bool(item.get("knowledge_store_maintenance_due", False)):
+                knowledge_store_maintenance_due_count += 1
+            if int(item.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0:
+                knowledge_store_cleanup_pressure_count += 1
             if int(item.get("semantic_guidance_match_count", 0) or 0) > 0:
                 semantic_guided_count += 1
             if semantic_guidance_status == "cold" and knowledge_gap_level in {"cold", "thin"}:
@@ -21041,10 +21654,14 @@ class DesktopBackendService:
             strategy_notes.append("recent setup followthrough pressure is shaping app-learning depth")
         elif recent_setup_followthrough_recommended_count > 0:
             strategy_notes.append("recent setup followthrough memory is reused across learning targets")
+        if recent_setup_resume_ready_count > 0:
+            strategy_notes.append("recent setup resume memory is reopening model and provider followthrough for app-learning")
         if recent_continuation_required_count > 0:
             strategy_notes.append("recent continuation pressure is pushing another deeper learning pass before memory goes stale")
         elif recent_continuation_recommended_count > 0:
             strategy_notes.append("recent continuation memory is being reused to resume unfinished app-learning missions")
+        if knowledge_store_maintenance_due_count > 0 or knowledge_store_cleanup_pressure_count > 0:
+            strategy_notes.append("permanent vector-memory maintenance pressure is deepening app-learning revalidation")
         setup_guided_target_count = 0
         continuation_focus_target_count = 0
         setup_guided_app_names: List[str] = []
@@ -21079,12 +21696,6 @@ class DesktopBackendService:
                 [
                     *[
                         str(query_hint).strip()
-                        for query_hint in row.get("recent_setup_guided_queries", [])
-                        if isinstance(row.get("recent_setup_guided_queries", []), list)
-                        and str(query_hint).strip()
-                    ],
-                    *[
-                        str(query_hint).strip()
                         for query_hint in row.get("recommended_queries", [])
                         if isinstance(row.get("recommended_queries", []), list)
                         and str(query_hint).strip()
@@ -21102,6 +21713,12 @@ class DesktopBackendService:
                         and str(query_hint).strip()
                     ],
                     str(memory_mission_payload.get("seed_query", "") or "").strip(),
+                    *[
+                        str(query_hint).strip()
+                        for query_hint in row.get("recent_setup_guided_queries", [])
+                        if isinstance(row.get("recent_setup_guided_queries", []), list)
+                        and str(query_hint).strip()
+                    ],
                 ],
                 limit=8,
             )
@@ -21216,6 +21833,38 @@ class DesktopBackendService:
             combined_roles.extend(["toolbar", "dialog", "menu"])
             combined_actions.extend(["focus_toolbar", "focus_search_box"])
             combined_paths.extend(["toolbar", "dialog", "menu"])
+        if recent_setup_resume_ready_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(
+                    max_surface_waves_value,
+                    int(recent_setup_followthrough_memory.get("suggested_followthrough_waves", 2) or 2)
+                    + (1 if recent_setup_auto_resume_ready_count > 0 else 0),
+                ),
+            )
+            max_probe_controls_value = min(
+                8,
+                max(max_probe_controls_value, 5 if recent_setup_auto_resume_ready_count > 0 else 4),
+            )
+            per_app_limit = min(56, max(per_app_limit, 30 if recent_setup_auto_resume_ready_count > 0 else 28))
+            combined_queries.extend(["models", "runtime", "provider"])
+            combined_roles.extend(["dialog", "menu"])
+            combined_actions.extend(["command", "focus_search_box"])
+            combined_paths.extend(["dialog", "menu"])
+        if knowledge_store_maintenance_due_count > 0 or knowledge_store_cleanup_pressure_count > 0:
+            max_surface_waves_value = min(
+                8,
+                max(max_surface_waves_value, 5 if knowledge_store_cleanup_pressure_count > 0 else 4),
+            )
+            max_probe_controls_value = min(
+                8,
+                max(max_probe_controls_value, 5 if knowledge_store_cleanup_pressure_count > 0 else 4),
+            )
+            per_app_limit = min(56, max(per_app_limit, 30 if knowledge_store_cleanup_pressure_count > 0 else 28))
+            combined_queries.extend(["settings", "preferences", "toolbar", "navigation"])
+            combined_roles.extend(["toolbar", "tree", "sidebar"])
+            combined_actions.extend(["focus_toolbar", "focus_navigation_tree", "focus_sidebar"])
+            combined_paths.extend(["toolbar", "tree", "sidebar"])
         if continuation_focus_target_count > 0:
             max_surface_waves_value = min(
                 8,
@@ -21310,6 +21959,8 @@ class DesktopBackendService:
                 ),
                 "recent_setup_followthrough_recommended_count": recent_setup_followthrough_recommended_count,
                 "recent_setup_followthrough_required_count": recent_setup_followthrough_required_count,
+                "recent_setup_resume_ready_count": recent_setup_resume_ready_count,
+                "recent_setup_auto_resume_ready_count": recent_setup_auto_resume_ready_count,
                 "setup_guided_target_count": setup_guided_target_count,
                 "setup_guided_app_names": self._machine_dedupe(setup_guided_app_names, limit=8),
                 "recent_setup_suggested_followthrough_waves": int(
@@ -21330,6 +21981,8 @@ class DesktopBackendService:
                     if isinstance(recent_setup_followthrough_memory.get("reason_codes", []), list)
                     and str(code).strip()
                 ][:10],
+                "knowledge_store_maintenance_due_count": knowledge_store_maintenance_due_count,
+                "knowledge_store_cleanup_pressure_count": knowledge_store_cleanup_pressure_count,
                 "recent_continuation_status": str(
                     recent_continuation_memory.get("continuation_status", "") or ""
                 ).strip().lower(),
@@ -21636,6 +22289,8 @@ class DesktopBackendService:
                 ),
                 "recent_setup_followthrough_recommended_count": recent_setup_followthrough_recommended_count,
                 "recent_setup_followthrough_required_count": recent_setup_followthrough_required_count,
+                "recent_setup_resume_ready_count": recent_setup_resume_ready_count,
+                "recent_setup_auto_resume_ready_count": recent_setup_auto_resume_ready_count,
                 "setup_guided_target_count": setup_guided_target_count,
                 "setup_guided_app_names": self._machine_dedupe(setup_guided_app_names, limit=8),
                 "recent_setup_suggested_followthrough_waves": int(
@@ -21656,6 +22311,11 @@ class DesktopBackendService:
                     if isinstance(recent_setup_followthrough_memory.get("reason_codes", []), list)
                     and str(code).strip()
                 ][:10],
+                "knowledge_store_maintenance_due_count": knowledge_store_maintenance_due_count,
+                "knowledge_store_cleanup_pressure_count": knowledge_store_cleanup_pressure_count,
+                "maintenance_followthrough_enabled": bool(
+                    knowledge_store_maintenance_due_count > 0 or knowledge_store_cleanup_pressure_count > 0
+                ),
                 "recent_continuation_status": str(
                     recent_continuation_memory.get("continuation_status", "") or ""
                 ).strip().lower(),
@@ -23478,6 +24138,38 @@ class DesktopBackendService:
                         )
                         or 0
                     ),
+                    2
+                    if int(
+                        runtime_app_learning_campaign_defaults.get("recent_setup_resume_ready_count", 0)
+                        or runtime_app_learning_plan_summary.get("recent_setup_resume_ready_count", 0)
+                        or 0
+                    )
+                    > 0
+                    or bool(
+                        runtime_app_learning_campaign_defaults.get("maintenance_followthrough_enabled", False)
+                        or runtime_app_learning_plan_summary.get("maintenance_followthrough_enabled", False)
+                    )
+                    or int(
+                        runtime_app_learning_campaign_defaults.get("knowledge_store_maintenance_due_count", 0)
+                        or runtime_app_learning_plan_summary.get("knowledge_store_maintenance_due_count", 0)
+                        or 0
+                    )
+                    > 0
+                    else 0,
+                    3
+                    if int(
+                        runtime_app_learning_campaign_defaults.get("recent_setup_auto_resume_ready_count", 0)
+                        or runtime_app_learning_plan_summary.get("recent_setup_auto_resume_ready_count", 0)
+                        or 0
+                    )
+                    > 0
+                    or int(
+                        runtime_app_learning_campaign_defaults.get("knowledge_store_cleanup_pressure_count", 0)
+                        or runtime_app_learning_plan_summary.get("knowledge_store_cleanup_pressure_count", 0)
+                        or 0
+                    )
+                    > 0
+                    else 0,
                     1
                     if bool(runtime_app_learning_campaign_defaults.get("memory_followthrough_enabled", False))
                     or int(runtime_app_learning_campaign_defaults.get("memory_underused_count", 0) or 0) > 0
@@ -23988,6 +24680,17 @@ class DesktopBackendService:
                         )
                         or 0
                     ),
+                    2
+                    if int(dict(vm_control_prepare_result.get("summary", {})).get("setup_resume_guest_count", 0) or 0) > 0
+                    or int(dict(runtime_vm_control_plan.get("summary", {})).get("setup_resume_guided_guest_count", 0) or 0) > 0
+                    or int(dict(runtime_vm_control_plan.get("summary", {})).get("maintenance_guided_guest_count", 0) or 0) > 0
+                    else 0,
+                    3
+                    if int(dict(vm_control_prepare_result.get("summary", {})).get("setup_auto_resume_guest_count", 0) or 0) > 0
+                    or int(dict(vm_control_prepare_result.get("summary", {})).get("maintenance_cleanup_guest_count", 0) or 0) > 0
+                    or int(dict(runtime_vm_control_plan.get("summary", {})).get("setup_auto_resume_guided_guest_count", 0) or 0) > 0
+                    or int(dict(runtime_vm_control_plan.get("summary", {})).get("maintenance_cleanup_guest_count", 0) or 0) > 0
+                    else 0,
                     1
                     if int(dict(vm_control_prepare_result.get("summary", {})).get("memory_followthrough_guest_count", 0) or 0) > 0
                     or int(dict(vm_control_prepare_result.get("summary", {})).get("attention_count", 0) or 0) > 0
@@ -24695,6 +25398,18 @@ class DesktopBackendService:
                 "app_learning_continuation_memory_underused_count": int(
                     app_learning_continuation.get("memory_underused_count", 0) or 0
                 ),
+                "app_learning_continuation_setup_resume_count": int(
+                    app_learning_continuation.get("recent_setup_resume_ready_count", 0) or 0
+                ),
+                "app_learning_continuation_setup_auto_resume_count": int(
+                    app_learning_continuation.get("recent_setup_auto_resume_ready_count", 0) or 0
+                ),
+                "app_learning_continuation_maintenance_count": int(
+                    app_learning_continuation.get("knowledge_store_maintenance_due_count", 0) or 0
+                ),
+                "app_learning_continuation_maintenance_cleanup_count": int(
+                    app_learning_continuation.get("knowledge_store_cleanup_pressure_count", 0) or 0
+                ),
                 "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
                 "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
                 "multimodal_knowledge_entry_count": int(
@@ -24938,6 +25653,18 @@ class DesktopBackendService:
                     if isinstance(vm_prepare_continuation.get("summary", {}), dict)
                     else 0
                 ),
+                "vm_prepare_continuation_setup_resume_count": int(
+                    vm_prepare_continuation.get("setup_resume_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_setup_auto_resume_count": int(
+                    vm_prepare_continuation.get("setup_auto_resume_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_maintenance_count": int(
+                    vm_prepare_continuation.get("maintenance_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_maintenance_cleanup_count": int(
+                    vm_prepare_continuation.get("maintenance_cleanup_guest_count", 0) or 0
+                ),
                 "vm_prepare_continuation_memory_route_alignment_counts": dict(
                     dict(vm_prepare_continuation.get("summary", {})).get("memory_route_alignment_counts", {})
                     if isinstance(vm_prepare_continuation.get("summary", {}), dict)
@@ -25046,6 +25773,26 @@ class DesktopBackendService:
                 ),
                 "continuation_memory_followthrough_count": int(
                     dict(continuation_plan.get("summary", {})).get("memory_followthrough_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_setup_resume_count": int(
+                    dict(continuation_plan.get("summary", {})).get("setup_resume_followthrough_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_setup_auto_resume_count": int(
+                    dict(continuation_plan.get("summary", {})).get("setup_auto_resume_followthrough_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_memory_maintenance_count": int(
+                    dict(continuation_plan.get("summary", {})).get("memory_maintenance_followthrough_count", 0)
+                    if isinstance(continuation_plan.get("summary", {}), dict)
+                    else 0
+                ),
+                "continuation_memory_cleanup_pressure_count": int(
+                    dict(continuation_plan.get("summary", {})).get("memory_cleanup_pressure_count", 0)
                     if isinstance(continuation_plan.get("summary", {}), dict)
                     else 0
                 ),
@@ -25255,6 +26002,24 @@ class DesktopBackendService:
                 entity_types=entity_types,
             )
             return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory semantic payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    def desktop_app_memory_maintain(
+        self,
+        *,
+        force: bool = False,
+        reason: str = "manual",
+    ) -> Dict[str, Any]:
+        router = getattr(self, "desktop_action_router", None)
+        if router is None:
+            return {"status": "unavailable", "message": "desktop action router unavailable"}
+        try:
+            payload = router.app_memory_maintain(
+                force=force,
+                reason=reason,
+            )
+            return _to_jsonable(payload) if isinstance(payload, dict) else {"status": "error", "message": "invalid app memory maintenance payload"}
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": str(exc)}
 
@@ -26490,6 +27255,10 @@ class DesktopBackendService:
         semantic_hotkeys_by_app: Optional[Dict[str, List[str]]] = None,
         source: str = "daemon",
     ) -> Dict[str, Any]:
+        maintenance = self.desktop_app_memory_maintain(
+            force=False,
+            reason=f"supervisor:{str(source or 'daemon').strip().lower() or 'daemon'}",
+        )
         payload = self.survey_desktop_app_memory_batch(
             query=query,
             category=category,
@@ -26519,6 +27288,21 @@ class DesktopBackendService:
             semantic_hotkeys_by_app=semantic_hotkeys_by_app,
             source=source,
         )
+        maintenance_payload = dict(maintenance) if isinstance(maintenance, dict) else {}
+        maintenance_state = (
+            dict(maintenance_payload.get("maintenance", {}))
+            if isinstance(maintenance_payload.get("maintenance", {}), dict)
+            else maintenance_payload
+        )
+        if isinstance(payload, dict):
+            payload["knowledge_store_maintenance"] = maintenance_payload
+            payload["maintenance_status"] = str(maintenance_state.get("status", maintenance_payload.get("status", "unknown")) or "unknown").strip().lower() or "unknown"
+            payload["maintenance_performed"] = bool(maintenance_state.get("performed", maintenance_payload.get("performed", False)))
+            payload["maintenance_due"] = bool(maintenance_state.get("maintenance_due", False))
+            payload["maintenance_removed_count"] = max(0, int(maintenance_state.get("removed_count", 0) or 0))
+            payload["maintenance_added_count"] = max(0, int(maintenance_state.get("added_count", 0) or 0))
+            payload["maintenance_reason"] = str(maintenance_state.get("reason", maintenance_payload.get("reason", "")) or "").strip()
+            payload["maintenance_last_at"] = str(maintenance_state.get("last_maintenance_at", "") or "").strip()
         return _to_jsonable(payload)
 
     def _execute_desktop_evaluation_program_supervisor_tick(

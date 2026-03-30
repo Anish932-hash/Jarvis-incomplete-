@@ -53,6 +53,7 @@ class DesktopAppMemory:
         self._load()
         with self._lock:
             self._rebuild_knowledge_store_locked()
+            self._ensure_knowledge_store_maintenance_locked(force=True, reason="initial_reconcile")
 
     @classmethod
     def default(cls) -> "DesktopAppMemory":
@@ -689,6 +690,7 @@ class DesktopAppMemory:
             self._entries[key] = entry
             self._trim_locked()
             self._sync_knowledge_store_entry_locked(entry_key=key, entry=entry)
+            self._ensure_knowledge_store_maintenance_locked(force=False, reason="record_survey")
             self._updates_since_save += 1
             self._maybe_save_locked(force=False)
             return self._snapshot_item(dict(entry))
@@ -706,6 +708,7 @@ class DesktopAppMemory:
         clean_profile_id = self._normalize_text(profile_id)
         clean_category = self._normalize_text(category)
         with self._lock:
+            self._ensure_knowledge_store_maintenance_locked(force=False, reason="snapshot")
             rows = [dict(row) for row in self._entries.values()]
         if clean_app_name:
             rows = [
@@ -797,6 +800,8 @@ class DesktopAppMemory:
         limit: int = 8,
         entity_types: List[str] | None = None,
     ) -> Dict[str, Any]:
+        with self._lock:
+            self._ensure_knowledge_store_maintenance_locked(force=False, reason="semantic_lookup")
         return self._knowledge_store.semantic_lookup(
             query=query,
             app_name=app_name,
@@ -1413,10 +1418,14 @@ class DesktopAppMemory:
             "control_count": control_count,
             "command_count": command_count,
             "vector_count": vector_count,
+            "details_vector_count": vector_count,
+            "controls_vector_count": vector_count,
             "hotkey_count": hotkey_count,
             "semantic_memory_available": semantic_memory_available,
             "coverage_score": coverage_score,
             "coverage_level": coverage_level,
+            "temporary_sqlite_backed": True,
+            "permanent_vector_db_count": 2,
         }
 
     def _snapshot_summary(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -3131,6 +3140,8 @@ class DesktopAppMemory:
         clean_app_name = self._normalize_text(app_name)
         clean_profile_id = self._normalize_text(profile_id)
         clean_surface_fingerprint = str(surface_fingerprint or "").strip()
+        with self._lock:
+            self._ensure_knowledge_store_maintenance_locked(force=False, reason="surface_hint")
         knowledge_store_summary = self._knowledge_store.summary(
             app_name=app_name,
             profile_id=profile_id,
@@ -3320,6 +3331,16 @@ class DesktopAppMemory:
             self._knowledge_store.sync_entry(entry_key=entry_key, row=entry)
         except Exception:
             return
+
+    def maintain_knowledge_store(self, *, force: bool = False, reason: str = "manual") -> Dict[str, Any]:
+        with self._lock:
+            return self._ensure_knowledge_store_maintenance_locked(force=force, reason=reason)
+
+    def _ensure_knowledge_store_maintenance_locked(self, *, force: bool, reason: str) -> Dict[str, Any]:
+        try:
+            return self._knowledge_store.maintenance(entries=self._entries, force=force, reason=reason)
+        except Exception:
+            return {"status": "error", "performed": False, "message": "knowledge store maintenance failed"}
 
     def _rebuild_knowledge_store_locked(self) -> None:
         try:
