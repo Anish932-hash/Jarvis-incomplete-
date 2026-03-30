@@ -10308,6 +10308,138 @@ class DesktopBackendService:
             "message": "Prepared multimodal OCR and vision runtime for onboarding-guided app learning.",
         }
 
+    def _desktop_machine_vector_memory_maintenance_result(
+        self,
+        *,
+        payload: Optional[Dict[str, Any]] = None,
+        status: str = "skipped",
+        selected: bool = False,
+        source: str = "machine_onboarding",
+        counted_in_multimodal: bool = False,
+    ) -> Dict[str, Any]:
+        raw_payload = dict(payload) if isinstance(payload, dict) else {}
+        maintenance_payload = (
+            dict(raw_payload.get("maintenance", {}))
+            if isinstance(raw_payload.get("maintenance", {}), dict)
+            else {}
+        )
+        knowledge_store_payload = (
+            dict(raw_payload.get("knowledge_store", {}))
+            if isinstance(raw_payload.get("knowledge_store", {}), dict)
+            else {}
+        )
+        status_name = self._machine_text(
+            maintenance_payload.get("status", "") or raw_payload.get("status", "") or status
+        ) or self._machine_text(status or "skipped") or "skipped"
+        if selected and status_name == "skipped":
+            status_name = "planned"
+        added_count = max(
+            0,
+            int(
+                maintenance_payload.get("added_count", raw_payload.get("added_count", 0))
+                or 0
+            ),
+        )
+        removed_count = max(
+            0,
+            int(
+                maintenance_payload.get("removed_count", raw_payload.get("removed_count", 0))
+                or 0
+            ),
+        )
+        maintenance_due = bool(
+            maintenance_payload.get("maintenance_due", raw_payload.get("maintenance_due", False))
+        )
+        vector_db_count = max(
+            0,
+            int(
+                knowledge_store_payload.get(
+                    "permanent_vector_db_count",
+                    raw_payload.get("permanent_vector_db_count", 0),
+                )
+                or 0
+            ),
+        )
+        performed = bool(
+            raw_payload.get("performed", False)
+            or maintenance_payload.get("performed", False)
+            or (
+                status_name in {"success", "partial"}
+                and (added_count > 0 or removed_count > 0 or maintenance_due is False)
+            )
+        )
+        next_actions: List[Dict[str, Any]] = []
+        if status_name in {"planned", "error"} or (selected and not performed):
+            next_actions.append(
+                {
+                    "id": f"{self._machine_text(source or 'machine_onboarding')}:maintain_vector_memory",
+                    "kind": "maintain_vector_memory",
+                    "stage": "memory_maintenance",
+                    "action": "maintain_vector_memory",
+                    "target": "desktop_app_memory",
+                    "status": "ready" if status_name == "planned" else "attention",
+                    "required": bool(selected),
+                    "count": 1,
+                }
+            )
+        reason_codes = self._machine_dedupe(
+            [
+                "vector_memory_selected" if selected else "",
+                "vector_memory_maintained" if performed else "",
+                "vector_memory_cleanup_applied" if removed_count > 0 else "",
+                "vector_memory_added_entries" if added_count > 0 else "",
+                "vector_memory_error" if status_name == "error" else "",
+                "vector_memory_planned" if status_name == "planned" else "",
+                "vector_memory_counted_in_multimodal" if counted_in_multimodal else "",
+            ],
+            limit=8,
+        )
+        return {
+            "status": status_name,
+            "selected": bool(selected),
+            "performed": performed,
+            "performed_count": 1 if performed else 0,
+            "added_count": added_count,
+            "removed_count": removed_count,
+            "maintenance_due": maintenance_due,
+            "permanent_vector_db_count": vector_db_count,
+            "counted_in_multimodal": bool(counted_in_multimodal),
+            "reason_codes": reason_codes,
+            "next_actions": next_actions,
+            "payload": raw_payload,
+        }
+
+    def _desktop_machine_execute_vector_memory_maintenance(
+        self,
+        *,
+        reason: str,
+        dry_run: bool = False,
+        source: str = "machine_onboarding",
+    ) -> Dict[str, Any]:
+        clean_source = str(source or "machine_onboarding").strip().lower() or "machine_onboarding"
+        if bool(dry_run):
+            return self._desktop_machine_vector_memory_maintenance_result(
+                status="planned",
+                selected=True,
+                source=clean_source,
+            )
+        maintenance_payload = self.desktop_app_memory_maintain(
+            force=True,
+            reason=str(reason or clean_source).strip().lower() or clean_source,
+        )
+        result = self._desktop_machine_vector_memory_maintenance_result(
+            payload=maintenance_payload if isinstance(maintenance_payload, dict) else {},
+            status="error",
+            selected=True,
+            source=clean_source,
+        )
+        result["message"] = (
+            "Executed permanent vector-memory maintenance."
+            if result.get("performed", False)
+            else "Vector-memory maintenance did not execute."
+        )
+        return result
+
     @staticmethod
     def _machine_text(value: Any) -> str:
         return str(value or "").strip().lower()
@@ -12093,6 +12225,22 @@ class DesktopBackendService:
                 "next_actions": [],
             }
 
+        maintenance_selected = bool(
+            maintenance_followthrough_enabled
+            or knowledge_store_maintenance_due_count > 0
+            or knowledge_store_cleanup_pressure_count > 0
+        )
+        maintenance_execution = self._desktop_machine_vector_memory_maintenance_result(
+            status="skipped",
+            selected=maintenance_selected,
+            source=f"{source}_campaign_memory",
+        )
+        if maintenance_selected:
+            maintenance_execution = self._desktop_machine_execute_vector_memory_maintenance(
+                reason=f"{source}_campaign_followthrough",
+                source=f"{source}_campaign_memory",
+            )
+
         continued_items: List[Dict[str, Any]] = []
         previous_pending = int(latest_campaign.get("pending_app_count", 0) or 0)
         for _ in range(bounded_waves):
@@ -12360,8 +12508,22 @@ class DesktopBackendService:
             generated_next_actions,
             limit=8,
         )
+        final_next_actions = self._desktop_machine_merge_next_actions(
+            final_next_actions,
+            list(maintenance_execution.get("next_actions", []))
+            if isinstance(maintenance_execution.get("next_actions", []), list)
+            else [],
+            limit=8,
+        )
+        status_name = "skipped"
+        if continued_items:
+            status_name = "success"
+        elif maintenance_execution.get("status", "") in {"success", "partial"}:
+            status_name = str(maintenance_execution.get("status", "") or "success").strip().lower()
+        elif maintenance_selected and maintenance_execution.get("status", "") == "error":
+            status_name = "error"
         return {
-            "status": "success" if continued_items else "skipped",
+            "status": status_name,
             "campaign_id": campaign_id,
             "waves_requested": bounded_waves,
             "waves_executed": len(continued_items),
@@ -12400,6 +12562,11 @@ class DesktopBackendService:
             "knowledge_store_maintenance_due_count": knowledge_store_maintenance_due_count,
             "knowledge_store_cleanup_pressure_count": knowledge_store_cleanup_pressure_count,
             "maintenance_followthrough_enabled": maintenance_followthrough_enabled,
+            "maintenance_execution": maintenance_execution,
+            "maintenance_execution_performed": bool(maintenance_execution.get("performed", False)),
+            "maintenance_execution_status": str(maintenance_execution.get("status", "") or "").strip().lower(),
+            "maintenance_execution_added_count": int(maintenance_execution.get("added_count", 0) or 0),
+            "maintenance_execution_removed_count": int(maintenance_execution.get("removed_count", 0) or 0),
             "focus_app_names": focus_app_names[:8],
             "focus_app_count": len(focus_app_names),
             "reason_codes": self._machine_dedupe(
@@ -12420,6 +12587,9 @@ class DesktopBackendService:
                     if maintenance_followthrough_enabled
                     or knowledge_store_maintenance_due_count > 0
                     or knowledge_store_cleanup_pressure_count > 0
+                    else "",
+                    "campaign_vector_memory_maintained"
+                    if maintenance_execution.get("performed", False)
                     else "",
                 ]
             ),
@@ -12620,6 +12790,31 @@ class DesktopBackendService:
         resolved_guest_names: set[str] = set()
         persistent_guest_names: set[str] = set()
         executed_wave_count = 0
+        maintenance_selected = False
+        for row in latest_items_by_guest.values():
+            if not isinstance(row, dict):
+                continue
+            summary = dict(row.get("summary", {})) if isinstance(row.get("summary", {}), dict) else {}
+            provider_model_readiness = (
+                dict(summary.get("provider_model_readiness", {}))
+                if isinstance(summary.get("provider_model_readiness", {}), dict)
+                else {}
+            )
+            if bool(provider_model_readiness.get("structured_memory_maintenance_due", False)) or int(
+                provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
+            ) > 0:
+                maintenance_selected = True
+                break
+        maintenance_execution = self._desktop_machine_vector_memory_maintenance_result(
+            status="skipped",
+            selected=maintenance_selected,
+            source=f"{source}_vm_memory",
+        )
+        if maintenance_selected:
+            maintenance_execution = self._desktop_machine_execute_vector_memory_maintenance(
+                reason=f"{source}_vm_followthrough",
+                source=f"{source}_vm_memory",
+            )
 
         for _ in range(bounded_waves):
             target_rows: List[Dict[str, Any]] = []
@@ -12817,8 +13012,22 @@ class DesktopBackendService:
             )
             if len(continuation_next_actions) >= 6:
                 break
+        continuation_next_actions = self._desktop_machine_merge_next_actions(
+            continuation_next_actions,
+            list(maintenance_execution.get("next_actions", []))
+            if isinstance(maintenance_execution.get("next_actions", []), list)
+            else [],
+            limit=6,
+        )
+        status_name = "skipped"
+        if continuation_items:
+            status_name = "success"
+        elif maintenance_execution.get("status", "") in {"success", "partial"}:
+            status_name = str(maintenance_execution.get("status", "") or "success").strip().lower()
+        elif maintenance_selected and maintenance_execution.get("status", "") == "error":
+            status_name = "error"
         return {
-            "status": "success" if continuation_items else "skipped",
+            "status": status_name,
             "waves_executed": executed_wave_count,
             "continued_guest_count": len(continued_guest_names),
             "resolved_guest_count": len(resolved_guest_names),
@@ -12851,6 +13060,11 @@ class DesktopBackendService:
             "maintenance_cleanup_guest_count": int(
                 latest_summary.get("maintenance_cleanup_guest_count", 0) or 0
             ),
+            "maintenance_execution": maintenance_execution,
+            "maintenance_execution_performed": bool(maintenance_execution.get("performed", False)),
+            "maintenance_execution_status": str(maintenance_execution.get("status", "") or "").strip().lower(),
+            "maintenance_execution_added_count": int(maintenance_execution.get("added_count", 0) or 0),
+            "maintenance_execution_removed_count": int(maintenance_execution.get("removed_count", 0) or 0),
             "memory_mission": self._desktop_machine_memory_mission_from_summary(
                 summary=(
                     dict(latest_summary)
@@ -13206,6 +13420,21 @@ class DesktopBackendService:
             "setup_followthrough_multimodal_action_count": int(
                 followthrough_payload.get("selected_multimodal_action_count", 0) or 0
             ),
+            "setup_followthrough_maintenance_selected": bool(
+                followthrough_payload.get("maintenance_selected", False)
+            ),
+            "setup_followthrough_maintenance_selected_action_count": int(
+                followthrough_payload.get("maintenance_selected_action_count", 0) or 0
+            ),
+            "setup_followthrough_maintenance_executed_count": int(
+                followthrough_payload.get("maintenance_executed_count", 0) or 0
+            ),
+            "setup_followthrough_maintenance_added_count": int(
+                followthrough_payload.get("maintenance_added_count", 0) or 0
+            ),
+            "setup_followthrough_maintenance_removed_count": int(
+                followthrough_payload.get("maintenance_removed_count", 0) or 0
+            ),
             "setup_followthrough_provider_status_counts": dict(
                 followthrough_payload.get("provider_status_counts", {})
                 if isinstance(followthrough_payload.get("provider_status_counts", {}), dict)
@@ -13275,6 +13504,13 @@ class DesktopBackendService:
                 if isinstance(followthrough_payload.get("setup_guidance_reason_codes", []), list)
                 and str(code).strip()
             ][:12],
+            "setup_followthrough_maintenance_reason_codes": [
+                str(code).strip().lower()
+                for code in dict(followthrough_payload.get("maintenance_execution", {})).get("reason_codes", [])
+                if isinstance(followthrough_payload.get("maintenance_execution", {}), dict)
+                and isinstance(dict(followthrough_payload.get("maintenance_execution", {})).get("reason_codes", []), list)
+                and str(code).strip()
+            ][:8],
             "recent_setup_followthrough_status": str(
                 selected_target.get("recent_setup_followthrough_status", "") or ""
             ).strip().lower(),
@@ -14518,6 +14754,20 @@ class DesktopBackendService:
             task=clean_task,
             limit=6,
         )
+        target_provider_model_readiness = (
+            dict(target.get("provider_model_readiness", {}))
+            if isinstance(target.get("provider_model_readiness", {}), dict)
+            else {}
+        )
+        maintenance_selected = bool(target.get("knowledge_store_maintenance_due", False)) or bool(
+            target_provider_model_readiness.get("structured_memory_maintenance_due", False)
+        )
+        maintenance_cleanup_count = max(
+            0,
+            int(target.get("knowledge_store_recent_cleanup_count", 0) or 0),
+            int(target_provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0),
+        )
+        maintenance_selected = bool(maintenance_selected or maintenance_cleanup_count > 0)
         multimodal_selected_action_codes = [
             self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
             for item in multimodal_actions
@@ -14532,6 +14782,11 @@ class DesktopBackendService:
                     and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
                     in {"initialize_local_vision_runtime", "warm_local_vision_runtime"}
                 )
+                or (
+                    maintenance_selected
+                    and self._machine_text(item.get("setup_action_code", "") or item.get("id", ""))
+                    == "maintain_vector_memory"
+                )
             )
         ]
         multimodal_result = self._desktop_machine_execute_multimodal_setup_plan(
@@ -14541,6 +14796,40 @@ class DesktopBackendService:
             dry_run=bool(dry_run),
             source=f"{source}_multimodal_followthrough",
         )
+        maintenance_execution = self._desktop_machine_vector_memory_maintenance_result(
+            status="skipped",
+            selected=maintenance_selected,
+            source=f"{source}_memory_maintenance",
+        )
+        maintenance_counted_in_multimodal = False
+        if isinstance(multimodal_result.get("items", []), list):
+            for row in multimodal_result.get("items", []):
+                if not isinstance(row, dict):
+                    continue
+                setup_action_code = self._machine_text(
+                    row.get("setup_action_code", "") or row.get("id", "")
+                )
+                if setup_action_code != "maintain_vector_memory":
+                    continue
+                maintenance_execution = self._desktop_machine_vector_memory_maintenance_result(
+                    payload=(
+                        dict(row.get("result", {}))
+                        if isinstance(row.get("result", {}), dict)
+                        else {}
+                    ),
+                    status=self._machine_text(row.get("status", "")) or "planned",
+                    selected=True,
+                    source=f"{source}_memory_maintenance",
+                    counted_in_multimodal=True,
+                )
+                maintenance_counted_in_multimodal = True
+                break
+        if maintenance_selected and not maintenance_counted_in_multimodal:
+            maintenance_execution = self._desktop_machine_execute_vector_memory_maintenance(
+                reason=f"{source}_target_followthrough",
+                dry_run=bool(dry_run),
+                source=f"{source}_memory_maintenance",
+            )
         model_setup_mission = self.model_setup_mission(
             refresh_provider_credentials=False,
             limit=bounded_model_limit,
@@ -14571,6 +14860,8 @@ class DesktopBackendService:
         executed_count += int(ai_runtime_result.get("executed_action_count", 0) or 0)
         executed_count += int(multimodal_result.get("executed_action_count", 0) or 0)
         executed_count += int(model_setup_result.get("executed_count", 0) or model_setup_result.get("executed_action_count", 0) or 0)
+        if not maintenance_counted_in_multimodal:
+            executed_count += int(maintenance_execution.get("performed_count", 0) or 0)
         status_name = "success"
         child_statuses = [
             self._machine_text(provider_followthrough.get("status", "")),
@@ -14578,6 +14869,8 @@ class DesktopBackendService:
             self._machine_text(multimodal_result.get("status", "")),
             self._machine_text(model_setup_result.get("status", "")),
         ]
+        if maintenance_selected and not maintenance_counted_in_multimodal:
+            child_statuses.append(self._machine_text(maintenance_execution.get("status", "")))
         actionable_statuses = [item for item in child_statuses if item and item not in {"skipped", "planned"}]
         if any(item == "error" for item in actionable_statuses):
             status_name = "partial" if any(item in {"success", "partial"} for item in actionable_statuses) else "error"
@@ -14606,6 +14899,13 @@ class DesktopBackendService:
             list(model_setup_result.get("resume_advice", {}).get("recommended_next_actions", []))
             if isinstance(model_setup_result.get("resume_advice", {}), dict)
             and isinstance(model_setup_result.get("resume_advice", {}).get("recommended_next_actions", []), list)
+            else [],
+            limit=6,
+        )
+        next_actions = self._desktop_machine_merge_next_actions(
+            next_actions,
+            list(maintenance_execution.get("next_actions", []))
+            if isinstance(maintenance_execution.get("next_actions", []), list)
             else [],
             limit=6,
         )
@@ -14640,6 +14940,16 @@ class DesktopBackendService:
                 *(["recent_model_selection_available"] if model_selection.get("selected_item_keys", []) else []),
                 *(["recent_ai_runtime_setup_available"] if ai_selected_action_codes else []),
                 *(["recent_multimodal_setup_available"] if multimodal_selected_action_codes else []),
+                *(
+                    ["recent_vector_memory_maintenance_available"]
+                    if maintenance_selected
+                    else []
+                ),
+                *(
+                    ["recent_vector_memory_maintenance_executed"]
+                    if maintenance_execution.get("performed", False)
+                    else []
+                ),
             ],
             limit=12,
         )
@@ -14650,6 +14960,7 @@ class DesktopBackendService:
             "provider_followthrough": provider_followthrough,
             "ai_runtime_setup": ai_runtime_result,
             "multimodal_setup": multimodal_result,
+            "maintenance_execution": maintenance_execution,
             "model_setup": model_setup_result,
             "selected_model_action_ids": selected_model_action_ids,
             "selected_model_action_count": len(selected_model_action_ids),
@@ -14657,6 +14968,12 @@ class DesktopBackendService:
             "selected_ai_runtime_action_count": len(ai_selected_action_codes),
             "selected_multimodal_action_codes": multimodal_selected_action_codes,
             "selected_multimodal_action_count": len(multimodal_selected_action_codes),
+            "maintenance_selected": maintenance_selected,
+            "maintenance_selected_action_count": 1 if maintenance_selected else 0,
+            "maintenance_executed_count": int(maintenance_execution.get("performed_count", 0) or 0),
+            "maintenance_added_count": int(maintenance_execution.get("added_count", 0) or 0),
+            "maintenance_removed_count": int(maintenance_execution.get("removed_count", 0) or 0),
+            "maintenance_counted_in_multimodal": maintenance_counted_in_multimodal,
             "provider_status_counts": {
                 str(key): int(value)
                 for key, value in sorted(provider_status_counts.items(), key=lambda entry: entry[0])
@@ -25410,6 +25727,15 @@ class DesktopBackendService:
                 "app_learning_continuation_maintenance_cleanup_count": int(
                     app_learning_continuation.get("knowledge_store_cleanup_pressure_count", 0) or 0
                 ),
+                "app_learning_continuation_maintenance_executed_count": int(
+                    app_learning_continuation.get("maintenance_execution_performed", False)
+                ),
+                "app_learning_continuation_maintenance_added_count": int(
+                    app_learning_continuation.get("maintenance_execution_added_count", 0) or 0
+                ),
+                "app_learning_continuation_maintenance_removed_count": int(
+                    app_learning_continuation.get("maintenance_execution_removed_count", 0) or 0
+                ),
                 "multimodal_memory_app_count": int(final_multimodal_summary.get("vision_memory_app_count", 0) or 0),
                 "multimodal_ocr_memory_app_count": int(final_multimodal_summary.get("ocr_memory_app_count", 0) or 0),
                 "multimodal_knowledge_entry_count": int(
@@ -25664,6 +25990,15 @@ class DesktopBackendService:
                 ),
                 "vm_prepare_continuation_maintenance_cleanup_count": int(
                     vm_prepare_continuation.get("maintenance_cleanup_guest_count", 0) or 0
+                ),
+                "vm_prepare_continuation_maintenance_executed_count": int(
+                    vm_prepare_continuation.get("maintenance_execution_performed", False)
+                ),
+                "vm_prepare_continuation_maintenance_added_count": int(
+                    vm_prepare_continuation.get("maintenance_execution_added_count", 0) or 0
+                ),
+                "vm_prepare_continuation_maintenance_removed_count": int(
+                    vm_prepare_continuation.get("maintenance_execution_removed_count", 0) or 0
                 ),
                 "vm_prepare_continuation_memory_route_alignment_counts": dict(
                     dict(vm_prepare_continuation.get("summary", {})).get("memory_route_alignment_counts", {})

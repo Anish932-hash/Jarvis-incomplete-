@@ -98,6 +98,9 @@ class DesktopOnboardingManager:
         app_learning_continuation_setup_auto_resume_total = 0
         app_learning_continuation_maintenance_total = 0
         app_learning_continuation_maintenance_cleanup_total = 0
+        app_learning_continuation_maintenance_executed_total = 0
+        app_learning_continuation_maintenance_added_total = 0
+        app_learning_continuation_maintenance_removed_total = 0
         prepared_setup_aligned_total = 0
         prepared_setup_boosted_total = 0
         prepared_setup_constrained_total = 0
@@ -118,6 +121,9 @@ class DesktopOnboardingManager:
         vm_prepare_continuation_setup_auto_resume_total = 0
         vm_prepare_continuation_maintenance_total = 0
         vm_prepare_continuation_maintenance_cleanup_total = 0
+        vm_prepare_continuation_maintenance_executed_total = 0
+        vm_prepare_continuation_maintenance_added_total = 0
+        vm_prepare_continuation_maintenance_removed_total = 0
         route_remediation_total = 0
         route_remediation_blocked_total = 0
         route_remediation_degraded_total = 0
@@ -255,6 +261,15 @@ class DesktopOnboardingManager:
             app_learning_continuation_maintenance_cleanup_total += int(
                 summary.get("app_learning_continuation_maintenance_cleanup_count", 0) or 0
             )
+            app_learning_continuation_maintenance_executed_total += int(
+                summary.get("app_learning_continuation_maintenance_executed_count", 0) or 0
+            )
+            app_learning_continuation_maintenance_added_total += int(
+                summary.get("app_learning_continuation_maintenance_added_count", 0) or 0
+            )
+            app_learning_continuation_maintenance_removed_total += int(
+                summary.get("app_learning_continuation_maintenance_removed_count", 0) or 0
+            )
             app_learning_continuation_focus_app_total += int(
                 summary.get("app_learning_continuation_focus_app_count", 0) or 0
             )
@@ -306,6 +321,15 @@ class DesktopOnboardingManager:
             )
             vm_prepare_continuation_maintenance_cleanup_total += int(
                 summary.get("vm_prepare_continuation_maintenance_cleanup_count", 0) or 0
+            )
+            vm_prepare_continuation_maintenance_executed_total += int(
+                summary.get("vm_prepare_continuation_maintenance_executed_count", 0) or 0
+            )
+            vm_prepare_continuation_maintenance_added_total += int(
+                summary.get("vm_prepare_continuation_maintenance_added_count", 0) or 0
+            )
+            vm_prepare_continuation_maintenance_removed_total += int(
+                summary.get("vm_prepare_continuation_maintenance_removed_count", 0) or 0
             )
             prepared_remediation_retry_total += int(summary.get("prepared_remediation_retry_count", 0) or 0)
             prepared_remediation_provider_blocked_total += int(
@@ -447,6 +471,9 @@ class DesktopOnboardingManager:
                 "app_learning_continuation_setup_auto_resume_total": app_learning_continuation_setup_auto_resume_total,
                 "app_learning_continuation_maintenance_total": app_learning_continuation_maintenance_total,
                 "app_learning_continuation_maintenance_cleanup_total": app_learning_continuation_maintenance_cleanup_total,
+                "app_learning_continuation_maintenance_executed_total": app_learning_continuation_maintenance_executed_total,
+                "app_learning_continuation_maintenance_added_total": app_learning_continuation_maintenance_added_total,
+                "app_learning_continuation_maintenance_removed_total": app_learning_continuation_maintenance_removed_total,
                 "app_learning_remediation_retry_total": app_learning_remediation_retry_total,
                 "app_learning_remediation_provider_blocked_total": app_learning_remediation_provider_blocked_total,
                 "app_learning_remediation_setup_followup_total": app_learning_remediation_setup_followup_total,
@@ -469,6 +496,9 @@ class DesktopOnboardingManager:
                 "vm_prepare_continuation_setup_auto_resume_total": vm_prepare_continuation_setup_auto_resume_total,
                 "vm_prepare_continuation_maintenance_total": vm_prepare_continuation_maintenance_total,
                 "vm_prepare_continuation_maintenance_cleanup_total": vm_prepare_continuation_maintenance_cleanup_total,
+                "vm_prepare_continuation_maintenance_executed_total": vm_prepare_continuation_maintenance_executed_total,
+                "vm_prepare_continuation_maintenance_added_total": vm_prepare_continuation_maintenance_added_total,
+                "vm_prepare_continuation_maintenance_removed_total": vm_prepare_continuation_maintenance_removed_total,
                 "prepared_remediation_retry_total": prepared_remediation_retry_total,
                 "prepared_remediation_provider_blocked_total": prepared_remediation_provider_blocked_total,
                 "prepared_remediation_setup_followup_total": prepared_remediation_setup_followup_total,

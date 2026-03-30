@@ -111,6 +111,9 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "app_learning_continuation_setup_auto_resume_count": 1,
                 "app_learning_continuation_maintenance_count": 1,
                 "app_learning_continuation_maintenance_cleanup_count": 1,
+                "app_learning_continuation_maintenance_executed_count": 1,
+                "app_learning_continuation_maintenance_added_count": 5,
+                "app_learning_continuation_maintenance_removed_count": 2,
                 "vm_prepare_count": 2,
                 "prepared_vm_control_count": 2,
                 "vm_ready_guest_count": 1,
@@ -127,6 +130,9 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
                 "vm_prepare_continuation_setup_auto_resume_count": 1,
                 "vm_prepare_continuation_maintenance_count": 1,
                 "vm_prepare_continuation_maintenance_cleanup_count": 1,
+                "vm_prepare_continuation_maintenance_executed_count": 1,
+                "vm_prepare_continuation_maintenance_added_count": 3,
+                "vm_prepare_continuation_maintenance_removed_count": 1,
             },
         },
         source="machine_onboarding",
@@ -245,6 +251,9 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["app_learning_continuation_setup_auto_resume_total"] == 1
     assert history["summary"]["app_learning_continuation_maintenance_total"] == 1
     assert history["summary"]["app_learning_continuation_maintenance_cleanup_total"] == 1
+    assert history["summary"]["app_learning_continuation_maintenance_executed_total"] == 1
+    assert history["summary"]["app_learning_continuation_maintenance_added_total"] == 5
+    assert history["summary"]["app_learning_continuation_maintenance_removed_total"] == 2
     assert history["summary"]["vm_prepare_total"] == 2
     assert history["summary"]["prepared_vm_control_total"] == 2
     assert history["summary"]["vm_ready_guest_total"] == 1
@@ -261,3 +270,6 @@ def test_desktop_onboarding_manager_records_and_lists_runs(tmp_path) -> None:
     assert history["summary"]["vm_prepare_continuation_setup_auto_resume_total"] == 1
     assert history["summary"]["vm_prepare_continuation_maintenance_total"] == 1
     assert history["summary"]["vm_prepare_continuation_maintenance_cleanup_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_maintenance_executed_total"] == 1
+    assert history["summary"]["vm_prepare_continuation_maintenance_added_total"] == 3
+    assert history["summary"]["vm_prepare_continuation_maintenance_removed_total"] == 1

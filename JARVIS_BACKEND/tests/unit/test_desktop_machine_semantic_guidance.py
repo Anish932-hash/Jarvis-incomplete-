@@ -700,6 +700,79 @@ def test_desktop_machine_prepare_app_control_preserves_last_good_profile_after_s
     assert len(profile_calls) == 2
 
 
+def test_desktop_machine_execute_target_setup_followthrough_executes_vector_maintenance() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+    maintenance_calls: list[dict[str, object]] = []
+
+    service.model_setup_plan = lambda **_kwargs: {}
+    service._desktop_machine_select_model_items = lambda **_kwargs: {"selected_item_keys": []}
+    service._desktop_machine_execute_provider_followthrough = lambda **_kwargs: {
+        "status": "skipped",
+        "executed_count": 0,
+        "items": [],
+        "next_actions": [],
+    }
+    service._desktop_machine_ai_runtime_profile = lambda **_kwargs: {}
+    service._desktop_machine_ai_runtime_setup_actions = lambda **_kwargs: []
+    service._desktop_machine_execute_ai_runtime_setup_plan = lambda **_kwargs: {
+        "status": "skipped",
+        "executed_action_count": 0,
+        "next_actions": [],
+    }
+    service._desktop_machine_multimodal_setup_actions = lambda **_kwargs: []
+    service._desktop_machine_execute_multimodal_setup_plan = lambda **_kwargs: {
+        "status": "skipped",
+        "executed_action_count": 0,
+        "next_actions": [],
+        "items": [],
+    }
+    service.model_setup_mission = lambda **_kwargs: {}
+    service._desktop_machine_select_model_setup_followthrough_action_ids = lambda **_kwargs: []
+    service._desktop_machine_execute_model_setup_plan = lambda **_kwargs: {
+        "status": "skipped",
+        "executed_count": 0,
+        "resume_advice": {},
+    }
+
+    def _maintain(**kwargs):
+        maintenance_calls.append(dict(kwargs))
+        return {
+            "status": "success",
+            "performed": True,
+            "maintenance": {
+                "status": "success",
+                "performed": True,
+                "maintenance_due": False,
+                "removed_count": 1,
+                "added_count": 2,
+            },
+            "knowledge_store": {
+                "permanent_vector_db_count": 2,
+            },
+        }
+
+    service.desktop_app_memory_maintain = _maintain
+
+    payload = service._desktop_machine_execute_target_setup_followthrough(
+        profile={"ai_runtime_profile": {}, "multimodal_memory": {}},
+        target_row={
+            "knowledge_store_maintenance_due": True,
+            "knowledge_store_recent_cleanup_count": 1,
+        },
+        task="control",
+        source="unit_test",
+    )
+
+    assert payload["status"] == "success"
+    assert payload["maintenance_selected"] is True
+    assert payload["maintenance_executed_count"] == 1
+    assert payload["maintenance_added_count"] == 2
+    assert payload["maintenance_removed_count"] == 1
+    assert payload["maintenance_execution"]["performed"] is True
+    assert payload["executed_count"] == 1
+    assert maintenance_calls[0]["reason"] == "unit_test_target_followthrough"
+
+
 def test_desktop_machine_prepare_vm_control_preserves_last_good_profile_after_setup_followthrough_refresh_failure() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     profile_calls = []
@@ -1456,6 +1529,7 @@ def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
 def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     run_calls: list[dict[str, object]] = []
+    maintenance_calls: list[dict[str, object]] = []
 
     def _run_campaign(**kwargs):
         run_calls.append(dict(kwargs))
@@ -1494,6 +1568,20 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
         }
 
     service.run_desktop_app_memory_campaign = _run_campaign
+    service.desktop_app_memory_maintain = lambda **kwargs: maintenance_calls.append(dict(kwargs)) or {
+        "status": "success",
+        "performed": True,
+        "maintenance": {
+            "status": "success",
+            "performed": True,
+            "maintenance_due": False,
+            "removed_count": 2,
+            "added_count": 5,
+        },
+        "knowledge_store": {
+            "permanent_vector_db_count": 2,
+        },
+    }
 
     payload = service._desktop_machine_continue_app_learning_campaign(
         campaign_result={
@@ -1556,17 +1644,22 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
     assert payload["knowledge_store_maintenance_due_count"] == 1
     assert payload["knowledge_store_cleanup_pressure_count"] == 1
     assert payload["maintenance_followthrough_enabled"] is True
+    assert payload["maintenance_execution_performed"] is True
+    assert payload["maintenance_execution_added_count"] == 5
+    assert payload["maintenance_execution_removed_count"] == 2
     assert payload["next_actions"][0]["kind"] == "resume_setup_then_continue_learning"
     assert payload["next_actions"][0]["query"] == "settings"
     assert payload["next_actions"][0]["setup_resume_recommended"] is True
     assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
     assert "alt+f" in payload["next_actions"][0]["memory_mission"]["hotkey_hints"]
     assert run_calls[0]["source"] == "unit_test_followthrough"
+    assert maintenance_calls[0]["reason"] == "unit_test_campaign_followthrough"
 
 
 def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assisted_guest() -> None:
     service = DesktopBackendService.__new__(DesktopBackendService)
     prepare_calls: list[dict[str, object]] = []
+    maintenance_calls: list[dict[str, object]] = []
 
     def _prepare_vm(**kwargs):
         prepare_calls.append(dict(kwargs))
@@ -1592,6 +1685,20 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
         }
 
     service.desktop_machine_prepare_vm_control = _prepare_vm
+    service.desktop_app_memory_maintain = lambda **kwargs: maintenance_calls.append(dict(kwargs)) or {
+        "status": "success",
+        "performed": True,
+        "maintenance": {
+            "status": "success",
+            "performed": True,
+            "maintenance_due": False,
+            "removed_count": 1,
+            "added_count": 3,
+        },
+        "knowledge_store": {
+            "permanent_vector_db_count": 2,
+        },
+    }
 
     payload = service._desktop_machine_continue_vm_prepare_followthrough(
         vm_items=[
@@ -1638,6 +1745,9 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
     assert payload["setup_auto_resume_guest_count"] == 1
     assert payload["maintenance_guest_count"] == 1
     assert payload["maintenance_cleanup_guest_count"] == 1
+    assert payload["maintenance_execution_performed"] is True
+    assert payload["maintenance_execution_added_count"] == 3
+    assert payload["maintenance_execution_removed_count"] == 1
     assert payload["summary"]["memory_guided_route_count"] == 1
     assert payload["summary"]["memory_route_alignment_counts"]["aligned"] == 1
     assert payload["next_actions"][0]["kind"] == "resume_setup_then_retry_vm"
@@ -1645,6 +1755,7 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
     assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
     assert prepare_calls[0]["query"] == "desktop settings"
     assert prepare_calls[0]["source"] == "unit_test_vm_followthrough"
+    assert maintenance_calls[0]["reason"] == "unit_test_vm_followthrough"
 
 
 def test_desktop_machine_recent_continuation_memory_aggregates_history() -> None:
