@@ -17641,21 +17641,61 @@ class DesktopBackendService:
             setup_followup_required = bool(row.get("setup_followup_required", False))
             if route_status in {"matched", "ready", "success", "resolved"} and not provider_blocked and not setup_followup_required:
                 continue
+            followthrough_policy = str(row.get("followthrough_policy", "") or "").strip().lower()
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
             _append_item(
                 {
                     "id": f"continuation:route:{self._machine_text(app_name)}",
                     "stage": "route_remediation",
-                    "kind": str(row.get("remediation_kind", "") or "route_remediation").strip().lower(),
+                    "kind": followthrough_policy or str(row.get("remediation_kind", "") or "route_remediation").strip().lower(),
                     "status": route_status or "attention",
                     "title": f"Continue route remediation for {app_name}",
-                    "auto_runnable": True,
+                    "auto_runnable": bool(row.get("auto_runnable", False)),
                     "required": False,
                     "app_name": app_name,
                     "provider": "",
-                    "target": str(row.get("recommended_action_code", "") or app_name).strip(),
+                    "target": str(
+                        row.get("recommended_action_code", "")
+                        or row.get("target_query", "")
+                        or memory_mission.get("seed_query", "")
+                        or app_name
+                    ).strip(),
                     "retry_recommended": route_status in {"degraded", "fallback", "setup_constrained", "setup_waiting"},
                     "provider_blocked": provider_blocked,
                     "setup_followup_required": setup_followup_required,
+                    "setup_resume_recommended": bool(row.get("recent_setup_resume_ready", False)),
+                    "setup_auto_resume_ready": bool(row.get("recent_setup_auto_resume_ready", False)),
+                    "recent_setup_resume_action_count": int(row.get("recent_setup_resume_action_count", 0) or 0),
+                    "memory_maintenance_recommended": bool(row.get("memory_maintenance_recommended", False)),
+                    "memory_cleanup_pressure": bool(row.get("memory_cleanup_pressure", False)),
+                    "memory_refresh_recommended": bool(row.get("memory_refresh_recommended", False)),
+                    "recent_setup_maintenance_execution_count": int(
+                        row.get("recent_setup_maintenance_execution_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_added_count": int(
+                        row.get("recent_setup_maintenance_added_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_removed_count": int(
+                        row.get("recent_setup_maintenance_removed_count", 0) or 0
+                    ),
+                    "recent_setup_top_maintenance_action_codes": [
+                        str(item).strip().lower()
+                        for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ][:6],
+                    "memory_mission": memory_mission,
+                    "target_query": str(row.get("target_query", "") or memory_mission.get("seed_query", "") or "").strip(),
+                    "hotkey_hints": [
+                        str(item).strip()
+                        for item in row.get("hotkey_hints", [])
+                        if isinstance(row.get("hotkey_hints", []), list) and str(item).strip()
+                    ][:6],
+                    "followthrough_policy": followthrough_policy,
                     "recent_action_code": str(row.get("recommended_action_code", "") or "").strip().lower(),
                     "continuation_source": "route_remediation",
                 }
@@ -17668,21 +17708,49 @@ class DesktopBackendService:
             progress_status = str(row.get("progress_status", "") or "").strip().lower()
             if progress_status not in {"persistent", "regressed", "new"}:
                 continue
+            followthrough_policy = str(row.get("followthrough_policy", "") or "").strip().lower()
             _append_item(
                 {
                     "id": f"continuation:route_progress:{self._machine_text(app_name)}",
                     "stage": "route_remediation_progress",
-                    "kind": str(row.get("remediation_kind", "") or "route_recheck").strip().lower(),
+                    "kind": followthrough_policy or str(row.get("remediation_kind", "") or "route_recheck").strip().lower(),
                     "status": progress_status,
                     "title": f"Recheck route progress for {app_name}",
-                    "auto_runnable": True,
+                    "auto_runnable": bool(row.get("auto_runnable", False)),
                     "required": False,
                     "app_name": app_name,
                     "provider": "",
-                    "target": str(row.get("recommended_action_code", "") or app_name).strip(),
+                    "target": str(
+                        row.get("recommended_action_code", "")
+                        or row.get("target_query", "")
+                        or app_name
+                    ).strip(),
                     "retry_recommended": True,
                     "provider_blocked": bool(row.get("provider_blocked", False)),
                     "setup_followup_required": bool(row.get("setup_followup_required", False)),
+                    "recent_setup_resume_action_count": int(row.get("recent_setup_resume_action_count", 0) or 0),
+                    "recent_setup_maintenance_execution_count": int(
+                        row.get("recent_setup_maintenance_execution_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_added_count": int(
+                        row.get("recent_setup_maintenance_added_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_removed_count": int(
+                        row.get("recent_setup_maintenance_removed_count", 0) or 0
+                    ),
+                    "recent_setup_top_maintenance_action_codes": [
+                        str(item).strip().lower()
+                        for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ][:6],
+                    "target_query": str(row.get("target_query", "") or "").strip(),
+                    "hotkey_hints": [
+                        str(item).strip()
+                        for item in row.get("hotkey_hints", [])
+                        if isinstance(row.get("hotkey_hints", []), list) and str(item).strip()
+                    ][:6],
+                    "followthrough_policy": followthrough_policy,
                     "recent_action_code": str(row.get("recommended_action_code", "") or "").strip().lower(),
                     "continuation_source": "route_remediation_progress",
                 }
@@ -18012,6 +18080,75 @@ class DesktopBackendService:
         payload["plan"] = plan
         return payload
 
+    @staticmethod
+    def _desktop_machine_route_followthrough_policy(
+        *,
+        setup_resume_recommended: bool = False,
+        setup_auto_resume_ready: bool = False,
+        recent_setup_resume_action_count: int = 0,
+        memory_maintenance_recommended: bool = False,
+        memory_cleanup_pressure: bool = False,
+        memory_refresh_recommended: bool = False,
+        recent_setup_maintenance_execution_count: int = 0,
+        recent_setup_maintenance_removed_count: int = 0,
+    ) -> str:
+        if setup_auto_resume_ready or int(recent_setup_resume_action_count or 0) > 0:
+            return "auto_resume_setup"
+        if setup_resume_recommended:
+            return "resume_setup"
+        if memory_cleanup_pressure and int(recent_setup_maintenance_removed_count or 0) > 0:
+            return "cleanup_vector_memory"
+        if memory_refresh_recommended:
+            return "refresh_vector_memory"
+        if memory_maintenance_recommended or int(recent_setup_maintenance_execution_count or 0) > 0:
+            return "maintain_vector_memory"
+        return ""
+
+    @staticmethod
+    def _desktop_machine_route_remediation_kind(
+        *,
+        provider_blocked: bool = False,
+        related_setup_action_codes: Optional[List[str]] = None,
+        route_resolution_status: str = "",
+        setup_resume_recommended: bool = False,
+        setup_auto_resume_ready: bool = False,
+        recent_setup_resume_action_count: int = 0,
+        memory_maintenance_recommended: bool = False,
+        memory_cleanup_pressure: bool = False,
+        memory_refresh_recommended: bool = False,
+        recent_setup_maintenance_execution_count: int = 0,
+        recent_setup_maintenance_removed_count: int = 0,
+    ) -> str:
+        followthrough_policy = DesktopBackendService._desktop_machine_route_followthrough_policy(
+            setup_resume_recommended=setup_resume_recommended,
+            setup_auto_resume_ready=setup_auto_resume_ready,
+            recent_setup_resume_action_count=recent_setup_resume_action_count,
+            memory_maintenance_recommended=memory_maintenance_recommended,
+            memory_cleanup_pressure=memory_cleanup_pressure,
+            memory_refresh_recommended=memory_refresh_recommended,
+            recent_setup_maintenance_execution_count=recent_setup_maintenance_execution_count,
+            recent_setup_maintenance_removed_count=recent_setup_maintenance_removed_count,
+        )
+        if followthrough_policy == "auto_resume_setup":
+            return "setup_resume"
+        if followthrough_policy == "resume_setup":
+            return "setup_resume"
+        if followthrough_policy == "cleanup_vector_memory":
+            return "vector_memory_cleanup"
+        if followthrough_policy == "refresh_vector_memory":
+            return "vector_memory_refresh"
+        if followthrough_policy == "maintain_vector_memory":
+            return "vector_memory_maintenance"
+        if provider_blocked:
+            return "provider_setup"
+        if related_setup_action_codes:
+            return "model_setup"
+        if str(route_resolution_status or "").strip().lower() in {"fallback", "degraded"}:
+            return "route_tuning"
+        if str(route_resolution_status or "").strip().lower() == "blocked":
+            return "dependency_setup"
+        return "route_tuning"
+
     def _desktop_machine_route_remediation_plan(
         self,
         *,
@@ -18086,6 +18223,16 @@ class DesktopBackendService:
                     "setup_followup_count": 0,
                     "route_fallback_applied": False,
                     "auto_prepare_allowed": True,
+                    "recent_setup_resume_ready": False,
+                    "recent_setup_auto_resume_ready": False,
+                    "recent_setup_resume_action_count": 0,
+                    "recent_setup_maintenance_execution_count": 0,
+                    "recent_setup_maintenance_added_count": 0,
+                    "recent_setup_maintenance_removed_count": 0,
+                    "recent_setup_top_maintenance_action_codes": [],
+                    "knowledge_store_maintenance_due": False,
+                    "knowledge_store_recent_cleanup_count": 0,
+                    "memory_mission": {},
                 }
                 merged_rows[app_key] = row
             return row
@@ -18170,6 +18317,49 @@ class DesktopBackendService:
                     int(target.get("setup_followup_count", 0) or 0),
                     len(target["related_setup_action_codes"]),
                 )
+            target["recent_setup_resume_ready"] = bool(
+                row.get("recent_setup_resume_ready", target.get("recent_setup_resume_ready", False))
+            )
+            target["recent_setup_auto_resume_ready"] = bool(
+                row.get("recent_setup_auto_resume_ready", target.get("recent_setup_auto_resume_ready", False))
+            )
+            target["recent_setup_resume_action_count"] = max(
+                int(target.get("recent_setup_resume_action_count", 0) or 0),
+                int(row.get("recent_setup_resume_action_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_execution_count"] = max(
+                int(target.get("recent_setup_maintenance_execution_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_execution_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_added_count"] = max(
+                int(target.get("recent_setup_maintenance_added_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_added_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_removed_count"] = max(
+                int(target.get("recent_setup_maintenance_removed_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_removed_count", 0) or 0),
+            )
+            target["recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("recent_setup_top_maintenance_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            target["knowledge_store_maintenance_due"] = bool(
+                row.get("knowledge_store_maintenance_due", target.get("knowledge_store_maintenance_due", False))
+            )
+            target["knowledge_store_recent_cleanup_count"] = max(
+                int(target.get("knowledge_store_recent_cleanup_count", 0) or 0),
+                int(row.get("knowledge_store_recent_cleanup_count", 0) or 0),
+            )
+            if isinstance(row.get("memory_mission", {}), dict) and row.get("memory_mission", {}):
+                target["memory_mission"] = dict(row.get("memory_mission", {}))
 
         for row in prepare_items:
             target = ensure_row(str(row.get("app_name", "") or ""))
@@ -18230,6 +18420,49 @@ class DesktopBackendService:
                     int(row.get("related_setup_action_count", 0) or 0),
                     len(target["related_setup_action_codes"]),
                 )
+            target["recent_setup_resume_ready"] = bool(
+                row.get("recent_setup_resume_ready", target.get("recent_setup_resume_ready", False))
+            )
+            target["recent_setup_auto_resume_ready"] = bool(
+                row.get("recent_setup_auto_resume_ready", target.get("recent_setup_auto_resume_ready", False))
+            )
+            target["recent_setup_resume_action_count"] = max(
+                int(target.get("recent_setup_resume_action_count", 0) or 0),
+                int(row.get("recent_setup_resume_action_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_execution_count"] = max(
+                int(target.get("recent_setup_maintenance_execution_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_execution_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_added_count"] = max(
+                int(target.get("recent_setup_maintenance_added_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_added_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_removed_count"] = max(
+                int(target.get("recent_setup_maintenance_removed_count", 0) or 0),
+                int(row.get("recent_setup_maintenance_removed_count", 0) or 0),
+            )
+            target["recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("recent_setup_top_maintenance_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            target["knowledge_store_maintenance_due"] = bool(
+                row.get("knowledge_store_maintenance_due", target.get("knowledge_store_maintenance_due", False))
+            )
+            target["knowledge_store_recent_cleanup_count"] = max(
+                int(target.get("knowledge_store_recent_cleanup_count", 0) or 0),
+                int(row.get("knowledge_store_recent_cleanup_count", 0) or 0),
+            )
+            if isinstance(row.get("memory_mission", {}), dict) and row.get("memory_mission", {}):
+                target["memory_mission"] = dict(row.get("memory_mission", {}))
 
         for row in prepare_result_rows:
             target = ensure_row(
@@ -18298,6 +18531,49 @@ class DesktopBackendService:
                 ],
                 limit=12,
             )
+            target["recent_setup_resume_ready"] = bool(
+                summary.get("recent_setup_resume_ready", target.get("recent_setup_resume_ready", False))
+            )
+            target["recent_setup_auto_resume_ready"] = bool(
+                summary.get("recent_setup_auto_resume_ready", target.get("recent_setup_auto_resume_ready", False))
+            )
+            target["recent_setup_resume_action_count"] = max(
+                int(target.get("recent_setup_resume_action_count", 0) or 0),
+                int(summary.get("recent_setup_resume_action_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_execution_count"] = max(
+                int(target.get("recent_setup_maintenance_execution_count", 0) or 0),
+                int(summary.get("recent_setup_maintenance_execution_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_added_count"] = max(
+                int(target.get("recent_setup_maintenance_added_count", 0) or 0),
+                int(summary.get("recent_setup_maintenance_added_count", 0) or 0),
+            )
+            target["recent_setup_maintenance_removed_count"] = max(
+                int(target.get("recent_setup_maintenance_removed_count", 0) or 0),
+                int(summary.get("recent_setup_maintenance_removed_count", 0) or 0),
+            )
+            target["recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+                [
+                    *target.get("recent_setup_top_maintenance_action_codes", []),
+                    *[
+                        str(item).strip().lower()
+                        for item in summary.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(summary.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            target["knowledge_store_maintenance_due"] = bool(
+                summary.get("knowledge_store_maintenance_due", target.get("knowledge_store_maintenance_due", False))
+            )
+            target["knowledge_store_recent_cleanup_count"] = max(
+                int(target.get("knowledge_store_recent_cleanup_count", 0) or 0),
+                int(summary.get("knowledge_store_recent_cleanup_count", 0) or 0),
+            )
+            if isinstance(summary.get("memory_mission", {}), dict) and summary.get("memory_mission", {}):
+                target["memory_mission"] = dict(summary.get("memory_mission", {}))
 
         status_rank = {
             "blocked": 0,
@@ -18315,9 +18591,13 @@ class DesktopBackendService:
         route_status_counts: Dict[str, int] = {}
         remediation_kind_counts: Dict[str, int] = {}
         priority_band_counts: Dict[str, int] = {}
+        followthrough_policy_counts: Dict[str, int] = {}
         top_setup_action_codes: Dict[str, int] = {}
         top_blocker_codes: Dict[str, int] = {}
         expected_route_profile_counts: Dict[str, int] = {}
+        top_target_queries: Dict[str, int] = {}
+        top_hotkeys: Dict[str, int] = {}
+        top_maintenance_action_codes: Dict[str, int] = {}
 
         for row in merged_rows.values():
             blocker_codes = self._machine_dedupe(list(row.get("blocker_codes", [])), limit=10)
@@ -18351,18 +18631,110 @@ class DesktopBackendService:
             if not actionable:
                 continue
 
-            remediation_kind = "route_tuning"
-            if provider_blocked or any(code.startswith("provider_") for code in blocker_codes):
-                remediation_kind = "provider_setup"
-            elif related_setup_action_codes:
-                remediation_kind = "model_setup"
-            elif route_resolution_status in {"fallback", "degraded"}:
-                remediation_kind = "route_tuning"
-            elif route_resolution_status == "blocked":
-                remediation_kind = "dependency_setup"
+            recent_setup_resume_ready = bool(row.get("recent_setup_resume_ready", False))
+            recent_setup_auto_resume_ready = bool(row.get("recent_setup_auto_resume_ready", False))
+            recent_setup_resume_action_count = int(row.get("recent_setup_resume_action_count", 0) or 0)
+            recent_setup_maintenance_execution_count = int(
+                row.get("recent_setup_maintenance_execution_count", 0) or 0
+            )
+            recent_setup_maintenance_added_count = int(
+                row.get("recent_setup_maintenance_added_count", 0) or 0
+            )
+            recent_setup_maintenance_removed_count = int(
+                row.get("recent_setup_maintenance_removed_count", 0) or 0
+            )
+            recent_setup_top_maintenance_action_codes = self._machine_dedupe(
+                list(row.get("recent_setup_top_maintenance_action_codes", [])),
+                limit=8,
+            )
+            knowledge_store_maintenance_due = bool(row.get("knowledge_store_maintenance_due", False))
+            knowledge_store_recent_cleanup_count = int(
+                row.get("knowledge_store_recent_cleanup_count", 0) or 0
+            )
+            memory_mission = (
+                dict(row.get("memory_mission", {}))
+                if isinstance(row.get("memory_mission", {}), dict)
+                else {}
+            )
+            target_query = str(
+                memory_mission.get("seed_query", "")
+                or memory_mission.get("target_query", "")
+                or ""
+            ).strip()
+            query_hints = self._machine_dedupe(
+                [
+                    target_query,
+                    *[
+                        str(item).strip()
+                        for item in memory_mission.get("query_hints", [])
+                        if isinstance(memory_mission.get("query_hints", []), list) and str(item).strip()
+                    ],
+                ],
+                limit=6,
+            )
+            hotkey_hints = self._machine_dedupe(
+                [
+                    str(item).strip()
+                    for item in memory_mission.get("hotkey_hints", [])
+                    if isinstance(memory_mission.get("hotkey_hints", []), list) and str(item).strip()
+                ],
+                limit=6,
+            )
+            memory_maintenance_recommended = bool(
+                knowledge_store_maintenance_due or recent_setup_maintenance_execution_count > 0
+            )
+            memory_cleanup_pressure = bool(
+                knowledge_store_recent_cleanup_count > 0 or recent_setup_maintenance_removed_count > 0
+            )
+            memory_refresh_recommended = bool(recent_setup_maintenance_added_count > 0)
+            followthrough_policy = self._desktop_machine_route_followthrough_policy(
+                setup_resume_recommended=recent_setup_resume_ready,
+                setup_auto_resume_ready=recent_setup_auto_resume_ready,
+                recent_setup_resume_action_count=recent_setup_resume_action_count,
+                memory_maintenance_recommended=memory_maintenance_recommended,
+                memory_cleanup_pressure=memory_cleanup_pressure,
+                memory_refresh_recommended=memory_refresh_recommended,
+                recent_setup_maintenance_execution_count=recent_setup_maintenance_execution_count,
+                recent_setup_maintenance_removed_count=recent_setup_maintenance_removed_count,
+            )
+            remediation_kind = self._desktop_machine_route_remediation_kind(
+                provider_blocked=provider_blocked or any(code.startswith("provider_") for code in blocker_codes),
+                related_setup_action_codes=related_setup_action_codes,
+                route_resolution_status=route_resolution_status,
+                setup_resume_recommended=recent_setup_resume_ready,
+                setup_auto_resume_ready=recent_setup_auto_resume_ready,
+                recent_setup_resume_action_count=recent_setup_resume_action_count,
+                memory_maintenance_recommended=memory_maintenance_recommended,
+                memory_cleanup_pressure=memory_cleanup_pressure,
+                memory_refresh_recommended=memory_refresh_recommended,
+                recent_setup_maintenance_execution_count=recent_setup_maintenance_execution_count,
+                recent_setup_maintenance_removed_count=recent_setup_maintenance_removed_count,
+            )
 
             recommended_action = ""
-            if related_setup_action_codes:
+            if followthrough_policy == "auto_resume_setup":
+                recommended_action = related_setup_action_codes[0] if related_setup_action_codes else "resume_model_setup"
+            elif followthrough_policy == "resume_setup":
+                recommended_action = related_setup_action_codes[0] if related_setup_action_codes else "resume_setup"
+            elif followthrough_policy == "cleanup_vector_memory":
+                recommended_action = (
+                    recent_setup_top_maintenance_action_codes[0]
+                    if recent_setup_top_maintenance_action_codes
+                    else "cleanup_vector_memory"
+                )
+            elif followthrough_policy == "refresh_vector_memory":
+                recommended_action = (
+                    recent_setup_top_maintenance_action_codes[0]
+                    if recent_setup_top_maintenance_action_codes
+                    else "refresh_vector_memory"
+                )
+            elif followthrough_policy == "maintain_vector_memory":
+                recommended_action = (
+                    recent_setup_top_maintenance_action_codes[0]
+                    if recent_setup_top_maintenance_action_codes
+                    else "maintain_vector_memory"
+                )
+            elif related_setup_action_codes:
                 recommended_action = related_setup_action_codes[0]
             elif blocker_codes:
                 recommended_action = blocker_codes[0]
@@ -18387,6 +18759,12 @@ class DesktopBackendService:
                 top_setup_action_codes[code] = int(top_setup_action_codes.get(code, 0) or 0) + 1
             for code in blocker_codes:
                 top_blocker_codes[code] = int(top_blocker_codes.get(code, 0) or 0) + 1
+            for code in recent_setup_top_maintenance_action_codes:
+                top_maintenance_action_codes[code] = int(top_maintenance_action_codes.get(code, 0) or 0) + 1
+            for query in query_hints:
+                top_target_queries[query] = int(top_target_queries.get(query, 0) or 0) + 1
+            for hotkey in hotkey_hints:
+                top_hotkeys[hotkey] = int(top_hotkeys.get(hotkey, 0) or 0) + 1
             route_status_counts[route_resolution_status] = int(
                 route_status_counts.get(route_resolution_status, 0) or 0
             ) + 1
@@ -18394,6 +18772,16 @@ class DesktopBackendService:
                 remediation_kind_counts.get(remediation_kind, 0) or 0
             ) + 1
             priority_band_counts[priority_band] = int(priority_band_counts.get(priority_band, 0) or 0) + 1
+            if followthrough_policy:
+                followthrough_policy_counts[followthrough_policy] = int(
+                    followthrough_policy_counts.get(followthrough_policy, 0) or 0
+                ) + 1
+            auto_runnable = followthrough_policy in {
+                "auto_resume_setup",
+                "cleanup_vector_memory",
+                "refresh_vector_memory",
+                "maintain_vector_memory",
+            }
             remediation_items.append(
                 {
                     "id": f"route_remediation:{row.get('app_key', '')}",
@@ -18436,6 +18824,24 @@ class DesktopBackendService:
                     "route_selection_reason_codes": list(row.get("route_selection_reason_codes", []))
                     if isinstance(row.get("route_selection_reason_codes", []), list)
                     else [],
+                    "followthrough_policy": followthrough_policy,
+                    "auto_runnable": auto_runnable,
+                    "recent_setup_resume_ready": recent_setup_resume_ready,
+                    "recent_setup_auto_resume_ready": recent_setup_auto_resume_ready,
+                    "recent_setup_resume_action_count": recent_setup_resume_action_count,
+                    "memory_maintenance_recommended": memory_maintenance_recommended,
+                    "memory_cleanup_pressure": memory_cleanup_pressure,
+                    "memory_refresh_recommended": memory_refresh_recommended,
+                    "recent_setup_maintenance_execution_count": recent_setup_maintenance_execution_count,
+                    "recent_setup_maintenance_added_count": recent_setup_maintenance_added_count,
+                    "recent_setup_maintenance_removed_count": recent_setup_maintenance_removed_count,
+                    "recent_setup_top_maintenance_action_codes": recent_setup_top_maintenance_action_codes,
+                    "knowledge_store_maintenance_due": knowledge_store_maintenance_due,
+                    "knowledge_store_recent_cleanup_count": knowledge_store_recent_cleanup_count,
+                    "memory_mission": memory_mission,
+                    "target_query": target_query,
+                    "query_hints": query_hints,
+                    "hotkey_hints": hotkey_hints,
                     "recommended_action_code": recommended_action,
                 }
             )
@@ -18452,14 +18858,32 @@ class DesktopBackendService:
             {
                 "id": str(item.get("id", "") or "").strip(),
                 "stage": "route_remediation",
-                "kind": str(item.get("remediation_kind", "") or "route_tuning").strip().lower(),
+                "kind": str(
+                    item.get("followthrough_policy", "") or item.get("remediation_kind", "") or "route_tuning"
+                ).strip().lower(),
                 "status": str(item.get("route_resolution_status", "") or "attention").strip().lower(),
-                "title": f"Resolve {str(item.get('app_name', '') or 'app').strip()} route constraints",
+                "title": (
+                    f"Resume setup for {str(item.get('app_name', '') or 'app').strip()}"
+                    if str(item.get("followthrough_policy", "") or "").strip().lower()
+                    in {"auto_resume_setup", "resume_setup"}
+                    else f"Refresh vector memory for {str(item.get('app_name', '') or 'app').strip()}"
+                    if str(item.get("followthrough_policy", "") or "").strip().lower()
+                    in {"cleanup_vector_memory", "refresh_vector_memory", "maintain_vector_memory"}
+                    else f"Resolve {str(item.get('app_name', '') or 'app').strip()} route constraints"
+                ),
                 "target": str(
-                    item.get("recommended_action_code", "") or item.get("app_name", "") or ""
+                    item.get("recommended_action_code", "")
+                    or item.get("target_query", "")
+                    or item.get("app_name", "")
+                    or ""
                 ).strip(),
                 "app_name": str(item.get("app_name", "") or "").strip(),
-                "auto_runnable": False,
+                "query": str(item.get("target_query", "") or "").strip(),
+                "hotkey_hints": list(item.get("hotkey_hints", []))
+                if isinstance(item.get("hotkey_hints", []), list)
+                else [],
+                "followthrough_policy": str(item.get("followthrough_policy", "") or "").strip().lower(),
+                "auto_runnable": bool(item.get("auto_runnable", False)),
                 "required": bool(
                     str(item.get("route_resolution_status", "") or "").strip().lower()
                     in {"blocked", "setup_constrained", "setup_waiting"}
@@ -18500,6 +18924,10 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(priority_band_counts.items(), key=lambda entry: entry[0])
                 },
+                "followthrough_policy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(followthrough_policy_counts.items(), key=lambda entry: entry[0])
+                },
                 "expected_route_profile_counts": {
                     str(key): int(value)
                     for key, value in sorted(expected_route_profile_counts.items(), key=lambda entry: entry[0])
@@ -18512,6 +18940,34 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(top_blocker_codes.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
                 },
+                "top_maintenance_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_maintenance_action_codes.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:8]
+                },
+                "top_target_queries": {
+                    str(key): int(value)
+                    for key, value in sorted(top_target_queries.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+                },
+                "top_hotkeys": {
+                    str(key): int(value)
+                    for key, value in sorted(top_hotkeys.items(), key=lambda entry: (-entry[1], entry[0]))[:8]
+                },
+                "setup_resume_guided_app_count": int(
+                    followthrough_policy_counts.get("auto_resume_setup", 0)
+                    + followthrough_policy_counts.get("resume_setup", 0)
+                ),
+                "memory_cleanup_guided_app_count": int(
+                    followthrough_policy_counts.get("cleanup_vector_memory", 0)
+                ),
+                "memory_refresh_guided_app_count": int(
+                    followthrough_policy_counts.get("refresh_vector_memory", 0)
+                ),
+                "memory_maintenance_guided_app_count": int(
+                    followthrough_policy_counts.get("maintain_vector_memory", 0)
+                ),
             },
         }
 
@@ -18592,6 +19048,10 @@ class DesktopBackendService:
         items: List[Dict[str, Any]] = []
         resolved_setup_action_codes: Dict[str, int] = {}
         persistent_setup_action_codes: Dict[str, int] = {}
+        followthrough_policy_counts: Dict[str, int] = {}
+        resolved_followthrough_policy_counts: Dict[str, int] = {}
+        persistent_followthrough_policy_counts: Dict[str, int] = {}
+        top_maintenance_action_codes: Dict[str, int] = {}
 
         for key, planned in planned_map.items():
             runtime = runtime_map.get(key, {})
@@ -18624,12 +19084,46 @@ class DesktopBackendService:
                 ],
                 limit=10,
             )
+            planned_followthrough_policy = str(planned.get("followthrough_policy", "") or "").strip().lower()
+            runtime_followthrough_policy = str(runtime.get("followthrough_policy", "") or "").strip().lower()
+            effective_followthrough_policy = runtime_followthrough_policy or planned_followthrough_policy
+            if effective_followthrough_policy:
+                followthrough_policy_counts[effective_followthrough_policy] = int(
+                    followthrough_policy_counts.get(effective_followthrough_policy, 0) or 0
+                ) + 1
+            maintenance_codes = self._machine_dedupe(
+                [
+                    *[
+                        str(item).strip().lower()
+                        for item in planned.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(planned.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                    *[
+                        str(item).strip().lower()
+                        for item in runtime.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(runtime.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                ],
+                limit=8,
+            )
+            for code in maintenance_codes:
+                top_maintenance_action_codes[code] = int(top_maintenance_action_codes.get(code, 0) or 0) + 1
             if progress_status in {"resolved", "improved"}:
                 for code in planned_setup_codes:
                     resolved_setup_action_codes[code] = int(resolved_setup_action_codes.get(code, 0) or 0) + 1
+                if effective_followthrough_policy:
+                    resolved_followthrough_policy_counts[effective_followthrough_policy] = int(
+                        resolved_followthrough_policy_counts.get(effective_followthrough_policy, 0) or 0
+                    ) + 1
             else:
                 for code in runtime_setup_codes or planned_setup_codes:
                     persistent_setup_action_codes[code] = int(persistent_setup_action_codes.get(code, 0) or 0) + 1
+                if effective_followthrough_policy:
+                    persistent_followthrough_policy_counts[effective_followthrough_policy] = int(
+                        persistent_followthrough_policy_counts.get(effective_followthrough_policy, 0) or 0
+                    ) + 1
             status_counts[progress_status] = int(status_counts.get(progress_status, 0) or 0) + 1
             items.append(
                 {
@@ -18650,6 +19144,45 @@ class DesktopBackendService:
                     "recommended_action_code": str(
                         runtime.get("recommended_action_code", "") or planned.get("recommended_action_code", "")
                     ).strip().lower(),
+                    "followthrough_policy": effective_followthrough_policy,
+                    "target_query": str(
+                        runtime.get("target_query", "") or planned.get("target_query", "") or ""
+                    ).strip(),
+                    "hotkey_hints": self._machine_dedupe(
+                        [
+                            *[
+                                str(item).strip()
+                                for item in planned.get("hotkey_hints", [])
+                                if isinstance(planned.get("hotkey_hints", []), list) and str(item).strip()
+                            ],
+                            *[
+                                str(item).strip()
+                                for item in runtime.get("hotkey_hints", [])
+                                if isinstance(runtime.get("hotkey_hints", []), list) and str(item).strip()
+                            ],
+                        ],
+                        limit=6,
+                    ),
+                    "auto_runnable": bool(
+                        runtime.get("auto_runnable", planned.get("auto_runnable", False))
+                    ),
+                    "recent_setup_resume_action_count": max(
+                        int(planned.get("recent_setup_resume_action_count", 0) or 0),
+                        int(runtime.get("recent_setup_resume_action_count", 0) or 0),
+                    ),
+                    "recent_setup_maintenance_execution_count": max(
+                        int(planned.get("recent_setup_maintenance_execution_count", 0) or 0),
+                        int(runtime.get("recent_setup_maintenance_execution_count", 0) or 0),
+                    ),
+                    "recent_setup_maintenance_added_count": max(
+                        int(planned.get("recent_setup_maintenance_added_count", 0) or 0),
+                        int(runtime.get("recent_setup_maintenance_added_count", 0) or 0),
+                    ),
+                    "recent_setup_maintenance_removed_count": max(
+                        int(planned.get("recent_setup_maintenance_removed_count", 0) or 0),
+                        int(runtime.get("recent_setup_maintenance_removed_count", 0) or 0),
+                    ),
+                    "recent_setup_top_maintenance_action_codes": maintenance_codes,
                     "related_setup_action_codes": runtime_setup_codes or planned_setup_codes,
                 }
             )
@@ -18665,8 +19198,27 @@ class DesktopBackendService:
                 ],
                 limit=10,
             )
+            runtime_followthrough_policy = str(runtime.get("followthrough_policy", "") or "").strip().lower()
+            if runtime_followthrough_policy:
+                followthrough_policy_counts[runtime_followthrough_policy] = int(
+                    followthrough_policy_counts.get(runtime_followthrough_policy, 0) or 0
+                ) + 1
+                persistent_followthrough_policy_counts[runtime_followthrough_policy] = int(
+                    persistent_followthrough_policy_counts.get(runtime_followthrough_policy, 0) or 0
+                ) + 1
+            runtime_maintenance_codes = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in runtime.get("recent_setup_top_maintenance_action_codes", [])
+                    if isinstance(runtime.get("recent_setup_top_maintenance_action_codes", []), list)
+                    and str(item).strip()
+                ],
+                limit=8,
+            )
             for code in runtime_setup_codes:
                 persistent_setup_action_codes[code] = int(persistent_setup_action_codes.get(code, 0) or 0) + 1
+            for code in runtime_maintenance_codes:
+                top_maintenance_action_codes[code] = int(top_maintenance_action_codes.get(code, 0) or 0) + 1
             items.append(
                 {
                     "id": f"route_progress:{key}",
@@ -18682,6 +19234,30 @@ class DesktopBackendService:
                     "provider_blocked": bool(runtime.get("provider_blocked", False)),
                     "setup_followup_required": bool(runtime.get("setup_followup_required", False)),
                     "recommended_action_code": str(runtime.get("recommended_action_code", "") or "").strip().lower(),
+                    "followthrough_policy": runtime_followthrough_policy,
+                    "target_query": str(runtime.get("target_query", "") or "").strip(),
+                    "hotkey_hints": self._machine_dedupe(
+                        [
+                            str(item).strip()
+                            for item in runtime.get("hotkey_hints", [])
+                            if isinstance(runtime.get("hotkey_hints", []), list) and str(item).strip()
+                        ],
+                        limit=6,
+                    ),
+                    "auto_runnable": bool(runtime.get("auto_runnable", False)),
+                    "recent_setup_resume_action_count": int(
+                        runtime.get("recent_setup_resume_action_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_execution_count": int(
+                        runtime.get("recent_setup_maintenance_execution_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_added_count": int(
+                        runtime.get("recent_setup_maintenance_added_count", 0) or 0
+                    ),
+                    "recent_setup_maintenance_removed_count": int(
+                        runtime.get("recent_setup_maintenance_removed_count", 0) or 0
+                    ),
+                    "recent_setup_top_maintenance_action_codes": runtime_maintenance_codes,
                     "related_setup_action_codes": runtime_setup_codes,
                 }
             )
@@ -18704,7 +19280,9 @@ class DesktopBackendService:
             {
                 "id": str(item.get("id", "") or "").strip(),
                 "stage": "route_remediation_progress",
-                "kind": str(item.get("remediation_kind", "") or "route_tuning").strip().lower(),
+                "kind": str(
+                    item.get("followthrough_policy", "") or item.get("remediation_kind", "") or "route_tuning"
+                ).strip().lower(),
                 "status": str(item.get("progress_status", "") or "persistent").strip().lower(),
                 "title": (
                     f"Continue remediation for {str(item.get('app_name', '') or 'app').strip()}"
@@ -18712,10 +19290,18 @@ class DesktopBackendService:
                     else f"Review improved route for {str(item.get('app_name', '') or 'app').strip()}"
                 ),
                 "target": str(
-                    item.get("recommended_action_code", "") or item.get("app_name", "") or ""
+                    item.get("recommended_action_code", "")
+                    or item.get("target_query", "")
+                    or item.get("app_name", "")
+                    or ""
                 ).strip(),
                 "app_name": str(item.get("app_name", "") or "").strip(),
-                "auto_runnable": False,
+                "query": str(item.get("target_query", "") or "").strip(),
+                "hotkey_hints": list(item.get("hotkey_hints", []))
+                if isinstance(item.get("hotkey_hints", []), list)
+                else [],
+                "followthrough_policy": str(item.get("followthrough_policy", "") or "").strip().lower(),
+                "auto_runnable": bool(item.get("auto_runnable", False)),
                 "required": bool(
                     str(item.get("progress_status", "") or "").strip().lower() in {"persistent", "regressed", "new"}
                 ),
@@ -18744,6 +19330,24 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
                 },
+                "followthrough_policy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(followthrough_policy_counts.items(), key=lambda entry: entry[0])
+                },
+                "resolved_followthrough_policy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        resolved_followthrough_policy_counts.items(),
+                        key=lambda entry: entry[0],
+                    )
+                },
+                "persistent_followthrough_policy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        persistent_followthrough_policy_counts.items(),
+                        key=lambda entry: entry[0],
+                    )
+                },
                 "resolved_setup_action_codes": {
                     str(key): int(value)
                     for key, value in sorted(
@@ -18755,6 +19359,13 @@ class DesktopBackendService:
                     str(key): int(value)
                     for key, value in sorted(
                         persistent_setup_action_codes.items(),
+                        key=lambda entry: (-entry[1], entry[0]),
+                    )[:8]
+                },
+                "top_maintenance_action_codes": {
+                    str(key): int(value)
+                    for key, value in sorted(
+                        top_maintenance_action_codes.items(),
                         key=lambda entry: (-entry[1], entry[0]),
                     )[:8]
                 },
@@ -18817,6 +19428,14 @@ class DesktopBackendService:
                     "setup_followup_required": False,
                     "recommended_action_code": "",
                     "related_setup_action_codes": [],
+                    "followthrough_policy": "",
+                    "target_query": "",
+                    "hotkey_hints": [],
+                    "recent_setup_resume_action_count": 0,
+                    "recent_setup_maintenance_execution_count": 0,
+                    "recent_setup_maintenance_added_count": 0,
+                    "recent_setup_maintenance_removed_count": 0,
+                    "recent_setup_top_maintenance_action_codes": [],
                     "remediation_priority_delta": 0.0,
                     "retry_recommended": False,
                     "feedback_reason_codes": [],
@@ -18846,6 +19465,37 @@ class DesktopBackendService:
                 ],
                 limit=8,
             )
+            feedback["followthrough_policy"] = str(row.get("followthrough_policy", "") or "").strip().lower()
+            feedback["target_query"] = str(row.get("target_query", "") or "").strip()
+            feedback["hotkey_hints"] = self._machine_dedupe(
+                [
+                    str(item).strip()
+                    for item in row.get("hotkey_hints", [])
+                    if isinstance(row.get("hotkey_hints", []), list) and str(item).strip()
+                ],
+                limit=6,
+            )
+            feedback["recent_setup_resume_action_count"] = int(
+                row.get("recent_setup_resume_action_count", 0) or 0
+            )
+            feedback["recent_setup_maintenance_execution_count"] = int(
+                row.get("recent_setup_maintenance_execution_count", 0) or 0
+            )
+            feedback["recent_setup_maintenance_added_count"] = int(
+                row.get("recent_setup_maintenance_added_count", 0) or 0
+            )
+            feedback["recent_setup_maintenance_removed_count"] = int(
+                row.get("recent_setup_maintenance_removed_count", 0) or 0
+            )
+            feedback["recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+                [
+                    str(item).strip().lower()
+                    for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                    if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                    and str(item).strip()
+                ],
+                limit=8,
+            )
             if progress_status in {"persistent", "regressed", "new"}:
                 feedback["remediation_priority_delta"] = 12.0 if progress_status != "new" else 9.0
                 feedback["retry_recommended"] = True
@@ -18860,7 +19510,14 @@ class DesktopBackendService:
                     f"route_progress_{progress_status}" if progress_status else "",
                     *(["provider_blocked_recently"] if bool(feedback["provider_blocked"]) else []),
                     *(["setup_followup_recently"] if bool(feedback["setup_followup_required"]) else []),
+                    *(["setup_resume_recently"] if int(feedback.get("recent_setup_resume_action_count", 0) or 0) > 0 else []),
+                    *(
+                        ["vector_memory_maintenance_recently"]
+                        if int(feedback.get("recent_setup_maintenance_execution_count", 0) or 0) > 0
+                        else []
+                    ),
                     str(feedback.get("remediation_kind", "") or "").strip().lower(),
+                    str(feedback.get("followthrough_policy", "") or "").strip().lower(),
                 ],
                 limit=8,
             )
@@ -18886,6 +19543,37 @@ class DesktopBackendService:
                     ],
                     limit=8,
                 )
+                feedback["followthrough_policy"] = str(row.get("followthrough_policy", "") or "").strip().lower()
+                feedback["target_query"] = str(row.get("target_query", "") or "").strip()
+                feedback["hotkey_hints"] = self._machine_dedupe(
+                    [
+                        str(item).strip()
+                        for item in row.get("hotkey_hints", [])
+                        if isinstance(row.get("hotkey_hints", []), list) and str(item).strip()
+                    ],
+                    limit=6,
+                )
+                feedback["recent_setup_resume_action_count"] = int(
+                    row.get("recent_setup_resume_action_count", 0) or 0
+                )
+                feedback["recent_setup_maintenance_execution_count"] = int(
+                    row.get("recent_setup_maintenance_execution_count", 0) or 0
+                )
+                feedback["recent_setup_maintenance_added_count"] = int(
+                    row.get("recent_setup_maintenance_added_count", 0) or 0
+                )
+                feedback["recent_setup_maintenance_removed_count"] = int(
+                    row.get("recent_setup_maintenance_removed_count", 0) or 0
+                )
+                feedback["recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+                    [
+                        str(item).strip().lower()
+                        for item in row.get("recent_setup_top_maintenance_action_codes", [])
+                        if isinstance(row.get("recent_setup_top_maintenance_action_codes", []), list)
+                        and str(item).strip()
+                    ],
+                    limit=8,
+                )
                 feedback["remediation_priority_delta"] = 10.0
                 feedback["retry_recommended"] = True
                 feedback["feedback_reason_codes"] = self._machine_dedupe(
@@ -18894,18 +19582,31 @@ class DesktopBackendService:
                         f"route_state_{route_status}" if route_status else "",
                         *(["provider_blocked_recently"] if bool(feedback["provider_blocked"]) else []),
                         *(["setup_followup_recently"] if bool(feedback["setup_followup_required"]) else []),
+                        *(["setup_resume_recently"] if int(feedback.get("recent_setup_resume_action_count", 0) or 0) > 0 else []),
+                        *(
+                            ["vector_memory_maintenance_recently"]
+                            if int(feedback.get("recent_setup_maintenance_execution_count", 0) or 0) > 0
+                            else []
+                        ),
                         str(feedback.get("remediation_kind", "") or "").strip().lower(),
+                        str(feedback.get("followthrough_policy", "") or "").strip().lower(),
                     ],
                     limit=8,
                 )
 
         status_counts: Dict[str, int] = {}
         retry_count = 0
+        followthrough_policy_counts: Dict[str, int] = {}
         for row in feedback_by_app.values():
             progress_status = str(row.get("progress_status", "") or "").strip().lower() or "unknown"
             status_counts[progress_status] = int(status_counts.get(progress_status, 0) or 0) + 1
             if bool(row.get("retry_recommended", False)):
                 retry_count += 1
+            followthrough_policy = str(row.get("followthrough_policy", "") or "").strip().lower()
+            if followthrough_policy:
+                followthrough_policy_counts[followthrough_policy] = int(
+                    followthrough_policy_counts.get(followthrough_policy, 0) or 0
+                ) + 1
         return {
             "status": "success",
             "count": len(feedback_by_app),
@@ -18917,6 +19618,10 @@ class DesktopBackendService:
                 "status_counts": {
                     str(key): int(value)
                     for key, value in sorted(status_counts.items(), key=lambda entry: entry[0])
+                },
+                "followthrough_policy_counts": {
+                    str(key): int(value)
+                    for key, value in sorted(followthrough_policy_counts.items(), key=lambda entry: entry[0])
                 },
                 "retry_count": retry_count,
                 "provider_blocked_count": len(
@@ -20341,6 +21046,39 @@ class DesktopBackendService:
         row["remediation_setup_followup_required"] = bool(feedback.get("setup_followup_required", False))
         row["remediation_priority_delta"] = float(feedback.get("remediation_priority_delta", 0.0) or 0.0)
         row["remediation_recent_action_code"] = str(feedback.get("recommended_action_code", "") or "").strip().lower()
+        row["remediation_followthrough_policy"] = str(
+            feedback.get("followthrough_policy", "") or ""
+        ).strip().lower()
+        row["remediation_target_query"] = str(feedback.get("target_query", "") or "").strip()
+        row["remediation_hotkey_hints"] = self._machine_dedupe(
+            [
+                str(item).strip()
+                for item in feedback.get("hotkey_hints", [])
+                if isinstance(feedback.get("hotkey_hints", []), list) and str(item).strip()
+            ],
+            limit=6,
+        )
+        row["remediation_recent_setup_resume_action_count"] = int(
+            feedback.get("recent_setup_resume_action_count", 0) or 0
+        )
+        row["remediation_recent_setup_maintenance_execution_count"] = int(
+            feedback.get("recent_setup_maintenance_execution_count", 0) or 0
+        )
+        row["remediation_recent_setup_maintenance_added_count"] = int(
+            feedback.get("recent_setup_maintenance_added_count", 0) or 0
+        )
+        row["remediation_recent_setup_maintenance_removed_count"] = int(
+            feedback.get("recent_setup_maintenance_removed_count", 0) or 0
+        )
+        row["remediation_recent_setup_top_maintenance_action_codes"] = self._machine_dedupe(
+            [
+                str(item).strip().lower()
+                for item in feedback.get("recent_setup_top_maintenance_action_codes", [])
+                if isinstance(feedback.get("recent_setup_top_maintenance_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=8,
+        )
         row["remediation_related_setup_action_codes"] = self._machine_dedupe(
             [
                 str(item).strip().lower()

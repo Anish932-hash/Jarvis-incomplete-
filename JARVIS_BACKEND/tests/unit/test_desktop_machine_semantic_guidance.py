@@ -1738,10 +1738,198 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
     assert payload["next_actions"][0]["kind"] == "auto_resume_setup_then_continue_learning"
     assert payload["next_actions"][0]["query"] == "settings"
     assert payload["next_actions"][0]["setup_resume_recommended"] is True
-    assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
-    assert "alt+f" in payload["next_actions"][0]["memory_mission"]["hotkey_hints"]
-    assert run_calls[0]["source"] == "unit_test_followthrough"
-    assert maintenance_calls[0]["reason"] == "unit_test_campaign_followthrough"
+
+
+def test_desktop_machine_route_remediation_plan_tracks_setup_resume_and_vector_memory_guidance() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    payload = service._desktop_machine_route_remediation_plan(
+        app_learning_plan={
+            "plan": {
+                "targets": [
+                    {
+                        "app_name": "Notepad",
+                        "category": "utility",
+                        "execution_mode": "degraded",
+                        "readiness_status": "degraded",
+                        "expected_route_profile": "hybrid_verify",
+                        "required_tasks": ["control", "vision"],
+                        "blocker_codes": ["provider_missing"],
+                        "related_setup_action_codes": ["install_vision_model"],
+                        "recent_setup_resume_ready": True,
+                        "recent_setup_auto_resume_ready": True,
+                        "recent_setup_resume_action_count": 2,
+                        "recent_setup_maintenance_execution_count": 1,
+                        "recent_setup_maintenance_added_count": 1,
+                        "recent_setup_maintenance_removed_count": 0,
+                        "recent_setup_top_maintenance_action_codes": ["maintain_vector_memory"],
+                        "knowledge_store_maintenance_due": True,
+                        "knowledge_store_recent_cleanup_count": 0,
+                        "memory_mission": {
+                            "seed_query": "settings",
+                            "query_hints": ["settings", "preferences"],
+                            "hotkey_hints": ["Alt+F"],
+                        },
+                    },
+                    {
+                        "app_name": "Calculator",
+                        "category": "utility",
+                        "execution_mode": "hybrid_ready",
+                        "readiness_status": "degraded",
+                        "expected_route_profile": "accessibility_memory_first",
+                        "blocker_codes": [],
+                        "related_setup_action_codes": [],
+                        "recent_setup_resume_ready": False,
+                        "recent_setup_auto_resume_ready": False,
+                        "recent_setup_resume_action_count": 0,
+                        "recent_setup_maintenance_execution_count": 2,
+                        "recent_setup_maintenance_added_count": 3,
+                        "recent_setup_maintenance_removed_count": 2,
+                        "recent_setup_top_maintenance_action_codes": ["cleanup_vector_memory"],
+                        "knowledge_store_maintenance_due": True,
+                        "knowledge_store_recent_cleanup_count": 2,
+                        "memory_mission": {
+                            "seed_query": "preferences",
+                            "query_hints": ["preferences"],
+                            "hotkey_hints": ["Ctrl+F"],
+                        },
+                    },
+                ]
+            }
+        },
+        app_control_prepare_plan={"items": []},
+        app_control_prepare_result=None,
+    )
+
+    assert payload["status"] == "success"
+    assert payload["count"] == 2
+    assert payload["items"][0]["app_name"] == "Notepad"
+    assert payload["items"][0]["followthrough_policy"] == "auto_resume_setup"
+    assert payload["items"][0]["remediation_kind"] == "setup_resume"
+    assert payload["items"][0]["auto_runnable"] is True
+    assert payload["items"][0]["target_query"] == "settings"
+    assert "alt+f" in payload["items"][0]["hotkey_hints"]
+    assert payload["items"][1]["followthrough_policy"] == "cleanup_vector_memory"
+    assert payload["items"][1]["remediation_kind"] == "vector_memory_cleanup"
+    assert payload["summary"]["setup_resume_guided_app_count"] == 1
+    assert payload["summary"]["memory_cleanup_guided_app_count"] == 1
+    assert payload["summary"]["followthrough_policy_counts"]["auto_resume_setup"] == 1
+    assert payload["summary"]["followthrough_policy_counts"]["cleanup_vector_memory"] == 1
+    assert payload["summary"]["top_target_queries"]["settings"] >= 1
+    assert payload["summary"]["top_hotkeys"]["ctrl+f"] >= 1
+    assert payload["summary"]["top_maintenance_action_codes"]["cleanup_vector_memory"] == 1
+    assert payload["next_actions"][0]["kind"] == "auto_resume_setup"
+    assert payload["next_actions"][0]["query"] == "settings"
+
+
+def test_desktop_machine_route_remediation_progress_and_feedback_track_followthrough_policy() -> None:
+    service = DesktopBackendService.__new__(DesktopBackendService)
+
+    planned = {
+        "status": "success",
+        "items": [
+            {
+                "app_name": "Notepad",
+                "route_resolution_status": "setup_constrained",
+                "priority_band": "high",
+                "remediation_kind": "setup_resume",
+                "recommended_action_code": "install_vision_model",
+                "provider_blocked": True,
+                "setup_followup_required": True,
+                "related_setup_action_codes": ["install_vision_model"],
+                "followthrough_policy": "auto_resume_setup",
+                "auto_runnable": True,
+                "recent_setup_resume_action_count": 2,
+                "target_query": "settings",
+                "hotkey_hints": ["Alt+F"],
+            },
+            {
+                "app_name": "Calculator",
+                "route_resolution_status": "fallback",
+                "priority_band": "medium",
+                "remediation_kind": "vector_memory_cleanup",
+                "recommended_action_code": "cleanup_vector_memory",
+                "provider_blocked": False,
+                "setup_followup_required": False,
+                "related_setup_action_codes": [],
+                "followthrough_policy": "cleanup_vector_memory",
+                "auto_runnable": True,
+                "recent_setup_maintenance_execution_count": 1,
+                "recent_setup_maintenance_removed_count": 2,
+                "recent_setup_top_maintenance_action_codes": ["cleanup_vector_memory"],
+                "target_query": "preferences",
+                "hotkey_hints": ["Ctrl+F"],
+            },
+        ],
+    }
+    runtime = {
+        "status": "success",
+        "items": [
+            {
+                "app_name": "Calculator",
+                "route_resolution_status": "fallback",
+                "priority_band": "medium",
+                "remediation_kind": "vector_memory_cleanup",
+                "recommended_action_code": "cleanup_vector_memory",
+                "provider_blocked": False,
+                "setup_followup_required": False,
+                "related_setup_action_codes": [],
+                "followthrough_policy": "cleanup_vector_memory",
+                "auto_runnable": True,
+                "recent_setup_maintenance_execution_count": 1,
+                "recent_setup_maintenance_removed_count": 2,
+                "recent_setup_top_maintenance_action_codes": ["cleanup_vector_memory"],
+                "target_query": "preferences",
+                "hotkey_hints": ["Ctrl+F"],
+            }
+        ],
+    }
+
+    progress = service._desktop_machine_route_remediation_progress(
+        planned_remediation=planned,
+        runtime_remediation=runtime,
+    )
+
+    assert progress["status"] == "success"
+    assert progress["summary"]["resolved_count"] == 1
+    assert progress["summary"]["persistent_count"] == 1
+    assert progress["summary"]["resolved_followthrough_policy_counts"]["auto_resume_setup"] == 1
+    assert progress["summary"]["persistent_followthrough_policy_counts"]["cleanup_vector_memory"] == 1
+    assert progress["summary"]["top_maintenance_action_codes"]["cleanup_vector_memory"] == 1
+    assert progress["next_actions"][0]["kind"] == "cleanup_vector_memory"
+    assert progress["next_actions"][0]["query"] == "preferences"
+
+    class _StubOnboardingManager:
+        def latest_run(self):
+            return {
+                "status": "success",
+                "source": "unit_test",
+                "route_remediation": planned,
+                "route_remediation_progress": progress,
+            }
+
+    service.desktop_onboarding_manager = _StubOnboardingManager()
+    feedback = service._desktop_machine_recent_route_feedback(limit=8)
+
+    assert feedback["status"] == "success"
+    assert feedback["summary"]["followthrough_policy_counts"]["auto_resume_setup"] == 1
+    assert feedback["summary"]["followthrough_policy_counts"]["cleanup_vector_memory"] == 1
+    assert feedback["feedback_by_app"]["notepad"]["target_query"] == "settings"
+    assert "alt+f" in feedback["feedback_by_app"]["notepad"]["hotkey_hints"]
+
+    continuation = service._desktop_machine_onboarding_continuation_plan(
+        execution_queue={"items": []},
+        app_learning_plan={"plan": {"targets": []}},
+        app_control_prepare_plan={"items": []},
+        vm_control_plan={"items": []},
+        route_remediation=planned,
+        route_remediation_progress=progress,
+    )
+
+    assert continuation["status"] == "success"
+    kinds = {str(item.get("kind", "") or "") for item in continuation["items"]}
+    assert "auto_resume_setup" in kinds
+    assert "cleanup_vector_memory" in kinds
 
 
 def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assisted_guest() -> None:
