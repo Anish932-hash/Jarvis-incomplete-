@@ -102,6 +102,13 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
             "top_model_resume_blockers": ["active_runs"],
             "model_setup_resume_trigger": "after_active_runs",
             "model_setup_resume_hint": "Resume model downloads after active runs finish.",
+            "maintenance_execution_count": 2,
+            "maintenance_added_total": 3,
+            "maintenance_removed_total": 1,
+            "maintenance_recently_executed": True,
+            "maintenance_cleanup_recently_applied": True,
+            "maintenance_refresh_recently_applied": True,
+            "top_maintenance_action_codes": ["maintain_vector_memory"],
             "reason_codes": ["recent_setup_followthrough_required", "recent_provider_blocked_pressure"],
         },
         "continuation_memory": {
@@ -166,9 +173,15 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["items"][0]["provider_model_readiness"]["recent_setup_resume_action_count"] == 1
     assert "install_vision" in plan["items"][0]["provider_model_readiness"]["recent_setup_resume_action_ids"]
     assert "active_runs" in plan["items"][0]["provider_model_readiness"]["recent_setup_resume_blockers"]
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_maintenance_execution_count"] == 2
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_maintenance_added_count"] == 3
+    assert plan["items"][0]["provider_model_readiness"]["recent_setup_maintenance_removed_count"] == 1
+    assert "maintain_vector_memory" in plan["items"][0]["provider_model_readiness"]["recent_setup_top_maintenance_action_codes"]
     assert "recent_setup_followthrough_required" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert "recent_model_setup_resume_ready" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert "recent_model_setup_auto_resume_ready" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert "recent_vector_memory_maintenance_executed" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
+    assert "recent_vector_memory_cleanup_applied" in plan["items"][0]["provider_model_readiness"]["ai_route_reason_codes"]
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_status"] == "recommended"
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_recommended"] is True
     assert plan["items"][0]["provider_model_readiness"]["recent_continuation_learning_wave_total"] == 2
@@ -182,8 +195,10 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert "models" in plan["items"][0]["memory_mission"]["query_hints"]
     assert "runtime" in plan["items"][0]["memory_mission"]["query_hints"]
     assert "settings" in plan["items"][0]["memory_mission"]["query_hints"]
+    assert "hotkeys" in plan["items"][0]["memory_mission"]["query_hints"]
     assert "recent_model_setup_resume_ready" in plan["items"][0]["memory_mission"]["reason_codes"]
     assert "structured_memory_maintenance_due" in plan["items"][0]["memory_mission"]["reason_codes"]
+    assert "recent_vector_memory_maintenance_executed" in plan["items"][0]["memory_mission"]["reason_codes"]
     assert plan["summary"]["ai_route_status_counts"]["fallback"] == 1
     assert plan["summary"]["ai_route_runtime_band_counts"]["accessibility"] == 1
     assert plan["summary"]["memory_guidance_status_counts"]["partial"] == 1
@@ -192,7 +207,7 @@ def test_desktop_vm_manager_inventory_plan_and_prepare(tmp_path, monkeypatch) ->
     assert plan["summary"]["memory_route_alignment_counts"]["assisted"] == 1
     assert plan["summary"]["memory_followthrough_guest_count"] == 1
     assert plan["summary"]["memory_mission_status_counts"]["partial"] == 1
-    assert plan["summary"]["top_memory_mission_queries"]["settings"] >= 1
+    assert plan["summary"]["top_memory_mission_queries"]["desktop settings"] >= 1
     assert plan["summary"]["top_memory_mission_hotkeys"]["Alt+F"] >= 1
     assert plan["summary"]["setup_guided_guest_count"] == 1
     assert plan["summary"]["continuation_guided_guest_count"] == 1

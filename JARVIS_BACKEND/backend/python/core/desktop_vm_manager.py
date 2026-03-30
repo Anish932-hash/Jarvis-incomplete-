@@ -1371,6 +1371,36 @@ class DesktopVMManager:
         )
         recent_setup_resume_trigger = _norm_text(setup_followthrough_memory.get("model_setup_resume_trigger", ""))
         recent_setup_resume_hint = _clean_text(setup_followthrough_memory.get("model_setup_resume_hint", ""))
+        recent_setup_maintenance_execution_count = max(
+            0,
+            int(setup_followthrough_memory.get("maintenance_execution_count", 0) or 0),
+        )
+        recent_setup_maintenance_added_count = max(
+            0,
+            int(setup_followthrough_memory.get("maintenance_added_total", 0) or 0),
+        )
+        recent_setup_maintenance_removed_count = max(
+            0,
+            int(setup_followthrough_memory.get("maintenance_removed_total", 0) or 0),
+        )
+        recent_setup_maintenance_recently_executed = bool(
+            setup_followthrough_memory.get("maintenance_recently_executed", False)
+        ) or recent_setup_maintenance_execution_count > 0
+        recent_setup_maintenance_cleanup_recently_applied = bool(
+            setup_followthrough_memory.get("maintenance_cleanup_recently_applied", False)
+        ) or recent_setup_maintenance_removed_count > 0
+        recent_setup_maintenance_refresh_recently_applied = bool(
+            setup_followthrough_memory.get("maintenance_refresh_recently_applied", False)
+        ) or recent_setup_maintenance_added_count > 0
+        recent_setup_top_maintenance_action_codes = _dedupe_strings(
+            [
+                str(item).strip().lower()
+                for item in setup_followthrough_memory.get("top_maintenance_action_codes", [])
+                if isinstance(setup_followthrough_memory.get("top_maintenance_action_codes", []), list)
+                and str(item).strip()
+            ],
+            limit=4,
+        )
         app_learning_memory_mission_status_counts = (
             dict(app_learning_summary.get("memory_mission_status_counts", {}))
             if isinstance(app_learning_summary.get("memory_mission_status_counts", {}), dict)
@@ -1416,8 +1446,14 @@ class DesktopVMManager:
         structured_memory_controls_vector_count = int(multimodal_summary.get("knowledge_store_controls_vector_count", 0) or 0)
         structured_memory_permanent_vector_db_count = int(multimodal_summary.get("knowledge_store_permanent_vector_db_count", 0) or 0)
         structured_memory_maintenance_due = bool(multimodal_summary.get("knowledge_store_maintenance_due", False))
-        structured_memory_recent_cleanup_count = int(multimodal_summary.get("knowledge_store_maintenance_removed_count", 0) or 0)
-        structured_memory_recent_refresh_count = int(multimodal_summary.get("knowledge_store_maintenance_added_count", 0) or 0)
+        structured_memory_recent_cleanup_count = max(
+            int(multimodal_summary.get("knowledge_store_maintenance_removed_count", 0) or 0),
+            recent_setup_maintenance_removed_count,
+        )
+        structured_memory_recent_refresh_count = max(
+            int(multimodal_summary.get("knowledge_store_maintenance_added_count", 0) or 0),
+            recent_setup_maintenance_added_count,
+        )
         app_learning_semantic_guided_count = int(app_learning_summary.get("semantic_guided_count", 0) or 0)
         app_learning_semantic_followup_count = int(app_learning_summary.get("semantic_followup_count", 0) or 0)
         recent_setup_followthrough_status = _norm_text(
@@ -1519,10 +1555,13 @@ class DesktopVMManager:
                 "recent_setup_model_selection_available" if recent_setup_model_item_keys else "",
                 "recent_model_setup_resume_ready" if recent_setup_resume_ready else "",
                 "recent_model_setup_auto_resume_ready" if recent_setup_auto_resume_ready else "",
+                "recent_vector_memory_maintenance_executed" if recent_setup_maintenance_recently_executed else "",
+                "recent_vector_memory_cleanup_applied" if recent_setup_maintenance_cleanup_recently_applied else "",
+                "recent_vector_memory_refresh_applied" if recent_setup_maintenance_refresh_recently_applied else "",
                 "structured_memory_maintenance_due" if structured_memory_maintenance_due else "",
                 "structured_memory_recent_cleanup_pressure" if structured_memory_recent_cleanup_count > 0 else "",
             ],
-            limit=8,
+            limit=12,
         )
         expected_route_profile = cls._expected_route_profile(row, task=task)
         expected_model_preference = cls._expected_model_preference(row, task=task)
@@ -1598,6 +1637,12 @@ class DesktopVMManager:
                 ai_route_status = "setup_waiting"
         if recent_setup_auto_resume_ready:
             ai_route_reason_codes.append("recent_model_setup_auto_resume_ready")
+        if recent_setup_maintenance_recently_executed:
+            ai_route_reason_codes.append("recent_vector_memory_maintenance_executed")
+        if recent_setup_maintenance_cleanup_recently_applied:
+            ai_route_reason_codes.append("recent_vector_memory_cleanup_applied")
+        if recent_setup_maintenance_refresh_recently_applied:
+            ai_route_reason_codes.append("recent_vector_memory_refresh_applied")
         if recent_continuation_required:
             ai_route_reason_codes.append("recent_continuation_required")
             if ai_route_status == "matched":
@@ -1662,6 +1707,7 @@ class DesktopVMManager:
         ai_route_confidence -= 0.04 if structured_memory_low_coverage_count > 0 and family != "terminal" else 0.0
         ai_route_confidence -= 0.05 if structured_memory_maintenance_due else 0.0
         ai_route_confidence -= min(structured_memory_recent_cleanup_count, 4) * 0.01
+        ai_route_confidence += min(structured_memory_recent_refresh_count, 3) * 0.01
         ai_route_confidence += 0.05 if memory_guidance_status == "strong" else 0.02 if memory_guidance_status == "partial" else 0.0
         ai_route_confidence = max(0.05, min(round(ai_route_confidence, 2), 0.98))
         memory_route_guidance = cls._memory_route_guidance_summary(
@@ -1714,7 +1760,7 @@ class DesktopVMManager:
             "selected_ai_vision_stack": selected_ai_vision_stack,
             "selected_ai_memory_stack": selected_ai_memory_stack,
             "selected_ai_stack_names": selected_ai_stack_names,
-            "ai_route_reason_codes": _dedupe_strings(ai_route_reason_codes, limit=10),
+            "ai_route_reason_codes": _dedupe_strings(ai_route_reason_codes, limit=14),
             "multimodal_memory_pressure": multimodal_memory_pressure,
             "structured_memory_entry_count": structured_memory_entry_count,
             "structured_memory_control_count": structured_memory_control_count,
@@ -1750,6 +1796,13 @@ class DesktopVMManager:
             "recent_setup_resume_blockers": recent_setup_resume_blockers,
             "recent_setup_resume_trigger": recent_setup_resume_trigger,
             "recent_setup_resume_hint": recent_setup_resume_hint,
+            "recent_setup_maintenance_execution_count": recent_setup_maintenance_execution_count,
+            "recent_setup_maintenance_added_count": recent_setup_maintenance_added_count,
+            "recent_setup_maintenance_removed_count": recent_setup_maintenance_removed_count,
+            "recent_setup_maintenance_recently_executed": recent_setup_maintenance_recently_executed,
+            "recent_setup_maintenance_cleanup_recently_applied": recent_setup_maintenance_cleanup_recently_applied,
+            "recent_setup_maintenance_refresh_recently_applied": recent_setup_maintenance_refresh_recently_applied,
+            "recent_setup_top_maintenance_action_codes": recent_setup_top_maintenance_action_codes,
             "recent_continuation_status": recent_continuation_status,
             "recent_continuation_recommended": recent_continuation_recommended,
             "recent_continuation_required": recent_continuation_required,
@@ -1846,11 +1899,21 @@ class DesktopVMManager:
         structured_memory_recent_cleanup_count = int(
             provider_model_readiness.get("structured_memory_recent_cleanup_count", 0) or 0
         )
+        recent_setup_maintenance_execution_count = int(
+            provider_model_readiness.get("recent_setup_maintenance_execution_count", 0) or 0
+        )
+        recent_setup_maintenance_added_count = int(
+            provider_model_readiness.get("recent_setup_maintenance_added_count", 0) or 0
+        )
+        recent_setup_maintenance_removed_count = int(
+            provider_model_readiness.get("recent_setup_maintenance_removed_count", 0) or 0
+        )
         memory_followthrough_recommended = (
             memory_route_alignment_status in {"underused", "assisted"}
             or recent_setup_resume_ready
             or structured_memory_maintenance_due
             or structured_memory_recent_cleanup_count > 0
+            or recent_setup_maintenance_execution_count > 0
         )
         recommended_max_surface_waves = (
             6 if memory_route_alignment_status == "underused" else 5 if memory_followthrough_recommended else 4
@@ -1882,6 +1945,16 @@ class DesktopVMManager:
                 if structured_memory_recent_cleanup_count > 0
                 else "structured_memory_maintenance_due"
             )
+        if recent_setup_maintenance_execution_count > 0:
+            recommended_max_surface_waves = max(
+                recommended_max_surface_waves,
+                6 if recent_setup_maintenance_removed_count > 0 else 5,
+            )
+            recommended_max_probe_controls = max(
+                recommended_max_probe_controls,
+                5 if recent_setup_maintenance_removed_count > 0 else 4,
+            )
+            reason_codes.append("recent_vector_memory_maintenance_executed")
         memory_mission = cls._guest_memory_mission(
             {**base, "learning_query": cls._guest_learning_query(base)},
             provider_model_readiness=provider_model_readiness,
@@ -1970,6 +2043,11 @@ class DesktopVMManager:
                 learning_query,
                 *(["models", "runtime", "provider"] if bool(readiness.get("recent_setup_resume_ready", False)) else []),
                 *(["settings", "preferences", "toolbar", "navigation"] if bool(readiness.get("structured_memory_maintenance_due", False)) else []),
+                *(
+                    ["toolbar", "navigation", "hotkeys", "shortcuts", "commands"]
+                    if int(readiness.get("recent_setup_maintenance_execution_count", 0) or 0) > 0
+                    else []
+                ),
                 *[
                     str(item).strip()
                     for item in readiness.get("recent_continuation_top_memory_mission_queries", [])
@@ -1985,7 +2063,7 @@ class DesktopVMManager:
                 guest_name,
                 _clean_text(row.get("provider_label", "")),
             ],
-            limit=8,
+            limit=12,
         )
         hotkey_hints = _dedupe_strings(
             [
@@ -2071,6 +2149,21 @@ class DesktopVMManager:
                     *(
                         ["structured_memory_recent_cleanup_pressure"]
                         if int(readiness.get("structured_memory_recent_cleanup_count", 0) or 0) > 0
+                        else []
+                    ),
+                    *(
+                        ["recent_vector_memory_maintenance_executed"]
+                        if int(readiness.get("recent_setup_maintenance_execution_count", 0) or 0) > 0
+                        else []
+                    ),
+                    *(
+                        ["recent_vector_memory_cleanup_applied"]
+                        if int(readiness.get("recent_setup_maintenance_removed_count", 0) or 0) > 0
+                        else []
+                    ),
+                    *(
+                        ["recent_vector_memory_refresh_applied"]
+                        if int(readiness.get("recent_setup_maintenance_added_count", 0) or 0) > 0
                         else []
                     ),
                     *(["guest_memory_followthrough_recommended"] if followthrough_recommended else []),

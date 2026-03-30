@@ -267,6 +267,12 @@ def test_desktop_machine_recent_setup_followthrough_memory_collects_provider_and
                     "app_learning_memory_followthrough_total": 0,
                     "prepared_memory_followthrough_total": 0,
                     "vm_memory_followthrough_total": 0,
+                    "app_learning_continuation_maintenance_executed_total": 1,
+                    "app_learning_continuation_maintenance_added_total": 4,
+                    "app_learning_continuation_maintenance_removed_total": 2,
+                    "vm_prepare_continuation_maintenance_executed_total": 1,
+                    "vm_prepare_continuation_maintenance_added_total": 1,
+                    "vm_prepare_continuation_maintenance_removed_total": 0,
                     "continuation_manual_total": 0,
                     "route_remediation_blocked_total": 0,
                     "continuation_retry_total": 0,
@@ -293,9 +299,16 @@ def test_desktop_machine_recent_setup_followthrough_memory_collects_provider_and
     assert payload["model_setup_resume_trigger"] == "after_active_runs"
     assert payload["top_ai_runtime_setup_action_codes"] == ["warm_local_reasoning_runtime"]
     assert payload["top_multimodal_setup_action_codes"] == ["warm_local_vision_runtime"]
+    assert payload["maintenance_execution_count"] == 2
+    assert payload["maintenance_added_total"] == 5
+    assert payload["maintenance_removed_total"] == 2
+    assert payload["maintenance_recently_executed"] is True
+    assert payload["maintenance_cleanup_recently_applied"] is True
+    assert payload["top_maintenance_action_codes"] == ["maintain_vector_memory"]
     assert payload["setup_guidance_status"] == "strong"
     assert "recent_provider_verified" in payload["setup_guidance_reason_codes"]
     assert "recent_model_setup_resume_available" in payload["setup_guidance_reason_codes"]
+    assert "recent_vector_memory_cleanup_applied" in payload["setup_guidance_reason_codes"]
 
 
 def test_desktop_machine_prepare_readiness_annotation_uses_recent_setup_memory_hints() -> None:
@@ -392,6 +405,13 @@ def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_que
             "model_setup_resume_hint": "Resume model downloads after the active run finishes.",
             "setup_guidance_status": "strong",
             "setup_guidance_reason_codes": ["recent_provider_verified"],
+            "maintenance_execution_count": 2,
+            "maintenance_added_total": 3,
+            "maintenance_removed_total": 1,
+            "maintenance_recently_executed": True,
+            "maintenance_cleanup_recently_applied": True,
+            "maintenance_refresh_recently_applied": True,
+            "top_maintenance_action_codes": ["maintain_vector_memory"],
         },
     )
 
@@ -399,10 +419,16 @@ def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_que
     assert payload["setup_execution_policy"] == "auto_followthrough_resume"
     assert payload["recent_setup_auto_resume_ready"] is True
     assert payload["recent_setup_resume_action_count"] == 1
+    assert payload["recent_setup_maintenance_execution_count"] == 2
+    assert payload["recent_setup_maintenance_added_count"] == 3
+    assert payload["recent_setup_maintenance_removed_count"] == 1
+    assert payload["recent_setup_maintenance_cleanup_recently_applied"] is True
+    assert "maintain_vector_memory" in payload["recent_setup_top_maintenance_action_codes"]
     assert payload["setup_execution_resume_ready"] is True
     assert "install_vision" in payload["setup_execution_resume_action_ids"]
     assert "settings" in payload["recent_setup_guided_queries"]
     assert "models" in payload["recent_setup_guided_queries"]
+    assert "hotkeys" in payload["recent_setup_guided_queries"]
     assert "preferences" in payload["recent_setup_guided_queries"]
     assert "focus_toolbar" in payload["recent_setup_guided_wave_actions"]
     assert "focus_navigation_tree" in payload["recent_setup_guided_wave_actions"]
@@ -414,6 +440,8 @@ def test_desktop_machine_apply_recent_setup_followthrough_memory_adds_guided_que
     assert "focus_search_box" in payload["preferred_wave_actions"]
     assert "menu" in payload["target_container_roles"]
     assert "tree" in payload["preferred_traversal_paths"]
+    assert "maintain_vector_memory" in payload["related_setup_action_codes"]
+    assert "recent_vector_memory_cleanup_applied" in payload["reason_codes"]
     assert int(payload["effective_max_surface_waves"] or 0) >= 4
     assert int(payload["effective_max_probe_controls"] or 0) >= 4
 
@@ -1117,6 +1145,13 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
                 "model_setup_can_auto_resume_now": True,
                 "top_model_resume_action_ids": ["install_vision"],
                 "model_setup_resume_action_count": 1,
+                "maintenance_execution_count": 2,
+                "maintenance_added_total": 3,
+                "maintenance_removed_total": 1,
+                "maintenance_recently_executed": True,
+                "maintenance_cleanup_recently_applied": True,
+                "maintenance_refresh_recently_applied": True,
+                "top_maintenance_action_codes": ["maintain_vector_memory"],
             },
         },
         app_learning_plan=plan,
@@ -1138,6 +1173,12 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert finalized["summary"]["memory_mission_followthrough_count"] == 2
     assert finalized["summary"]["recent_setup_resume_ready_count"] == 2
     assert finalized["summary"]["recent_setup_auto_resume_ready_count"] == 2
+    assert finalized["summary"]["recent_setup_maintenance_execution_guided_count"] == 2
+    assert finalized["summary"]["recent_setup_maintenance_cleanup_guided_count"] == 2
+    assert finalized["summary"]["recent_setup_maintenance_refresh_guided_count"] == 2
+    assert finalized["summary"]["recent_setup_maintenance_execution_count"] == 2
+    assert finalized["summary"]["recent_setup_maintenance_added_count"] == 3
+    assert finalized["summary"]["recent_setup_maintenance_removed_count"] == 1
     assert finalized["summary"]["knowledge_store_maintenance_due_count"] == 2
     assert finalized["summary"]["knowledge_store_cleanup_pressure_count"] == 2
     assert finalized["summary"]["top_memory_mission_queries"]["settings"] >= 1
@@ -1148,6 +1189,12 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert finalized["campaign_defaults"]["maintenance_followthrough_enabled"] is True
     assert finalized["campaign_defaults"]["recent_setup_resume_ready_count"] == 2
     assert finalized["campaign_defaults"]["recent_setup_auto_resume_ready_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_execution_guided_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_cleanup_guided_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_refresh_guided_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_execution_count"] == 2
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_added_count"] == 3
+    assert finalized["campaign_defaults"]["recent_setup_maintenance_removed_count"] == 1
     assert finalized["campaign_defaults"]["knowledge_store_maintenance_due_count"] == 2
     assert finalized["campaign_defaults"]["knowledge_store_cleanup_pressure_count"] == 2
     assert finalized["campaign_defaults"]["memory_underused_count"] == 1
@@ -1156,7 +1203,7 @@ def test_desktop_machine_app_learning_plan_tracks_semantic_guidance() -> None:
     assert finalized["campaign_defaults"]["query_hints_by_app"]["Notepad"][0] == "settings"
     assert "ctrl+f" in finalized["campaign_defaults"]["semantic_hotkeys_by_app"]["Notepad"]
     assert finalized["campaign_defaults"]["max_surface_waves"] >= 6
-    assert finalized["campaign_defaults"]["max_probe_controls"] >= 4
+    assert finalized["campaign_defaults"]["max_probe_controls"] >= 5
     assert "focus_navigation_tree" in finalized["campaign_defaults"]["preferred_wave_actions"]
     assert finalized["campaign_defaults"]["semantic_guidance_status_counts"]["strong"] == 1
     assert finalized["campaign_defaults"]["top_semantic_match_labels"]["Settings"] == 1
@@ -1279,8 +1326,13 @@ def test_desktop_machine_onboarding_continuation_plan_tracks_setup_resume_and_me
                         "readiness_status": "degraded",
                         "recent_setup_resume_ready": True,
                         "recent_setup_auto_resume_ready": True,
+                        "recent_setup_resume_action_count": 2,
                         "knowledge_store_maintenance_due": True,
                         "knowledge_store_recent_cleanup_count": 2,
+                        "recent_setup_maintenance_execution_count": 1,
+                        "recent_setup_maintenance_added_count": 3,
+                        "recent_setup_maintenance_removed_count": 2,
+                        "recent_setup_top_maintenance_action_codes": ["maintain_vector_memory"],
                         "memory_mission": {
                             "status": "partial",
                             "seed_query": "",
@@ -1299,18 +1351,32 @@ def test_desktop_machine_onboarding_continuation_plan_tracks_setup_resume_and_me
 
     assert continuation["status"] == "success"
     assert continuation["count"] == 1
-    assert continuation["items"][0]["kind"] == "resume_setup_then_continue_learning"
+    assert continuation["items"][0]["kind"] == "auto_resume_setup_then_continue_learning"
     assert continuation["items"][0]["setup_resume_recommended"] is True
     assert continuation["items"][0]["setup_auto_resume_ready"] is True
+    assert continuation["items"][0]["recent_setup_resume_action_count"] == 2
     assert continuation["items"][0]["memory_maintenance_recommended"] is True
     assert continuation["items"][0]["memory_cleanup_pressure"] is True
+    assert continuation["items"][0]["memory_refresh_recommended"] is True
+    assert continuation["items"][0]["recent_setup_maintenance_execution_count"] == 1
+    assert continuation["items"][0]["recent_setup_maintenance_added_count"] == 3
+    assert continuation["items"][0]["recent_setup_maintenance_removed_count"] == 2
+    assert continuation["items"][0]["followthrough_policy"] == "auto_resume_setup"
     assert continuation["items"][0]["memory_mission"]["seed_query"] == "models"
     assert "runtime" in continuation["items"][0]["memory_mission"]["query_hints"]
     assert "settings" in continuation["items"][0]["memory_mission"]["query_hints"]
+    assert continuation["items"][0]["recent_setup_top_maintenance_action_codes"] == ["maintain_vector_memory"]
     assert continuation["summary"]["setup_resume_followthrough_count"] == 1
     assert continuation["summary"]["setup_auto_resume_followthrough_count"] == 1
+    assert continuation["summary"]["setup_resume_action_count"] == 2
     assert continuation["summary"]["memory_maintenance_followthrough_count"] == 1
     assert continuation["summary"]["memory_cleanup_pressure_count"] == 1
+    assert continuation["summary"]["memory_refresh_followthrough_count"] == 1
+    assert continuation["summary"]["maintenance_execution_count"] == 1
+    assert continuation["summary"]["maintenance_added_count"] == 3
+    assert continuation["summary"]["maintenance_removed_count"] == 2
+    assert continuation["summary"]["followthrough_policy_counts"]["auto_resume_setup"] == 1
+    assert continuation["summary"]["top_maintenance_action_codes"]["maintain_vector_memory"] == 1
 
 
 def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_vm_items() -> None:
@@ -1333,6 +1399,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                     "top_memory_mission_hotkeys": {"Ctrl+F": 1},
                     "recent_setup_resume_ready_count": 1,
                     "recent_setup_auto_resume_ready_count": 1,
+                    "recent_setup_remaining_ready_count": 2,
+                    "recent_setup_maintenance_execution_count": 1,
+                    "recent_setup_maintenance_added_count": 4,
+                    "recent_setup_maintenance_removed_count": 1,
                     "knowledge_store_maintenance_due_count": 1,
                     "knowledge_store_cleanup_pressure_count": 1,
                 }
@@ -1345,6 +1415,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                 "memory_mission_status_counts": {"strong": 1},
                 "recent_setup_resume_ready_count": 1,
                 "recent_setup_auto_resume_ready_count": 1,
+                "recent_setup_remaining_ready_count": 2,
+                "recent_setup_maintenance_execution_count": 1,
+                "recent_setup_maintenance_added_count": 4,
+                "recent_setup_maintenance_removed_count": 1,
                 "knowledge_store_maintenance_due_count": 1,
                 "knowledge_store_cleanup_pressure_count": 1,
             },
@@ -1369,6 +1443,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                     "recent_setup_resume_ready": True,
                     "recent_setup_auto_resume_ready": True,
                     "recent_setup_resume_action_count": 1,
+                    "recent_setup_maintenance_execution_count": 1,
+                    "recent_setup_maintenance_added_count": 2,
+                    "recent_setup_maintenance_removed_count": 1,
+                    "recent_setup_top_maintenance_action_codes": ["maintain_vector_memory"],
                     "knowledge_store_maintenance_due": True,
                     "knowledge_store_recent_cleanup_count": 1,
                 }
@@ -1395,6 +1473,10 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
                         "recent_setup_resume_ready": True,
                         "recent_setup_auto_resume_ready": True,
                         "recent_setup_resume_action_count": 2,
+                        "recent_setup_maintenance_execution_count": 1,
+                        "recent_setup_maintenance_added_count": 3,
+                        "recent_setup_maintenance_removed_count": 1,
+                        "recent_setup_top_maintenance_action_codes": ["maintain_vector_memory"],
                         "structured_memory_maintenance_due": True,
                         "structured_memory_recent_cleanup_count": 1,
                     },
@@ -1433,12 +1515,18 @@ def test_desktop_machine_onboarding_execution_queue_tracks_memory_followthrough_
     assert summary["memory_route_alignment_counts"]["assisted"] == 1
     assert summary["setup_resume_recommended_count"] == 4
     assert summary["setup_auto_resume_recommended_count"] == 4
+    assert summary["setup_resume_action_count"] == 7
     assert summary["memory_maintenance_recommended_count"] == 4
     assert summary["memory_cleanup_pressure_count"] == 4
+    assert summary["memory_refresh_recommended_count"] == 4
+    assert summary["maintenance_execution_count"] == 4
+    assert summary["maintenance_added_count"] == 13
+    assert summary["maintenance_removed_count"] == 4
     assert summary["memory_mission_status_counts"]["strong"] >= 1
     assert summary["memory_mission_status_counts"]["partial"] >= 1
     assert summary["top_memory_mission_queries"]["settings"] >= 1
     assert summary["top_memory_mission_hotkeys"]["Ctrl+F"] >= 1
+    assert summary["top_maintenance_action_codes"]["maintain_vector_memory"] >= 2
 
 
 def test_memory_guided_runtime_strategy_biases_ai_route() -> None:
@@ -1647,7 +1735,7 @@ def test_desktop_machine_continue_app_learning_campaign_runs_followthrough_waves
     assert payload["maintenance_execution_performed"] is True
     assert payload["maintenance_execution_added_count"] == 5
     assert payload["maintenance_execution_removed_count"] == 2
-    assert payload["next_actions"][0]["kind"] == "resume_setup_then_continue_learning"
+    assert payload["next_actions"][0]["kind"] == "auto_resume_setup_then_continue_learning"
     assert payload["next_actions"][0]["query"] == "settings"
     assert payload["next_actions"][0]["setup_resume_recommended"] is True
     assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
@@ -1750,7 +1838,7 @@ def test_desktop_machine_continue_vm_prepare_followthrough_retries_memory_assist
     assert payload["maintenance_execution_removed_count"] == 1
     assert payload["summary"]["memory_guided_route_count"] == 1
     assert payload["summary"]["memory_route_alignment_counts"]["aligned"] == 1
-    assert payload["next_actions"][0]["kind"] == "resume_setup_then_retry_vm"
+    assert payload["next_actions"][0]["kind"] == "auto_resume_setup_then_retry_vm"
     assert payload["next_actions"][0]["setup_resume_recommended"] is True
     assert payload["next_actions"][0]["memory_maintenance_recommended"] is True
     assert prepare_calls[0]["query"] == "desktop settings"

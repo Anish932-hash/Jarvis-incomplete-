@@ -326,8 +326,11 @@ class DesktopAppMemorySupervisor:
             continuation_guided_total = 0
             setup_resume_guided_total = 0
             setup_auto_resume_guided_total = 0
+            setup_resume_action_guided_total = 0
             maintenance_guided_total = 0
             maintenance_cleanup_total = 0
+            maintenance_execution_guided_total = 0
+            maintenance_refresh_guided_total = 0
             maintenance_run_total = 0
             maintenance_due_total = 0
             maintenance_removed_total = 0
@@ -366,8 +369,11 @@ class DesktopAppMemorySupervisor:
                 continuation_guided_total += self._coerce_int(item.get("continuation_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
                 setup_resume_guided_total += self._coerce_int(item.get("setup_resume_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
                 setup_auto_resume_guided_total += self._coerce_int(item.get("setup_auto_resume_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                setup_resume_action_guided_total += self._coerce_int(item.get("setup_resume_action_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
                 maintenance_guided_total += self._coerce_int(item.get("maintenance_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
                 maintenance_cleanup_total += self._coerce_int(item.get("maintenance_cleanup_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                maintenance_execution_guided_total += self._coerce_int(item.get("maintenance_execution_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
+                maintenance_refresh_guided_total += self._coerce_int(item.get("maintenance_refresh_guided_target_count", 0), minimum=0, maximum=1_000_000, default=0)
                 maintenance_run_total += self._coerce_int(item.get("maintenance_run_count", 0), minimum=0, maximum=1_000_000, default=0)
                 maintenance_due_total += self._coerce_int(item.get("maintenance_due_count", 0), minimum=0, maximum=1_000_000, default=0)
                 maintenance_removed_total += self._coerce_int(item.get("maintenance_removed_count", 0), minimum=0, maximum=1_000_000, default=0)
@@ -459,8 +465,11 @@ class DesktopAppMemorySupervisor:
                     "continuation_guided_total": continuation_guided_total,
                     "setup_resume_guided_total": setup_resume_guided_total,
                     "setup_auto_resume_guided_total": setup_auto_resume_guided_total,
+                    "setup_resume_action_guided_total": setup_resume_action_guided_total,
                     "maintenance_guided_total": maintenance_guided_total,
                     "maintenance_cleanup_total": maintenance_cleanup_total,
+                    "maintenance_execution_guided_total": maintenance_execution_guided_total,
+                    "maintenance_refresh_guided_total": maintenance_refresh_guided_total,
                     "maintenance_run_total": maintenance_run_total,
                     "maintenance_due_total": maintenance_due_total,
                     "maintenance_removed_total": maintenance_removed_total,
@@ -935,8 +944,11 @@ class DesktopAppMemorySupervisor:
             continuation_guided_target_count = 0
             setup_resume_guided_target_count = 0
             setup_auto_resume_guided_target_count = 0
+            setup_resume_action_guided_target_count = 0
             maintenance_guided_target_count = 0
             maintenance_cleanup_target_count = 0
+            maintenance_execution_guided_target_count = 0
+            maintenance_refresh_guided_target_count = 0
             setup_guided_app_names: List[str] = []
             continuation_guided_app_names: List[str] = []
             setup_resume_guided_app_names: List[str] = []
@@ -959,8 +971,15 @@ class DesktopAppMemorySupervisor:
                 )
                 setup_resume_guided = bool(item.get("recent_setup_resume_ready", False))
                 setup_auto_resume_guided = bool(item.get("recent_setup_auto_resume_ready", False))
+                setup_resume_action_guided = int(item.get("recent_setup_resume_action_count", 0) or 0) > 0
                 maintenance_guided = bool(item.get("knowledge_store_maintenance_due", False))
                 maintenance_cleanup_guided = int(item.get("knowledge_store_recent_cleanup_count", 0) or 0) > 0
+                maintenance_execution_guided = int(
+                    item.get("recent_setup_maintenance_execution_count", 0) or 0
+                ) > 0
+                maintenance_refresh_guided = int(
+                    item.get("recent_setup_maintenance_added_count", 0) or 0
+                ) > 0
                 if setup_guided:
                     setup_guided_target_count += 1
                     if app_key:
@@ -975,12 +994,24 @@ class DesktopAppMemorySupervisor:
                         setup_resume_guided_app_names.append(app_key)
                 if setup_auto_resume_guided:
                     setup_auto_resume_guided_target_count += 1
+                if setup_resume_action_guided:
+                    setup_resume_action_guided_target_count += 1
+                    if app_key:
+                        setup_resume_guided_app_names.append(app_key)
                 if maintenance_guided:
                     maintenance_guided_target_count += 1
                     if app_key:
                         maintenance_guided_app_names.append(app_key)
                 if maintenance_cleanup_guided:
                     maintenance_cleanup_target_count += 1
+                    if app_key:
+                        maintenance_guided_app_names.append(app_key)
+                if maintenance_execution_guided:
+                    maintenance_execution_guided_target_count += 1
+                    if app_key:
+                        maintenance_guided_app_names.append(app_key)
+                if maintenance_refresh_guided:
+                    maintenance_refresh_guided_target_count += 1
                     if app_key:
                         maintenance_guided_app_names.append(app_key)
                 if not app_key:
@@ -1001,7 +1032,17 @@ class DesktopAppMemorySupervisor:
                             and str(query_hint).strip()
                         ],
                         *(["models", "runtime", "provider"] if setup_resume_guided else []),
-                        *(["settings", "preferences", "toolbar", "navigation"] if maintenance_guided or maintenance_cleanup_guided else []),
+                        *(["models", "runtime", "provider", "commands"] if setup_resume_action_guided else []),
+                        *(
+                            ["settings", "preferences", "toolbar", "navigation"]
+                            if maintenance_guided or maintenance_cleanup_guided
+                            else []
+                        ),
+                        *(
+                            ["commands", "shortcuts", "hotkeys", "toolbar"]
+                            if maintenance_execution_guided or maintenance_refresh_guided
+                            else []
+                        ),
                     ]
                 )[:8]
                 if merged_query_hints:
@@ -1100,6 +1141,20 @@ class DesktopAppMemorySupervisor:
                     effective_max_surface_waves,
                     5 if setup_auto_resume_guided_target_count > 0 else 4,
                 )
+            if setup_resume_action_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "dialog", "menu"]
+                )[:8]
+                preferred_wave_actions = self._dedupe_strings(
+                    [*preferred_wave_actions, "command", "focus_search_box", "focus_toolbar"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "dialog", "menu"]
+                )[:8]
+                effective_max_surface_waves = max(
+                    effective_max_surface_waves,
+                    6 if setup_auto_resume_guided_target_count > 0 else 5,
+                )
             if maintenance_guided_target_count > 0 or maintenance_cleanup_target_count > 0:
                 effective_target_container_roles = self._dedupe_strings(
                     [*effective_target_container_roles, "toolbar", "tree", "sidebar"]
@@ -1113,6 +1168,20 @@ class DesktopAppMemorySupervisor:
                 effective_max_surface_waves = max(
                     effective_max_surface_waves,
                     5 if maintenance_cleanup_target_count > 0 else 4,
+                )
+            if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "menu", "tree", "sidebar"]
+                )[:8]
+                preferred_wave_actions = self._dedupe_strings(
+                    [*preferred_wave_actions, "focus_toolbar", "focus_search_box", "focus_navigation_tree"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "menu", "tree", "sidebar"]
+                )[:8]
+                effective_max_surface_waves = max(
+                    effective_max_surface_waves,
+                    6 if maintenance_refresh_guided_target_count > 0 else 5,
                 )
             effective_max_probe_controls = self._coerce_int(
                 max_probe_controls,
@@ -1135,10 +1204,20 @@ class DesktopAppMemorySupervisor:
                     effective_max_probe_controls,
                     6 if setup_auto_resume_guided_target_count > 0 else 5,
                 )
+            if setup_resume_action_guided_target_count > 0:
+                effective_max_probe_controls = max(
+                    effective_max_probe_controls,
+                    7 if setup_auto_resume_guided_target_count > 0 else 6,
+                )
             if maintenance_guided_target_count > 0 or maintenance_cleanup_target_count > 0:
                 effective_max_probe_controls = max(
                     effective_max_probe_controls,
                     6 if maintenance_cleanup_target_count > 0 else 5,
+                )
+            if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0:
+                effective_max_probe_controls = max(
+                    effective_max_probe_controls,
+                    7 if maintenance_refresh_guided_target_count > 0 else 6,
                 )
             effective_query = str(query or "").strip()
             if not effective_query:
@@ -1162,6 +1241,8 @@ class DesktopAppMemorySupervisor:
                         ),
                         "",
                     )
+                    or ("commands" if setup_resume_action_guided_target_count > 0 else "")
+                    or ("toolbar" if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0 else "")
                 )
             campaign_id = self._campaign_id(label=label, app_names=clean_apps)
             now = _utc_now_iso()
@@ -1282,9 +1363,12 @@ class DesktopAppMemorySupervisor:
                 "continuation_guided_app_names": self._dedupe_strings(continuation_guided_app_names)[:8],
                 "setup_resume_guided_target_count": int(setup_resume_guided_target_count),
                 "setup_auto_resume_guided_target_count": int(setup_auto_resume_guided_target_count),
+                "setup_resume_action_guided_target_count": int(setup_resume_action_guided_target_count),
                 "setup_resume_guided_app_names": self._dedupe_strings(setup_resume_guided_app_names)[:8],
                 "maintenance_guided_target_count": int(maintenance_guided_target_count),
                 "maintenance_cleanup_target_count": int(maintenance_cleanup_target_count),
+                "maintenance_execution_guided_target_count": int(maintenance_execution_guided_target_count),
+                "maintenance_refresh_guided_target_count": int(maintenance_refresh_guided_target_count),
                 "maintenance_guided_app_names": self._dedupe_strings(maintenance_guided_app_names)[:8],
                 "query_hints_by_app": {
                     str(key): list(value)
@@ -1507,6 +1591,12 @@ class DesktopAppMemorySupervisor:
                 maximum=1_000_000,
                 default=0,
             )
+            setup_resume_action_guided_target_count = self._coerce_int(
+                campaign.get("setup_resume_action_guided_target_count", 0),
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
             maintenance_guided_target_count = self._coerce_int(
                 campaign.get("maintenance_guided_target_count", 0),
                 minimum=0,
@@ -1515,6 +1605,18 @@ class DesktopAppMemorySupervisor:
             )
             maintenance_cleanup_target_count = self._coerce_int(
                 campaign.get("maintenance_cleanup_target_count", 0),
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            maintenance_execution_guided_target_count = self._coerce_int(
+                campaign.get("maintenance_execution_guided_target_count", 0),
+                minimum=0,
+                maximum=1_000_000,
+                default=0,
+            )
+            maintenance_refresh_guided_target_count = self._coerce_int(
+                campaign.get("maintenance_refresh_guided_target_count", 0),
                 minimum=0,
                 maximum=1_000_000,
                 default=0,
@@ -1549,6 +1651,16 @@ class DesktopAppMemorySupervisor:
                 effective_preferred_traversal_paths = self._dedupe_strings(
                     [*effective_preferred_traversal_paths, "dialog", "menu"]
                 )[:8]
+            if setup_resume_action_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "dialog", "menu"]
+                )[:8]
+                effective_preferred_wave_actions = self._dedupe_strings(
+                    [*effective_preferred_wave_actions, "command", "focus_search_box", "focus_toolbar"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "dialog", "menu"]
+                )[:8]
             if maintenance_guided_target_count > 0 or maintenance_cleanup_target_count > 0:
                 effective_target_container_roles = self._dedupe_strings(
                     [*effective_target_container_roles, "toolbar", "tree", "sidebar"]
@@ -1558,6 +1670,16 @@ class DesktopAppMemorySupervisor:
                 )[:8]
                 effective_preferred_traversal_paths = self._dedupe_strings(
                     [*effective_preferred_traversal_paths, "toolbar", "tree", "sidebar"]
+                )[:8]
+            if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0:
+                effective_target_container_roles = self._dedupe_strings(
+                    [*effective_target_container_roles, "toolbar", "menu", "tree", "sidebar"]
+                )[:8]
+                effective_preferred_wave_actions = self._dedupe_strings(
+                    [*effective_preferred_wave_actions, "focus_toolbar", "focus_search_box", "focus_navigation_tree"]
+                )[:8]
+                effective_preferred_traversal_paths = self._dedupe_strings(
+                    [*effective_preferred_traversal_paths, "toolbar", "menu", "tree", "sidebar"]
                 )[:8]
             effective_max_surface_waves, adaptive_surface_wave_depth = self._adaptive_campaign_wave_depth(
                 self._coerce_int(campaign.get("max_surface_waves", 3), minimum=1, maximum=8, default=3),
@@ -1574,10 +1696,20 @@ class DesktopAppMemorySupervisor:
                     effective_max_surface_waves,
                     5 if setup_auto_resume_guided_target_count > 0 else 4,
                 )
+            if setup_resume_action_guided_target_count > 0:
+                effective_max_surface_waves = max(
+                    effective_max_surface_waves,
+                    6 if setup_auto_resume_guided_target_count > 0 else 5,
+                )
             if maintenance_guided_target_count > 0 or maintenance_cleanup_target_count > 0:
                 effective_max_surface_waves = max(
                     effective_max_surface_waves,
                     5 if maintenance_cleanup_target_count > 0 else 4,
+                )
+            if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0:
+                effective_max_surface_waves = max(
+                    effective_max_surface_waves,
+                    6 if maintenance_refresh_guided_target_count > 0 else 5,
                 )
             callback_max_probe_controls = self._coerce_int(
                 campaign.get("effective_max_probe_controls", campaign.get("max_probe_controls", 4)),
@@ -1594,10 +1726,20 @@ class DesktopAppMemorySupervisor:
                     callback_max_probe_controls,
                     6 if setup_auto_resume_guided_target_count > 0 else 5,
                 )
+            if setup_resume_action_guided_target_count > 0:
+                callback_max_probe_controls = max(
+                    callback_max_probe_controls,
+                    7 if setup_auto_resume_guided_target_count > 0 else 6,
+                )
             if maintenance_guided_target_count > 0 or maintenance_cleanup_target_count > 0:
                 callback_max_probe_controls = max(
                     callback_max_probe_controls,
                     6 if maintenance_cleanup_target_count > 0 else 5,
+                )
+            if maintenance_execution_guided_target_count > 0 or maintenance_refresh_guided_target_count > 0:
+                callback_max_probe_controls = max(
+                    callback_max_probe_controls,
+                    7 if maintenance_refresh_guided_target_count > 0 else 6,
                 )
             campaign_adaptive_profiles = [
                 dict(item)
@@ -3865,6 +4007,12 @@ class DesktopAppMemorySupervisor:
             maximum=1_000_000,
             default=0,
         )
+        campaign["setup_resume_action_guided_target_count"] = self._coerce_int(
+            campaign.get("setup_resume_action_guided_target_count", 0),
+            minimum=0,
+            maximum=1_000_000,
+            default=0,
+        )
         campaign["maintenance_guided_target_count"] = self._coerce_int(
             campaign.get("maintenance_guided_target_count", 0),
             minimum=0,
@@ -3873,6 +4021,18 @@ class DesktopAppMemorySupervisor:
         )
         campaign["maintenance_cleanup_target_count"] = self._coerce_int(
             campaign.get("maintenance_cleanup_target_count", 0),
+            minimum=0,
+            maximum=1_000_000,
+            default=0,
+        )
+        campaign["maintenance_execution_guided_target_count"] = self._coerce_int(
+            campaign.get("maintenance_execution_guided_target_count", 0),
+            minimum=0,
+            maximum=1_000_000,
+            default=0,
+        )
+        campaign["maintenance_refresh_guided_target_count"] = self._coerce_int(
+            campaign.get("maintenance_refresh_guided_target_count", 0),
             minimum=0,
             maximum=1_000_000,
             default=0,

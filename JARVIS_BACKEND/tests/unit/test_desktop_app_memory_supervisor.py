@@ -732,6 +732,12 @@ def test_desktop_app_memory_supervisor_memory_followthrough_boosts_campaign_dept
                     "memory_guided_route": False,
                     "memory_assisted_route": False,
                     "memory_route_alignment_status": "underused",
+                    "recent_setup_resume_ready": True,
+                    "recent_setup_auto_resume_ready": True,
+                    "recent_setup_resume_action_count": 2,
+                    "recent_setup_maintenance_execution_count": 1,
+                    "recent_setup_maintenance_added_count": 3,
+                    "recent_setup_maintenance_removed_count": 1,
                     "provider_model_readiness": {
                         "ai_route_status": "matched",
                         "selected_ai_runtime_band": "hybrid",
@@ -746,19 +752,27 @@ def test_desktop_app_memory_supervisor_memory_followthrough_boosts_campaign_dept
         assert created["campaign"]["memory_followthrough_enabled"] is True
         assert created["campaign"]["memory_underused_count"] == 1
         assert created["campaign"]["memory_aligned_count"] == 0
-        assert created["campaign"]["effective_max_probe_controls"] == 5
+        assert created["campaign"]["setup_resume_action_guided_target_count"] == 1
+        assert created["campaign"]["maintenance_execution_guided_target_count"] == 1
+        assert created["campaign"]["maintenance_refresh_guided_target_count"] == 1
+        assert created["campaign"]["effective_max_surface_waves"] == 6
+        assert created["campaign"]["effective_max_probe_controls"] == 7
         assert created["campaign"]["memory_followthrough_preferred_wave_actions"][:2] == [
             "focus_navigation_tree",
             "focus_list_surface",
         ]
+        assert created["campaign"]["query"] == "commands"
 
         campaign_id = str(created["campaign"]["campaign_id"])
         executed = supervisor.run_campaign(campaign_id=campaign_id, max_apps=1, source="manual")
         assert executed["status"] == "success"
-        assert captured[-1]["max_probe_controls"] == 5
+        assert captured[-1]["max_probe_controls"] == 7
         assert executed["campaign"]["memory_followthrough_enabled"] is True
         assert executed["campaign"]["memory_underused_count"] == 1
-        assert executed["campaign"]["effective_max_probe_controls"] == 5
+        assert executed["campaign"]["effective_max_probe_controls"] == 7
+        assert executed["campaigns"]["summary"]["setup_resume_action_guided_total"] >= 1
+        assert executed["campaigns"]["summary"]["maintenance_execution_guided_total"] >= 1
+        assert executed["campaigns"]["summary"]["maintenance_refresh_guided_total"] >= 1
         assert executed["campaign"]["memory_route_alignment_counts"]["underused"] == 1
         assert executed["campaigns"]["summary"]["memory_followthrough_total"] >= 1
         assert executed["campaigns"]["summary"]["memory_underused_total"] >= 1
